@@ -428,7 +428,7 @@ repository.
 
 Clauses: OPS-11.1, OPS-11.2, OPS-1.5, OPS-12.2.
 
-Action: send both to `github.com/thisisjun786/workflow-skills` on base `dev` after the
+Action: send both to `github.com/thisisjun786/codex-relay-workflow` on base `dev` after the
 owner-authorized snapshot publication has established that destination. Creating the clean public
 repository is a separate publication operation, not a reason to create one per component. Preserve
 private history separately and never push its branches into the public repository. `dev` is where
