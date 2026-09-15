@@ -552,8 +552,10 @@ behaving that way rather than as a host-side suppression switch.
 Criterion 3 is settled. Every row below was watched on a running host rather than read out of the
 binary, under a throwaway `CODEX_HOME` created for the run and removed after it. The user's own
 Codex home was read and never written; its `hooks.json` hashed identically before and after. The
-redacted record is `../scripts/fixtures/host/host-observation-codex-0.154.0.json`, and
-`hook_probe.py replay` holds it to the capability record it names.
+redacted record is `../scripts/fixtures/host/host-observation-codex-0.154.0.json`. `hook_probe.py
+replay` reads the row ids out of the table below, requires a record to carry every one of them,
+and holds the record to the capability record it names, so dropping a row here is a failed check
+rather than a quieter packet.
 
 Read every row as a statement about codex-cli 0.154.0 on one Linux host. Another host or version
 has to be watched again, exactly as the static table does.
@@ -678,12 +680,12 @@ fixture mismatch is never waived.
 
 Replay proves three things and no more: that this decision function agrees with expectations written
 alongside it, that no return site in it goes unexercised, and that the recorded host observations
-still agree with the capability record each one names. All three artifacts share an author, so this
-is a consistency check rather than independent evidence, and the third checks a recording rather than
-a host: it re-runs no hook and would keep passing on a machine where hooks are switched off. Whether
-a host invoked a hook, honored its output, delivered a hold, persisted anything, or met a latency
-budget is settled in the host-verification packet and in the measurement section, not here, and
-nothing here exercises a real creation race.
+still cover every row the packet asks about and agree with the capability record each one names. All
+three artifacts share an author, so this is a consistency check rather than independent evidence, and
+the third checks a recording rather than a host: it re-runs no hook and would keep passing on a
+machine where hooks are switched off. Whether a host invoked a hook, honored its output, delivered a
+hold, persisted anything, or met a latency budget is settled in the host-verification packet and in
+the measurement section, not here, and nothing here exercises a real creation race.
 
 ## Boundaries
 

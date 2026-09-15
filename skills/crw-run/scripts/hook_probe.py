@@ -819,7 +819,26 @@ def _check_one(label, observation, expected, report):
     return True
 
 
-def check_host_observations(directory=None):
+def packet_questions(contract_path=None):
+    """Row ids the host-verification packet asks about, read from its own table.
+
+    Derived rather than declared for the same reason the trace list is: a row added to the
+    packet later has to enter this denominator whether or not anyone remembers, and a row
+    deleted from the observation record has to leave a hole somebody sees.
+    """
+    path = Path(contract_path or CONTRACT)
+    found = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| H"):
+            continue
+        label = stripped.split("|")[1].strip()
+        if len(label) > 1 and label[0] == "H" and label[1:].isdigit() and label not in found:
+            found.append(label)
+    return found
+
+
+def check_host_observations(directory=None, contract_path=None):
     """Hold each recorded host observation to the capability record it names.
 
     The two are separate readings of one host: the capability record is what the binary
@@ -828,8 +847,14 @@ def check_host_observations(directory=None):
     offline, so a record that drifts from its own paired schema is reported here rather than
     discovered by whoever relies on it next. Nothing here re-runs a hook, and an observation
     record proves nothing on its own about the host running now.
+
+    The packet is answered as a set, so the rows are counted against the contract's own table
+    rather than against whatever the record happens to contain. A record carrying six of seven
+    rows is a packet with a hole in it, and the load-bearing row is the cheapest one to lose.
     """
     directory = Path(directory or HOST_FIXTURES)
+    asked = packet_questions(contract_path)
+    answered = set()
     problems = []
     checked = 0
     for path in sorted(directory.glob("host-observation-*.json")):
@@ -857,6 +882,7 @@ def check_host_observations(directory=None):
         rows = _mapping(record.get("observations"))
         if not rows:
             problems.append(f"{path.name}: records no observation rows")
+        answered.update(rows)
         for row_id, row in sorted(rows.items()):
             row = _mapping(row)
             status = row.get("status")
@@ -866,6 +892,20 @@ def check_host_observations(directory=None):
                 problems.append(f"{path.name}: {row_id} is unresolved and says nothing about why")
             elif status not in ("resolved", "unresolved"):
                 problems.append(f"{path.name}: {row_id} carries no readable status")
+    if not asked:
+        problems.append("the contract's host-verification packet asks nothing; its table is "
+                        "unreadable or gone")
+    elif not checked:
+        problems.append("the contract asks " + ", ".join(asked) + " and no observation record "
+                        "answers any of them")
+    else:
+        unanswered = [row for row in asked if row not in answered]
+        if unanswered:
+            problems.append("the packet asks " + ", ".join(unanswered) + " and no observation "
+                            "record carries that row")
+        unasked = sorted(answered - set(asked))
+        if unasked:
+            problems.append("recorded rows the packet does not ask about: " + ", ".join(unasked))
     return checked, problems
 
 
@@ -944,16 +984,15 @@ def command_replay(args):
         else:
             print("A return site no fixture executes is an untested decision path. Add a fixture "
                   "for it, or pass --allow-unreached for a deliberate subset run.")
-    host_checked, host_problems = check_host_observations(args.host_fixtures)
+    host_checked, host_problems = check_host_observations(args.host_fixtures, args.contract)
     if host_problems:
         for problem in host_problems:
             print("HOST OBSERVATION: " + problem)
         failures += 1
-    elif host_checked:
-        print(f"host observations: {host_checked}/{host_checked} agree with the capability "
-              "record each names. A recording, not a live host run.")
     else:
-        print("host observations: none recorded; no host coverage claimed")
+        asked = packet_questions(args.contract)
+        print(f"host observations: {host_checked} record(s) cover all {len(asked)} packet rows "
+              "and agree with the capability record each names. A recording, not a live host run.")
 
     if failures:
         return 1

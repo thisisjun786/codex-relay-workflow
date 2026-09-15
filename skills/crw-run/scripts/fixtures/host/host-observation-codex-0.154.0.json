@@ -52,7 +52,7 @@
       "boundThatStopped": "count",
       "continuationsReached": 10,
       "elapsedSecondsAtRelease": 27.74,
-      "evidence": "11 Stop invocations on one turn: 1 unheld first Stop, 10 held continuations, then an unconditional release",
+      "evidence": "11 Stop invocations on one turn: 10 consecutive holding decisions, each answered with a continuation, then an 11th Stop that released unconditionally",
       "observed": "false on the first Stop of a turn and true on every Stop that follows a continuation. The host does not suppress the handler while it is true: the hook ran on every Stop of the chain. The bounded run reached 10 consecutive continuations in 27.7 seconds and was stopped by the count bound, not by the time bound and not by the host. That is evidence about 10 continuations and nothing more; no run of any length shows the host has no cap.",
       "question": "What the host sets stop_hook_active to, whether it suppresses handlers when true, and whether the host caps continuations independently",
       "status": "resolved"
