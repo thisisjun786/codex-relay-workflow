@@ -1,6 +1,0 @@
-interface:
-  display_name: "Linear Logic"
-  short_description: "Linear 문서·설계·계산의 모순을 Paperthin으로 검증"
-  default_prompt: "$linear-logic 이 Linear 프로젝트의 문서 정본과 설계·계산 규칙을 Paperthin 스킬로 점검하고, 모순을 최소 반례와 정상 대조 사례로 검증해줘."
-policy:
-  allow_implicit_invocation: true

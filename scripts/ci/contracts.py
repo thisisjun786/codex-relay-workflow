@@ -7,10 +7,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECKS = (
-    ("hook", "skills/linear-run/scripts/hook_probe.py",
-     "skills/linear-run/references/hook-contract.md", ["replay"]),
+    ("hook", "skills/crw-run/scripts/hook_probe.py",
+     "skills/crw-run/references/hook-contract.md", ["replay"]),
     ("operations", "scripts/check_operations_contract.py",
-     "skills/linear-run/references/operations.md", []),
+     "skills/crw-run/references/operations.md", []),
 )
 
 

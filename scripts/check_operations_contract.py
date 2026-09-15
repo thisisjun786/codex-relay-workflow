@@ -183,7 +183,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     args = parser.parse_args()
-    references = args.root / "skills" / "linear-run" / "references"
+    references = args.root / "skills" / "crw-run" / "references"
     contract_path = references / "operations.md"
     fixtures = references / "operations"
 
