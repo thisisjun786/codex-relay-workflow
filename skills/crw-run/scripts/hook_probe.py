@@ -841,8 +841,13 @@ def packet_questions(contract_path=None):
             continue
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
         label = cells[0]
-        if len(label) > 1 and label[0] == "H" and label[1:].isdigit() and label not in found:
-            found[label] = cells[-1].lower() if len(cells) > 1 else ""
+        if len(label) < 2 or label[0] != "H" or not label[1:].isdigit():
+            continue
+        # A second row carrying an id the packet already used is reported rather than dropped.
+        # Silently keeping the first would let a later table be added whose rows never take
+        # effect, which is the quietest way for a packet to stop meaning what it prints.
+        found[label] = "duplicated" if label in found else (cells[-1].lower() if len(cells) > 1
+                                                            else "")
     return found
 
 
@@ -932,7 +937,8 @@ def check_host_observations(directory=None, contract_path=None):
             capability = json.loads(paired.read_text(encoding="utf-8"))
             stop = _mapping(_mapping(capability.get("events")).get("stop"))
             declared = sorted(_mapping(stop.get("input")).get("required") or [])
-            delivered = sorted(_mapping(record.get("stopInput")).get("fields") or [])
+            stop_input = _mapping(record.get("stopInput"))
+            delivered = sorted(stop_input.get("fields") or [])
             if not declared:
                 problems.append(f"{path.name}: {paired_name} declares no required Stop input")
             elif delivered != declared:
@@ -940,6 +946,22 @@ def check_host_observations(directory=None, contract_path=None):
                 unexpected = sorted(set(delivered) - set(declared))
                 problems.append(f"{path.name}: delivered Stop fields disagree with {paired_name} "
                                 f"(missing {missing}, unexpected {unexpected})")
+            else:
+                # The recorded types are the structured half of what H1 concluded, so they are
+                # held to the same field list rather than left as decoration that can be deleted
+                # while the row still reads as evidence.
+                types = record.get("stopInput", {}).get("types")
+                if not isinstance(types, dict):
+                    problems.append(f"{path.name}: records no Stop field types")
+                elif sorted(types) != delivered:
+                    absent = sorted(set(delivered) - set(types))
+                    extra = sorted(set(types) - set(delivered))
+                    problems.append(f"{path.name}: the recorded Stop field types do not cover the "
+                                    f"fields it delivered (missing {absent}, unexpected {extra})")
+                elif [name for name, kind in sorted(types.items()) if not _stated(kind)]:
+                    unnamed = [name for name, kind in sorted(types.items()) if not _stated(kind)]
+                    problems.append(f"{path.name}: the recorded Stop field types state nothing "
+                                    f"for {', '.join(unnamed)}")
         rows = _mapping(record.get("observations"))
         unanswered = [row for row in asked if row not in rows]
         if unanswered:
@@ -970,8 +992,12 @@ def check_host_observations(directory=None, contract_path=None):
                 problems.append(f"{path.name}: {row_id} is resolved and states no evidence")
             elif status == "unresolved" and not _stated(row.get("whyUnresolved")):
                 problems.append(f"{path.name}: {row_id} is unresolved and says nothing about why")
+    duplicated = [row for row, claimed in asked.items() if claimed == "duplicated"]
+    if duplicated:
+        problems.append("the packet's table states " + ", ".join(duplicated) + " more than once, "
+                        "so one row id would carry two statuses")
     unreadable = [row for row, claimed in asked.items()
-                  if claimed not in ("resolved", "unresolved")]
+                  if claimed not in ("resolved", "unresolved", "duplicated")]
     if unreadable:
         problems.append("the packet's table states no readable status for " + ", ".join(unreadable))
     if not asked:
