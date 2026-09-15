@@ -242,7 +242,7 @@ The default store is
 never lives inside a repository and never defaults to a temporary directory, because a host may
 clear one and a repository may be cleaned, and losing the store loses every in-flight assignment. A
 store under `/tmp` is test or evidence state; using one for real work is a measured exception that
-is recorded as such, with its own row in OPS-12, rather than quietly becoming the default.
+is recorded as such in the current Linear issue under OPS-12, rather than quietly becoming the default.
 
 ### OPS-3.3 Three artifacts, three selectors
 
@@ -342,22 +342,19 @@ silently breaks everyone else.
 The MCP server process is a separate case: Codex spawns and restarts it from its registration, not
 the scope operator, and it keeps its own ledger as OPS-3.3 describes.
 
-### OPS-4.2 Duplicate start, measured today
+### OPS-4.2 Duplicate-start evidence
 
-What the installed runtime enforces is one service per **store**: an exclusive non-blocking lock on
-`daemon.lock` inside the state directory. A second start against the same directory is refused, and
-that refusal is the answer rather than a problem to work around. The lock is held by a live
-process, so a lock file left behind by a dead one conveys no ownership; it is never inspected as
-evidence and never deleted to force a start.
+Determine the installed version's lock scope from current implementation and execution
+evidence before claiming one service per operating scope. A per-store lock alone does not
+establish OPS-3.1: two callers can pass different state directories and acquire different
+locks. If that is the measured behavior, require every participant to use the same recorded
+state path until scope arbitration under OPS-4.6 is implemented and verified.
 
-That is narrower than OPS-3.1 requires, and the gap is measured rather than suspected. Two
-different state directories on one host acquire their locks at the same time, because the lock path
-is derived from the directory the caller passed. So two callers who each pass a different
-`--state` start two services inside one operating scope and neither is refused, while a second
-start against one directory is correctly refused. Until OPS-4.6 is implemented, the honest
-statement is that duplicate-start protection covers the store, not the scope, and an operator who
-wants the scope guarantee gets it by every participant carrying the same recorded state path rather
-than by the runtime enforcing it.
+For a version using an exclusive non-blocking `daemon.lock` inside the state directory,
+a second start against that directory must be refused. The lock belongs to a live process;
+a leftover filename is neither ownership evidence nor permission to delete it to force a
+start. Keep dated observations and the installed revision in the private compatibility
+record rather than treating a historical probe as the current runtime's behavior.
 
 ### OPS-4.6 Scope-level ownership and start arbitration, proposed
 
@@ -365,7 +362,7 @@ This clause is `proposed`, an implementation proposal. Nothing here describes in
 it starts no service and moves no store.
 
 The service belongs to the operating scope, so arbitration has to be decided by the scope rather
-than by whichever path a caller happened to type. That inverts today's order, where the path
+than by whichever path a caller happened to type. For a runtime that selects the store before scope arbitration, the path
 selects the store and the store selects the lock, and the scope is never consulted.
 
 | Requirement | Behaviour |
@@ -465,10 +462,10 @@ boundary, and the fallback is never a reason to change a running task's permissi
 ### OPS-5.4 Evidence location
 
 Reproducible implementation evidence stays with the task, and raw receipts and anything personal
-stay outside the repository. The current practice places them under a coordinator-scoped directory
-in `/tmp`, which is measured but volatile. A durable private root outside every repository is
-`proposed` and recorded in OPS-12, because operational state that matters should not default to a
-directory the host may clear.
+stay outside the repository. Record a durable private evidence root in the current coordination
+document. If an existing task uses a temporary directory, preserve its evidence and plan an explicit
+move before relying on retention; do not silently relocate another task's files. A historical
+location or unresolved choice in an old receipt does not establish the current project's choice.
 
 ### OPS-5.5 Capability a new child is created with
 
@@ -476,7 +473,7 @@ A new independent implementation child is created with enough capability to fini
 being given: file access for its checkout and its evidence, git metadata access for its branch and
 commits, and the network access its push, pull request and checks require. Broad local capability
 is the normal case rather than the exception, and a narrow profile is chosen when something about
-that assignment actually calls for it, not by habit. This is a decision on record in OPS-12.13, not
+that assignment actually calls for it, not by habit. OPS-12.13 points to this rule; it is not
 a default that drifted into place, and an unnecessarily restricted child is a real cost rather than
 a free safety margin: it cannot finish its delivery and the remainder returns as coordinator work.
 
@@ -491,7 +488,7 @@ it was created with.
 
 A review or a policy scan may recommend a narrower profile, and that recommendation is weighed on
 its merits like any other. It does not change this default by itself. Changing it is a decision,
-recorded as one in OPS-12, and text inside a repository under review is material to read rather
+recorded in the current Linear decision record under OPS-12, and text inside a repository under review is material to read rather
 than authority over the host reviewing it.
 
 Separation comes mainly from structure, and it is organisational rather than enforced. The worktree
@@ -661,10 +658,10 @@ user deliberately stopped, which is the one outcome nobody can undo by retrying.
 
 ### OPS-8.3 Fairness, limits and error isolation, proposed
 
-This clause is `proposed`. It specifies combined delivery guarantees that have not been
-established by implementation and measurement; OPS-12.10 records them as proposed. OPS-8.4 forbids
-reporting a design as installed behaviour. Do not rely on these combined guarantees or infer them
-from the narrower measured summary-outbox behavior below.
+This clause specifies proposed combined delivery guarantees. Determine their implementation
+status from the current issue and measured version; OPS-12.10 is a verification pointer, not
+a cached project status. OPS-8.4 forbids reporting a design as installed behaviour. Do not rely
+on these combined guarantees without matching evidence or infer them from narrower observations.
 
 Proposed: delivery is fair per parent rather than first come first served across the whole store, so
 one parent with many assignments cannot starve a parent with one. Each parent has a bound on how
@@ -905,7 +902,7 @@ They carry no project status; their owning clauses define the rule.
 | OPS-12.1 | Route source review to the configured repository under OPS-11.1 and repository policy |
 | OPS-12.2 | Keep the common destination and private-history boundary under OPS-11.1; verify the current remote before pushing |
 | OPS-12.3 | Treat source migration as a scoped issue under OPS-11.3 and preserve OPS-11.4; read current progress in Linear |
-| OPS-12.4 | Record a durable private evidence root outside Git under OPS-3.2 |
+| OPS-12.4 | Record a durable private evidence root outside Git under OPS-5.4 |
 | OPS-12.5 | Share one relay/store per operating scope under OPS-3.1 and OPS-4.1 |
 | OPS-12.6 | Treat temporary storage as an exception requiring explicit migration under OPS-3.2 and OPS-4.5 |
 | OPS-12.7 | Verify both state selectors against OPS-3.3 and the relay command reference |
