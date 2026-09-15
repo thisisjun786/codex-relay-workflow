@@ -1,4 +1,4 @@
-name: Workflow skills CI
+name: CRW CI
 
 on:
   pull_request:

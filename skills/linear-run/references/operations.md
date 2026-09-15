@@ -33,7 +33,7 @@ reported as measured installed behaviour.
 
 ### OPS-1.1 One record per component
 
-`workflow-skills` owns one compatibility definition covering every component the workflow
+`codex-relay-workflow` owns one compatibility definition covering every component the workflow
 depends on. There is exactly one such definition; a version repeated in a second document or script
 is a copy that will go stale. Each component record carries the component name, the source checkout
 path, its remote as a URL or the literal word `none`, the full commit SHA, the full `HEAD^{tree}`
@@ -826,7 +826,7 @@ paraphrase that will drift.
 ### OPS-11.1 One destination
 
 Skills, bridge and relay all deliver to one repository,
-`github.com/thisisjun786/workflow-skills`, on base `dev`. This is decided, so an
+`github.com/thisisjun786/codex-relay-workflow`, on base `dev`. This is decided, so an
 implementation issue for any of the three has a place to send a pull request and no longer waits on
 a location question. The public repository starts from a reviewed source snapshot; the earlier
 private repository retains its history. Do not push private-history branches into the public remote.

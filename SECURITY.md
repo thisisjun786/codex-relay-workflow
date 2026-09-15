@@ -2,7 +2,7 @@
 
 ## Report a vulnerability privately
 
-Use GitHub's [Report a vulnerability](https://github.com/thisisjun786/workflow-skills/security/advisories/new)
+Use GitHub's [Report a vulnerability](https://github.com/thisisjun786/codex-relay-workflow/security/advisories/new)
 form. Maintainers must enable and verify this route as part of the
 [publication procedure](docs/CI.md#public-repository-activation). Do not open a public issue or PR containing an unpatched vulnerability,
 credential, private Linear description, or session transcript.

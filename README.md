@@ -1,6 +1,10 @@
-# Linear Workflow Skills
+# Codex Relay Workflow (CRW)
 
 Codex skills for planning, delegating, and verifying work with Linear, CXC, and Paperthin. Keep product decisions in Linear, implementation in Git, and delivery evidence connected to the issue and PR.
+
+CRW is a community project designed to work with CXC; it is not an official
+OpenAI or Codex product. Its workflow connects child-task delegation, PR review
+resolution, and parent-task verification and integration.
 
 This is an experimental workflow built from a personal setup. It contains six
 skill instruction sets and a symlink installer. CXC, Paperthin, the task bridge,
@@ -34,8 +38,8 @@ branch `dev` contains ongoing integration work; `main` is reserved for authorize
 release promotions. Clone into a location you will keep:
 
 ```sh
-git clone --branch dev https://github.com/thisisjun786/workflow-skills.git
-cd workflow-skills
+git clone --branch dev https://github.com/thisisjun786/codex-relay-workflow.git
+cd codex-relay-workflow
 python3 scripts/install.py --apply
 python3 scripts/install.py --check
 ```
@@ -190,7 +194,7 @@ the workflow suffix does not prove execution. See [Child task titles](skills/lin
 
 ## Contribute and report problems
 
-Open a [GitHub issue](https://github.com/thisisjun786/workflow-skills/issues)
+Open a [GitHub issue](https://github.com/thisisjun786/codex-relay-workflow/issues)
 with a redacted reproduction, or follow [CONTRIBUTING.md](CONTRIBUTING.md) for a PR
 against `dev`. Include the relevant skill, source commit, host version, expected
 behavior, and observed behavior. Do not paste credentials or private task history.
