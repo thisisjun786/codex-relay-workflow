@@ -1,0 +1,81 @@
+{
+  "expected": {
+    "decision": "release",
+    "observation": "correlated_unbound",
+    "record": {
+      "assignmentState": "ambiguous_identity"
+    },
+    "state": "correlated_unbound"
+  },
+  "note": "Half an identity is not an identity: a resolution naming a session the record does not contain clears nothing.",
+  "observation": {
+    "disposition": null,
+    "marker": {
+      "attempts": [
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "factId": "attempts/0",
+          "outcome": "accepted",
+          "taskId": "task-1111"
+        },
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "factId": "attempts/1",
+          "outcome": "accepted",
+          "taskId": "task-2222"
+        }
+      ],
+      "bound": null,
+      "claims": [
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "dispatchRequestId": "dispatch-0001",
+          "factId": "claims/session-1111",
+          "firstTurnId": "turn-0001",
+          "sessionId": "session-1111"
+        }
+      ],
+      "intent": {
+        "declaredAt": "2026-01-01T00:00:00+00:00",
+        "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+        "issue": "JUN-000",
+        "workspace": "/workspace/example"
+      },
+      "relationship": null,
+      "resolutions": [
+        {
+          "adjudicated": [
+            {
+              "digest": "5dfa06ec4e673100264914664fb3c8fe45f3a944f100354f0cdf5576b3751cbd",
+              "factId": "attempts/0"
+            },
+            {
+              "digest": "c9311d1138d0e688e64f516eaf8f0731e33a884e874ddc269fcb1de24a250a21",
+              "factId": "attempts/1"
+            },
+            {
+              "digest": "0ac18dc2c3dc32f1757c23e7888158ee47a64e81d8dafb866bd4899a41551ba2",
+              "factId": "claims/session-1111"
+            }
+          ],
+          "at": "2026-01-01T00:05:00+00:00",
+          "chosenSessionId": "session-ABSENT",
+          "chosenTaskId": "task-1111",
+          "reason": "recovery"
+        }
+      ]
+    },
+    "now": "2026-01-01T00:01:00+00:00",
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0001"
+    }
+  }
+}

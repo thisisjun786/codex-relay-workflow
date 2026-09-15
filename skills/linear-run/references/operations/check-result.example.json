@@ -1,0 +1,51 @@
+{
+  "_exampleOnly": true,
+  "_note": "ILLUSTRATIVE EXAMPLE, not a host measurement. The subject, timestamps and identifiers are fictional, matching the compatibility record this result reads from. It shows the shape OPS-6.1 and OPS-6.2 require. The timestamps are synthetic: no observation was recorded at those times, so they must not be read as evidence, and a real record carries the times its observations actually happened. Task identifiers are placeholders, because a session id identifies a person's working session. A live record for a host is a private receipt kept outside the repository.",
+  "recordVersion": 1,
+  "subject": "codex-session-relay and codex-thread-bridge on a host (fictional example)",
+  "measuredFrom": "the acting child task, sandbox workspace-write, no socket",
+  "fields": {
+    "installed": {
+      "value": "not_verified",
+      "evidence": "Withheld, because no install classifies own. Every install matches the record on identity and bytes: the entry points resolve into recorded paths, both checkouts are on their recorded commit and tree, both working trees are clean, and every OPS-1.2 digest matches. What is missing everywhere is the evidence signal. The compatibility record carries no measured point for any combination, because the commands behind it read git metadata, project files, digests and a Codex version string without ever executing the bridge or the relay, and OPS-1.3 refuses to let an inventory reading stand in for an exercised combination. So OPS-2.2 classifies all three installs unmeasured rather than own, including the copied bridge inside the relay's environment, which additionally has no exercise evidence of any kind under the interpreter it runs there. Digest equality alone would not have been sufficient either, since an uncommitted change outside the package directory leaves it unchanged. A field covering several components is only as verified as its weakest component. This withholds a claim rather than asserting anything is broken: it says no run recorded here qualifies as a point.",
+      "command": "git rev-parse HEAD HEAD^{tree}; git status --porcelain; OPS-1.2 digest over each interpreter-resolved location; read the registered MCP command; compare each against the compatibility record, then read that record for a measured point covering the combination each install actually runs under",
+      "actor": "<child-task-id>",
+      "measuredAt": "2026-09-15T09:50:00Z"
+    },
+    "mcpExposed": {
+      "value": "verified",
+      "evidence": "mcp_servers.codex-thread-bridge is registered and its tools are listed in this live session, including create_thread, create_worktree_thread and get_operation.",
+      "command": "read ~/.codex/config.toml, then list the tools available in the running session",
+      "actor": "<child-task-id>",
+      "measuredAt": "2026-09-15T09:50:00Z"
+    },
+    "connected": {
+      "value": "not_verified",
+      "evidence": "This process ran doctor without a socket, so actorReachability.socketConnect is \"not configured\". A socket file exists at ~/.codex/app-server-control/app-server-control.sock, which does not establish that this process can connect.",
+      "command": "CODEX_SESSION_RELAY_STATE=<dir> codex-session-relay --state <dir> doctor, both selectors on one resolved absolute path as OPS-3.3 requires",
+      "actor": "<child-task-id>",
+      "measuredAt": "2026-09-15T09:50:00Z"
+    },
+    "deliveryAccepted": {
+      "value": "not_verified",
+      "evidence": "This task emits without a socket, so its receipt is staged. Staged is real recorded progress and is not delivery. A host-capable observer completes it.",
+      "command": "CODEX_SESSION_RELAY_STATE=<dir> codex-session-relay --state <dir> assignment-show --relationship <rel>",
+      "actor": "<child-task-id>",
+      "measuredAt": "2026-09-15T09:50:00Z"
+    },
+    "verificationComplete": {
+      "value": "not_verified",
+      "evidence": "No verdict exists, so none of the five OPS-6.4 conditions can hold. The time is unknown because no timed read stands behind this field: supplying a plausible one, or copying a sibling field's, would assert an observation nobody made. The command that could establish it is below, and revision-head could not, since it reports lineage rather than verdicts. The parent owns claim, acknowledgement and verdict; when one exists it still needs a verified disposition, every required criterion verified, the current event, revision and generation, the criteria digest in force now, and a host-verified acknowledgement. Integration is judged separately.",
+      "command": "CODEX_SESSION_RELAY_STATE=<dir> codex-session-relay --state <dir> assignment-show --relationship <rel>, reading lastVerdict",
+      "actor": "<parent-task-id>",
+      "measuredAt": "unknown"
+    },
+    "alwaysActive": {
+      "value": "not_verified",
+      "evidence": "No supervised runtime has been observed surviving a host restart. Nothing is installed to provide one, but absence of a supervisor is an unmet requirement rather than an inapplicable one, so this stays not_verified.",
+      "command": "none available from this process",
+      "actor": "<child-task-id>",
+      "measuredAt": "2026-09-15T09:50:00Z"
+    }
+  }
+}

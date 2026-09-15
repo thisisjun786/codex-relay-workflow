@@ -1,0 +1,119 @@
+{
+  "_exampleOnly": true,
+  "_note": "FICTIONAL WORKED EXAMPLE showing the shape OPS-1 requires. Every value is invented: the paths, revisions, trees, digests, interpreter and tool versions, host name and date describe no machine that exists. They are chosen to stay internally consistent so the record still teaches what it is for, namely that one component can be installed twice and drift, that an editable install's location is its source tree while a copied one sits inside the environment, that an entry point can bind to a live development checkout, and that identity and compatibility are different questions. The compatibility side is deliberately empty: nothing here records a run, so under OPS-1.3 there is no measured point and OPS-2.2 cannot return own for any install. A real record for a real host is a private receipt kept outside this repository, because it is operational state under OPS-3.2 and it goes stale as the host changes. Do not copy these values; produce your own by measuring. See OPS-1.5 and OPS-11.3 for the migrated identity, which stays unmeasured until a migration actually runs.",
+  "recordVersion": 1,
+  "components": [
+    {
+      "component": "codex-thread-bridge",
+      "status": "unmeasured",
+      "identityStatus": "measured",
+      "statusMeaning": "status is the compatibility status of this component and uses the OPS-0 vocabulary: unmeasured, because no run binds a combination to these bytes. identityStatus is measured, because the revision, tree, cleanliness and install digests were observed. The two are recorded separately so that knowing what is installed is never read as knowing that it works.",
+      "compatibilityEvidence": "No qualifying exercise evidence for any combination of this component. Identity and installed bytes are measured; the combination each install runs under is unmeasured under OPS-1.3, so OPS-2.2 cannot return own for any install here. A qualifying point would be produced by actually running this component under the named interpreter, Codex CLI and App Server on the named host and recording that run; it is not produced by reading files or version strings.",
+      "source": {
+        "checkout": "/example/checkouts/codex-thread-bridge",
+        "remote": "https://github.com/example-upstream/codex-thread-bridge.git",
+        "remoteOwnership": "Third-party upstream: this remote belongs to another author, not to us. Kept as the upstream provenance anchor under OPS-1.5; the delivery destination is OPS-11.1 and the source has not moved yet, see OPS-12.3."
+      },
+      "revision": "11aa22bb33cc44dd55ee66ff7788990011223344",
+      "tree": "aabbccdd11223344556677889900aabbccddeeff",
+      "workingTreeClean": true,
+      "version": "0.1.0",
+      "requiresPython": ">=3.11",
+      "installs": [
+        {
+          "location": "/example/checkouts/codex-thread-bridge/src/codex_thread_bridge",
+          "installMode": "editable",
+          "entryPoint": "/example/checkouts/codex-thread-bridge/.venv/bin/codex-thread-bridge",
+          "interpreter": "3.12.0",
+          "integrity": "1111aaaa2222bbbb3333cccc4444dddd5555eeee6666ffff7777000088889999",
+          "reachedVia": "MCP server registration mcp_servers.codex-thread-bridge",
+          "environment": "/example/checkouts/codex-thread-bridge/.venv",
+          "locationNote": "editable install: the .pth file adds /example/checkouts/codex-thread-bridge/src, so nothing exists under the environment's site-packages and the location is the source tree. Read from the interpreter, not assumed."
+        },
+        {
+          "location": "/example/checkouts/codex-session-relay/.venv/lib/python3.13/site-packages/codex_thread_bridge",
+          "installMode": "copied",
+          "entryPoint": "imported by the relay bridge adapter, no console script",
+          "interpreter": "3.13.0",
+          "integrity": "1111aaaa2222bbbb3333cccc4444dddd5555eeee6666ffff7777000088889999",
+          "reachedVia": "codex_session_relay.bridge_adapter",
+          "environment": "/example/checkouts/codex-session-relay/.venv"
+        }
+      ],
+      "measuredPoints": [],
+      "inventoryObservations": [
+        {
+          "interpreter": "3.12.0",
+          "codexCli": "0.100.0",
+          "appServer": "0.100.0",
+          "host": "example-host",
+          "date": "2026-01-01",
+          "measuredBy": "<issue-id>",
+          "method": "git rev-parse HEAD and HEAD^{tree}; git status --porcelain; pyproject read; OPS-1.2 digest over the interpreter-resolved location; codex --version",
+          "appServerProvenance": "fictional, like every value in this example. In a real record this field names where the App Server version came from and states that an inventory command does not measure a running App Server.",
+          "kind": "inventoryObservation",
+          "exercised": false,
+          "whyNotAPoint": "Inventory observation only. These commands establish identity and bytes: the revision, the tree, working-tree cleanliness, the declared metadata and the OPS-1.2 digest of the resolved location, plus the Codex version of the host. None of them executes this component, so under OPS-1.3 they are not a measured point and cannot authorize reuse. Kept here because the identity they establish is genuinely measured and is what OPS-2.1 classifies from."
+        }
+      ],
+      "monorepoIdentity": {
+        "status": "unmeasured",
+        "detail": "Destination is decided (OPS-11.1) but the source migration has not run (OPS-12.3). After it runs, record repositoryCommit, repositoryTree, subdirectory and subdirectoryTree here, carry source.remote and the licence across unchanged as upstream provenance, and recompute the installed digest from what the host then runs."
+      }
+    },
+    {
+      "component": "codex-session-relay",
+      "status": "unmeasured",
+      "identityStatus": "measured",
+      "statusMeaning": "status is the compatibility status of this component and uses the OPS-0 vocabulary: unmeasured, because no run binds a combination to these bytes. identityStatus is measured, because the revision, tree, cleanliness and install digests were observed. The two are recorded separately so that knowing what is installed is never read as knowing that it works.",
+      "compatibilityEvidence": "No qualifying exercise evidence for any combination of this component. Identity and installed bytes are measured; the combination each install runs under is unmeasured under OPS-1.3, so OPS-2.2 cannot return own for any install here. A qualifying point would be produced by actually running this component under the named interpreter, Codex CLI and App Server on the named host and recording that run; it is not produced by reading files or version strings.",
+      "source": {
+        "checkout": "/example/checkouts/codex-session-relay",
+        "remote": "none",
+        "remoteOwnership": "No remote exists for this checkout. Its upstream provenance is therefore the local checkout itself under OPS-1.5; the delivery destination is OPS-11.1 and the source has not moved yet, see OPS-12.3."
+      },
+      "revision": "55ff66ee77dd88cc99bb00aa1122334455667788",
+      "tree": "ffeeddccbbaa99887766554433221100aabbccdd",
+      "workingTreeClean": true,
+      "version": "0.1.0",
+      "requiresPython": ">=3.11",
+      "installs": [
+        {
+          "location": "/example/checkouts/codex-session-relay/.venv/lib/python3.13/site-packages/codex_session_relay",
+          "installMode": "copied",
+          "entryPoint": "/example/home/.local/bin/codex-session-relay",
+          "entryPointNote": "shebang points at /example/checkouts/codex-session-relay/.venv/bin/python, so the user-facing command is bound to a live development checkout",
+          "interpreter": "3.13.0",
+          "integrity": "9999888877776666555544443333222211110000ffffeeeeddddccccbbbbaaaa",
+          "reachedVia": "PATH",
+          "environment": "/example/checkouts/codex-session-relay/.venv"
+        }
+      ],
+      "measuredPoints": [],
+      "inventoryObservations": [
+        {
+          "interpreter": "3.13.0",
+          "codexCli": "0.100.0",
+          "appServer": "0.100.0",
+          "host": "example-host",
+          "date": "2026-01-01",
+          "measuredBy": "<issue-id>",
+          "method": "git rev-parse HEAD and HEAD^{tree}; git status --porcelain; pyproject read; OPS-1.2 digest over the interpreter-resolved location; codex --version",
+          "appServerProvenance": "fictional, like every value in this example. In a real record this field names where the App Server version came from and states that an inventory command does not measure a running App Server.",
+          "kind": "inventoryObservation",
+          "exercised": false,
+          "whyNotAPoint": "Inventory observation only. These commands establish identity and bytes: the revision, the tree, working-tree cleanliness, the declared metadata and the OPS-1.2 digest of the resolved location, plus the Codex version of the host. None of them executes this component, so under OPS-1.3 they are not a measured point and cannot authorize reuse. Kept here because the identity they establish is genuinely measured and is what OPS-2.1 classifies from."
+        }
+      ],
+      "monorepoIdentity": {
+        "status": "unmeasured",
+        "detail": "Destination is decided (OPS-11.1) but the source migration has not run (OPS-12.3). After it runs, record repositoryCommit, repositoryTree, subdirectory and subdirectoryTree here, carry source.remote and the licence across unchanged as upstream provenance, and recompute the installed digest from what the host then runs."
+      }
+    }
+  ],
+  "unmeasured": [
+    "Every combination of these components. No exercise evidence exists that binds a run to these exact revisions, installed bytes and interpreters, so every combination is unmeasured rather than compatible or incompatible. This is not a claim that either component has never run: it is a claim that no run recorded here qualifies as a point under OPS-1.3.",
+    "The copied bridge install in the relay's 3.13.0 environment, which additionally has no exercise evidence of any kind under that interpreter.",
+    "The App Server behaviour, which no inventory command observes."
+  ]
+}

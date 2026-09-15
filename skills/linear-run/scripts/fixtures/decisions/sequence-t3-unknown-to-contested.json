@@ -1,0 +1,192 @@
+{
+  "note": "T3: an unknown creation outcome, then reconciliation and a bind, then a late acceptance naming a different task.",
+  "steps": [
+    {
+      "expected": {
+        "decision": "release",
+        "record": {
+          "assignmentState": "creation_unknown"
+        },
+        "state": "correlated_unbound"
+      },
+      "note": "Unknown outcome, no acceptance, still inside the window.",
+      "observation": {
+        "disposition": null,
+        "marker": {
+          "attempts": [
+            {
+              "at": "2026-01-01T00:01:00+00:00",
+              "outcome": "unknown"
+            }
+          ],
+          "bound": null,
+          "claims": [
+            {
+              "at": "2026-01-01T00:01:00+00:00",
+              "dispatchRequestId": "dispatch-0001",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-01-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": null
+        },
+        "now": "2026-01-01T00:01:00+00:00",
+        "stop_input": {
+          "cwd": "/workspace/example",
+          "hook_event_name": "Stop",
+          "last_assistant_message": "Work continues.",
+          "model": "<model>",
+          "permission_mode": "default",
+          "session_id": "session-1111",
+          "stop_hook_active": false,
+          "transcript_path": null,
+          "turn_id": "turn-0001"
+        }
+      }
+    },
+    {
+      "expected": {
+        "decision": "release",
+        "record": {
+          "identityContested": false
+        },
+        "state": "declared_in_progress"
+      },
+      "note": "Reconciled and bound; a declared turn releases.",
+      "observation": {
+        "disposition": {
+          "outcome": "in_progress",
+          "sessionId": "session-1111",
+          "turnId": "turn-0002"
+        },
+        "marker": {
+          "attempts": [
+            {
+              "at": "2026-01-01T00:01:00+00:00",
+              "outcome": "unknown"
+            },
+            {
+              "at": "2026-01-01T00:01:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-1111"
+            }
+          ],
+          "bound": {
+            "at": "2026-01-01T00:05:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-01-01T00:01:00+00:00",
+              "dispatchRequestId": "dispatch-0001",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-01-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": {
+            "at": "2026-01-01T00:05:00+00:00",
+            "relationshipId": "rel-example"
+          }
+        },
+        "now": "2026-01-01T00:05:00+00:00",
+        "stop_input": {
+          "cwd": "/workspace/example",
+          "hook_event_name": "Stop",
+          "last_assistant_message": "Work continues.",
+          "model": "<model>",
+          "permission_mode": "default",
+          "session_id": "session-1111",
+          "stop_hook_active": false,
+          "transcript_path": null,
+          "turn_id": "turn-0002"
+        }
+      }
+    },
+    {
+      "expected": {
+        "decision": "release",
+        "record": {
+          "identityContested": true
+        },
+        "state": "declared_in_progress"
+      },
+      "note": "A late acceptance naming another task contests the assignment; the bind stands. The unknown attempt from step 1 is still present, because a published fact never disappears.",
+      "observation": {
+        "disposition": {
+          "outcome": "in_progress",
+          "sessionId": "session-1111",
+          "turnId": "turn-0003"
+        },
+        "marker": {
+          "attempts": [
+            {
+              "at": "2026-01-01T00:01:00+00:00",
+              "outcome": "unknown"
+            },
+            {
+              "at": "2026-01-01T00:01:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-1111"
+            },
+            {
+              "at": "2026-01-01T00:05:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-9999"
+            }
+          ],
+          "bound": {
+            "at": "2026-01-01T00:05:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-01-01T00:01:00+00:00",
+              "dispatchRequestId": "dispatch-0001",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-01-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": {
+            "at": "2026-01-01T00:05:00+00:00",
+            "relationshipId": "rel-example"
+          }
+        },
+        "now": "2026-01-01T00:05:00+00:00",
+        "stop_input": {
+          "cwd": "/workspace/example",
+          "hook_event_name": "Stop",
+          "last_assistant_message": "Work continues.",
+          "model": "<model>",
+          "permission_mode": "default",
+          "session_id": "session-1111",
+          "stop_hook_active": false,
+          "transcript_path": null,
+          "turn_id": "turn-0003"
+        }
+      }
+    }
+  ]
+}

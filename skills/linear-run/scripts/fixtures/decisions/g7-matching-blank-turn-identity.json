@@ -1,0 +1,66 @@
+{
+  "expected": {
+    "decision": "block",
+    "observation": "undeclared_turn_end",
+    "state": "undeclared_turn_end"
+  },
+  "note": "Matching blank turn identities name no turn, so the disposition is not this turn's and nothing was declared. Still held, one state earlier than before: readiness was never established, so the missing receipt is not the finding.",
+  "observation": {
+    "disposition": {
+      "outcome": "ready_for_review",
+      "sessionId": "session-1111",
+      "turnId": " "
+    },
+    "marker": {
+      "attempts": [
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "outcome": "accepted",
+          "taskId": "task-1111"
+        }
+      ],
+      "bound": {
+        "at": "2026-01-01T00:05:00+00:00",
+        "sessionId": "session-1111",
+        "taskId": "task-1111"
+      },
+      "claims": [
+        {
+          "at": "2026-01-01T00:01:00+00:00",
+          "dispatchRequestId": "dispatch-0001",
+          "factId": "claims/session-1111/claim.json",
+          "firstTurnId": "turn-0001",
+          "sessionId": "session-1111"
+        }
+      ],
+      "intent": {
+        "declaredAt": "2026-01-01T00:00:00+00:00",
+        "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+        "issue": "JUN-000",
+        "workspace": "/workspace/example"
+      },
+      "relationship": {
+        "at": "2026-01-01T00:05:00+00:00",
+        "relationshipId": "rel-example"
+      }
+    },
+    "receipt": {
+      "atCurrentHead": true,
+      "eventId": "event-anonymous",
+      "relationshipId": "rel-example",
+      "sessionId": "session-1111",
+      "turnId": " "
+    },
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": " "
+    }
+  }
+}

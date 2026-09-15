@@ -1,0 +1,202 @@
+# Linear Workflow Skills
+
+Codex skills for planning, delegating, and verifying work with Linear, CXC, and Paperthin. Keep product decisions in Linear, implementation in Git, and delivery evidence connected to the issue and PR.
+
+This is an experimental workflow built from a personal setup. It contains six
+skill instruction sets and a symlink installer. CXC, Paperthin, the task bridge,
+and the session relay are separate dependencies; their runtimes are not included.
+Offline contract checks do not establish live Codex hook or Desktop compatibility.
+
+| Skill | Purpose |
+|---|---|
+| [linear-focus](skills/linear-focus/SKILL.md) | Make this task a project's fixed management point and restore its recorded link |
+| [linear-next](skills/linear-next/SKILL.md) | Choose one next action when starting or after finishing work, using readchk and nba |
+| [linear-plan](skills/linear-plan/SKILL.md) | Turn product context into canonical Linear documents, milestones, and issues |
+| [linear-run](skills/linear-run/SKILL.md) | Delegate ready work to independent Codex tasks and verify CXC execution and delivery |
+| [linear-check](skills/linear-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
+| [linear-logic](skills/linear-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
+
+The shared [integration guide](skills/linear-plan/references/integrations.md) owns Linear document authority and CXC/Paperthin routing. Keep the skills together because their references link to one another.
+
+## Sources of truth
+
+- This repository owns the skill instructions and installation helper.
+- Linear owns product specifications, plans, accepted decisions, and coordination documents.
+- Product repositories own implementation, executable configuration, and repository policy.
+- Private task locations hold raw receipts, logs, and sensitive verification evidence.
+
+The skills use installed CXC/Paperthin and the available Linear connector; they do not bundle those tools or install credentials. Explicit-only Paperthin skills remain deliberate user choices.
+
+## Install
+
+Use Git, Python 3.10+, and a platform supporting directory symlinks. The default
+branch `dev` contains ongoing integration work; `main` is reserved for authorized
+release promotions. Clone into a location you will keep:
+
+```sh
+git clone --branch dev https://github.com/thisisjun786/workflow-skills.git
+cd workflow-skills
+python3 scripts/install.py --apply
+python3 scripts/install.py --check
+```
+
+### Before using the skills
+
+| Capability | What you need |
+| --- | --- |
+| Install or run repository checks | Python 3.10+; installation also requires directory symlinks |
+| Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
+| Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](skills/linear-plan/references/integrations.md) |
+| Delegate independent tasks | A host exposing task creation and coordination tools, or a compatible separately installed bridge |
+| Receive automatic completion reports | A separately installed relay and verified host capability; installing these skills alone does not enable delivery |
+
+Use your own Linear project and repository. The examples describe the maintainer's
+workflow, including task names, model preferences, and worktree locations; adapt
+them to your explicit instructions, repository policy, and available host tools.
+Private maintainer projects are not required for installation or contributions.
+There is no GitHub-only replacement for the Linear workflow in this version.
+
+The [operations contract](skills/linear-run/references/operations.md) records
+dependency and compatibility requirements. Automatic Codex hook activation and
+adopting Desktop's native worktree creation as the default remain unverified;
+see the [hook contract](skills/linear-run/references/hook-contract.md) and
+[relay guide](skills/linear-run/references/relay.md). Do not treat their proposed
+contracts or passing offline fixtures as a supported turnkey runtime.
+
+### Acquire external dependencies
+
+- CXC: follow the upstream [Codexclaw installation guide](https://github.com/lidge-jun/codexclaw#install).
+- Paperthin: follow the upstream [Paperthin setup guide](https://github.com/LilMGenius/paperthin#readme), selecting Codex as the target agent.
+- Bridge and relay: no public distribution or supported version is provided by
+  this repository yet. Their package import is future work. Without a compatible
+  bridge or host-native task tools, independent delegation is unavailable;
+  without a compatible relay, automatic completion reporting is unavailable.
+
+You can read, install, and validate the skill sources without these runtimes.
+With Linear and the referenced CXC/Paperthin skills configured, planning and
+manual delivery verification do not require relay delivery. The full unattended
+workflow is not available from this repository alone. There is no certified
+cross-component version matrix yet; inspect the installed interfaces against the
+operations contract before enabling delegation, hooks, or automatic reporting.
+
+### Installation behavior
+
+The destination defaults to `$CODEX_HOME/skills`, or `~/.codex/skills`. Use `--dest /absolute/skills/path` for another Codex installation.
+
+Installation creates a symlink per skill to this checkout. Repeating it preserves correct links. Existing directories or links to other locations are reported as conflicts and left untouched; compare and back them up before deliberately replacing them. There is no automatic deletion or overwrite option.
+
+Edits in this checkout are visible through the installed paths immediately. Already-loaded conversation context may still contain an earlier version; read the updated skill or use a fresh task. Keep this checkout available while its skills are linked. If it moves, deliberately relink after checking the old destinations.
+
+## Maintain
+
+Edit `skills/`, review the diff, and commit the change. Use a scoped branch from `dev` and target `dev` for ordinary pull requests; an explicit dependent pull request may target its prerequisite branch instead. `main` receives explicitly authorized release promotions from `dev`. Read [repository policy](POLICY.md), [contribution steps](CONTRIBUTING.md) and [CI operation](docs/CI.md). Remote pushes remain user-authorized. Do not copy project state into the skills.
+
+Repository checks need only Python 3.10+:
+
+```sh
+python3 scripts/ci/validate.py
+python3 -m unittest discover -s scripts/ci/tests -v
+git diff --check
+```
+
+When the bundled Codex skill validator is available:
+
+```sh
+for skill in skills/*; do
+  python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" "$skill" || exit 1
+done
+python3 scripts/install.py --check
+git diff --check
+```
+
+The bundled validator has its own dependencies. It checks skill structure, not the quality of workflow decisions. For meaningful instruction changes, use a scoped fresh-context review and realistic offline cases. Live Linear mutations or worker launches must be covered by the current assignment; reuse existing authorization rather than asking again.
+
+## Usage
+
+```text
+$linear-focus [Linear project] 이 작업을 이 프로젝트의 고정 진행 관리 창구로 지정하고 연결을 기록해줘.
+$linear-next [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
+$linear-plan [Linear project or product repository] 정본 문서와 남은 실행 이슈를 정리해줘.
+$linear-run [Linear project] 준비된 첫 묶음을 기존 담당 하위 Codex 작업에 맡기고, 없으면 새 독립 하위 Codex 작업을 생성해 CXC Loop로 실행·검증해줘.
+$linear-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
+$linear-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
+```
+
+These are invocation examples, not requests to execute while reading this file.
+
+`linear-run` keeps implementation in the responsible independent child task for
+one issue, an existing worktree, or a PR repair. The coordinator selects scope,
+reviews results, checks CI, and performs authorized integration. Internal
+subagents assist within those tasks and do not replace the independent child.
+
+Independent child tasks run under the shared
+[Default independent execution](skills/linear-plan/references/integrations.md#default-independent-execution)
+settings unless the request chooses otherwise. A child running CXC Loop owns its own
+goal and phases; an explicit non-Loop or no-goal assignment keeps the agreed workflow
+without one. The coordinator's launch job is small: apply those settings through the
+creation tool, send the bounded packet in the initial work prompt, invoke the
+installed `cxc-loop` skill when Loop is the effective workflow, and verify the
+settings that actually came back. A worker starts the assigned work without a routine
+readiness handshake, and a mismatch found afterwards is reconciled on that same task
+instead of adding an approval round.
+
+Read a short request in its conversation: “진행해” accepting a concrete new-task
+plan requests that plan's execution, and clear project delegation in an established
+independent-task workflow carries that intent. No particular creation keyword is
+required. Reuse the responsible task first and preserve the authorized scope and
+settings, including successor batches and resumes after compaction.
+
+If the conversation and prior authorization genuinely contain no creation intent
+for this scope, prepare the packet and ask only for the missing request when a
+new task is needed and the host requires it. Skill selection, unsubmitted UI text,
+quoted examples, and permission for an unrelated task do not supply that intent.
+A default prompt expressing creation/reuse intent counts when actually submitted.
+Host restrictions and explicit current-task, read-only, or no-create limits still
+apply. See [Independent implementation tasks](skills/linear-run/SKILL.md#independent-implementation-tasks).
+
+`linear-focus` records the project and current task IDs in a linked Linear
+document, sets the task title and sidebar pin when supported, and restores that
+context for later requests. Management titles use `Initiative name - Project summary`.
+It routes each request to its existing operation
+owner. Designating the management task alone does not start project execution;
+an accompanying execution request continues within its authorized scope.
+
+`linear-next` distinguishes choosing a first step from choosing what follows a
+delivery. It uses `readchk` to resolve ambiguous intent and `nba` to pick one
+evidence-backed action with a clear completion condition. Standalone advice does
+not launch work; a question during an authorized run does not pause that run.
+
+During an existing delegated workflow, a completion check sends actionable
+in-scope corrections to the responsible task and verifies the result without
+another approval round. A capable child owns its commits, push, pull request and
+the review handling on it, and reports once the current head's required checks and
+reviews are clean. The coordinator updates the Linear record, verifies the pull
+request against the Linear criteria and its latest diff, checks and review
+resolution, then merges under Jun's standing authorization for this workflow and
+confirms the landing. Release and deployment still require Jun. Skills, bridge and
+relay all deliver to this repository on base `dev` for ordinary pull requests, with dependent pull
+requests allowed to target their prerequisite branch, and promoting `dev` to `main` is a release that
+needs Jun.
+See [Default dev integration](skills/linear-plan/references/integrations.md#default-dev-integration)
+for destination, delivery, and release boundaries. [Merge readiness](skills/linear-run/references/merge-readiness.md)
+checks current CI, actual review coverage, and unresolved findings without requiring
+a particular reviewer or repository-management app. Full-project execution continues
+through the authorized batches; an explicit first-batch request remains bounded.
+Standalone audits and explicit read-only or report-only requests remain observational.
+
+Managed child tasks use `ISSUE-ID · short task name · workflow`, such as
+`JUN-44 · 가격 조회 계약 · CXC Loop`. The coordinator verifies the actual app title;
+the workflow suffix does not prove execution. See [Child task titles](skills/linear-run/references/task-packet.md#child-task-titles).
+
+## Contribute and report problems
+
+Open a [GitHub issue](https://github.com/thisisjun786/workflow-skills/issues)
+with a redacted reproduction, or follow [CONTRIBUTING.md](CONTRIBUTING.md) for a PR
+against `dev`. Include the relevant skill, source commit, host version, expected
+behavior, and observed behavior. Do not paste credentials or private task history.
+For vulnerabilities, use the private route in [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE). External dependencies retain their own licenses and are not
+redistributed by this repository.

@@ -1,0 +1,37 @@
+{
+  "expected": {
+    "decision": "release",
+    "observation": "unmanaged",
+    "state": "unmanaged"
+  },
+  "note": "A directory whose intent has not landed is nobody's assignment yet. With nothing else published the workspace is simply unmanaged, rather than a half-built assignment standing in for one.",
+  "observation": {
+    "disposition": null,
+    "now": "2026-02-01T00:10:00+00:00",
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-2222",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-9002"
+    },
+    "workspace": {
+      "assignments": [
+        {
+          "assignmentId": "cba2b057c5561059cdb748fe46dc6cd714d179292f82683c0f17d524d3c0ebc2",
+          "attempts": [],
+          "bound": null,
+          "claims": [],
+          "intent": null,
+          "relationship": null
+        }
+      ],
+      "path": "/workspace/example",
+      "pathHash": "863c29bb9a6e7822955a80f7e09466e156f7019807c3c0c030592cff4af0f348"
+    }
+  }
+}
