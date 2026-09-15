@@ -6,6 +6,11 @@ import os
 from pathlib import Path
 import sys
 
+LEGACY_NAMES = (
+    "linear-focus", "linear-next", "linear-plan",
+    "linear-run", "linear-check", "linear-logic",
+)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -22,6 +27,17 @@ def main() -> int:
     destination = args.dest.expanduser().absolute()
     pending = []
     conflicts = []
+    legacy = []
+    for name in LEGACY_NAMES:
+        target = destination / name
+        if target.exists() or target.is_symlink():
+            legacy.append(target)
+            kind = "symlink" if target.is_symlink() else "directory" if target.is_dir() else "file"
+            print(f"LEGACY {target} ({kind})", file=sys.stderr)
+    if legacy:
+        print("Legacy entries are preserved. See README: Upgrade from linear-* to crw-*; "
+              "inspect ownership and move retired entries outside skill discovery. "
+              "--apply installs new names; --check fails while legacy entries remain.", file=sys.stderr)
     for source in sources:
         target = destination / source.name
         if target.is_symlink() and target.resolve() == source.resolve():
@@ -36,7 +52,7 @@ def main() -> int:
         print("Existing paths were left untouched. Resolve conflicts before installing.", file=sys.stderr)
         return 1
     if args.check:
-        return int(bool(pending))
+        return int(bool(pending or legacy))
     destination.mkdir(parents=True, exist_ok=True)
     for source, target in pending:
         # symlink_to refuses a path created after the preflight as well.

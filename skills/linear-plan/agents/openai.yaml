@@ -1,6 +1,0 @@
-interface:
-  display_name: "Linear Plan"
-  short_description: "제품 현황을 Linear 문서·프로젝트·실행 이슈로 정리"
-  default_prompt: "$linear-plan 이 제품의 코드와 기존 기획, Linear 현황을 대조해서 문서 정본과 남은 마일스톤·PR 단위 이슈를 정리해줘."
-policy:
-  allow_implicit_invocation: true
