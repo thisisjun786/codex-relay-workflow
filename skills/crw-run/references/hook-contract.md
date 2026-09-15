@@ -2,8 +2,10 @@
 
 Read when deciding whether a Codex hook may conclude that a managed assignment finished, or when
 implementing the marker, disposition, and blocking behaviour that later issues install. This
-reference DECIDES those rules; it installs nothing. No hook is registered here, no CXC state is
-read or written, and no Linear write happens from a hook.
+reference DECIDES those rules; it installs nothing. No hook is registered by this contract, no CXC
+state is read or written, and no Linear write happens from a hook. The one run that did register
+hooks, recorded in the host-verification packet, did so inside a throwaway `CODEX_HOME` that was
+removed afterwards, and left nothing installed.
 
 Ordinary `crw-run` does not need any of this. Without a managed marker a session is an
 ordinary session and every rule below is inert.
@@ -11,11 +13,11 @@ ordinary session and every rule below is inert.
 ## Stop is a turn end, and the host proves it
 
 The host's Stop input schema declares `last_assistant_message` required, so a hook is handed the
-sentence "I finished" and must not act on it. That is a schema deduction, not a watched invocation;
-everything about the host in this document carries the same caveat, set out under the static
-observation heading below. Natural-language completion wording is never evidence, and neither is a
-Stop event on its own, since Stop is the host's response-turn boundary rather than a completion
-signal.
+sentence "I finished" and must not act on it. A captured invocation delivered that field, so this
+one is watched rather than deduced; most of what this document says about the host is still read
+from the binary at rest, and the two are kept apart under the static observation heading below.
+Natural-language completion wording is never evidence, and neither is a Stop event on its own, since
+Stop is the host's response-turn boundary rather than a completion signal.
 
 Completion that authorises parent verification requires three records from three different
 producers, none of which is prose and none of which is a turn boundary:
@@ -429,8 +431,9 @@ may report it as covered.
 that delivers no turn identity nothing can be attributed to the turn, so every turn reads
 `undeclared_turn_end` and is held until the bounds release it: one hold per turn, two per generation,
 three per rolling hour, then `unresolved_handoff`. The cost is bounded rather than a loop, but it is
-real, and which fields a host actually delivers is not verified here. It is the open question in the
-host-verification packet, and it is the reason that packet is not optional.
+real. On the host in the packet below both identities are delivered, and the session identity is the
+same value a dispatch receipt returns, so attribution works there. That is one host and one version;
+the dependency stays stated because the next host has to be watched, not assumed.
 
 **Malformed is its own answer.** An unreadable store reads as `state_unreadable` because "I could not
 look" must never be reported as "there is nothing there". A record that is readable but is not the
@@ -457,19 +460,20 @@ verdict, and does not mark anything verified.
 
 **Read this paragraph before any line below it.** Everything in this section comes from the
 installed binary at rest: the JSON Schemas it embeds per event, and its own diagnostic strings.
-Nothing here was obtained by running a hook. No hook was registered, no hook was invoked, and no
-probe session was started, so no delivered payload, no exit code in effect, and no composed
-multi-handler decision has been seen on this host. Schema-and-string evidence establishes what the
-host is built to accept and what it is built to complain about. It does not establish what it does
-at runtime. Where a sentence below states a behaviour, read it as "the binary declares this",
-never as "this was observed happening", and treat criterion 3 as open until a scoped host run
-settles it against the packet at the end of this section.
+Nothing in this section was obtained by running a hook, so where a sentence below states a
+behaviour, read it as "the binary declares this" rather than "this was observed happening".
+Schema-and-string evidence establishes what the host is built to accept and what it is built to
+complain about, which is worth keeping separate from what it does. The packet at the end of this
+section is the separate record of a scoped host run, and it is what settles criterion 3. Where the
+two agree, say which one a claim rests on; where a claim needs the run, the static reading below
+does not supply it.
 
 Extracted from codex-cli 0.154.0 by reading the JSON Schemas the installed binary embeds for each
 event, titled `<event>.command.input` and `<event>.command.output`. `hook_probe.py observe` in
 `../scripts` extracts them, and `--sanitize` writes the shareable capability record kept under
-`../scripts/fixtures/host`. Re-run it on any other host or version before relying on the table;
-nothing below is assumed to hold elsewhere.
+`../scripts/fixtures/host`, beside the observation record the packet run produced. The two are
+separate readings of the same host and are named separately for that reason. Re-run both on any
+other host or version before relying on either; nothing below is assumed to hold elsewhere.
 
 Twelve events carry schemas: `pre-tool-use`, `permission-request`, `post-tool-use`, `pre-compact`,
 `post-compact`, `session-start`, `session-end`, `user-prompt-submit`, `stop`, `subagent-start`,
@@ -495,8 +499,9 @@ reported as terminated, not as success.
 The binary's own diagnostics read as a continuation request rather than a veto: it carries the string
 `Stop hook requested continuation without a prompt; ignoring the block`, which is written for a case
 where `decision: "block"` asked for another pass and no reason accompanied it. That is a deduction
-from a message the binary can emit, not an observation of it being emitted, and H2 is what would
-settle it.
+from a message the binary can emit, not an observation of it being emitted. H2 and H3 settled the
+behaviour it describes: a block carrying a reason continues the turn, and a block carrying none is
+reported as a failed run and continues nothing.
 `session-end` has an input schema and no output schema, so session end cannot influence anything and
 is unusable as an enforcement point. Which events a host actually registers varies, and two signals
 disagree by construction: `hook_probe.py observe` reports the distinct event names that declaration
@@ -510,59 +515,76 @@ cannot emit context, and spills oversized hook output to a file it then names in
 these change a decision, but they mean a hook cannot assume its declared timeout or output size
 survived unchanged.
 
-**Absent from the static evidence, and therefore not relied upon.** Two independent passes over the
-installed artifacts found nothing bearing on any of the following. Absence of evidence here is not
-evidence that the host has no rule: each of these may well be fully specified in the running host,
-and the static surface simply does not say. Each is a limit on what this contract may claim, not a
-claim about what the host supports:
+**Absent from the static evidence.** Two independent passes over the installed artifacts found
+nothing bearing on any of the following, and that is still true: the static surface does not say.
+Each was settled instead by the run recorded in the packet below, so what follows is a map from a
+silence in the binary to the observation that answered it, and each answer carries the run's scope
+rather than the schema's generality:
 
 - How the host combines several matching handlers for one event. Deny-wins, first-result and
   concatenation are each unevidenced in the static surface, as is the operative meaning of the
-  traced `display_order` and `scope` fields. A composition rule probably exists; it was not read.
+  traced `display_order` and `scope` fields. H4 watched it: concurrent execution, every result
+  honoured, reasons concatenated in declaration-index order, and no observable effect from
+  `display_order` set on a command entry.
 - Whether a hook that times out, crashes, or writes invalid JSON fails open or fails closed. Only
-  the host's failure *logging* was found, not its effect on the action.
+  the host's failure *logging* was found, not its effect on the action. H5 watched the action: all
+  three fail open.
 - What the host sets `stop_hook_active` to, and whether the host itself suppresses hooks or caps
   continuations when it is true. The schema declares the field required on Stop and SubagentStop.
-  Its runtime meaning is an interpretation this contract adopts, not a behaviour anyone watched.
-- Whether exit 1 is distinguished from a crash.
+  H6 watched the flag: false on a turn's first Stop, true afterwards, and no suppression of the
+  handler while true. Whether the host caps continuations at all is not settled and cannot be.
+- Whether exit 1 is distinguished from a crash. H5 covered it too: not on this surface.
 
 The design narrows the exposure rather than claiming immunity. Observation and holding are separate
 steps: the omission is classified and recorded from the delivered payload and the marker, disposition
 and receipt stores alone, so that classification does not depend on ordering, on another hook, or on
 whether a hold is granted. Only the hold is exposed to the unknowns, and it degrades toward
-releasing. What cannot be claimed: that a hold is delivered, that it lands before or after another
-handler's, or that a continuation already in flight was requested by this hook rather than another.
-`stop_hook_active` is read only as "a continuation is running", which is true whoever asked for it.
-That reading is this contract's own interpretation of a schema-declared field, chosen because it is
-the weakest assumption that still makes the flag useful. It is not a report of observed behaviour,
-and the packet below is what would confirm or refute it.
+releasing. The packet below removed two of those unknowns and left one standing. A hold is delivered,
+and it does not need to land before or after another handler's, because every holding handler's
+reason is carried in the same continuation rather than one winning. What still cannot be claimed is
+that a continuation already in flight was requested by this hook rather than another, which is why
+`stop_hook_active` is read only as "a continuation is running", true whoever asked for it. That
+reading was chosen as the weakest assumption that still makes the flag useful, and H6 found the flag
+behaving that way rather than as a host-side suppression switch.
 
-## Host-verification packet, unresolved
+## Host-verification packet, observed
 
-Criterion 3 stays open until these are observed on a running host. Each row names what to watch and
-what would settle it. Nothing here may be executed under this contract's scope: registering or
-modifying a hook, and starting a probe session, need a separately authorised path, and a result
-obtained any other way does not count.
+Criterion 3 is settled. Every row below was watched on a running host rather than read out of the
+binary, under a throwaway `CODEX_HOME` created for the run and removed after it. The user's own
+Codex home was read and never written; its `hooks.json` hashed identically before and after. The
+redacted record is `../scripts/fixtures/host/host-observation-codex-0.154.0.json`. `hook_probe.py
+replay` reads the row ids out of the table below, requires a record to carry every one of them,
+and holds the record to the capability record it names, so dropping a row here is a failed check
+rather than a quieter packet.
 
-| # | Question | Evidence that settles it | Status |
-| -- | -- | -- | -- |
-| H1 | Which fields the host actually delivers to a Stop hook, and whether they match `stop.command.input` | A captured stdin payload from one real Stop invocation, field names only, values redacted | Unresolved |
-| H2 | Whether stdout JSON with `decision: "block"` and a `reason` produces a continuation, and what the model receives | One invocation returning that JSON, plus the resulting turn showing the continuation and its prompt | Unresolved |
-| H3 | Whether exit 2 with stderr behaves as the same continuation channel, and how it differs from the JSON route | Paired invocations, one per route, with the resulting turns compared | Unresolved |
-| H4 | How two matching handlers on one event compose: ordering, whether a hold from one suppresses the other, and what `display_order` does | Two registered handlers emitting distinguishable results, with both outcomes and the final effect recorded | Unresolved |
-| H5 | Whether a hook that times out, crashes, or writes invalid JSON fails open or fails closed | Three invocations, one per failure mode, each with the action's observed outcome | Unresolved |
-| H6 | What the host sets `stop_hook_active` to, whether it suppresses handlers when true, and whether the host caps continuations independently | The delivered flag across a first Stop and its continuation; then a bounded run that holds on every Stop until 10 consecutive continuations or 5 minutes, whichever comes first, then releases unconditionally. Report the actual continuation count reached, the elapsed time, and which bound stopped it. Two continuations in 5 minutes is evidence about two continuations and nothing more; only a run that actually reached 10 supports a statement about 10, and no run of any length proves the host has no cap | Unresolved |
-| H7 | Whether the `session_id` the host delivers to a hook is the same value as the task id a creation receipt returns | One real dispatch, its creation receipt, and one captured Stop payload from that task, compared | Unresolved |
+Read every row as a statement about codex-cli 0.154.0 on one Linux host. Another host or version
+has to be watched again, exactly as the static table does.
 
-H7 is load-bearing and is listed last only because it was found last. The coordinator writes a bound
-session id, and the hook compares the delivered `session_id` against it; if those are different kinds
-of identifier, binding is uncheckable by the hook and the marker's whole eligibility test fails
-closed. Until H7 is answered the contract assumes they match, and that assumption is the single
-cheapest thing to falsify: one dispatch settles it.
+| # | Question | Evidence taken | What it showed | Status |
+| -- | -- | -- | -- | -- |
+| H1 | Which fields the host actually delivers to a Stop hook, and whether they match `stop.command.input` | One captured stdin payload from a real Stop invocation, field names and JSON types only | Exactly the nine field names the schema marks required, and no others. `stop_hook_active` arrives as a JSON boolean; the other eight are strings | Resolved |
+| H2 | Whether stdout JSON with `decision: "block"` and a `reason` produces a continuation, and what the model receives | One blocking invocation, the turn it produced, and the transcript entry carrying the prompt | It continues the turn. The model receives the reason verbatim as a user-role message wrapping it in `<hook_prompt hook_run_id="stop:<index>:<declaration source>">`, and it answered the instruction the reason carried | Resolved |
+| H3 | Whether exit 2 with stderr behaves as the same continuation channel, and how it differs from the JSON route | Paired invocations, one per route, plus both degenerate variants | The same channel, down to the wrapper and the `hook_run_id`: stderr becomes the fragment body and the next Stop carries `stop_hook_active` true. The routes part only when the prompt is missing, where a block with no reason and exit 2 with empty stderr are both reported as a failed run and neither continues | Resolved |
+| H4 | How two matching handlers on one event compose: ordering, whether a hold from one suppresses the other, and what `display_order` does | Four registrations: two handlers in one matcher group, the same two in separate groups, one holding against one releasing, and the pair with `display_order` reversed | Both handlers start concurrently and both results are honoured. Reasons are concatenated into one continuation in declaration-index order, so neither deny-wins nor first-result describes it. A releasing handler does not suppress a holding one. Grouping is not observable, and `display_order` on a command entry changed neither execution nor delivery order | Resolved |
+| H5 | Whether a hook that times out, crashes, or writes invalid JSON fails open or fails closed | Four invocations: a handler sleeping past its registered timeout, one killed with `SIGKILL`, one writing invalid JSON, and one exiting 1 | All fail open. Each is reported as a failed hook run, none requests a continuation, and the turn ends normally. Exit 1 is labelled the same as the crash, so it is not distinguished on this surface | Resolved |
+| H6 | What the host sets `stop_hook_active` to, whether it suppresses handlers when true, and whether the host caps continuations independently | The delivered flag across a first Stop and its continuation; then a bounded run holding on every Stop until 10 consecutive continuations or 5 minutes, whichever came first | `false` on a turn's first Stop and `true` on every Stop after a continuation. The host does not suppress the handler while it is true: the hook ran on all 11 Stops. The run reached 10 consecutive continuations in 27.7 seconds and the count bound stopped it, not the clock and not the host. That is evidence about 10 continuations and nothing more; no run of any length shows the host has no cap | Resolved |
+| H7 | Whether the `session_id` the host delivers to a hook is the same value as the task id a creation receipt returns | One real dispatch through this repository's bridge against a probe-only App Server, its creation receipt, and the Stop payload captured from that same first turn | The same value. The delivered `session_id` equalled the receipt's thread id, and the delivered `turn_id` equalled the receipt's turn id, which the question did not ask for | Resolved |
 
-Until H1 to H7 are answered, the blocking policy's per-turn bound rests on this contract's own
-accounting rather than on any host guarantee, and the composition paragraph above stands as a limit
-rather than a finding. A report that cites the static table for any of H1 to H7 is misreporting.
+H7 was the load-bearing one. The coordinator writes a bound session id and the hook compares the
+delivered `session_id` against it, so a different kind of identifier there would have failed the
+marker's whole eligibility test closed. It is the same identifier, and the turn identity matches
+too, so a disposition keyed on the delivered `turn_id` and a bind keyed on the delivered
+`session_id` are both checkable against what a dispatch returns.
+
+**What the packet still does not license.** A hold was observed being delivered, so the blocking
+policy's bounds are no longer the only thing standing between a held turn and a loop; but every
+bound in it remains this hook's own accounting, because the host was observed not to cap ten
+continuations rather than observed to have no cap. Two facts sharpen the per-turn bound rather than
+loosening it: a continuation does not start a new turn, so all eleven Stops carried one `turn_id`,
+and the first continuation already carries `stop_hook_active` true. Under this contract's own rules
+the hold therefore ends after one, twice over. Reporting a row here still requires citing the run,
+not the static table above it: a report that cites the static table for any of H1 to H7 is
+misreporting, and so is one that cites this table without the fixture behind it.
 
 ## Blocking policy
 
@@ -575,27 +597,33 @@ A hold is only ever issued at Stop, only for a claimed managed session, and only
 
 | Bound | Value |
 | -- | -- |
-| Holds per turn | 1, counted by this hook against the delivered `turn_id`. A delivered `stop_hook_active` of true releases as well, as corroboration rather than as the mechanism |
+| Holds per turn | 1, counted by this hook against the delivered `turn_id`. A continuation was observed to keep the turn it continues, so every Stop of a held chain carries one `turn_id` and this count is what ends the chain. A delivered `stop_hook_active` of true releases as well, as corroboration rather than as the mechanism |
 | Holds per relationship generation | 2 |
 | Holds per session per rolling 60 minutes | 3 |
 | Hook wall clock | 5 s self-imposed, against a 10 s registered host timeout. This bounds the hook process, not the continuation it asks for |
 | Added latency budget | 2 s median, 5 s at the 95th percentile, per Stop |
 
-Every bound here is self-imposed and must be enforced by the hook, because the host was not shown to
-cap continuations. The per-turn count is the hook's own record keyed on the delivered `turn_id`, so
-it works even though `stop_hook_active` semantics are unverified; the delivered flag is a second,
-independent reason to release, not the guarantee. Losing that record fails toward one extra hold,
+Every bound here is self-imposed and must be enforced by the hook. A bounded run held ten consecutive
+continuations without the host intervening, which shows the host does not cap at ten rather than that
+it has no cap, so nothing here may lean on a host limit. The per-turn count is the hook's own record
+keyed on the delivered `turn_id`, and that key was observed to be stable across a continuation chain.
+The delivered flag is a second, independent reason to release, now observed to be false on a turn's
+first Stop and true on every Stop after a continuation. Losing the count fails toward one extra hold,
 which the generation and window bounds then catch.
 
 Two things this hook cannot bound. It cannot limit how long the continuation it requested runs,
 because the host owns that; the release owner is the next Stop evaluation, which sees that the turn
-already spent its hold. It also cannot say what happens when the hook times out or crashes, since
-fail-open versus fail-closed is unobserved. That is an enforcement limit rather than a guarantee, and
-it is why the wall-clock budget sits well under the registered timeout.
+already spent its hold. It also cannot hold a turn it failed on: a hook that times out, crashes or
+writes invalid JSON was observed to fail open, so a detector that dies detects nothing and the turn
+ends as an ordinary one. That is the direction to fail in, and it is why the wall-clock budget sits
+well under the registered timeout, but it means an unreliable hook degrades into no hook rather than
+into a stuck session.
 
-Other hooks hold independently. The installed CXC Stop hook applies its own continuation caps, so a
-turn can be held by more than one owner and the totals compound. This contract governs only its own
-holds; it never inspects, relaxes, or counts another hook's.
+Other hooks hold independently, and the host was observed to honour every one of them: two handlers
+holding the same Stop both had their reasons carried into a single continuation, and a handler that
+released did not suppress one that held. The installed CXC Stop hook applies its own continuation
+caps, so a turn can be held by more than one owner and the totals compound. This contract governs
+only its own holds; it never inspects, relaxes, or counts another hook's.
 
 Release is unconditional on any of: `stop_hook_active` true; a disposition recorded for this session
 and turn whose outcome is one of `in_progress`, `blocked_needs_input`, `interrupted` or `failed`; a
@@ -650,19 +678,22 @@ enters it whether or not anyone remembers. This is return-site coverage, not bra
 would need branch instrumentation. `--allow-unreached` reports the gap and waives only that gap; a
 fixture mismatch is never waived.
 
-Replay proves two things and no more: that this decision function agrees with expectations written
-alongside it, and that no return site in it goes unexercised. Both artifacts share an author, so this
-is a consistency check rather than independent evidence. It says nothing about whether a host invoked
-a hook, honored its output, delivered a hold, persisted anything, or met a latency budget, and it
-exercises no real creation race. Those are separate observations, and the measurement section is
-where they are made.
+Replay proves three things and no more: that this decision function agrees with expectations written
+alongside it, that no return site in it goes unexercised, and that the recorded host observations
+still cover every row the packet asks about and agree with the capability record each one names. All
+three artifacts share an author, so this is a consistency check rather than independent evidence, and
+the third checks a recording rather than a host: it re-runs no hook and would keep passing on a
+machine where hooks are switched off. Whether a host invoked a hook, honored its output, delivered a
+hold, persisted anything, or met a latency budget is settled in the host-verification packet and in
+the measurement section, not here, and nothing here exercises a real creation race.
 
 ## Boundaries
 
 The marker root, database location, daemon ownership, and workspace permissions belong to the
 operations contract. Registering the hook, adding the relay's intent and adjudication commands, and
-wiring `crw-run` to write markers are later issues. The measured comparison is a later issue too,
-and it reuses the criteria above rather than restating them.
+wiring `crw-run` to write markers are later issues. Watching the host settled how a hook behaves
+once it runs; it installed none, so it moved none of those issues. The measured comparison is a
+later issue too, and it reuses the criteria above rather than restating them.
 
 A coordinator may prepare Git metadata, such as a branch in an assigned worktree, without widening
 the child's permissions. Where the child's run is restricted enough that it cannot commit, the

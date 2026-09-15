@@ -10,6 +10,9 @@ replay   runs every fixture through decide and checks the recorded expectation.
 
 Replay proves this parser and this decision table. It is not evidence that the host invoked
 a hook or honored its output; that evidence comes from a real run and is recorded separately.
+Replay also cross-checks the recorded host observations under fixtures/host against the
+capability record each one names. That compares two recordings of the same host; it re-runs
+nothing and starts no session.
 """
 
 import argparse
@@ -26,6 +29,7 @@ import sys
 SCHEMA_NEEDLE = b'{\n  "$schema": "http://json-schema.org/draft-07/schema#"'
 SCHEMA_WINDOW = 1 << 16
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "decisions"
+HOST_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "host"
 CONTRACT = Path(__file__).resolve().parent.parent / "references" / "hook-contract.md"
 
 # Dispositions that carry no completion obligation and never justify holding a turn.
@@ -815,6 +819,170 @@ def _check_one(label, observation, expected, report):
     return True
 
 
+def packet_questions(contract_path=None):
+    """Row ids the host-verification packet asks about, each with the status it claims.
+
+    Derived rather than declared for the same reason the trace list is: a row added to the
+    packet later has to enter this denominator whether or not anyone remembers, and a row
+    deleted from the observation record has to leave a hole somebody sees.
+
+    The status travels with the id because the two artifacts have to agree. A record that
+    downgrades a row to unresolved while the contract still prints Resolved for it is evidence
+    quietly leaving through a door the contract says is shut. Reading the status here rather
+    than forbidding unresolved outright keeps the other direction open: a row that genuinely
+    cannot be watched on some later host is recorded as unresolved in both places, which is
+    what the packet is for.
+    """
+    path = Path(contract_path or CONTRACT)
+    found = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| H"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        label = cells[0]
+        if len(label) > 1 and label[0] == "H" and label[1:].isdigit() and label not in found:
+            found[label] = cells[-1].lower() if len(cells) > 1 else ""
+    return found
+
+
+def _stated(value):
+    """Text a reader can actually read, rather than any truthy value."""
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _record_tag(name):
+    """The host and version a host fixture's filename declares, as a pair, or None.
+
+    The grammar is fixed here rather than inferred: host-<kind>-<host>-<version>.json, where the
+    host is the first hyphen-delimited segment and the version is the whole remainder. Reading
+    the version as the last segment instead would split 0.155.0-rc1 and call the release rc1.
+
+    The tag is what makes two records the same reading of the same thing, and taking it from the
+    filename keeps it out of reach of the record that would benefit from claiming it.
+    """
+    stem = Path(name).stem
+    for prefix in ("host-observation-", "host-capability-"):
+        if stem.startswith(prefix):
+            host, _, version = stem[len(prefix):].partition("-")
+            if host and version:
+                return host, version
+    return None
+
+
+def check_host_observations(directory=None, contract_path=None):
+    """Hold each recorded host observation to the capability record it names.
+
+    The two are separate readings of one host: the capability record is what the binary
+    declares it accepts, and the observation record is what a real invocation delivered.
+    Checking them against each other is the part of the host packet that can be rechecked
+    offline, so a record that drifts from its own paired schema is reported here rather than
+    discovered by whoever relies on it next. Nothing here re-runs a hook, and an observation
+    record proves nothing on its own about the host running now.
+
+    Every record answers the whole packet by itself, checked against the contract's own table.
+    Rows are never pooled across records: a host or version is watched on its own, so counting
+    them together would let a record for a new one inherit rows an older one happened to have,
+    which is the drift the packet exists to prevent. A record carrying six of seven rows is a
+    packet with a hole in it, and the load-bearing row is the cheapest one to lose.
+
+    For the same reason a record is paired only with the capability record for its own host and
+    version. A 9.999.0 observation allowed to name the 0.154.0 schema would have its delivered
+    fields checked against a binary nobody ran it against, which is inheritance wearing the
+    shape of a check.
+
+    What this cannot catch, stated because the check would otherwise look stronger than it is:
+    a capability record carries no version inside it, so a copy of one version's record saved
+    under another version's name reads as that version here. The filename is the only version
+    identity these files have, and observe --sanitize is what produces a real one.
+    """
+    directory = Path(directory or HOST_FIXTURES)
+    asked = packet_questions(contract_path)
+    problems = []
+    checked = 0
+    for path in sorted(directory.glob("host-observation-*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            problems.append(f"{path.name}: unreadable ({exc})")
+            continue
+        checked += 1
+        paired_name = Path(str(record.get("capabilityRecord"))).name
+        paired = directory / paired_name
+        own = _record_tag(path.name)
+        version = record.get("version")
+        # The pairing is settled before the fields are compared, because comparing delivered
+        # fields against another version's schema reads as agreement while proving nothing. A
+        # record that cannot be paired is still held to the packet below: a wrong schema and a
+        # missing row are separate faults, and reporting only the first hides the second until
+        # the first is fixed.
+        if own is None:
+            problems.append(f"{path.name}: its name carries no host and version tag")
+        elif _record_tag(paired_name) != own:
+            problems.append(f"{path.name}: names {paired_name}, which is not the capability "
+                            "record for the same host and version")
+        elif not isinstance(version, str) or own[1] not in version.split():
+            # Whole-token equality, never a substring: 0.154.0 sits inside 10.154.0, so a
+            # substring test would read one release as another.
+            problems.append(f"{path.name}: the version it records, {version!r}, does not state "
+                            f"{own[1]}, the version its own name carries")
+        elif not paired.is_file():
+            problems.append(f"{path.name}: names a capability record that is not beside it")
+        else:
+            capability = json.loads(paired.read_text(encoding="utf-8"))
+            stop = _mapping(_mapping(capability.get("events")).get("stop"))
+            declared = sorted(_mapping(stop.get("input")).get("required") or [])
+            delivered = sorted(_mapping(record.get("stopInput")).get("fields") or [])
+            if not declared:
+                problems.append(f"{path.name}: {paired_name} declares no required Stop input")
+            elif delivered != declared:
+                missing = sorted(set(declared) - set(delivered))
+                unexpected = sorted(set(delivered) - set(declared))
+                problems.append(f"{path.name}: delivered Stop fields disagree with {paired_name} "
+                                f"(missing {missing}, unexpected {unexpected})")
+        rows = _mapping(record.get("observations"))
+        unanswered = [row for row in asked if row not in rows]
+        if unanswered:
+            problems.append(f"{path.name}: the packet asks " + ", ".join(unanswered)
+                            + " and this record carries no such row")
+        unasked = sorted(set(rows) - set(asked))
+        if unasked:
+            problems.append(f"{path.name}: rows the packet does not ask about: "
+                            + ", ".join(unasked))
+        for row_id, row in sorted(rows.items()):
+            row = _mapping(row)
+            status = row.get("status")
+            # A row has to carry its own question, its conclusion and its support, each as text
+            # somebody can read. Truthiness is not enough: a number or a bare true would let a
+            # row claim evidence it never states, and a resolved row without its conclusion keeps
+            # the coverage count while losing the answer the count is for.
+            claimed = asked.get(row_id)
+            if not _stated(row.get("question")):
+                problems.append(f"{path.name}: {row_id} states no question")
+            elif status not in ("resolved", "unresolved"):
+                problems.append(f"{path.name}: {row_id} carries no readable status")
+            elif claimed in ("resolved", "unresolved") and status != claimed:
+                problems.append(f"{path.name}: {row_id} records {status} where the packet's own "
+                                f"table says {claimed}")
+            elif status == "resolved" and not _stated(row.get("observed")):
+                problems.append(f"{path.name}: {row_id} is resolved and states nothing observed")
+            elif status == "resolved" and not _stated(row.get("evidence")):
+                problems.append(f"{path.name}: {row_id} is resolved and states no evidence")
+            elif status == "unresolved" and not _stated(row.get("whyUnresolved")):
+                problems.append(f"{path.name}: {row_id} is unresolved and says nothing about why")
+    unreadable = [row for row, claimed in asked.items()
+                  if claimed not in ("resolved", "unresolved")]
+    if unreadable:
+        problems.append("the packet's table states no readable status for " + ", ".join(unreadable))
+    if not asked:
+        problems.append("the contract's host-verification packet asks nothing; its table is "
+                        "unreadable or gone")
+    elif not checked:
+        problems.append("the contract asks " + ", ".join(asked) + " and no observation record "
+                        "answers any of them")
+    return checked, problems
+
+
 def command_replay(args):
     failures = 0
     checked = 0
@@ -890,6 +1058,17 @@ def command_replay(args):
         else:
             print("A return site no fixture executes is an untested decision path. Add a fixture "
                   "for it, or pass --allow-unreached for a deliberate subset run.")
+    host_checked, host_problems = check_host_observations(args.host_fixtures, args.contract)
+    if host_problems:
+        for problem in host_problems:
+            print("HOST OBSERVATION: " + problem)
+        failures += 1
+    else:
+        asked = packet_questions(args.contract)
+        print(f"host observations: {host_checked} record(s), each covering all {len(asked)} packet "
+              "rows on its own and agreeing with the capability record it names. A recording, not "
+              "a live host run.")
+
     if failures:
         return 1
     return 1 if (missing and not args.allow_unreached) else 0
@@ -915,6 +1094,8 @@ def main() -> int:
     replay.add_argument("--fixtures", default=str(FIXTURES))
     replay.add_argument("--contract", default=str(CONTRACT),
                         help="Contract whose documented traces must each have a fixture")
+    replay.add_argument("--host-fixtures", default=str(HOST_FIXTURES),
+                        help="Recorded host observations to hold to their capability record")
     replay.add_argument("--allow-unreached", action="store_true",
                         help="Report unreached return sites and incomplete documented-trace "
                              "coverage without failing; for deliberate subset runs only. Fixture "
