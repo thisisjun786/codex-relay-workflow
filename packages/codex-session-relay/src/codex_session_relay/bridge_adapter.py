@@ -339,7 +339,17 @@ class _Transport:
             try:
                 result = await work()
             except BaseException as error:  # noqa: BLE001 - returned to the caller
-                future.set_exception(error)
+                # Hand over the failure, but not this worker's own frame. The traceback
+                # starts at the `await work()` line above, inside a coroutine that is
+                # still suspended and still serving the queue. A caller is entitled to
+                # clear the frames of what it catches, and unittest's assertRaises does
+                # exactly that; on CPython 3.11 clearing this frame finalizes the worker
+                # mid-flight, so every later submit waits out its timeout against a loop
+                # that no longer reads its inbox. Dropping one frame keeps the type, the
+                # message and every frame from inside the operation, which is what the
+                # caller actually needs to debug it.
+                handed = error.__traceback__.tb_next if error.__traceback__ else None
+                future.set_exception(error.with_traceback(handed))
             else:
                 future.set_result(result)
 

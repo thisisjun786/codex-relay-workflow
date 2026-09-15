@@ -582,6 +582,29 @@ class GuardedSettingsSeam(unittest.TestCase):
             adapter.send_message("del-800000000000-a1", "other-thread", "hi", AUTHORIZED)
         self.assertEqual(len(calls), before)
 
+    def test_the_worker_survives_a_caller_clearing_the_frames_it_was_handed(self):
+        """A failure crosses a thread boundary here, and the caller owns what it catches.
+
+        `unittest.assertRaises` clears the frames of the exception it captures, which is
+        why the test above is where this first showed up. While the transport handed over
+        a traceback that still began at its own suspended worker frame, that clear
+        finalized the worker on CPython 3.11, and every later submit waited out its full
+        timeout against a loop that no longer read its inbox. Written against
+        `traceback.clear_frames` directly, because that is the actual mechanism rather
+        than an incidental detail of one assertion helper.
+        """
+        import traceback
+
+        adapter, _ = self._adapter()
+        adapter.send_message("del-b00000000000-a1", "thread-1", "hi", AUTHORIZED)
+        try:
+            adapter.send_message("del-b00000000000-a1", "thread-1", "DIFFERENT", AUTHORIZED)
+        except ValueError as error:
+            traceback.clear_frames(error.__traceback__)
+        else:
+            self.fail("a reused request id with different arguments must be rejected")
+        self.assertEqual(adapter.read_thread("thread-1").runtime_status, "idle")
+
     # ------------------------------------------------------------ busy, unchanged
 
     def test_an_active_recipient_is_still_left_alone_before_any_resume(self):
