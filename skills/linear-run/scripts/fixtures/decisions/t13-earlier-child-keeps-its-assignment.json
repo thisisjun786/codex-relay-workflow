@@ -1,0 +1,101 @@
+{
+  "expected": {
+    "decision": "release",
+    "observation": "declared_in_progress",
+    "state": "declared_in_progress"
+  },
+  "note": "T11: the earlier child is still running when the later assignment is declared for the same path. A session stays with the assignment it claimed, so the newer intent neither releases it nor makes it look like somebody else.",
+  "observation": {
+    "disposition": {
+      "outcome": "in_progress",
+      "sessionId": "session-1111",
+      "turnId": "turn-0007"
+    },
+    "now": "2026-02-01T00:10:00+00:00",
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0007"
+    },
+    "workspace": {
+      "assignments": [
+        {
+          "assignmentId": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+          "attempts": [
+            {
+              "at": "2026-01-01T00:00:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-1111"
+            }
+          ],
+          "bound": {
+            "at": "2026-01-01T00:00:00+00:00",
+            "sessionId": "session-1111",
+            "taskId": "task-1111"
+          },
+          "claims": [
+            {
+              "at": "2026-01-01T00:00:00+00:00",
+              "dispatchRequestId": "dispatch-0001",
+              "factId": "claims/session-1111/claim.json",
+              "firstTurnId": "turn-0001",
+              "sessionId": "session-1111"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-01-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "2e4a1116b2797a81d617f2cbf76ed2c4021d28399e46e10cef73d65f132b4f24",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": {
+            "at": "2026-01-01T00:00:00+00:00",
+            "relationshipId": "rel-first"
+          }
+        },
+        {
+          "assignmentId": "cba2b057c5561059cdb748fe46dc6cd714d179292f82683c0f17d524d3c0ebc2",
+          "attempts": [
+            {
+              "at": "2026-02-01T00:00:00+00:00",
+              "outcome": "accepted",
+              "taskId": "task-2222"
+            }
+          ],
+          "bound": {
+            "at": "2026-02-01T00:00:00+00:00",
+            "sessionId": "session-2222",
+            "taskId": "task-2222"
+          },
+          "claims": [
+            {
+              "at": "2026-02-01T00:00:00+00:00",
+              "dispatchRequestId": "dispatch-0002",
+              "factId": "claims/session-2222/claim.json",
+              "firstTurnId": "turn-9001",
+              "sessionId": "session-2222"
+            }
+          ],
+          "intent": {
+            "declaredAt": "2026-02-01T00:00:00+00:00",
+            "dispatchRequestIdHash": "cba2b057c5561059cdb748fe46dc6cd714d179292f82683c0f17d524d3c0ebc2",
+            "issue": "JUN-000",
+            "workspace": "/workspace/example"
+          },
+          "relationship": {
+            "at": "2026-02-01T00:00:00+00:00",
+            "relationshipId": "rel-second"
+          }
+        }
+      ],
+      "path": "/workspace/example",
+      "pathHash": "863c29bb9a6e7822955a80f7e09466e156f7019807c3c0c030592cff4af0f348"
+    }
+  }
+}

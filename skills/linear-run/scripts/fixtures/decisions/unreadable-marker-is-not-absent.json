@@ -1,0 +1,25 @@
+{
+  "expected": {
+    "decision": "release",
+    "observation": "state_unreadable",
+    "state": "state_unreadable"
+  },
+  "note": "An unreadable store outranks an absent marker: could not look is never reported as nothing there.",
+  "observation": {
+    "marker": null,
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Work continues.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0001"
+    },
+    "store_unreadable": [
+      "marker"
+    ]
+  }
+}

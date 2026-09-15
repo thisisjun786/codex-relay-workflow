@@ -1,0 +1,498 @@
+{
+  "binary": "<codex-binary>",
+  "events": {
+    "interrupt": {
+      "blocksViaTopLevelDecision": false,
+      "canInfluence": true,
+      "event": "interrupt",
+      "input": {
+        "properties": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "transcript_path",
+          "turn_id"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "transcript_path",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": false,
+        "hasHookSpecificOutput": false,
+        "properties": [
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": []
+      }
+    },
+    "permission-request": {
+      "blocksViaTopLevelDecision": false,
+      "canInfluence": true,
+      "event": "permission-request",
+      "input": {
+        "properties": [
+          "agent_id",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "tool_input",
+          "tool_name",
+          "transcript_path",
+          "turn_id"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "tool_input",
+          "tool_name",
+          "transcript_path",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": false,
+        "hasHookSpecificOutput": true,
+        "properties": [
+          "continue",
+          "hookSpecificOutput",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": []
+      }
+    },
+    "post-compact": {
+      "blocksViaTopLevelDecision": false,
+      "canInfluence": true,
+      "event": "post-compact",
+      "input": {
+        "properties": [
+          "agent_id",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "model",
+          "session_id",
+          "transcript_path",
+          "trigger",
+          "turn_id"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "session_id",
+          "transcript_path",
+          "trigger",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": false,
+        "hasHookSpecificOutput": false,
+        "properties": [
+          "continue",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": []
+      }
+    },
+    "post-tool-use": {
+      "blocksViaTopLevelDecision": true,
+      "canInfluence": true,
+      "event": "post-tool-use",
+      "input": {
+        "properties": [
+          "agent_id",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "tool_input",
+          "tool_name",
+          "tool_response",
+          "tool_use_id",
+          "transcript_path",
+          "turn_id"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "tool_input",
+          "tool_name",
+          "tool_response",
+          "tool_use_id",
+          "transcript_path",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": true,
+        "hasHookSpecificOutput": true,
+        "properties": [
+          "continue",
+          "decision",
+          "hookSpecificOutput",
+          "reason",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": [
+          "block"
+        ]
+      }
+    },
+    "pre-compact": {
+      "blocksViaTopLevelDecision": false,
+      "canInfluence": true,
+      "event": "pre-compact",
+      "input": {
+        "properties": [
+          "agent_id",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "model",
+          "session_id",
+          "transcript_path",
+          "trigger",
+          "turn_id"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "session_id",
+          "transcript_path",
+          "trigger",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": false,
+        "hasHookSpecificOutput": false,
+        "properties": [
+          "continue",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": []
+      }
+    },
+    "pre-tool-use": {
+      "blocksViaTopLevelDecision": true,
+      "canInfluence": true,
+      "event": "pre-tool-use",
+      "input": {
+        "properties": [
+          "agent_id",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "tool_input",
+          "tool_name",
+          "tool_use_id",
+          "transcript_path",
+          "turn_id"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "tool_input",
+          "tool_name",
+          "tool_use_id",
+          "transcript_path",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": true,
+        "hasHookSpecificOutput": true,
+        "properties": [
+          "continue",
+          "decision",
+          "hookSpecificOutput",
+          "reason",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": [
+          "approve",
+          "block"
+        ]
+      }
+    },
+    "session-end": {
+      "blocksViaTopLevelDecision": false,
+      "canInfluence": false,
+      "event": "session-end",
+      "input": {
+        "properties": [
+          "cwd",
+          "hook_event_name",
+          "reason",
+          "session_id",
+          "transcript_path"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "reason",
+          "session_id",
+          "transcript_path"
+        ]
+      },
+      "output": null
+    },
+    "session-start": {
+      "blocksViaTopLevelDecision": false,
+      "canInfluence": true,
+      "event": "session-start",
+      "input": {
+        "properties": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "source",
+          "transcript_path"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "source",
+          "transcript_path"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": true,
+        "hasHookSpecificOutput": true,
+        "properties": [
+          "continue",
+          "hookSpecificOutput",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": []
+      }
+    },
+    "stop": {
+      "blocksViaTopLevelDecision": true,
+      "canInfluence": true,
+      "event": "stop",
+      "input": {
+        "properties": [
+          "cwd",
+          "hook_event_name",
+          "last_assistant_message",
+          "model",
+          "permission_mode",
+          "session_id",
+          "stop_hook_active",
+          "transcript_path",
+          "turn_id"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "last_assistant_message",
+          "model",
+          "permission_mode",
+          "session_id",
+          "stop_hook_active",
+          "transcript_path",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": false,
+        "hasHookSpecificOutput": false,
+        "properties": [
+          "continue",
+          "decision",
+          "reason",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": [
+          "block"
+        ]
+      }
+    },
+    "subagent-start": {
+      "blocksViaTopLevelDecision": false,
+      "canInfluence": true,
+      "event": "subagent-start",
+      "input": {
+        "properties": [
+          "agent_id",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "transcript_path",
+          "turn_id"
+        ],
+        "required": [
+          "agent_id",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "session_id",
+          "transcript_path",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": true,
+        "hasHookSpecificOutput": true,
+        "properties": [
+          "continue",
+          "hookSpecificOutput",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": []
+      }
+    },
+    "subagent-stop": {
+      "blocksViaTopLevelDecision": true,
+      "canInfluence": true,
+      "event": "subagent-stop",
+      "input": {
+        "properties": [
+          "agent_id",
+          "agent_transcript_path",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "last_assistant_message",
+          "model",
+          "permission_mode",
+          "session_id",
+          "stop_hook_active",
+          "transcript_path",
+          "turn_id"
+        ],
+        "required": [
+          "agent_id",
+          "agent_transcript_path",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "last_assistant_message",
+          "model",
+          "permission_mode",
+          "session_id",
+          "stop_hook_active",
+          "transcript_path",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": false,
+        "hasHookSpecificOutput": false,
+        "properties": [
+          "continue",
+          "decision",
+          "reason",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": [
+          "block"
+        ]
+      }
+    },
+    "user-prompt-submit": {
+      "blocksViaTopLevelDecision": true,
+      "canInfluence": true,
+      "event": "user-prompt-submit",
+      "input": {
+        "properties": [
+          "agent_id",
+          "agent_type",
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "prompt",
+          "session_id",
+          "transcript_path",
+          "turn_id"
+        ],
+        "required": [
+          "cwd",
+          "hook_event_name",
+          "model",
+          "permission_mode",
+          "prompt",
+          "session_id",
+          "transcript_path",
+          "turn_id"
+        ]
+      },
+      "output": {
+        "canEmitAdditionalContext": true,
+        "hasHookSpecificOutput": true,
+        "properties": [
+          "continue",
+          "decision",
+          "hookSpecificOutput",
+          "reason",
+          "stopReason",
+          "suppressOutput",
+          "systemMessage"
+        ],
+        "topLevelDecisionValues": [
+          "block"
+        ]
+      }
+    }
+  },
+  "registration": null
+}

@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "decision": "release",
+    "observation": "unmanaged",
+    "state": "unmanaged"
+  },
+  "note": "An ordinary session with no assignment directory is ignored, even when its last message claims completion.",
+  "observation": {
+    "marker": null,
+    "stop_input": {
+      "cwd": "/workspace/example",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "All done.",
+      "model": "<model>",
+      "permission_mode": "default",
+      "session_id": "session-1111",
+      "stop_hook_active": false,
+      "transcript_path": null,
+      "turn_id": "turn-0001"
+    }
+  }
+}
