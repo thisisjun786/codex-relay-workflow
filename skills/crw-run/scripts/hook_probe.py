@@ -44,6 +44,10 @@ BINDING_WINDOW_MINUTES = 30
 MAX_HOLDS_PER_TURN = 1
 MAX_HOLDS_PER_GENERATION = 2
 MAX_HOLDS_PER_SESSION_WINDOW = 3
+# The names a recorded Stop field type may use. The vocabulary is checkable; which field carries
+# which type is the observation itself, and a reader that asserted that would be stating the
+# answer rather than checking the record.
+JSON_TYPE_NAMES = ("NoneType", "bool", "dict", "float", "int", "list", "str")
 
 
 def find_codex_binary(explicit):
@@ -899,7 +903,10 @@ def check_host_observations(directory=None, contract_path=None):
     What this cannot catch, stated because the check would otherwise look stronger than it is:
     a capability record carries no version inside it, so a copy of one version's record saved
     under another version's name reads as that version here. The filename is the only version
-    identity these files have, and observe --sanitize is what produces a real one.
+    identity these files have, and observe --sanitize is what produces a real one. The same goes
+    for a recorded field type: the vocabulary is checked, but whether stop_hook_active was really
+    delivered as a boolean is the observation, and a reader asserting it would be answering the
+    question instead of checking the answer. That one is settled by reading the diff.
     """
     directory = Path(directory or HOST_FIXTURES)
     asked = packet_questions(contract_path)
@@ -958,10 +965,16 @@ def check_host_observations(directory=None, contract_path=None):
                     extra = sorted(set(types) - set(delivered))
                     problems.append(f"{path.name}: the recorded Stop field types do not cover the "
                                     f"fields it delivered (missing {absent}, unexpected {extra})")
-                elif [name for name, kind in sorted(types.items()) if not _stated(kind)]:
-                    unnamed = [name for name, kind in sorted(types.items()) if not _stated(kind)]
-                    problems.append(f"{path.name}: the recorded Stop field types state nothing "
-                                    f"for {', '.join(unnamed)}")
+                else:
+                    # The vocabulary is held; the mapping is not. Requiring a particular field to
+                    # be a particular type would freeze one host's answer inside the reader, and
+                    # the next host has to be free to deliver something else and say so.
+                    unnamed = [name for name, kind in sorted(types.items())
+                               if kind not in JSON_TYPE_NAMES]
+                    if unnamed:
+                        problems.append(f"{path.name}: the recorded Stop field types name "
+                                        "something that is not a JSON type for "
+                                        + ", ".join(unnamed))
         rows = _mapping(record.get("observations"))
         unanswered = [row for row in asked if row not in rows]
         if unanswered:
