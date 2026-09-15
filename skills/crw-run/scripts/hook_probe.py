@@ -838,6 +838,11 @@ def packet_questions(contract_path=None):
     return found
 
 
+def _stated(value):
+    """Text a reader can actually read, rather than any truthy value."""
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _record_slug(name):
     """The host-and-version tag a host fixture's filename carries, or None.
 
@@ -872,6 +877,11 @@ def check_host_observations(directory=None, contract_path=None):
     version. A 9.999.0 observation allowed to name the 0.154.0 schema would have its delivered
     fields checked against a binary nobody ran it against, which is inheritance wearing the
     shape of a check.
+
+    What this cannot catch, stated because the check would otherwise look stronger than it is:
+    a capability record carries no version inside it, so a copy of one version's record saved
+    under another version's name reads as that version here. The filename is the only version
+    identity these files have, and observe --sanitize is what produces a real one.
     """
     directory = Path(directory or HOST_FIXTURES)
     asked = packet_questions(contract_path)
@@ -927,9 +937,12 @@ def check_host_observations(directory=None, contract_path=None):
         for row_id, row in sorted(rows.items()):
             row = _mapping(row)
             status = row.get("status")
-            if status == "resolved" and not row.get("evidence"):
-                problems.append(f"{path.name}: {row_id} is resolved and names no evidence")
-            elif status == "unresolved" and not row.get("whyUnresolved"):
+            # Both supporting fields have to be text somebody can read. A number or a bare true
+            # is truthy, and taking it as an answer would let a row claim evidence it never
+            # states.
+            if status == "resolved" and not _stated(row.get("evidence")):
+                problems.append(f"{path.name}: {row_id} is resolved and states no evidence")
+            elif status == "unresolved" and not _stated(row.get("whyUnresolved")):
                 problems.append(f"{path.name}: {row_id} is unresolved and says nothing about why")
             elif status not in ("resolved", "unresolved"):
                 problems.append(f"{path.name}: {row_id} carries no readable status")
