@@ -838,6 +838,20 @@ def packet_questions(contract_path=None):
     return found
 
 
+def _record_slug(name):
+    """The host-and-version tag a host fixture's filename carries, or None.
+
+    The tag is what makes two records the same reading of the same thing. Taking it from the
+    filename rather than from a field inside keeps it out of reach of the record that would
+    benefit from claiming it.
+    """
+    stem = Path(name).stem
+    for prefix in ("host-observation-", "host-capability-"):
+        if stem.startswith(prefix) and len(stem) > len(prefix):
+            return stem[len(prefix):]
+    return None
+
+
 def check_host_observations(directory=None, contract_path=None):
     """Hold each recorded host observation to the capability record it names.
 
@@ -853,6 +867,11 @@ def check_host_observations(directory=None, contract_path=None):
     them together would let a record for a new one inherit rows an older one happened to have,
     which is the drift the packet exists to prevent. A record carrying six of seven rows is a
     packet with a hole in it, and the load-bearing row is the cheapest one to lose.
+
+    For the same reason a record is paired only with the capability record for its own host and
+    version. A 9.999.0 observation allowed to name the 0.154.0 schema would have its delivered
+    fields checked against a binary nobody ran it against, which is inheritance wearing the
+    shape of a check.
     """
     directory = Path(directory or HOST_FIXTURES)
     asked = packet_questions(contract_path)
@@ -865,24 +884,37 @@ def check_host_observations(directory=None, contract_path=None):
             problems.append(f"{path.name}: unreadable ({exc})")
             continue
         checked += 1
-        paired = directory / Path(str(record.get("capabilityRecord"))).name
-        # A record that cannot be paired is still held to the packet below, because a missing
-        # schema and a missing row are separate faults and reporting only the first hides the
-        # second until the first is fixed.
-        if paired.is_file():
+        paired_name = Path(str(record.get("capabilityRecord"))).name
+        paired = directory / paired_name
+        own = _record_slug(path.name)
+        version = record.get("version")
+        # The pairing is settled before the fields are compared, because comparing delivered
+        # fields against another version's schema reads as agreement while proving nothing. A
+        # record that cannot be paired is still held to the packet below: a wrong schema and a
+        # missing row are separate faults, and reporting only the first hides the second until
+        # the first is fixed.
+        if own is None:
+            problems.append(f"{path.name}: its name carries no host and version tag")
+        elif _record_slug(paired_name) != own:
+            problems.append(f"{path.name}: names {paired_name}, which is not the capability "
+                            "record for the same host and version")
+        elif not isinstance(version, str) or own.rsplit("-", 1)[-1] not in version:
+            problems.append(f"{path.name}: the version it records, {version!r}, disagrees with "
+                            "the one its own name carries")
+        elif not paired.is_file():
+            problems.append(f"{path.name}: names a capability record that is not beside it")
+        else:
             capability = json.loads(paired.read_text(encoding="utf-8"))
             stop = _mapping(_mapping(capability.get("events")).get("stop"))
             declared = sorted(_mapping(stop.get("input")).get("required") or [])
             delivered = sorted(_mapping(record.get("stopInput")).get("fields") or [])
             if not declared:
-                problems.append(f"{path.name}: {paired.name} declares no required Stop input")
+                problems.append(f"{path.name}: {paired_name} declares no required Stop input")
             elif delivered != declared:
                 missing = sorted(set(declared) - set(delivered))
                 unexpected = sorted(set(delivered) - set(declared))
-                problems.append(f"{path.name}: delivered Stop fields disagree with {paired.name} "
+                problems.append(f"{path.name}: delivered Stop fields disagree with {paired_name} "
                                 f"(missing {missing}, unexpected {unexpected})")
-        else:
-            problems.append(f"{path.name}: names a capability record that is not beside it")
         rows = _mapping(record.get("observations"))
         unanswered = [row for row in asked if row not in rows]
         if unanswered:
