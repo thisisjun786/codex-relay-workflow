@@ -1,0 +1,487 @@
+"""The durable store. One writer, one schema, one transaction helper.
+
+Two rules shape everything here. Every state transition is committed before its side
+effect, so a crash leaves a recoverable state rather than an ambiguous one. And a failed
+transition is never a success: the transaction helper rolls back on any exception,
+including KeyboardInterrupt, so a partial record cannot survive.
+
+The schema is written once, by this module, with every column the delivery, reconciliation
+and acknowledgement layers will need, so no later phase has to migrate it.
+"""
+
+import hashlib
+import json
+import os
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+
+SCHEMA_VERSION = 1
+
+DDL = """
+CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS relationships (
+    relationship_id     TEXT PRIMARY KEY,
+    issue_key           TEXT NOT NULL,
+    status              TEXT NOT NULL,
+    parent_task_id      TEXT NOT NULL,
+    parent_host_id      TEXT NOT NULL,
+    parent_cwd          TEXT,
+    parent_cxc_session  TEXT,
+    child_task_id       TEXT NOT NULL,
+    child_host_id       TEXT NOT NULL,
+    child_cwd           TEXT,
+    child_cxc_session   TEXT,
+    execution_generation INTEGER NOT NULL,
+    artifact_roots      TEXT NOT NULL,
+    allowed_recipients  TEXT NOT NULL,
+    scope_ref           TEXT,
+    supersedes          TEXT,
+    superseded_by       TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS generations (
+    relationship_id      TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    dispatch_request_id  TEXT NOT NULL,
+    anchor_state         TEXT NOT NULL,
+    dispatch_turn_id     TEXT,
+    reason               TEXT,
+    opened_at            TEXT NOT NULL,
+    bound_at             TEXT,
+    PRIMARY KEY (relationship_id, execution_generation),
+    UNIQUE (relationship_id, dispatch_request_id)
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    event_id             TEXT PRIMARY KEY,
+    relationship_id      TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    revision_hash        TEXT NOT NULL,
+    outcome              TEXT NOT NULL,
+    producer             TEXT NOT NULL,
+    attempt              INTEGER,
+    turn_thread_id       TEXT NOT NULL,
+    turn_id              TEXT NOT NULL,
+    turn_status          TEXT NOT NULL,
+    receipt              TEXT NOT NULL,
+    manifest_ref         TEXT,
+    path_binding_mode    TEXT,
+    -- A child emitting from inside its own turn can only observe inProgress, so its claim
+    -- is STAGED. Only an independent observation of that turn ending normally makes it
+    -- final and therefore deliverable; a failed or interrupted ending suppresses it.
+    stage                TEXT NOT NULL DEFAULT 'final',
+    staged_at            TEXT,
+    finalized_at         TEXT,
+    finalizing_status    TEXT,
+    suppressed_reason    TEXT,
+    first_seen_at        TEXT NOT NULL,
+    last_seen_at         TEXT NOT NULL,
+    observation_count    INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS observations (
+    thread_id       TEXT NOT NULL,
+    turn_id         TEXT NOT NULL,
+    terminal_status TEXT NOT NULL,
+    relationship_id TEXT,
+    classification  TEXT NOT NULL,
+    event_id        TEXT,
+    observed_at     TEXT NOT NULL,
+    PRIMARY KEY (thread_id, turn_id, terminal_status)
+);
+
+CREATE TABLE IF NOT EXISTS refusals (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    at              TEXT NOT NULL,
+    relationship_id TEXT,
+    event_id        TEXT,
+    reason          TEXT NOT NULL,
+    detail          TEXT,
+    payload         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS deliveries (
+    event_id            TEXT PRIMARY KEY,
+    relationship_id     TEXT NOT NULL,
+    kind                TEXT NOT NULL,
+    recipient_task_id   TEXT NOT NULL,
+    recipient_thread_id TEXT NOT NULL,
+    state               TEXT NOT NULL,
+    attempt_count       INTEGER NOT NULL DEFAULT 0,
+    next_eligible_at    REAL,
+    hold_reason         TEXT,
+    lease_owner         TEXT,
+    lease_until         REAL,
+    dispatch_evidence   TEXT,
+    dispatch_turn_id    TEXT,
+    provenance          TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attempts (
+    request_id            TEXT PRIMARY KEY,
+    event_id              TEXT NOT NULL,
+    attempt_no            INTEGER NOT NULL,
+    kind                  TEXT NOT NULL,
+    internal_state        TEXT NOT NULL,
+    state                 TEXT,
+    record                TEXT,
+    sealed                INTEGER NOT NULL DEFAULT 0,
+    operation_observation TEXT,
+    recipient_scan        TEXT,
+    affirmative_evidence  TEXT,
+    reconciled_at         TEXT,
+    -- When the send was STARTED, not when it settled. An acknowledging turn is compared
+    -- against this, because a slow transport response would otherwise make the dispatch turn
+    -- itself look older than its own delivery.
+    sent_at               TEXT,
+    observed_at           TEXT NOT NULL,
+    UNIQUE (event_id, attempt_no)
+);
+
+-- The exact bytes sent for one attempt, frozen when that attempt was allocated.
+--
+-- A separate table rather than a column on attempts, because the schema is applied with
+-- CREATE TABLE IF NOT EXISTS on every open: that adds a table to an existing store but it
+-- would never add a column. An attempt predating this table therefore reports its bytes as
+-- unavailable, which is the truth, instead of being re-rendered into a plausible guess.
+CREATE TABLE IF NOT EXISTS attempt_messages (
+    request_id  TEXT PRIMARY KEY,
+    event_id    TEXT NOT NULL,
+    attempt_no  INTEGER NOT NULL,
+    kind        TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    rendered_at TEXT NOT NULL,
+    UNIQUE (event_id, attempt_no)
+);
+
+-- The execution settings a task was actually created with, as reported by the host at creation
+-- and recorded by whoever registered the relationship. This is what JUN-92 populates from Run's
+-- creation result; it is not a separate handshake and asks for nothing new from the host.
+CREATE TABLE IF NOT EXISTS authorized_settings (
+    task_id     TEXT PRIMARY KEY,
+    settings    TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    recorded_at TEXT NOT NULL
+);
+
+-- A settings violation learned about a dispatch that already reached a turn. The canonical
+-- delivery state stays 'dispatched': reconcile treats only that as receipt-based delivery and
+-- ack admits only that or inbox_only, so reclassifying a real delivery would strip it of the
+-- recovery it most needs. This annotates the dispatch; it never replaces its state.
+CREATE TABLE IF NOT EXISTS attempt_settings_violations (
+    request_id  TEXT PRIMARY KEY,
+    event_id    TEXT NOT NULL,
+    findings    TEXT NOT NULL,
+    observed_at TEXT NOT NULL
+);
+
+-- Which revision declares which predecessor, inside one generation, as STATED by the child in
+-- its own emit. Nothing here is an ordering by arrival: a declaration is an owner assertion
+-- about lineage, and where the declared graph is ambiguous the head is ambiguous too.
+CREATE TABLE IF NOT EXISTS revision_lineage (
+    relationship_id      TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    event_id             TEXT NOT NULL,
+    revision_hash        TEXT NOT NULL,
+    supersedes_hash      TEXT,
+    declared_by          TEXT NOT NULL,
+    recorded_at          TEXT NOT NULL,
+    PRIMARY KEY (relationship_id, execution_generation, event_id)
+);
+
+-- The canonical criteria a relationship is judged against. A table rather than fields on the
+-- verdict, because verification-verdict.json is frozen with additionalProperties false.
+CREATE TABLE IF NOT EXISTS canonical_criteria (
+    relationship_id TEXT NOT NULL,
+    criterion_id    TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    required        INTEGER NOT NULL DEFAULT 1,
+    source_ref      TEXT,
+    set_digest      TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL,
+    PRIMARY KEY (relationship_id, criterion_id)
+);
+
+-- managed or legacy, stored rather than inferred from whether a set exists, because an absent
+-- set on a managed assignment is exactly the case that must refuse a verified completion.
+CREATE TABLE IF NOT EXISTS verification_mode (
+    relationship_id TEXT PRIMARY KEY,
+    mode            TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL
+);
+
+-- The criteria set as it stood when the review STARTED. verification_claims cannot carry it:
+-- this schema is applied with CREATE TABLE IF NOT EXISTS, which adds a table to an existing
+-- store but never a column.
+CREATE TABLE IF NOT EXISTS claim_context (
+    event_id   TEXT PRIMARY KEY,
+    set_digest TEXT,
+    bound_at   TEXT NOT NULL
+);
+
+-- Everything a verdict establishes that contract v1 has no room for. The record in
+-- verdicts.record stays exactly what the frozen schema allows.
+CREATE TABLE IF NOT EXISTS verdict_context (
+    event_id      TEXT PRIMARY KEY,
+    set_digest    TEXT,
+    coverage      TEXT NOT NULL,
+    findings      TEXT,
+    reason        TEXT,
+    currency      TEXT NOT NULL,
+    head_event_id TEXT,
+    head_revision TEXT,
+    ack_evidence  TEXT NOT NULL,
+    recorded_at   TEXT NOT NULL
+);
+
+-- How an acknowledgement's own turn was established. host_read is an App Server read of the
+-- recipient's real turn list; unverified is recorded intent still awaiting that read. There is
+-- deliberately no tier derived from what the relay itself sent: a stored dispatch proves a send
+-- was accepted, never that the parent observed anything.
+CREATE TABLE IF NOT EXISTS ack_evidence (
+    event_id      TEXT PRIMARY KEY,
+    tier          TEXT NOT NULL,
+    detail        TEXT,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    last_reason   TEXT,
+    fingerprint   TEXT,
+    next_check_at REAL,
+    observed_at   TEXT NOT NULL
+);
+
+-- A merge is the one assignment fact the relay cannot observe, so it is the one that is marked
+-- rather than derived. Bound to the exact event, generation and revision it is about: keyed on
+-- the relationship alone, one old merge would have labelled every later generation merged.
+CREATE TABLE IF NOT EXISTS assignment_marks (
+    relationship_id      TEXT NOT NULL,
+    mark                 TEXT NOT NULL,
+    event_id             TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    revision_hash        TEXT NOT NULL,
+    evidence             TEXT NOT NULL,
+    actor                TEXT NOT NULL,
+    marked_at            TEXT NOT NULL,
+    PRIMARY KEY (relationship_id, mark, event_id)
+);
+
+-- Where a relationship's coordination summaries go. Per relationship rather than global,
+-- because one host runs many assignments against different documents.
+CREATE TABLE IF NOT EXISTS sync_targets (
+    relationship_id TEXT NOT NULL,
+    target          TEXT NOT NULL,
+    target_ref      TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL,
+    PRIMARY KEY (relationship_id, target)
+);
+
+-- The outbox. Enqueued inside the transaction that decided the thing it describes, so the
+-- summary cannot be lost, and keyed on that decision's identity INCLUDING the target document,
+-- so the same verdict owed to two documents is two jobs. claim_token fences complete and fail:
+-- an old claimant cannot undo what a newer one already confirmed.
+CREATE TABLE IF NOT EXISTS sync_outbox (
+    sync_id              TEXT PRIMARY KEY,
+    relationship_id      TEXT NOT NULL,
+    issue_key            TEXT NOT NULL,
+    target               TEXT NOT NULL,
+    target_ref           TEXT NOT NULL,
+    subject_kind         TEXT NOT NULL,
+    event_id             TEXT,
+    execution_generation INTEGER,
+    revision_hash        TEXT,
+    verdict              TEXT,
+    identity_digest      TEXT NOT NULL,
+    summary              TEXT NOT NULL,
+    state                TEXT NOT NULL,
+    attempts             INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at      REAL,
+    last_error           TEXT,
+    lease_owner          TEXT,
+    lease_until          REAL,
+    claim_token          TEXT,
+    external_ref         TEXT,
+    readback             TEXT,
+    written_at           TEXT,
+    confirmed_at         TEXT,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS acks (
+    event_id         TEXT PRIMARY KEY,
+    record           TEXT NOT NULL,
+    ack_turn_id      TEXT NOT NULL,
+    accepted         INTEGER NOT NULL,
+    verified         TEXT NOT NULL,
+    rejection_reason TEXT,
+    ack_at           TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS verdicts (
+    event_id        TEXT PRIMARY KEY,
+    record          TEXT NOT NULL,
+    verdict         TEXT NOT NULL,
+    next_generation INTEGER,
+    verdict_turn_id TEXT NOT NULL,
+    decided_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS verification_claims (
+    event_id      TEXT PRIMARY KEY,
+    claim_turn_id TEXT,
+    claimed_at    TEXT NOT NULL
+);
+
+-- Which turns are admitted to a generation's execution, and on what evidence. The anchor in
+-- generations stays immutable; this is a separate record, because "where the execution
+-- started" and "which turns belong to it" are different questions with different proofs.
+CREATE TABLE IF NOT EXISTS generation_turns (
+    relationship_id      TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    turn_id              TEXT NOT NULL,
+    evidence             TEXT NOT NULL,
+    actor                TEXT,
+    detail               TEXT,
+    admitted_at          TEXT NOT NULL,
+    PRIMARY KEY (relationship_id, execution_generation, turn_id)
+);
+
+CREATE TABLE IF NOT EXISTS recipient_rate (
+    recipient_task_id TEXT NOT NULL,
+    window_start      REAL NOT NULL,
+    sends             INTEGER NOT NULL DEFAULT 0,
+    last_send_at      REAL,
+    PRIMARY KEY (recipient_task_id, window_start)
+);
+
+-- Host lifecycle, observed from the App Server rather than inferred from our own registry.
+-- A user can archive or pause a task without ever touching this relay, so the relationship
+-- status is our authorization record and this table is what the host actually reports.
+-- thread/read carries runtime status only and has no archived flag; archived comes from the
+-- thread/list archived filter, and paused / usageLimited / budgetLimited come from the
+-- thread goal status. Nothing here is ever written back to the host.
+CREATE TABLE IF NOT EXISTS recipient_lifecycle (
+    task_id          TEXT PRIMARY KEY,
+    runtime_status   TEXT,
+    archived         INTEGER,
+    goal_status      TEXT,
+    can_accept_input INTEGER,
+    deliverable      TEXT NOT NULL,
+    withhold_reason  TEXT,
+    detail           TEXT,
+    observed_at      TEXT NOT NULL
+);
+
+-- Archive discovery resumes where it stopped instead of re-reading one prefix, so a task past
+-- the bound is still reached within a bounded number of ticks. It lives here rather than in
+-- recipient_lifecycle because that table's detail field is rewritten on every observation.
+CREATE TABLE IF NOT EXISTS discovery_cursors (
+    task_id    TEXT NOT NULL,
+    listing    TEXT NOT NULL,
+    cursor     TEXT,
+    exhausted  INTEGER NOT NULL DEFAULT 0,
+    scanned    INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (task_id, listing)
+);
+
+-- Whether reconciliation is worth invoking. retry_required records that work is OWED, which a
+-- fingerprint cannot: a failed read followed by an unchanged reading would otherwise silently
+-- drop the reconciliation the failure owed.
+CREATE TABLE IF NOT EXISTS reconcile_gate (
+    request_id     TEXT PRIMARY KEY,
+    fingerprint    TEXT,
+    retry_required INTEGER NOT NULL DEFAULT 1,
+    last_error     TEXT,
+    updated_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS journal (
+    seq     INTEGER PRIMARY KEY AUTOINCREMENT,
+    at      TEXT NOT NULL,
+    kind    TEXT NOT NULL,
+    subject TEXT,
+    detail  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS deliveries_state ON deliveries (state, next_eligible_at);
+CREATE INDEX IF NOT EXISTS attempts_open ON attempts (internal_state);
+CREATE INDEX IF NOT EXISTS events_relationship ON events (relationship_id, execution_generation);
+CREATE INDEX IF NOT EXISTS events_stage ON events (stage, turn_id);
+CREATE INDEX IF NOT EXISTS lineage_generation ON revision_lineage
+    (relationship_id, execution_generation);
+CREATE INDEX IF NOT EXISTS relationships_issue ON relationships (issue_key, status);
+CREATE INDEX IF NOT EXISTS sync_ready ON sync_outbox (state, next_attempt_at);
+"""
+
+
+def state_dir(socket_path: str | None = None) -> Path:
+    """Runtime state lives outside every repository, mirroring the bridge's convention."""
+    override = os.environ.get("CODEX_SESSION_RELAY_STATE")
+    if override:
+        return Path(override).expanduser()
+    base = Path(
+        os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
+    ).expanduser()
+    root = base / "codex-session-relay"
+    if socket_path:
+        endpoint = hashlib.sha256(str(Path(socket_path).expanduser()).encode()).hexdigest()[:16]
+        return root / endpoint
+    return root / "default"
+
+
+class Store:
+    def __init__(self, path):
+        path = Path(path)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+        os.close(descriptor)
+        self.path = path
+        self.db = sqlite3.connect(path, timeout=30, isolation_level=None)
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=FULL")
+        self.db.execute("PRAGMA foreign_keys=ON")
+        self.db.executescript(DDL)
+        self.db.execute(
+            "INSERT OR IGNORE INTO schema_meta VALUES ('version', ?)", (str(SCHEMA_VERSION),)
+        )
+        # Tests set this to prove a transition rolls back; nothing in production assigns it.
+        self.fault_hook = None
+
+    @contextmanager
+    def transaction(self):
+        """BEGIN IMMEDIATE, then commit or roll back. Never a partial record."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            yield self.db
+            if self.fault_hook is not None:
+                self.fault_hook()
+            self.db.execute("COMMIT")
+        except BaseException:
+            # COMMIT itself can fail, so it lives inside the protected block. Rolling back
+            # is conditional because a failed COMMIT may already have ended the transaction,
+            # and a second ROLLBACK would raise over the original error.
+            if self.db.in_transaction:
+                self.db.execute("ROLLBACK")
+            raise
+
+    def journal(self, kind: str, subject: str = "", detail="", *, at: str = "") -> None:
+        self.db.execute(
+            "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)",
+            (at, kind, subject, detail if isinstance(detail, str) else json.dumps(detail)),
+        )
+
+    def one(self, sql: str, params=()):
+        return self.db.execute(sql, params).fetchone()
+
+    def all(self, sql: str, params=()):
+        return self.db.execute(sql, params).fetchall()
+
+    def close(self) -> None:
+        self.db.close()

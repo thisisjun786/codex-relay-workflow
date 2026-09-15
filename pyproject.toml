@@ -1,0 +1,16 @@
+# Workspace root for the Python packages in this repository.
+#
+# There is no root package: the repository's own product is the skill instructions
+# under skills/, which need no build. This file exists so that uv resolves both
+# packages against one lock file and so that codex-session-relay's bridge
+# dependency binds to packages/codex-thread-bridge in this checkout rather than
+# to whatever copy happens to be on the interpreter's path.
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "pytest-asyncio>=1,<2",
+]

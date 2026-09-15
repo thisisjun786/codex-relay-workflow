@@ -7,9 +7,11 @@ OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
 This is an experimental workflow built from a personal setup. It contains six
-skill instruction sets and a symlink installer. CXC, Paperthin, the task bridge,
-and the session relay are separate dependencies; their runtimes are not included.
-Offline contract checks do not establish live Codex hook or Desktop compatibility.
+skill instruction sets, a symlink installer, and the two Python packages the
+workflow delegates and reports through. CXC and Paperthin remain separate
+dependencies. Having the package source here does not install or activate a
+runtime, and offline contract checks do not establish live Codex hook or Desktop
+compatibility.
 
 | Skill | Purpose |
 |---|---|
@@ -21,6 +23,14 @@ Offline contract checks do not establish live Codex hook or Desktop compatibilit
 | [crw-logic](skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
 
 The shared [integration guide](skills/crw-plan/references/integrations.md) owns Linear document authority and CXC/Paperthin routing. Keep the skills together because their references link to one another.
+
+| Package | Purpose |
+|---|---|
+| [codex-thread-bridge](packages/codex-thread-bridge/README.md) | An MCP server that creates and messages Codex sessions through the App Server running on the same host |
+| [codex-session-relay](packages/codex-session-relay/README.md) | Durable same-host verification requests and completion reports between two independent Codex tasks |
+
+Both are described in [packages/README.md](packages/README.md), including where they
+were imported from and what was deliberately left behind.
 
 ## Sources of truth
 
@@ -49,10 +59,11 @@ python3 scripts/install.py --check
 | Capability | What you need |
 | --- | --- |
 | Install or run repository checks | Python 3.10+; installation also requires directory symlinks |
+| Work on the packages | Python 3.11+ and [uv](https://docs.astral.sh/uv/) |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
 | Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](skills/crw-plan/references/integrations.md) |
-| Delegate independent tasks | A host exposing task creation and coordination tools, or a compatible separately installed bridge |
-| Receive automatic completion reports | A separately installed relay and verified host capability; installing these skills alone does not enable delivery |
+| Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
+| Receive automatic completion reports | An installed relay and verified host capability; installing these skills alone does not enable delivery |
 
 Use your own Linear project and repository. The examples describe the maintainer's
 workflow, including task names, model preferences, and worktree locations; adapt
@@ -71,10 +82,11 @@ contracts or passing offline fixtures as a supported turnkey runtime.
 
 - CXC: follow the upstream [Codexclaw installation guide](https://github.com/lidge-jun/codexclaw#install).
 - Paperthin: follow the upstream [Paperthin setup guide](https://github.com/LilMGenius/paperthin#readme), selecting Codex as the target agent.
-- Bridge and relay: no public distribution or supported version is provided by
-  this repository yet. Their package import is future work. Without a compatible
-  bridge or host-native task tools, independent delegation is unavailable;
-  without a compatible relay, automatic completion reporting is unavailable.
+- Bridge and relay: the source is in [packages/](packages/README.md) and you can
+  build both wheels with `uv build`, but there is no published distribution,
+  supported version, or installation procedure from this repository yet. Without an
+  installed bridge or host-native task tools, independent delegation is unavailable;
+  without an installed relay, automatic completion reporting is unavailable.
 
 You can read, install, and validate the skill sources without these runtimes.
 With Linear and the referenced CXC/Paperthin skills configured, planning and
@@ -140,7 +152,14 @@ Repository checks need only Python 3.10+:
 ```sh
 python3 scripts/ci/validate.py
 python3 -m unittest discover -s scripts/ci/tests -v
+python3 scripts/ci/contracts.py
 git diff --check
+```
+
+Changing either package additionally needs Python 3.11+ and uv:
+
+```sh
+python3 scripts/ci/packages.py
 ```
 
 When the bundled Codex skill validator is available:

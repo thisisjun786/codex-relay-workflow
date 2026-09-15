@@ -1,0 +1,301 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CompletionReceipt",
+  "description": "An assertion that a deliverable is ready for review, or that an execution ended without one. A host turn reaching status 'completed' is never by itself ready_for_review: turn completion is the trigger to look, the receipt is what gets verified. Each field names its producer, because a daemon observing turn/completed cannot supply what only the child knows.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "relationshipId",
+    "executionGeneration",
+    "revisionHash",
+    "outcome",
+    "producer",
+    "turnRef",
+    "emittedAt"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$",
+      "description": "For outcome ready_for_review: first 32 hex of sha256(relationshipId|generation|revisionHash|outcome) - product-level, so re-emitting one reviewable revision collapses. For execution-only outcomes there is no revision to identify, so it is sha256(relationshipId|generation|outcome|turnRef.turnId|attempt) - two interrupted turns in one generation stay two facts. The daemon's internal observation key (threadId, turnId, terminalStatus) never crosses this boundary; turnRef is its exported projection. Canonical derivation: fields joined by '|', integers rendered without padding, a null attempt rendered as the literal 'null', sha256 hex truncated to the first 32 characters."
+    },
+    "relationshipId": {
+      "type": "string"
+    },
+    "executionGeneration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "attempt": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "The child's own re-run counter inside one generation. Producible only by the child; a daemon observation sets null."
+    },
+    "revisionHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 over the sorted manifest of deliverable path+hash pairs. A turn id is not a revision. With no deliverable manifest this is the sentinel NO_DELIVERABLE = 64 zero characters."
+    },
+    "outcome": {
+      "enum": [
+        "ready_for_review",
+        "failed",
+        "interrupted",
+        "blocked_needs_input"
+      ],
+      "description": "Only ready_for_review asserts a reviewable product. blocked_needs_input is a child assertion: no terminal turn status identifies it, so a daemon may never synthesize it."
+    },
+    "producer": {
+      "enum": [
+        "child",
+        "daemon_observation"
+      ],
+      "description": "child = the executing task asserted this outcome. daemon_observation = synthesized from a turn/completed notification, which can only ever report failed or interrupted."
+    },
+    "turnRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threadId",
+        "turnId",
+        "turnStatus"
+      ],
+      "description": "Must equal the observation that produced or accompanied this receipt.",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "turnStatus": {
+          "enum": [
+            "completed",
+            "interrupted",
+            "failed",
+            "inProgress"
+          ]
+        }
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "verdict"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "verified",
+              "needs_changes",
+              "unverified"
+            ]
+          },
+          "evidencePath": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "emittedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "manifest": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "description": "The deliverable descriptors revisionHash was computed over, so a consumer can recompute it instead of trusting it. MANIFEST-CANON-01: each path is an absolute normalized POSIX path; entries are sorted byte-wise by that path; each serializes as '<absolutePath>:<lowercase hex sha256>'; entries are joined with a single newline and no trailing newline; revisionHash is the lowercase hex sha256 of that UTF-8 string. Relative paths are not permitted, because they produce a different hash for identical bytes. Every path must lie under the relationship's authorizedScope.artifactRoots. Required when outcome is ready_for_review; null for an execution-only outcome carrying the NO_DELIVERABLE sentinel.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^/",
+            "description": "Absolute normalized POSIX path (MANIFEST-CANON-01). A relative path is rejected: it would hash differently for identical bytes."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "manifestRef": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Resolvable path to a frozen copy of the manifest and its bytes, when the live files may move on. Used when the receipt must stay verifiable after a later revision."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "producer"
+        ],
+        "properties": {
+          "producer": {
+            "const": "daemon_observation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "enum": [
+              "failed",
+              "interrupted"
+            ]
+          },
+          "attempt": {
+            "type": "null"
+          },
+          "revisionHash": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "manifest": {
+            "type": "null"
+          }
+        },
+        "required": [
+          "attempt",
+          "turnRef"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "producer"
+        ],
+        "properties": {
+          "producer": {
+            "const": "child"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "attempt"
+        ],
+        "properties": {
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "const": "ready_for_review"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "producer",
+          "manifest"
+        ],
+        "properties": {
+          "producer": {
+            "const": "child"
+          },
+          "revisionHash": {
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "manifest": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "producer",
+          "outcome"
+        ],
+        "properties": {
+          "producer": {
+            "const": "daemon_observation"
+          },
+          "outcome": {
+            "const": "interrupted"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "turnRef": {
+            "properties": {
+              "turnStatus": {
+                "const": "interrupted"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "producer",
+          "outcome"
+        ],
+        "properties": {
+          "producer": {
+            "const": "daemon_observation"
+          },
+          "outcome": {
+            "const": "failed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "turnRef": {
+            "properties": {
+              "turnStatus": {
+                "const": "failed"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

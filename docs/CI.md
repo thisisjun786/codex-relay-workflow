@@ -10,6 +10,7 @@ the steps needed to activate GitHub enforcement.
 | `python3 scripts/ci/validate.py` | Skill metadata, local links and Python syntax |
 | `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests |
 | `python3 scripts/ci/contracts.py` | Run the owning hook replay and operations shape check when present; reject incomplete script/contract pairs |
+| `python3 scripts/ci/packages.py` | Install, test, run and build the two packages under `packages/` from the root lock file |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
 | `python3 scripts/ci/gate.py` | Aggregate prerequisite results supplied by the workflow |
 
@@ -24,6 +25,45 @@ fails and rejects missing, malformed, failed, cancelled and skipped results.
 `dev-gate` covers development targets; `release-gate` additionally requires a
 same-repository `dev -> main` promotion. Approval and release notes are reviewed
 by the coordinator; the gate does not infer authorization from a branch name.
+
+`scripts/ci/tests/test_gate.py` reads the workflow and requires the aggregator's
+job set to equal the jobs the workflow actually defines, both gates to wait for all
+of them, and no job to carry `continue-on-error`. Adding a job without requiring it,
+or requiring a job that does not exist, fails that test rather than producing a gate
+that silently covers less than it appears to.
+
+## Packages
+
+`packages/codex-thread-bridge` and `packages/codex-session-relay` are one uv
+workspace whose root `pyproject.toml` and `uv.lock` live at the repository root.
+The relay declares the bridge with `tool.uv.sources` set to `workspace = true`, so
+the dependency resolves to this checkout instead of an index.
+
+The `packages` job runs on Python 3.11 and 3.13, which are the versions those
+packages support. It installs with `--locked`, so a `pyproject.toml` edit without a
+refreshed lock fails there. Three results are treated as failures rather than
+successes, because each of them otherwise reads as a pass:
+
+- A suite that collected nothing. `unittest discover` answers a wrong directory with
+  "Ran 0 tests ... OK" and exit 0, so both suites run under pytest and their JUnit
+  reports are read back for a nonzero count.
+- A skipped case. The relay skips its real-bridge seams when `codex_thread_bridge`
+  cannot be imported, which is the integration this repository now owns, so that skip
+  is named explicitly and any other skip fails too. The relay's own conformance gate
+  runs with `RELAY_CONFORMANCE_REQUIRED=1` for the same reason.
+- An import satisfied by another copy. `codex_thread_bridge.__file__` and
+  `codex_session_relay.__file__` are resolved and required to sit under
+  `packages/<name>/src` before any test runs.
+
+The job then runs both CLIs with `--help` and builds both wheels. All of this is
+evidence about this source. It is not evidence about an installed bridge or relay,
+an App Server socket, an MCP registration or delivery on any host; those remain
+separate operations with their own authorization.
+
+The bridge's worktree tests create Git repositories under the pytest temporary
+directory, and a surrounding repository changes what they observe. The check refuses
+to run when the temporary directory is inside a checkout and names
+`CRW_PACKAGES_TMPDIR` as the override. Hosted CI is the authoritative run.
 
 The installer suite invokes the real CLI against temporary fixtures and leaves
 the user's installed skills alone. The validator is repository-owned structural
@@ -145,6 +185,11 @@ The policy and CI structure were adapted from Jun's Lina checkout at
 its Python/skill checks and existing task ownership. Lina application builds,
 Bun dependencies, deployment assumptions and personal operational data are not
 part of this adaptation. Preserve upstream notices for any copied source.
+
+The imported packages' provenance is recorded in [packages/README.md](../packages/README.md).
+The bridge's own `.github/workflows/ci.yml` was not imported as a nested workflow;
+its ruff, ty, pytest and build steps informed the `packages` job, which currently
+runs the pytest and build parts for both packages.
 
 GitHub's [PR event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)
 documents merge-candidate execution. Its [secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)
