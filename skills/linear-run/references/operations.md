@@ -33,7 +33,7 @@ reported as measured installed behaviour.
 
 ### OPS-1.1 One record per component
 
-`linear-workflow-skills` owns one compatibility definition covering every component the workflow
+`workflow-skills` owns one compatibility definition covering every component the workflow
 depends on. There is exactly one such definition; a version repeated in a second document or script
 is a copy that will go stale. Each component record carries the component name, the source checkout
 path, its remote as a URL or the literal word `none`, the full commit SHA, the full `HEAD^{tree}`

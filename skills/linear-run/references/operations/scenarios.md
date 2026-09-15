@@ -427,9 +427,11 @@ repository.
 
 Clauses: OPS-11.1, OPS-11.2, OPS-1.5, OPS-12.2.
 
-Action: send both to the decided destination, the existing skills repository on base `dev`, rather
-than waiting on a location question or creating anything. Nothing is forked and no remote is made,
-because the destination already exists. `dev` is where pull requests integrate; reaching `main` is a
+Action: send both to `github.com/thisisjun786/workflow-skills` on base `dev` after the
+owner-authorized snapshot publication has established that destination. Creating the clean public
+repository is a separate publication operation, not a reason to create one per component. Preserve
+private history separately and never push its branches into the public repository. `dev` is where
+pull requests integrate; reaching `main` is a
 promotion of `dev` and a release decision, so it is not part of sending a change for review.
 
 Keep the components distinct inside it. Each package keeps its own module and command names, its own
