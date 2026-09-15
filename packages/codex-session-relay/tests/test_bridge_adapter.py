@@ -605,6 +605,64 @@ class GuardedSettingsSeam(unittest.TestCase):
             self.fail("a reused request id with different arguments must be rejected")
         self.assertEqual(adapter.read_thread("thread-1").runtime_status, "idle")
 
+    def test_a_failure_that_fights_back_is_still_delivered(self):
+        """The handler must not execute anything the failure brought with it.
+
+        `with_traceback` is an ordinary method and a subclass may override it, so
+        calling it through the instance would run that override inside the one handler
+        that must not fail. The built-in is called unbound instead, which trims the
+        frame without giving the exception a say.
+
+        Written without `assertRaises`, which calls `with_traceback` on what it catches
+        and would therefore trigger the override itself and prove nothing about the
+        transport.
+        """
+        import traceback
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        class Hostile(RuntimeError):
+            def with_traceback(self, tb):
+                raise AssertionError("the transport must not run this")
+
+        class RefusingAppServer:
+            def __init__(self, socket_path, timeout=20):
+                self.socket_path = socket_path
+                self.info = {}
+
+            async def call(self, method, params):
+                raise Hostile("refused")
+
+            async def close(self):
+                return None
+
+        adapter = BridgeHostAdapter(
+            str(Path(self.tmp) / "hostile-socket"),
+            app_server_factory=lambda canonical: RefusingAppServer(canonical),
+            ledger_factory=lambda: (
+                Path(self.tmp) / "hostile-socket",
+                Ledger(Path(self.tmp) / "hostile.sqlite3"),
+            ),
+            timeout=3,
+        )
+        self.addCleanup(adapter.close)
+        try:
+            adapter.read_thread("thread-1")
+        except Hostile as error:
+            # Exactly what a caller is allowed to do with what it caught.
+            traceback.clear_frames(error.__traceback__)
+        else:
+            self.fail("the refusal must reach the caller")
+        # A worker taken down by the override or by that clear surfaces here as a
+        # TimeoutError rather than the refusal.
+        try:
+            adapter.read_thread("thread-1")
+        except Hostile:
+            pass
+        else:
+            self.fail("the refusal must reach the caller a second time")
+
     # ------------------------------------------------------------ busy, unchanged
 
     def test_an_active_recipient_is_still_left_alone_before_any_resume(self):

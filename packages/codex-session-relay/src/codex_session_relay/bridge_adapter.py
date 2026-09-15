@@ -348,8 +348,13 @@ class _Transport:
                 # that no longer reads its inbox. Dropping one frame keeps the type, the
                 # message and every frame from inside the operation, which is what the
                 # caller actually needs to debug it.
-                handed = error.__traceback__.tb_next if error.__traceback__ else None
-                future.set_exception(error.with_traceback(handed))
+                # Through the built-in, never `error.with_traceback(...)`. A subclass can
+                # override that method, and running its code here — inside the handler
+                # whose whole job is to keep this worker alive — would reintroduce the
+                # failure this guards against.
+                inner = error.__traceback__
+                BaseException.with_traceback(error, inner.tb_next if inner else None)
+                future.set_exception(error)
             else:
                 future.set_result(result)
 
