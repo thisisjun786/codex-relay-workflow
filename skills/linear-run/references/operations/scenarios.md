@@ -177,9 +177,9 @@ registered child, and neither parent's permissions are consulted for the other's
 
 What this scenario does not get is a fairness guarantee. OPS-8.3 proposes that delivery be fair per
 parent so the parent with several assignments does not starve the parent with one, and that is
-the intended behaviour, but OPS-12.10 records it as unbuilt. So the routing above is what actually
-separates the two parents here; ordering between them is currently whatever the store does, and
-neither parent should plan around a bound that has not been implemented or measured.
+the intended behaviour. OPS-12.10 requires current implementation and measurement evidence before
+claiming a bound. Routing separates the parents; do not infer a scheduling guarantee from this
+scenario or from the historical state of a maintainer's host.
 
 Preserved: the shared service and store, the other parent's in-flight assignments, and both
 parents' separate authorized settings. The one thing that must never happen here is one parent's
@@ -213,11 +213,12 @@ concurrent deliveries this handles states what was actually exercised, and anyth
 
 Observed: on one host, one operator starts a service passing one state directory while another
 passes a different one. Separately, a genuinely different host or App Server endpoint starts its own
-service.
+service. In this synthetic scenario the installed version has only a per-store lock.
 
 Clauses: OPS-4.2, OPS-4.6, OPS-3.1, OPS-12.11.
 
-Action: read what is measured today before relying on a guarantee. The lock is per store, so the two
+Action: read the current installation evidence before relying on a guarantee. Given the
+scenario's per-store lock, the two
 starts in one scope both succeed and neither is refused, while a second start against the same
 directory is correctly refused. That is the gap OPS-4.6 is written to close, and until it is
 implemented the scope guarantee comes from every participant carrying the same recorded state path,

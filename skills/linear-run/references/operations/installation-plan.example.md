@@ -136,8 +136,8 @@ it should be using.
 
 It does not show a runtime update, which moves a whole verified combination and is covered by
 [scenarios](scenarios.md). It does not prove any hook fires. It does not make the store durable
-against a host that clears temporary directories; the current store's temporary location is the
-measured exception in OPS-12.6, and the durable evidence root it is often confused with is OPS-12.4.
+against a host that clears temporary directories. If the current store is temporary, record the
+exception and migration in Linear under OPS-12.6; a durable evidence root is distinct under OPS-12.4.
 
 It also does not show a successful start, because this host cannot honestly reach one. The fully
 measured positive case, where every signal agrees and reuse follows, is S2 in

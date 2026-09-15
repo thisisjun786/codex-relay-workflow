@@ -862,12 +862,12 @@ entirely and are not vendored by this decision.
 Collapsing these is how a decision about pull request destinations becomes an unplanned outage, so
 they are tracked separately and each has its own evidence.
 
-| Stage | What it means | State |
+| Stage | What it means | Required evidence |
 |---|---|---|
-| Source destination | Where pull requests and review go | Decided, OPS-11.1 |
-| Source migration | Code actually moved into `packages/` | Its own issue; not run |
-| Runtime installation and activation | What a host installs and executes, per OPS-2 | Unchanged; still the external checkouts |
-| Store movement | Moving the durable store, per OPS-4.5 | Not part of any of the above |
+| Source destination | Where pull requests and review go | Current remote and repository policy, OPS-11.1 |
+| Source migration | Code actually moved into `packages/` | Issue criteria, PR diff and landed commit |
+| Runtime installation and activation | What a host installs and executes, per OPS-2 | Fresh installed-path and execution evidence |
+| Store movement | Moving the durable store, per OPS-4.5 | Explicit migration scope, backup and readback |
 
 A migration that lands source changes nothing about what is installed. The installed entry points
 keep resolving where they resolve today until somebody deliberately reinstalls, and that reinstall is
@@ -883,61 +883,42 @@ It does not import private or machine-local state: no virtual environments, no s
 databases, no receipts. Those are not source, they are the operational state that OPS-3.2 keeps
 outside every repository, and importing them would publish a person's working history.
 
-## OPS-12 Decision register
+## OPS-12 Project decision authority
 
-A decision is recorded with its status word so a reader cannot mistake a proposal for a settled
-choice. Implementation work on a repository does not start while a row it depends on is
-`unresolved` or `proposed`: one is an open question and the other is a design nobody has built, and
-work resting on either is resting on nothing.
+Project decisions, migration progress, unresolved questions, and real host observations
+belong in the selected project's canonical Linear documents and issues. The maintainer's
+[operations decision record](https://linear.app/jun786/document/615c40c73d55) holds the
+historical register removed from this file; access to that private project is not a
+prerequisite for using these rules with another project.
 
-The other two words describe observations rather than open questions, so they do not gate by
-themselves. A `measured` row records something seen, including a correction that has since landed,
-and blocking on it would make a resolved prerequisite unusable. An `unmeasured` row gates only the
-specific reliance its Needs column names, which is how OPS-12.8 and OPS-12.9 are written. Neither is
-relabelled to clear a gate: changing an observation to `decided` so work can proceed is the
-vocabulary drift OPS-0 exists to prevent.
+Read the current issue and authorized task scope before acting. A proposal does not
+establish an installed capability, but an issue explicitly authorizing its implementation
+may proceed. Missing measurements block only the capability claim or operation that
+requires them. A checked-in example, old receipt, or historical status never grants
+permission, proves current state, or creates a new approval requirement.
 
-The Status column uses exactly the five words OPS-0 defines and nothing else. That is what keeps the
-rule mechanical: a reader deciding whether to start work compares one word against two blocking
-words, and a status invented for a single row, however descriptive, puts them back to interpreting
-prose. Nuance belongs in the Statement and Needs columns, which is where "decided but not yet done"
-is said.
+The following identifiers remain as durable cross-reference targets for older receipts.
+They carry no project status; their owning clauses define the rule.
 
-| Id | Statement | Status | Needs |
-|---|---|---|---|
-| OPS-12.1 | `workflow-skills` PRs and review go to its own remote, `github.com/thisisjun786/workflow-skills` | decided | nothing |
-| OPS-12.2 | Skills, bridge and relay all deliver to `github.com/thisisjun786/workflow-skills`, base `dev`, with the layout in OPS-11.1. Public history starts from a reviewed snapshot; private history is retained separately | decided | Verify the destination and source ancestry before pushing |
-| OPS-12.17 | `dev` is the default integration branch and ordinary pull requests target it; explicit dependent PRs may target their prerequisite branch. `main` is reached by promoting `dev` in the same repository, which is a release and needs the owner | decided | nothing here. The promotion gate and its checks belong to the policy issue that owns them |
-| OPS-12.3 | The source migration into `packages/` belongs to its own issue, which owns and performs it. This contract change does not carry it out, and the migration has not run | decided | That issue to run it against its own project and session scope and its own prerequisites, preserving what OPS-11.4 lists. Until it does, installation and the store are untouched and a real compatibility record still describes the external checkouts |
-| OPS-12.4 | Proposed: a durable private evidence root outside every repository, replacing the volatile `/tmp` default | unresolved | Jun to choose the location |
-| OPS-12.5 | One relay and one store per host, OS user and App Server operating scope, shared across repositories and Linear projects | decided | nothing |
-| OPS-12.6 | The current shared store sits under a temporary directory, which OPS-3.2 forbids as a default. This is an observed exception, not a sanctioned default | measured | A move performed deliberately as a migration, not as an install side effect |
-| OPS-12.7 | The two state selectors are set separately: `--state` chooses the store while the adapter ledger reads `CODEX_SESSION_RELAY_STATE`. [codex-session-relay](relay.md) now states both and carries its own measurement of the split, so the command reference and OPS-3.3 agree | measured | nothing. The correction this row tracked has landed; treat the reference as the command-level owner rather than something to re-fix |
-| OPS-12.8 | Whether a creation path honours an additional writable root on the current Codex version | unmeasured | A measurement before OPS-3.5 is relied upon |
-| OPS-12.9 | Whether the store refuses a mismatched schema version on open | unmeasured | A measurement before OPS-4.5 is relied upon |
-| OPS-12.10 | Fairness, per-parent send limits and error isolation as described in OPS-8.3, which is an implementation proposal rather than installed behaviour | proposed | Implementation and a measured scale statement under OPS-8.4 |
-| OPS-12.11 | Duplicate-start protection covers the store, not the operating scope: two state directories on one host hold their locks at the same time | measured | OPS-4.6 to close the gap; until then participants carry the same recorded state path |
-| OPS-12.12 | Scope-level ownership and start arbitration as described in OPS-4.6, which is an implementation proposal rather than installed behaviour | proposed | Implementation, and a migration decision for any scope that already has two stores |
-| OPS-12.13 | New independent children are created with broad local capability and own their commits, push, pull request and review handling, per OPS-5.5 and OPS-9 | decided | nothing. Already-running tasks keep their settings and use the OPS-5.3 fallback |
-| OPS-12.14 | The parent may merge a verified pull request without another user approval; release and deployment still require the user | decided | nothing |
-| OPS-12.15 | [Task packet](task-packet.md) assigns a capable child its own pull request and review cycle, requires Ready before review, and keeps frozen-diff delivery for the restricted case. The drift against OPS-9 this row tracked is gone | measured | nothing. Diff-only delivery remains correct for the OPS-5.3 restricted-task fallback, which is the narrowing rather than a leftover defect |
-| OPS-12.16 | Ready for review precedes the review rather than following it, and a pull request stays ready while reviews are pending and ordinary fixes land, per OPS-9.1. Entering review, being merge ready, and the relay outcome are three separate states | decided | nothing. [Task packet](task-packet.md) no longer lists a draft pull request among its delivery artifacts, so the drift OPS-12.15 tracked is gone here too |
-
-Nothing in this register creates, publishes, or configures a remote. It records what was decided,
-what is merely proposed, and what is still owed.
-
-OPS-12.2 settles the question this register carried longest. Every implementation issue now has a
-place to send a pull request, so none of them is blocked on a location decision any more.
-
-OPS-12.3 is narrower than it looks, and the distinction is worth stating because it is easy to
-collapse in either direction. The migration is owned work with a home, not an open question waiting
-on a fresh approval, so this row is not a gate anyone needs to reopen. It is also not done: the
-source has not moved and the running installation still resolves to the external checkouts, which is
-a fact about this project rather than something the committed example evidences. That example is
-fictional and shows only the shape such a record takes, while the dated observations of a real host
-live in a private receipt outside this repository. Reading the decided destination as though the code
-had already moved is one mistake; treating a scope boundary in one change as evidence that the work
-lacks authorization is the opposite one.
+| Id | Durable rule and owner |
+|---|---|
+| OPS-12.1 | Route source review to the configured repository under OPS-11.1 and repository policy |
+| OPS-12.2 | Keep the common destination and private-history boundary under OPS-11.1; verify the current remote before pushing |
+| OPS-12.3 | Treat source migration as a scoped issue under OPS-11.3 and preserve OPS-11.4; read current progress in Linear |
+| OPS-12.4 | Record a durable private evidence root outside Git under OPS-3.2 |
+| OPS-12.5 | Share one relay/store per operating scope under OPS-3.1 and OPS-4.1 |
+| OPS-12.6 | Treat temporary storage as an exception requiring explicit migration under OPS-3.2 and OPS-4.5 |
+| OPS-12.7 | Verify both state selectors against OPS-3.3 and the relay command reference |
+| OPS-12.8 | Measure additional writable-root support before relying on OPS-3.5 |
+| OPS-12.9 | Measure schema-open behavior before relying on OPS-4.5 |
+| OPS-12.10 | Verify implementation and scale evidence before claiming fairness under OPS-8.3 and OPS-8.4 |
+| OPS-12.11 | Determine the installed lock's scope before claiming duplicate-start protection under OPS-4.2 and OPS-4.6 |
+| OPS-12.12 | Reconcile existing stores before scope arbitration or migration under OPS-4.6 |
+| OPS-12.13 | Carry child capability and delivery ownership under OPS-5.5 and OPS-9 |
+| OPS-12.14 | Apply current authorized merge scope and separate release authority under OPS-9.3 |
+| OPS-12.15 | Use the task packet and OPS-5.3 for delivery artifacts and restricted-task fallback |
+| OPS-12.16 | Keep review readiness, merge readiness, and relay outcome separate under OPS-9.1 |
+| OPS-12.17 | Follow repository policy for dev integration and separately authorized main promotion |
 
 ## Worked examples
 
