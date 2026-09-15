@@ -1,0 +1,203 @@
+"""A deterministic host, shaped like the real one where it matters.
+
+Two details are reproduced on purpose because the delivery logic depends on them. The transport
+writes its receipt BEFORE its calls run, so an interrupted send leaves an unfinished receipt
+rather than nothing. And replaying a request id returns the cached receipt instead of sending
+again, which is exactly why a retry has to open a new attempt number rather than reuse one.
+
+No test sleeps. Time only moves when a test moves it.
+"""
+
+import hashlib
+
+from .hostadapter import ThreadFacts, TokenScan, TurnInfo
+
+
+class ProcessDied(Exception):
+    """Raised by a scripted send to stand in for the relay process being killed mid-call."""
+
+
+class FakeThread:
+    def __init__(self, thread_id, *, status="idle", approval_policy="never", archived=False,
+                 goal_status=None, can_accept_input=True):
+        self.thread_id = thread_id
+        self.status = status
+        self.approval_policy = approval_policy
+        self.archived = archived
+        self.goal_status = goal_status
+        self.can_accept_input = can_accept_input
+        self.turns = []
+        self.items = []
+
+
+class FakeHostAdapter:
+    def __init__(self, clock):
+        self.clock = clock
+        self.threads = {}
+        self.ledger = {}
+        self._script = []
+        self.sends = []
+        self.settings_seen = []
+        self.read_failures = set()
+        self.scan_limit = None
+        self.connected = True
+        self._turn_counter = 0
+
+    # ------------------------------------------------------------- fixtures
+
+    def add_thread(self, thread_id, **kwargs) -> FakeThread:
+        thread = FakeThread(thread_id, **kwargs)
+        self.threads[thread_id] = thread
+        return thread
+
+    def start_turn(self, thread_id, *, turn_id=None, status="inProgress", text=None) -> TurnInfo:
+        thread = self.threads[thread_id]
+        self._turn_counter += 1
+        turn_id = turn_id or f"turn-{thread_id}-{self._turn_counter}"
+        turn = TurnInfo(turn_id, status, self.clock.now())
+        thread.turns.append(turn)
+        if text:
+            thread.items.append((turn_id, text))
+        return turn
+
+    def finish_turn(self, thread_id, turn_id, status="completed") -> None:
+        thread = self.threads[thread_id]
+        thread.turns = [
+            TurnInfo(t.turn_id, status, t.started_at) if t.turn_id == turn_id else t
+            for t in thread.turns
+        ]
+
+    def set_status(self, thread_id, status) -> None:
+        self.threads[thread_id].status = status
+
+    def script(self, outcome, *, times=1) -> None:
+        self._script.extend([outcome] * times)
+
+    def fail_reads(self, *names) -> None:
+        self.read_failures.update(names)
+
+    def restart(self) -> None:
+        """An app or connection restart: live state is lost, the durable ledger is not."""
+        self.connected = True
+        self.read_failures.clear()
+
+    # ---------------------------------------------------------------- reads
+
+    def _guard(self, name) -> None:
+        if name in self.read_failures:
+            raise ConnectionError(f"{name} unavailable")
+
+    def read_thread(self, thread_id) -> ThreadFacts:
+        self._guard("read_thread")
+        thread = self.threads[thread_id]
+        return ThreadFacts(thread.status, thread.can_accept_input)
+
+    def is_archived(self, thread_id, *, cwd=None):
+        self._guard("is_archived")
+        return self.threads[thread_id].archived
+
+    def read_goal_status(self, thread_id):
+        self._guard("read_goal_status")
+        return self.threads[thread_id].goal_status
+
+    def list_turn_ids(self, thread_id, limit=20) -> list:
+        self._guard("list_turn_ids")
+        return [t.turn_id for t in self.threads[thread_id].turns[-limit:]]
+
+    def read_turn(self, thread_id, turn_id):
+        self._guard("read_turn")
+        for turn in self.threads[thread_id].turns:
+            if turn.turn_id == turn_id:
+                return turn
+        return None
+
+    def get_operation(self, request_id):
+        self._guard("get_operation")
+        # The real ledger raises for an unknown id; the adapter turns that into a plain
+        # absence, because "we have never heard of this" is an observation, not an error.
+        return self.ledger.get(request_id)
+
+    def recipient_fingerprint(self, thread_id, *, window=8) -> str:
+        """Content, not just identity: a token appended to an existing item changes this."""
+        self._guard("recipient_fingerprint")
+        digest = hashlib.sha256()
+        for item_turn, text in list(reversed(self.threads[thread_id].items))[:window]:
+            digest.update(f"{item_turn}:{hashlib.sha256(text.encode()).hexdigest()}|".encode())
+        return digest.hexdigest()
+
+    def find_token(self, thread_id, token, *, limit=200, turn_id=None) -> TokenScan:
+        self._guard("find_token")
+        items = list(reversed(self.threads[thread_id].items))
+        bound = min(limit, self.scan_limit or limit)
+        scanned = 0
+        for item_turn, text in items[:bound]:
+            scanned += 1
+            if token in text:
+                return TokenScan(True, item_turn, scanned >= len(items), scanned)
+        return TokenScan(False, None, bound >= len(items), scanned)
+
+    # ---------------------------------------------------------------- write
+
+    def send_message(self, request_id, thread_id, message, settings=None) -> dict:
+        # Recorded so a delivery-level test can assert the authorized settings reached the
+        # adapter. The no-widened-start guarantee is NOT proved here: this fake implements
+        # delivery itself and never calls BridgeHostAdapter, so it could pass while the real
+        # adapter still started an unguarded turn. That proof lives in GuardedSettingsSeam.
+        self.settings_seen.append((request_id, settings))
+        cached = self.ledger.get(request_id)
+        if cached is not None and cached.get("status") != "in_progress_or_unknown":
+            # Exactly what the real ledger does: a settled request id is answered from the
+            # receipt, never resent. A retry that reuses an id gets the old failure forever.
+            return {**cached, "replayed": True}
+        outcome = self._script.pop(0) if self._script else "accepted"
+        receipt = {"requestId": request_id, "operation": "send_message_to_thread",
+                   "status": "in_progress_or_unknown", "threadId": thread_id, "retrySafe": False}
+        self.ledger[request_id] = receipt
+        self.sends.append((request_id, thread_id, message, outcome))
+        thread = self.threads[thread_id]
+        resumed = {"approvalPolicy": thread.approval_policy}
+
+        if outcome == "in_progress":
+            return dict(receipt)
+        if outcome == "process_death":
+            raise ProcessDied("the relay process was killed mid-send")
+        if outcome == "busy":
+            receipt.update(
+                status="failed",
+                error="thread/read: Thread is active; message withheld. Wait for completion.",
+                rpcError={"code": "thread_busy", "message": "Thread is active"},
+            )
+        elif outcome == "read_fail":
+            receipt.update(status="failed", error="thread/read: transport refused",
+                           rpcError={"code": "internal", "message": "transport refused"})
+        elif outcome == "resume_fail":
+            receipt.update(status="failed", error="thread/resume: cannot resume",
+                           rpcError={"code": "internal", "message": "cannot resume"})
+        elif outcome == "approval_policy":
+            receipt.update(
+                status="failed", resumed=resumed,
+                error="thread/resume: Interactive approvals unsupported; message withheld.",
+                rpcError={"code": "unsupported_approval_policy", "message": "unsupported"},
+            )
+        elif outcome == "turn_start_fail":
+            receipt.update(status="failed", resumed=resumed,
+                           error="turn/start: refused",
+                           rpcError={"code": "internal", "message": "refused"})
+        elif outcome == "initialize_fail":
+            receipt.update(status="failed", resumed=resumed,
+                           error="initialize: connection lost",
+                           rpcError={"code": "internal", "message": "connection lost"})
+        elif outcome == "transport_unknown":
+            receipt.update(
+                status="outcome_unknown",
+                error="TransportError: turn/start: response unavailable; do not resend",
+            )
+        elif outcome == "steer_existing":
+            existing = thread.turns[-1].turn_id if thread.turns else None
+            receipt.update(status="accepted", resumed=resumed, turnId=existing)
+            thread.items.append((existing, message))
+        else:  # accepted
+            turn = self.start_turn(thread_id, status="inProgress", text=message)
+            receipt.update(status="accepted", resumed=resumed, turnId=turn.turn_id)
+        self.ledger[request_id] = receipt
+        return dict(receipt)

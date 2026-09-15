@@ -5,13 +5,13 @@ import json
 import os
 import sys
 
-JOBS = {"validate", "tests", "secrets"}
+JOBS = {"validate", "tests", "secrets", "packages"}
 
 
 def check(env):
     needs = json.loads(env["NEEDS_JSON"])
     if not isinstance(needs, dict) or set(needs) != JOBS:
-        raise ValueError("Expected exactly validate, tests and secrets results")
+        raise ValueError("Expected exactly " + ", ".join(sorted(JOBS)) + " results")
     for name, job in needs.items():
         if not isinstance(job, dict) or job.get("result") != "success":
             raise ValueError(f"{name} did not succeed")

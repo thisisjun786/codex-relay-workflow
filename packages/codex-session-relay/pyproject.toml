@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codex-session-relay"
+version = "0.1.0"
+description = "Durable same-host verification requests between independent Codex tasks"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+bridge = ["codex-thread-bridge"]
+
+# Resolve the bridge to this repository's packages/codex-thread-bridge. Without this
+# the optional dependency would be looked up on an index, and a stale copy already
+# installed in the environment could satisfy an import that is supposed to prove the
+# in-repository package works.
+[tool.uv.sources]
+codex-thread-bridge = { workspace = true }
+
+[project.scripts]
+codex-session-relay = "codex_session_relay.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codex_session_relay"]

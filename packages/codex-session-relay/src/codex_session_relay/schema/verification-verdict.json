@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VerificationVerdict",
+  "description": "The parent's review outcome for one acknowledged event. needs_changes routes back to the SAME child task under a new execution generation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "relationshipId",
+    "executionGeneration",
+    "verdict",
+    "decidedAt",
+    "verdictTurnId"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "relationshipId": {
+      "type": "string"
+    },
+    "executionGeneration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "verdict": {
+      "enum": [
+        "verified",
+        "needs_changes",
+        "unverified",
+        "aborted"
+      ]
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "verdict"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "verified",
+              "needs_changes",
+              "unverified"
+            ]
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "nextExecutionGeneration": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Set only for needs_changes; the same child receives the revision request under this generation."
+    },
+    "verdictTurnId": {
+      "type": "string"
+    },
+    "decidedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -2,14 +2,43 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "gate.py"
+WORKFLOW = Path(__file__).resolve().parents[3] / ".github" / "workflows" / "ci.yml"
 spec = importlib.util.spec_from_file_location("gate", SCRIPT)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
+
+GATES = {"dev-gate", "release-gate"}
+
+
+def workflow_jobs():
+    """Job name -> body, read from the two-space headers under the workflow's jobs key.
+
+    Deliberately small: it reads this repository's own workflow, whose shape is
+    fixed by the file next to it, and it is not a general YAML parser.
+    """
+    jobs = {}
+    current = None
+    inside = False
+    for line in WORKFLOW.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith(" "):
+            inside = line.startswith("jobs:")
+            current = None
+            continue
+        if not inside:
+            continue
+        header = re.fullmatch(r"  ([a-z][a-z0-9-]*):", line)
+        if header:
+            current = header[1]
+            jobs[current] = []
+        elif current is not None:
+            jobs[current].append(line)
+    return {name: "\n".join(body) for name, body in jobs.items()}
 
 
 class GateTests(unittest.TestCase):
@@ -83,6 +112,43 @@ class GateTests(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
         self.assertIn("Gate failed", result.stderr)
+
+
+class WorkflowTests(unittest.TestCase):
+    """The aggregator only means something while it names the jobs that actually run."""
+
+    def test_the_required_set_is_the_set_of_real_jobs(self):
+        self.assertEqual(set(workflow_jobs()) - GATES, gate.JOBS)
+
+    def test_the_package_check_is_required(self):
+        self.assertIn("packages", gate.JOBS)
+        self.assertIn("packages", workflow_jobs())
+
+    def test_both_gates_wait_for_every_required_job(self):
+        jobs = workflow_jobs()
+        for name in sorted(GATES):
+            with self.subTest(gate=name):
+                declared = re.search(r"^    needs: \[([^\]]+)\]$", jobs[name], re.MULTILINE)
+                self.assertIsNotNone(declared, f"{name} must declare its prerequisites")
+                self.assertEqual({part.strip() for part in declared[1].split(",")}, gate.JOBS)
+
+    def test_no_job_may_opt_out_of_its_own_result(self):
+        for name, body in workflow_jobs().items():
+            with self.subTest(job=name):
+                self.assertNotIn("continue-on-error", body)
+
+    def test_the_packages_job_runs_the_check_unconditionally(self):
+        body = workflow_jobs()["packages"]
+        self.assertIn("scripts/ci/packages.py", body)
+        self.assertIsNone(re.search(r"^    if:", body, re.MULTILINE))
+        for version in ("'3.11'", "'3.13'"):
+            self.assertIn(version, body)
+
+    def test_downloaded_tooling_is_pinned_by_commit_and_checksum(self):
+        body = workflow_jobs()["packages"]
+        self.assertIsNotNone(re.search(r"uses: astral-sh/setup-uv@[0-9a-f]{40} #", body))
+        self.assertIsNotNone(re.search(r"checksum: '[0-9a-f]{64}'", body))
+        self.assertIsNotNone(re.search(r"version: '\d+\.\d+\.\d+'", body))
 
 
 if __name__ == "__main__":

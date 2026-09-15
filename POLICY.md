@@ -67,6 +67,7 @@ live-service suite, automatic release or deployment workflow.
 | Skill metadata, local links and Python syntax | Repository structure and readable source |
 | Installer subprocess tests in temporary destinations | Idempotence and preservation of conflicting files, directories and links |
 | CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the aggregator; invalid promotions are rejected |
+| Locked package install, resolved import locations, full suites, CLIs and wheel builds | The imported packages build, import and test from this checkout, with no empty collection and no skipped case |
 | Pinned secret scan of available Git history | No finding under the reviewed scanner configuration in that fetched history |
 | Owning offline contract checks, when present | Their documented parser, fixture or shape behavior |
 | Independent scenario review | Instruction consistency and consequential edge cases within its scope |
@@ -78,12 +79,14 @@ in the PR; reuse evidence only while its bytes, criteria and environment remain
 applicable. A structural test does not prove the workflow's meaning, and a fixture
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
-Repository checks use Python's standard library and temporary synthetic data.
-Ordinary CI does not need a contributor's Codex, CXC, Paperthin, Linear account,
-App Server socket or user skill installation. Keep `scripts/install.py`
-standard-library-only. Validate the documented minimum Python version in CI;
-cross-platform symlink behavior and actual host compatibility need their own
-evidence before claiming support.
+The skill and installer checks use Python's standard library and temporary
+synthetic data. The `packages` check additionally needs uv and the dependencies
+resolved in the root `uv.lock`; pin that tooling by version, commit and checksum,
+and keep its own fixtures synthetic and local. Ordinary CI does not need a
+contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
+skill installation. Keep `scripts/install.py` standard-library-only. Validate the
+documented minimum Python version in CI; cross-platform symlink behavior and
+actual host compatibility need their own evidence before claiming support.
 
 Use hosted Linux runners, pinned Action commits, bounded timeouts and a
 read-only token. Cancel obsolete runs only within the same PR. PR code runs on
@@ -113,16 +116,23 @@ public-repository linkback settings; repository prose does not enforce them.
 Review public PR comments and their edit history as well as the Git diff before
 publishing an existing private repository.
 
-Keep the skills and their shared references consistent. CXC/Paperthin and
-bridge/relay runtimes are external dependencies until a separately reviewed
-monorepo migration lands. Record tested versions, consumer interfaces, old/new
-behavior and unresolved host observations. An upstream green build is not this
-repository's compatibility proof. Do not vendor their source, copy private
-runtime stores or update running installations as a CI side effect.
+Keep the skills and their shared references consistent. CXC and Paperthin remain
+external runtime dependencies; do not vendor their source. The task bridge and the
+session relay are imported source under `packages/`, each keeping its own
+`pyproject.toml`, tests and module names, and the root `uv.lock` resolves the
+relay's bridge dependency to this checkout. Record tested versions, consumer
+interfaces, old/new behavior and unresolved host observations. An upstream green
+build is not this repository's compatibility proof. Do not copy private runtime
+stores or update running installations as a CI side effect.
 
-A future package import must add its own install, test and compatibility checks
-to this gate in the same change. The current skill/installer suite cannot certify
-a bridge or relay package merely because its Python files parse.
+The `packages` check carries the install, test and compatibility burden for that
+imported source, and every package change runs it. It installs from the lock file,
+resolves both import locations inside `packages/`, runs each suite under pytest,
+exercises both CLIs and builds both wheels. It rejects an empty collection and any
+skipped case, because a suite that collected nothing and a suite that skipped its
+real-bridge seams both report success otherwise. Passing it is evidence about this
+source; it establishes nothing about an installed runtime, a live App Server, or
+delivery on any host. Importing source does not change what is installed anywhere.
 
 This repository uses the [MIT license](LICENSE). Preserve source attribution and
 applicable notices for adapted material. Licensing does not authorize publication;
