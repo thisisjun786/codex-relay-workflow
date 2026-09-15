@@ -1,0 +1,94 @@
+{
+  "binary": "<codex-binary>",
+  "capabilityRecord": "host-capability-codex-0.154.0.json",
+  "continuation": {
+    "carrier": "a user-role message appended to the same turn",
+    "composition": "one fragment per holding handler, concatenated in declaration index order inside a single user message",
+    "turnIdentity": "every Stop of a continuation chain carries the turn_id of the turn that started it",
+    "wrapper": "<hook_prompt hook_run_id=\"<event>:<handler index>:<declaration source>\"><reason></hook_prompt>"
+  },
+  "method": {
+    "codexHome": "<throwaway CODEX_HOME>, created for this run and removed after it",
+    "hookTrust": "exec used --dangerously-bypass-hook-trust; the App Server path has no such override, so its hook was trusted once inside the throwaway home only",
+    "redaction": "Field names and JSON types only. No payload value, transcript text, path, session id, turn id or credential is reproduced here.",
+    "surfaces": [
+      "codex exec",
+      "codex app-server over a private Unix socket"
+    ],
+    "userHomeUntouched": "the real CODEX_HOME was read only; its hooks.json hashed identically before and after"
+  },
+  "observations": {
+    "H1": {
+      "evidence": "one captured Stop payload; see stopInput",
+      "observed": "The delivered object carried exactly the nine field names the schema marks required, and no others.",
+      "question": "Which fields the host delivers to a Stop hook, and whether they match stop.command.input",
+      "status": "resolved"
+    },
+    "H2": {
+      "evidence": "one blocking invocation, the resulting continuation turn, and the transcript entry carrying the fragment",
+      "observed": "It produces one continuation on the same turn. The model receives the reason verbatim inside a hook_prompt element in a user-role message, and answered the instruction the reason carried.",
+      "question": "Whether stdout JSON with decision block and a reason produces a continuation, and what the model receives",
+      "status": "resolved"
+    },
+    "H3": {
+      "evidence": "paired invocations, one per route, plus the two degenerate variants",
+      "observed": "Same channel and same delivered shape: stderr becomes the fragment body, the wrapper and hook_run_id are identical, and the next Stop carries stop_hook_active true. The routes differ only in the degenerate case: a block without a reason, and exit 2 with empty stderr, are both reported as a failed hook run and neither continues.",
+      "question": "Whether exit 2 with stderr behaves as the same continuation channel, and how it differs from the JSON route",
+      "status": "resolved"
+    },
+    "H4": {
+      "evidence": "four registrations: same group, separate groups, hold against release, and reversed display_order",
+      "observed": "Both handlers are started concurrently, both results are honoured, and their reasons are concatenated into one continuation rather than one winning. A handler that releases does not suppress a handler that holds. Grouping is not observable: one group of two handlers and two groups of one composed identically, and hook_run_id numbers handlers by a flat declaration index. display_order set on a command entry changed neither the execution order nor the delivered fragment order.",
+      "question": "How two matching handlers on one event compose: ordering, whether a hold from one suppresses the other, and what display_order does",
+      "status": "resolved"
+    },
+    "H5": {
+      "evidence": "four invocations, one per failure mode, each with the turn's observed outcome",
+      "observed": "All three fail open. Each was reported as a failed hook run, no continuation was requested, and the turn ended normally. A hook exiting 1 with stderr behaves and is labelled the same way, so exit 1 is not distinguished from a crash on this surface.",
+      "question": "Whether a hook that times out, crashes, or writes invalid JSON fails open or fails closed",
+      "status": "resolved"
+    },
+    "H6": {
+      "boundThatStopped": "count",
+      "continuationsReached": 10,
+      "elapsedSecondsAtRelease": 27.74,
+      "evidence": "11 Stop invocations on one turn: 1 unheld first Stop, 10 held continuations, then an unconditional release",
+      "observed": "false on the first Stop of a turn and true on every Stop that follows a continuation. The host does not suppress the handler while it is true: the hook ran on every Stop of the chain. The bounded run reached 10 consecutive continuations in 27.7 seconds and was stopped by the count bound, not by the time bound and not by the host. That is evidence about 10 continuations and nothing more; no run of any length shows the host has no cap.",
+      "question": "What the host sets stop_hook_active to, whether it suppresses handlers when true, and whether the host caps continuations independently",
+      "status": "resolved"
+    },
+    "H7": {
+      "evidence": "one real dispatch against a probe-only App Server, its creation receipt, and the Stop payload from that same turn",
+      "observed": "They are the same value. One dispatch through this repository's bridge returned a creation receipt, and the Stop payload captured from that task's first turn carried a session_id equal to the receipt's thread id. The delivered turn_id equalled the receipt's turn id as well, which the question did not ask for.",
+      "question": "Whether the session_id the host delivers to a hook is the same value as the task id a creation receipt returns",
+      "status": "resolved"
+    }
+  },
+  "record": "host-observation",
+  "stopInput": {
+    "fields": [
+      "cwd",
+      "hook_event_name",
+      "last_assistant_message",
+      "model",
+      "permission_mode",
+      "session_id",
+      "stop_hook_active",
+      "transcript_path",
+      "turn_id"
+    ],
+    "note": "one real Stop invocation; values withheld",
+    "types": {
+      "cwd": "str",
+      "hook_event_name": "str",
+      "last_assistant_message": "str",
+      "model": "str",
+      "permission_mode": "str",
+      "session_id": "str",
+      "stop_hook_active": "bool",
+      "transcript_path": "str",
+      "turn_id": "str"
+    }
+  },
+  "version": "codex-cli 0.154.0"
+}

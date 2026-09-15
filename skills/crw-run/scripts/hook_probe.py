@@ -10,6 +10,9 @@ replay   runs every fixture through decide and checks the recorded expectation.
 
 Replay proves this parser and this decision table. It is not evidence that the host invoked
 a hook or honored its output; that evidence comes from a real run and is recorded separately.
+Replay also cross-checks the recorded host observations under fixtures/host against the
+capability record each one names. That compares two recordings of the same host; it re-runs
+nothing and starts no session.
 """
 
 import argparse
@@ -26,6 +29,7 @@ import sys
 SCHEMA_NEEDLE = b'{\n  "$schema": "http://json-schema.org/draft-07/schema#"'
 SCHEMA_WINDOW = 1 << 16
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "decisions"
+HOST_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "host"
 CONTRACT = Path(__file__).resolve().parent.parent / "references" / "hook-contract.md"
 
 # Dispositions that carry no completion obligation and never justify holding a turn.
@@ -815,6 +819,56 @@ def _check_one(label, observation, expected, report):
     return True
 
 
+def check_host_observations(directory=None):
+    """Hold each recorded host observation to the capability record it names.
+
+    The two are separate readings of one host: the capability record is what the binary
+    declares it accepts, and the observation record is what a real invocation delivered.
+    Checking them against each other is the part of the host packet that can be rechecked
+    offline, so a record that drifts from its own paired schema is reported here rather than
+    discovered by whoever relies on it next. Nothing here re-runs a hook, and an observation
+    record proves nothing on its own about the host running now.
+    """
+    directory = Path(directory or HOST_FIXTURES)
+    problems = []
+    checked = 0
+    for path in sorted(directory.glob("host-observation-*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            problems.append(f"{path.name}: unreadable ({exc})")
+            continue
+        checked += 1
+        paired = directory / Path(str(record.get("capabilityRecord"))).name
+        if not paired.is_file():
+            problems.append(f"{path.name}: names a capability record that is not beside it")
+            continue
+        capability = json.loads(paired.read_text(encoding="utf-8"))
+        stop = _mapping(_mapping(capability.get("events")).get("stop"))
+        declared = sorted(_mapping(stop.get("input")).get("required") or [])
+        delivered = sorted(_mapping(record.get("stopInput")).get("fields") or [])
+        if not declared:
+            problems.append(f"{path.name}: {paired.name} declares no required Stop input")
+        elif delivered != declared:
+            missing = sorted(set(declared) - set(delivered))
+            unexpected = sorted(set(delivered) - set(declared))
+            problems.append(f"{path.name}: delivered Stop fields disagree with {paired.name} "
+                            f"(missing {missing}, unexpected {unexpected})")
+        rows = _mapping(record.get("observations"))
+        if not rows:
+            problems.append(f"{path.name}: records no observation rows")
+        for row_id, row in sorted(rows.items()):
+            row = _mapping(row)
+            status = row.get("status")
+            if status == "resolved" and not row.get("evidence"):
+                problems.append(f"{path.name}: {row_id} is resolved and names no evidence")
+            elif status == "unresolved" and not row.get("whyUnresolved"):
+                problems.append(f"{path.name}: {row_id} is unresolved and says nothing about why")
+            elif status not in ("resolved", "unresolved"):
+                problems.append(f"{path.name}: {row_id} carries no readable status")
+    return checked, problems
+
+
 def command_replay(args):
     failures = 0
     checked = 0
@@ -890,6 +944,17 @@ def command_replay(args):
         else:
             print("A return site no fixture executes is an untested decision path. Add a fixture "
                   "for it, or pass --allow-unreached for a deliberate subset run.")
+    host_checked, host_problems = check_host_observations(args.host_fixtures)
+    if host_problems:
+        for problem in host_problems:
+            print("HOST OBSERVATION: " + problem)
+        failures += 1
+    elif host_checked:
+        print(f"host observations: {host_checked}/{host_checked} agree with the capability "
+              "record each names. A recording, not a live host run.")
+    else:
+        print("host observations: none recorded; no host coverage claimed")
+
     if failures:
         return 1
     return 1 if (missing and not args.allow_unreached) else 0
@@ -915,6 +980,8 @@ def main() -> int:
     replay.add_argument("--fixtures", default=str(FIXTURES))
     replay.add_argument("--contract", default=str(CONTRACT),
                         help="Contract whose documented traces must each have a fixture")
+    replay.add_argument("--host-fixtures", default=str(HOST_FIXTURES),
+                        help="Recorded host observations to hold to their capability record")
     replay.add_argument("--allow-unreached", action="store_true",
                         help="Report unreached return sites and incomplete documented-trace "
                              "coverage without failing; for deliberate subset runs only. Fixture "
