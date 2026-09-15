@@ -848,13 +848,14 @@ def check_host_observations(directory=None, contract_path=None):
     discovered by whoever relies on it next. Nothing here re-runs a hook, and an observation
     record proves nothing on its own about the host running now.
 
-    The packet is answered as a set, so the rows are counted against the contract's own table
-    rather than against whatever the record happens to contain. A record carrying six of seven
-    rows is a packet with a hole in it, and the load-bearing row is the cheapest one to lose.
+    Every record answers the whole packet by itself, checked against the contract's own table.
+    Rows are never pooled across records: a host or version is watched on its own, so counting
+    them together would let a record for a new one inherit rows an older one happened to have,
+    which is the drift the packet exists to prevent. A record carrying six of seven rows is a
+    packet with a hole in it, and the load-bearing row is the cheapest one to lose.
     """
     directory = Path(directory or HOST_FIXTURES)
     asked = packet_questions(contract_path)
-    answered = set()
     problems = []
     checked = 0
     for path in sorted(directory.glob("host-observation-*.json")):
@@ -865,24 +866,32 @@ def check_host_observations(directory=None, contract_path=None):
             continue
         checked += 1
         paired = directory / Path(str(record.get("capabilityRecord"))).name
-        if not paired.is_file():
+        # A record that cannot be paired is still held to the packet below, because a missing
+        # schema and a missing row are separate faults and reporting only the first hides the
+        # second until the first is fixed.
+        if paired.is_file():
+            capability = json.loads(paired.read_text(encoding="utf-8"))
+            stop = _mapping(_mapping(capability.get("events")).get("stop"))
+            declared = sorted(_mapping(stop.get("input")).get("required") or [])
+            delivered = sorted(_mapping(record.get("stopInput")).get("fields") or [])
+            if not declared:
+                problems.append(f"{path.name}: {paired.name} declares no required Stop input")
+            elif delivered != declared:
+                missing = sorted(set(declared) - set(delivered))
+                unexpected = sorted(set(delivered) - set(declared))
+                problems.append(f"{path.name}: delivered Stop fields disagree with {paired.name} "
+                                f"(missing {missing}, unexpected {unexpected})")
+        else:
             problems.append(f"{path.name}: names a capability record that is not beside it")
-            continue
-        capability = json.loads(paired.read_text(encoding="utf-8"))
-        stop = _mapping(_mapping(capability.get("events")).get("stop"))
-        declared = sorted(_mapping(stop.get("input")).get("required") or [])
-        delivered = sorted(_mapping(record.get("stopInput")).get("fields") or [])
-        if not declared:
-            problems.append(f"{path.name}: {paired.name} declares no required Stop input")
-        elif delivered != declared:
-            missing = sorted(set(declared) - set(delivered))
-            unexpected = sorted(set(delivered) - set(declared))
-            problems.append(f"{path.name}: delivered Stop fields disagree with {paired.name} "
-                            f"(missing {missing}, unexpected {unexpected})")
         rows = _mapping(record.get("observations"))
-        if not rows:
-            problems.append(f"{path.name}: records no observation rows")
-        answered.update(rows)
+        unanswered = [row for row in asked if row not in rows]
+        if unanswered:
+            problems.append(f"{path.name}: the packet asks " + ", ".join(unanswered)
+                            + " and this record carries no such row")
+        unasked = sorted(set(rows) - set(asked))
+        if unasked:
+            problems.append(f"{path.name}: rows the packet does not ask about: "
+                            + ", ".join(unasked))
         for row_id, row in sorted(rows.items()):
             row = _mapping(row)
             status = row.get("status")
@@ -898,14 +907,6 @@ def check_host_observations(directory=None, contract_path=None):
     elif not checked:
         problems.append("the contract asks " + ", ".join(asked) + " and no observation record "
                         "answers any of them")
-    else:
-        unanswered = [row for row in asked if row not in answered]
-        if unanswered:
-            problems.append("the packet asks " + ", ".join(unanswered) + " and no observation "
-                            "record carries that row")
-        unasked = sorted(answered - set(asked))
-        if unasked:
-            problems.append("recorded rows the packet does not ask about: " + ", ".join(unasked))
     return checked, problems
 
 
@@ -991,8 +992,9 @@ def command_replay(args):
         failures += 1
     else:
         asked = packet_questions(args.contract)
-        print(f"host observations: {host_checked} record(s) cover all {len(asked)} packet rows "
-              "and agree with the capability record each names. A recording, not a live host run.")
+        print(f"host observations: {host_checked} record(s), each covering all {len(asked)} packet "
+              "rows on its own and agreeing with the capability record it names. A recording, not "
+              "a live host run.")
 
     if failures:
         return 1
