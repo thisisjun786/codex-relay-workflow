@@ -820,21 +820,29 @@ def _check_one(label, observation, expected, report):
 
 
 def packet_questions(contract_path=None):
-    """Row ids the host-verification packet asks about, read from its own table.
+    """Row ids the host-verification packet asks about, each with the status it claims.
 
     Derived rather than declared for the same reason the trace list is: a row added to the
     packet later has to enter this denominator whether or not anyone remembers, and a row
     deleted from the observation record has to leave a hole somebody sees.
+
+    The status travels with the id because the two artifacts have to agree. A record that
+    downgrades a row to unresolved while the contract still prints Resolved for it is evidence
+    quietly leaving through a door the contract says is shut. Reading the status here rather
+    than forbidding unresolved outright keeps the other direction open: a row that genuinely
+    cannot be watched on some later host is recorded as unresolved in both places, which is
+    what the packet is for.
     """
     path = Path(contract_path or CONTRACT)
-    found = []
+    found = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
         if not stripped.startswith("| H"):
             continue
-        label = stripped.split("|")[1].strip()
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        label = cells[0]
         if len(label) > 1 and label[0] == "H" and label[1:].isdigit() and label not in found:
-            found.append(label)
+            found[label] = cells[-1].lower() if len(cells) > 1 else ""
     return found
 
 
@@ -948,16 +956,24 @@ def check_host_observations(directory=None, contract_path=None):
             # somebody can read. Truthiness is not enough: a number or a bare true would let a
             # row claim evidence it never states, and a resolved row without its conclusion keeps
             # the coverage count while losing the answer the count is for.
+            claimed = asked.get(row_id)
             if not _stated(row.get("question")):
                 problems.append(f"{path.name}: {row_id} states no question")
+            elif status not in ("resolved", "unresolved"):
+                problems.append(f"{path.name}: {row_id} carries no readable status")
+            elif claimed in ("resolved", "unresolved") and status != claimed:
+                problems.append(f"{path.name}: {row_id} records {status} where the packet's own "
+                                f"table says {claimed}")
             elif status == "resolved" and not _stated(row.get("observed")):
                 problems.append(f"{path.name}: {row_id} is resolved and states nothing observed")
             elif status == "resolved" and not _stated(row.get("evidence")):
                 problems.append(f"{path.name}: {row_id} is resolved and states no evidence")
             elif status == "unresolved" and not _stated(row.get("whyUnresolved")):
                 problems.append(f"{path.name}: {row_id} is unresolved and says nothing about why")
-            elif status not in ("resolved", "unresolved"):
-                problems.append(f"{path.name}: {row_id} carries no readable status")
+    unreadable = [row for row, claimed in asked.items()
+                  if claimed not in ("resolved", "unresolved")]
+    if unreadable:
+        problems.append("the packet's table states no readable status for " + ", ".join(unreadable))
     if not asked:
         problems.append("the contract's host-verification packet asks nothing; its table is "
                         "unreadable or gone")
