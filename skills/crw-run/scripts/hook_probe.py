@@ -843,17 +843,22 @@ def _stated(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def _record_slug(name):
-    """The host-and-version tag a host fixture's filename carries, or None.
+def _record_tag(name):
+    """The host and version a host fixture's filename declares, as a pair, or None.
 
-    The tag is what makes two records the same reading of the same thing. Taking it from the
-    filename rather than from a field inside keeps it out of reach of the record that would
-    benefit from claiming it.
+    The grammar is fixed here rather than inferred: host-<kind>-<host>-<version>.json, where the
+    host is the first hyphen-delimited segment and the version is the whole remainder. Reading
+    the version as the last segment instead would split 0.155.0-rc1 and call the release rc1.
+
+    The tag is what makes two records the same reading of the same thing, and taking it from the
+    filename keeps it out of reach of the record that would benefit from claiming it.
     """
     stem = Path(name).stem
     for prefix in ("host-observation-", "host-capability-"):
-        if stem.startswith(prefix) and len(stem) > len(prefix):
-            return stem[len(prefix):]
+        if stem.startswith(prefix):
+            host, _, version = stem[len(prefix):].partition("-")
+            if host and version:
+                return host, version
     return None
 
 
@@ -896,7 +901,7 @@ def check_host_observations(directory=None, contract_path=None):
         checked += 1
         paired_name = Path(str(record.get("capabilityRecord"))).name
         paired = directory / paired_name
-        own = _record_slug(path.name)
+        own = _record_tag(path.name)
         version = record.get("version")
         # The pairing is settled before the fields are compared, because comparing delivered
         # fields against another version's schema reads as agreement while proving nothing. A
@@ -905,12 +910,14 @@ def check_host_observations(directory=None, contract_path=None):
         # the first is fixed.
         if own is None:
             problems.append(f"{path.name}: its name carries no host and version tag")
-        elif _record_slug(paired_name) != own:
+        elif _record_tag(paired_name) != own:
             problems.append(f"{path.name}: names {paired_name}, which is not the capability "
                             "record for the same host and version")
-        elif not isinstance(version, str) or own.rsplit("-", 1)[-1] not in version:
-            problems.append(f"{path.name}: the version it records, {version!r}, disagrees with "
-                            "the one its own name carries")
+        elif not isinstance(version, str) or own[1] not in version.split():
+            # Whole-token equality, never a substring: 0.154.0 sits inside 10.154.0, so a
+            # substring test would read one release as another.
+            problems.append(f"{path.name}: the version it records, {version!r}, does not state "
+                            f"{own[1]}, the version its own name carries")
         elif not paired.is_file():
             problems.append(f"{path.name}: names a capability record that is not beside it")
         else:
@@ -937,10 +944,15 @@ def check_host_observations(directory=None, contract_path=None):
         for row_id, row in sorted(rows.items()):
             row = _mapping(row)
             status = row.get("status")
-            # Both supporting fields have to be text somebody can read. A number or a bare true
-            # is truthy, and taking it as an answer would let a row claim evidence it never
-            # states.
-            if status == "resolved" and not _stated(row.get("evidence")):
+            # A row has to carry its own question, its conclusion and its support, each as text
+            # somebody can read. Truthiness is not enough: a number or a bare true would let a
+            # row claim evidence it never states, and a resolved row without its conclusion keeps
+            # the coverage count while losing the answer the count is for.
+            if not _stated(row.get("question")):
+                problems.append(f"{path.name}: {row_id} states no question")
+            elif status == "resolved" and not _stated(row.get("observed")):
+                problems.append(f"{path.name}: {row_id} is resolved and states nothing observed")
+            elif status == "resolved" and not _stated(row.get("evidence")):
                 problems.append(f"{path.name}: {row_id} is resolved and states no evidence")
             elif status == "unresolved" and not _stated(row.get("whyUnresolved")):
                 problems.append(f"{path.name}: {row_id} is unresolved and says nothing about why")
