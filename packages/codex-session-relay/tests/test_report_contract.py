@@ -41,9 +41,7 @@ class Recording(DeliveryTestCase):
         fields = a_report(**overrides)
         stored = report.record(
             self.store, self.clock, event_id=event_id,
-            relationship_id=relationship["relationshipId"],
-            execution_generation=receipt["executionGeneration"],
-            revision_hash=receipt["revisionHash"], outcome=receipt["outcome"], **fields
+            **fields
         )
         return relationship, event_id, stored
 
@@ -110,9 +108,6 @@ class Recording(DeliveryTestCase):
         # collapse lossless for a reader.
         stored = report.record(
             self.store, self.clock, event_id=event_id,
-            relationship_id=relationship["relationshipId"],
-            execution_generation=receipt["executionGeneration"],
-            revision_hash=receipt["revisionHash"], outcome=receipt["outcome"],
             **a_report(cxc_status=cxc.DONE)
         )
         self.assertEqual(report.read(self.store, event_id)["cxcReason"], stored["cxcReason"])
@@ -158,9 +153,6 @@ class Recording(DeliveryTestCase):
             RefusalReason.MALFORMED_RECEIPT,
             lambda: report.record(
                 self.store, self.clock, event_id=event_id,
-                relationship_id=relationship["relationshipId"],
-                execution_generation=receipt["executionGeneration"],
-                revision_hash=receipt["revisionHash"], outcome=receipt["outcome"],
                 **a_report(head_sha=None)
             ),
         )
@@ -174,9 +166,6 @@ class Recording(DeliveryTestCase):
                 RefusalReason.MALFORMED_RECEIPT,
                 lambda field=field: report.record(
                     self.store, self.clock, event_id=event_id,
-                    relationship_id=relationship["relationshipId"],
-                    execution_generation=receipt["executionGeneration"],
-                    revision_hash=receipt["revisionHash"], outcome=receipt["outcome"],
                     **a_report(**{field: "   "})
                 ),
             )
@@ -189,9 +178,6 @@ class Elision(DeliveryTestCase):
         unresolved = [f"finding {n}: something specific that still needs doing" for n in range(24)]
         report.record(
             self.store, self.clock, event_id=event_id,
-            relationship_id=relationship["relationshipId"],
-            execution_generation=receipt["executionGeneration"],
-            revision_hash=receipt["revisionHash"], outcome=receipt["outcome"],
             **a_report(unresolved=unresolved)
         )
         message = self.delivery.render_message(event_id)
@@ -213,9 +199,7 @@ class Elision(DeliveryTestCase):
         receipt = self.intake.get(event_id)
         report.record(
             self.store, self.clock, event_id=event_id,
-            relationship_id=relationship["relationshipId"],
-            execution_generation=receipt["executionGeneration"],
-            revision_hash=receipt["revisionHash"], outcome=receipt["outcome"], **a_report()
+            **a_report()
         )
         stored = report.read(self.store, event_id)
         row = self.delivery.get(event_id)
@@ -228,9 +212,7 @@ class Elision(DeliveryTestCase):
         receipt = self.intake.get(event_id)
         report.record(
             self.store, self.clock, event_id=event_id,
-            relationship_id=relationship["relationshipId"],
-            execution_generation=receipt["executionGeneration"],
-            revision_hash=receipt["revisionHash"], outcome=receipt["outcome"], **a_report()
+            **a_report()
         )
         before = self.delivery.preview_message(event_id)
         record = self.attempt(event_id)
@@ -264,9 +246,7 @@ class Legacy(DeliveryTestCase):
         self.assertEqual(report.version_of(report.read(self.store, event_id)), report.LEGACY)
         report.record(
             self.store, self.clock, event_id=event_id,
-            relationship_id=relationship["relationshipId"],
-            execution_generation=receipt["executionGeneration"],
-            revision_hash=receipt["revisionHash"], outcome=receipt["outcome"], **a_report()
+            **a_report()
         )
         stored = report.read(self.store, event_id)
         self.assertEqual(report.version_of(stored), report.VERSION)
@@ -382,10 +362,6 @@ class Directions(DeliveryTestCase):
         row = self.delivery.get(revision_event)
         stored = report.record(
             self.store, self.clock, event_id=revision_event,
-            relationship_id=row["relationship_id"],
-            execution_generation=receipt.get("executionGeneration") or 2,
-            revision_hash=receipt.get("revisionHash") or "0" * 64,
-            outcome="blocked_needs_input",
             **a_report(
                 cxc_status=cxc.NEEDS_HUMAN,
                 cxc_reason="the parent judged the manifest incomplete",
@@ -422,9 +398,7 @@ class Isolation(DeliveryTestCase):
         receipt = self.intake.get(event_id)
         report.record(
             self.store, self.clock, event_id=event_id,
-            relationship_id=relationship["relationshipId"],
-            execution_generation=receipt["executionGeneration"],
-            revision_hash=receipt["revisionHash"], outcome=receipt["outcome"], **a_report()
+            **a_report()
         )
         other = self.registry.register(
             parent=Endpoint("01other-parent", HOST, cwd="/other"),
@@ -439,3 +413,119 @@ class Isolation(DeliveryTestCase):
         theirs["repository"] = "another-org/another-repo"
         self.assertNotEqual(report.pr_key(mine), report.pr_key(theirs))
         self.assertNotIn("another-org", self.delivery.render_message(event_id))
+
+
+class Identity(DeliveryTestCase):
+    """Raised in review of PR 10: a report used to believe whatever its caller said it was."""
+
+    def test_a_report_cannot_be_filed_against_an_event_that_does_not_exist(self):
+        self.register()
+        error = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(
+                self.store, self.clock, event_id="0" * 32, **a_report()
+            ),
+        )
+        self.assertIn("nothing for this report to be about", error.detail)
+
+    def test_identity_is_read_from_the_event_rather_than_taken_from_the_caller(self):
+        relationship, event_id = self.queued_event()
+        receipt = self.intake.get(event_id)
+        stored = report.record(self.store, self.clock, event_id=event_id, **a_report())
+        # There is no argument through which a caller could have said otherwise.
+        self.assertEqual(stored["relationshipId"], relationship["relationshipId"])
+        self.assertEqual(stored["executionGeneration"], receipt["executionGeneration"])
+        self.assertEqual(stored["revisionHash"], receipt["revisionHash"])
+        read_back = report.read(self.store, event_id)
+        self.assertEqual(read_back["revisionHash"], receipt["revisionHash"])
+
+    def test_a_malformed_entry_is_refused_where_the_caller_can_still_fix_it(self):
+        relationship, event_id = self.queued_event()
+        for field, value in (("evidence", [1]), ("unresolved", [1]),
+                             ("evidence", [{"detail": "no check named"}])):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda field=field, value=value: report.record(
+                    self.store, self.clock, event_id=event_id,
+                    **a_report(**{field: value})
+                ),
+            )
+        # Left unchecked this surfaced inside the delivery claim, where a render failure
+        # rolls the transaction back and the delivery never goes out at all.
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        self.assertIsNotNone(self.attempt(event_id))
+
+    def test_a_blocked_report_does_not_tell_the_reader_it_proved_anything(self):
+        relationship = self.register()
+        payload = self.execution_payload(relationship, "interrupted")
+        self.accept(payload)
+        event_id = payload["eventId"]
+        self.delivery.enqueue(event_id)
+        report.record(
+            self.store, self.clock, event_id=event_id,
+            **a_report(cxc_status=cxc.BUDGET_EXHAUSTED,
+                       cxc_reason="the stated token bound ran out",
+                       pr_number=None, pr_url=None, head_sha=None)
+        )
+        message = self.delivery.render_message(event_id)
+        self.assertIn("BUDGET_EXHAUSTED", message)
+        self.assertIn("a bound the plan actually stated ran out", message)
+        self.assertNotIn("proving its own criteria", message)
+        self.assertIn("pull request: none recorded", message)
+
+    def test_the_budget_counts_bytes_because_a_transport_limit_does(self):
+        relationship, event_id = self.queued_event()
+        receipt = self.intake.get(event_id)
+        korean = "전달 메시지가 풀리퀘스트를 먼저 말하도록 바꿉니다. " * 12
+        report.record(self.store, self.clock, event_id=event_id, **a_report(summary=korean))
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        budget = 2200
+        message = report.render_completion(row, receipt, "del-z-a1", stored, budget=budget)
+        self.assertLessEqual(
+            len(message.encode("utf-8")), budget,
+            "counting characters would let a Korean report overrun a byte budget",
+        )
+
+
+class FinalLine(Directions):
+    def test_the_review_verdict_is_the_last_line_a_scanner_reads(self):
+        _source, revision_event = self._revision()
+        receipt = self.intake.get(revision_event) or {}
+        row = self.delivery.get(revision_event)
+        stored = report.record(
+            self.store, self.clock, event_id=revision_event,
+            **a_report(
+                cxc_status=cxc.NEEDS_HUMAN,
+                cxc_reason="the parent judged the manifest incomplete",
+                summary="add the migration script and re-submit",
+                next_action="add the migration script and emit generation 2",
+                review={"kind": cxc.GO_WITH_FIXES, "blockers": 1, "findings": [{
+                    "id": "c-1", "verdict": "needs_changes", "note": "manifest is short",
+                    "anchor": "migrations/004.sql"}]},
+            )
+        )
+        message = report.render_revision(row, receipt, "del-y-a1", stored)
+        self.assertEqual(
+            message.splitlines()[-1], "VERDICT: GO-WITH-FIXES (blockers=1)",
+            "REVIEW-OUTPUT-01 puts the machine-scannable judgment on the final line",
+        )
+        self.assertEqual(
+            cxc.parse_verdict_line(message.splitlines()[-1]),
+            {"kind": cxc.GO_WITH_FIXES, "blockers": 1},
+        )
+
+    def test_a_revision_report_does_not_have_to_invent_a_receipt_outcome(self):
+        _source, revision_event = self._revision()
+        event = self.store.one(
+            "SELECT outcome FROM events WHERE event_id = ?", (revision_event,)
+        )
+        self.assertEqual(event["outcome"], "revision_request")
+        # No child receipt exists in this direction, so pairing the status with an asserted
+        # outcome would force the caller to make one up.
+        stored = report.record(
+            self.store, self.clock, event_id=revision_event,
+            **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete")
+        )
+        self.assertEqual(stored["cxcStatus"], cxc.NEEDS_HUMAN)
+        self.assertIn("NEEDS_HUMAN", str(report.read(self.store, revision_event)))

@@ -26,10 +26,18 @@ from .errors import DeliveryRefused, ReceiptRefused, RefusalReason
 NEWLINE = chr(10)
 VERSION = "relay-report/1"
 LEGACY = "relay-message/legacy"
+REVISION_OUTCOME = "revision_request"
 
+# UTF-8 BYTES, not characters. A transport limit is a byte limit, and a report written in
+# Korean costs roughly three bytes per character, so measuring characters would let exactly
+# the messages this workflow actually sends overrun a budget that looked comfortable.
 # Generous enough that an ordinary report is never touched, small enough that a runaway one
 # is elided here, on purpose and in the open, rather than cut by whatever reads it later.
 BUDGET = 6000
+
+
+def _size(text) -> int:
+    return len(text.encode("utf-8"))
 
 
 def show_command(event_id: str) -> str:
@@ -38,18 +46,39 @@ def show_command(event_id: str) -> str:
 
 # ------------------------------------------------------------------------ recording
 
-def record(store, clock, *, event_id, relationship_id, execution_generation, revision_hash,
-           outcome, repository, cxc_status, cxc_reason, summary, next_action,
+def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summary, next_action,
            pr_number=None, pr_url=None, pr_state=None, base_ref=None, base_sha=None,
            head_sha=None, criteria_digest=None, evidence=None, unresolved=None, review=None,
            restore=None, submission_no=1) -> dict:
     """Store one report, validated, bound to the revision it describes.
 
-    The CXC status is checked against the outcome the child's receipt already asserted. It
-    is not allowed to choose that outcome: the receipt is the only thing the frozen contract
-    lets assert one, and a status that picked it could quietly overrule the evidence.
+    Identity is READ from the stored event, never accepted from the caller. Taking the
+    relationship, generation, revision and outcome as arguments meant a mistyped or stale
+    caller could file a report whose metadata described a different execution entirely, and
+    delivery would then hand the recipient another pull request and another instruction. The
+    event row is the only thing that knows what this event is.
+
+    The CXC status is then checked against the outcome that event actually carries. It is not
+    allowed to choose that outcome: the receipt is the only thing the frozen contract lets
+    assert one, and a status that picked it could quietly overrule the evidence.
     """
-    cxc.check_status(cxc_status, outcome)
+    event = store.one("SELECT * FROM events WHERE event_id = ?", (event_id,))
+    if event is None:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"no event {event_id!r} is recorded, so there is nothing for this report to be "
+            "about; a report is written against an accepted event, not ahead of one",
+        )
+    relationship_id = event["relationship_id"]
+    execution_generation = event["execution_generation"]
+    revision_hash = event["revision_hash"]
+    outcome = event["outcome"]
+    if outcome == REVISION_OUTCOME:
+        # The parent-to-child direction carries no child receipt, so there is no asserted
+        # outcome to pair the status with. Demanding one would make the caller invent it.
+        cxc.check_known(cxc_status)
+    else:
+        cxc.check_status(cxc_status, outcome)
     repository = _required(repository, "repository")
     summary = _required(summary, "summary")
     next_action = _required(next_action, "next_action")
@@ -67,6 +96,8 @@ def record(store, clock, *, event_id, relationship_id, execution_generation, rev
                 "one, a later push silently inherits this report",
             )
     review = _check_review(review)
+    evidence = _check_evidence(evidence)
+    unresolved = _check_unresolved(unresolved)
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
@@ -199,6 +230,50 @@ def _check_review(review):
     return {"kind": kind, "blockers": blockers, "findings": findings}
 
 
+def _check_evidence(entries):
+    """Reject a malformed entry HERE, where a caller can fix it.
+
+    Rendering happens inside the delivery claim transaction, so an entry that only blows up
+    at render time rolls the claim back and the delivery never goes out. A shape that cannot
+    be rendered must therefore be refused at the point it is recorded.
+    """
+    checked = []
+    for item in entries or []:
+        if isinstance(item, str):
+            checked.append(item)
+            continue
+        if not isinstance(item, dict) or not str(item.get("check") or "").strip():
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"each verification entry is a string or an object naming its check, not "
+                f"{item!r}",
+            )
+        checked.append({
+            "check": str(item["check"]).strip(),
+            "exitCode": item.get("exitCode"),
+            "detail": str(item.get("detail") or "").strip() or None,
+        })
+    return checked
+
+
+def _check_unresolved(entries):
+    checked = []
+    for item in entries or []:
+        if isinstance(item, str):
+            checked.append(item)
+            continue
+        if not isinstance(item, dict) or not str(item.get("id") or "").strip():
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"each unresolved entry is a string or an object naming its id, not {item!r}",
+            )
+        checked.append({
+            "id": str(item["id"]).strip(),
+            "note": str(item.get("note") or "").strip(),
+        })
+    return checked
+
+
 # -------------------------------------------------------------------- identity guards
 
 def pr_ref(report) -> str:
@@ -273,7 +348,7 @@ def _compose(sections, event_id, *, budget) -> str:
 
     order = sorted(range(len(sections)), key=lambda i: -sections[i].rank)
     for index in order:
-        if len(rendered()) <= budget:
+        if _size(rendered()) <= budget:
             break
         section = sections[index]
         if section.essential or not blocks[index]:
@@ -289,7 +364,7 @@ def _compose(sections, event_id, *, budget) -> str:
         # appended to it. Popping a line and then appending a marker leaves the block the
         # same length, which is a loop that never ends.
         kept = list(section.lines)
-        while len(rendered()) > budget and len(kept) > section.keep:
+        while _size(rendered()) > budget and len(kept) > section.keep:
             kept.pop()
             dropped = len(section.lines) - len(kept)
             blocks[index] = kept + [f"  ... {dropped} more, see the full record"]
@@ -297,9 +372,9 @@ def _compose(sections, event_id, *, budget) -> str:
                 removed.append(section.name)
 
     out = rendered()
-    if len(out) > budget:
+    if _size(out) > budget:
         raise ValueError(
-            f"a message budget of {budget} cannot hold this report even reduced to its "
+            f"a message budget of {budget} bytes cannot hold this report even reduced to its "
             "required parts; raise the budget rather than shipping a message that lost them"
         )
     return out
@@ -307,6 +382,15 @@ def _compose(sections, event_id, *, budget) -> str:
 
 def _omission_line(removed, event_id) -> str:
     return f"omitted: {', '.join(removed)} - read in full with {show_command(event_id)}"
+
+
+def _non_verification(status: str) -> str:
+    """The reason this particular report is not a verdict.
+
+    Reusing the DONE sentence for every status told a BLOCKED report it was proving its own
+    criteria, which is both false and the opposite of what BLOCKED means.
+    """
+    return cxc.refuse_promotion("cxc_done" if status == cxc.DONE else "cxc_report")
 
 
 # ------------------------------------------------------------------------ rendering
@@ -319,6 +403,8 @@ def render_completion(row, receipt, request, report, *, budget=BUDGET) -> str:
     how it decides.
     """
     event_id = row["event_id"]
+    assert_current(report, execution_generation=receipt.get("executionGeneration")
+                   or report["executionGeneration"])
     sections = [
         _Section("header", [
             "[codex-session-relay] verification request",
@@ -326,7 +412,7 @@ def render_completion(row, receipt, request, report, *, budget=BUDGET) -> str:
             f"cxc: {report['cxcStatus']} - {report['cxcReason']}",
             f"  meaning: {cxc.MEANING[report['cxcStatus']]}",
             "  this is the child reporting on its own work. It is not a verification:"
-            f" {cxc.refuse_promotion('cxc_done')}",
+            f" {_non_verification(report['cxcStatus'])}",
         ], rank=0, essential=True, keep=5),
         # keep counts from the top of the block, and these blocks open with a blank line, so
         # a floor of two is what keeps the heading attached to whatever survives under it.
@@ -362,13 +448,11 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
     """
     event_id = row["event_id"]
     generation = receipt.get("executionGeneration")
+    assert_current(report, execution_generation=generation or report["executionGeneration"])
     review = report.get("review")
     head = [
         "[codex-session-relay] revision request",
     ]
-    if review:
-        cxc.assert_reviewed(True)
-        head.append(cxc.verdict_line(review["kind"], review.get("blockers")))
     head.append(f"TASK: {report['summary']}")
 
     sections = [
@@ -417,6 +501,15 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
             f"Full record: {show_command(event_id)}",
         ], rank=0, essential=True, keep=9),
     ]
+    if review:
+        # REVIEW-OUTPUT-01 puts the machine-scannable judgment on the FINAL line, so a
+        # scanner reading the tail finds it. assert_reviewed is what stops an ordinary
+        # progress notice from reaching this branch at all.
+        cxc.assert_reviewed(True)
+        sections.append(_Section(
+            "verdict", ["", cxc.verdict_line(review["kind"], review.get("blockers"))],
+            rank=0, essential=True, keep=2,
+        ))
     return _compose(sections, event_id, budget=budget)
 
 

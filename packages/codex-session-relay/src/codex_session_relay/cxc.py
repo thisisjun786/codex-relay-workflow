@@ -84,7 +84,12 @@ SOURCES = (
 
 
 def provenance() -> dict:
-    """What was read, from where, at which version. Recorded with every work report."""
+    """What was read, from where, at which version.
+
+    A work report stores the version string only. The digests live here, pinned in source,
+    because copying nine of them onto every row would store the same constant many times and
+    still not prove anything a reader could not get from this function.
+    """
     return {
         "package": PACKAGE,
         "version": VERSION,
@@ -147,12 +152,13 @@ COMPATIBLE_OUTCOMES = {
 }
 
 
-def check_status(status: str, outcome: str) -> None:
-    """Refuse an unknown status by name, and an incompatible pair by both names.
+def check_known(status: str) -> None:
+    """Is this a status this build understands, without pairing it to a receipt outcome.
 
-    Silently defaulting an unrecognised status is the failure this exists to prevent: a
-    newer CXC reporting a word this build has never seen must be diagnosed, not mapped to
-    whichever neighbour happens to be first in a dict.
+    The parent-to-child direction has no child receipt to pair with: a revision request is
+    the parent stating a judgment, not a child asserting how its execution ended. Reusing the
+    compatibility check there would force the caller to invent an outcome, and an invented
+    outcome is exactly what the rest of this package refuses.
     """
     if status not in COMPATIBLE_OUTCOMES:
         raise ReceiptRefused(
@@ -161,6 +167,16 @@ def check_status(status: str, outcome: str) -> None:
             f"{', '.join(REPORT_STATUSES)}. Read against {PACKAGE} {VERSION}; a newer "
             "contract needs the mapping extended rather than the value guessed at",
         )
+
+
+def check_status(status: str, outcome: str) -> None:
+    """Refuse an unknown status by name, and an incompatible pair by both names.
+
+    Silently defaulting an unrecognised status is the failure this exists to prevent: a
+    newer CXC reporting a word this build has never seen must be diagnosed, not mapped to
+    whichever neighbour happens to be first in a dict.
+    """
+    check_known(status)
     allowed = COMPATIBLE_OUTCOMES[status]
     if outcome not in allowed:
         raise ReceiptRefused(
@@ -177,6 +193,7 @@ def check_status(status: str, outcome: str) -> None:
 # parent produces, from inside its own turn, against registered criteria.
 NOT_VERIFICATION = {
     "cxc_done": "a DONE report is the child proving its own criteria, not the parent's verdict",
+    "cxc_report": "a child report is the child describing its own execution, not a verdict",
     "pull_request_opened": "an open pull request is a place to review, not a review",
     "review_pass": "a review PASS is one reviewer's judgment, not the parent's disposition",
     "required_checks_green": "a green required check is evidence for a verdict, not a verdict",
