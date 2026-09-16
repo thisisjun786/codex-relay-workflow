@@ -378,8 +378,14 @@ def cmd_emit(services, args) -> dict:
     result = {"receipt": contract_record(stored), "stage": stored.get("_stage"),
               "duplicate": stored.get("_duplicate"), "terminalProof": proof,
               "observedTurnStatus": observed_status}
-    if stored.get("_stage") == "final" and not args.no_enqueue:
-        result["delivery"] = dict(services.delivery.enqueue(event))
+    if stored.get("_stage") == "final":
+        # Whatever this event replaces stops being current the moment this one is final, and
+        # that is true whether or not anyone asked to deliver THIS one. --no-enqueue skips
+        # the queue, and the annotation used to ride on it, so a predecessor already in
+        # flight kept being reported as the current delivery.
+        services.delivery.annotate_predecessors(event)
+        if not args.no_enqueue:
+            result["delivery"] = dict(services.delivery.enqueue(event))
     return result
 
 

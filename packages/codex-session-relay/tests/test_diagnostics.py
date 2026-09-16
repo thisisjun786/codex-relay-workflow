@@ -190,6 +190,44 @@ class UncertainPhases(unittest.TestCase):
         )
 
 
+class RefusedBeforeTheQueue(DeliveryTestCase):
+    """The most stuck state in the system was the one status could not show."""
+
+    def test_an_event_refused_at_the_queue_is_visible_in_status(self):
+        """It has no deliveries row at all, and snapshot was built only from deliveries.
+
+        A permanently paused or unauthorized assignment therefore had no status entry, no
+        phase and no retry time while the daemon went on retrying it.
+        """
+        relationship, event_id = self.ready_event()
+        with self.store.transaction() as db:
+            self.delivery.record_intent_in(
+                db, event_id, relationship_id=relationship["relationshipId"],
+                kind="completion_event", recipient_task_id=PARENT,
+                error="relationship_not_active", now=self.clock.now(),
+            )
+
+        payload = self.delivery.snapshot()
+
+        self.assertEqual(payload["deliveries"], [], "there is no delivery row, by design")
+        self.assertEqual([i["eventId"] for i in payload["pendingIntents"]], [event_id])
+        intent = payload["pendingIntents"][0]
+        self.assertEqual(intent["phase"], "refused_pre_queue")
+        self.assertIn("relationship_not_active", intent["lastError"])
+        self.assertIsNotNone(intent["nextRetryAt"])
+
+    def test_a_scoped_status_filters_the_pending_intents_too(self):
+        relationship, event_id = self.ready_event()
+        with self.store.transaction() as db:
+            self.delivery.record_intent_in(
+                db, event_id, relationship_id=relationship["relationshipId"],
+                kind="completion_event", recipient_task_id=PARENT,
+                error="relationship_not_active", now=self.clock.now(),
+            )
+        scoped = self.delivery.snapshot(relationship_id="rel-someone-else")
+        self.assertEqual(scoped["pendingIntents"], [])
+
+
 class RevisionPhases(DeliveryTestCase):
     """Contract v1 acknowledges the child-to-parent direction only."""
 
@@ -494,6 +532,34 @@ class ObservationHealth(DaemonTestCase):
             "this assignment observed its turn and has nothing of its own left to resolve",
         )
         del settled
+
+    def test_a_cancelled_assignments_staged_event_does_not_hold_health_down(self):
+        """The scheduler drops an inactive assignment and will never settle its claim.
+
+        Ageing that claim anyway left the whole health block degraded indefinitely while
+        every active assignment was fine.
+        """
+        relationship = self.register()
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-1", status="inProgress")
+        path = self.artifact("out.txt", "still going")
+        self.accept(self.ready_payload(
+            relationship, [path], turn=TurnRef(CHILD, "turn-dispatch-1", "inProgress"),
+        ))
+        self.daemon.tick(now=self.clock.now())
+        self.clock.advance(7200)
+        before = self.delivery.observation_health(now=self.clock.now())
+        self.assertEqual(len(before["stagedEvents"]), 1)
+        self.assertNotEqual(before["health"], "healthy")
+
+        self.registry.set_status(
+            relationship["relationshipId"], "cancelled", actor="test",
+        )
+
+        health = self.delivery.observation_health(now=self.clock.now())
+
+        self.assertEqual(health["stagedEvents"], [],
+                         "nothing is going to settle this one, so it is not a backlog")
+        self.assertEqual(health["health"], "healthy")
 
     def test_a_generation_whose_anchor_is_not_bound_yet_is_not_a_stall(self):
         """A needs_changes verdict opens a generation before its revision is dispatched.

@@ -139,6 +139,12 @@ transport call.
 Each carries the most recent failed operation, its concrete error, the exact settings
 difference where there is one, and the next retry time.
 
+`status` also reports `pendingIntents`: events whose delivery was wanted and refused before a
+delivery row could exist, which a paused or unauthorized assignment produces. They have no
+phase in the table above because they have no delivery; they carry the refusal, the attempt
+count and the next retry instead. Without them the most stuck state in the system was the one
+status could not show.
+
 Health is separate from liveness. A running process with a growing observation backlog is
 reported as stalled: staged event age, when each current anchor was last successfully
 polled, and the backlog per assignment are all exposed, and a live pid is never counted as

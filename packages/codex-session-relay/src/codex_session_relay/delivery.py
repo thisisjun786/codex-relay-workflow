@@ -877,10 +877,16 @@ class DeliveryService:
             {"eventId": row["event_id"], "turnId": row["turn_id"],
              "ageSeconds": age(row["staged_at"] or row["first_seen_at"])}
             for row in self.store.all(
-                "SELECT event_id, turn_id, staged_at, first_seen_at FROM events"
-                " WHERE stage = 'staged'"
-                + (" AND relationship_id = ?" if relationship_id else "")
-                + " ORDER BY first_seen_at",
+                # Joined through relationships with the same active predicate the anchors
+                # use. A paused, cancelled or superseded assignment is no longer settled by
+                # the scheduler, so its staged event would age forever and hold the whole
+                # health block at degraded while every active assignment was fine.
+                "SELECT e.event_id, e.turn_id, e.staged_at, e.first_seen_at FROM events e"
+                "  JOIN relationships r ON r.relationship_id = e.relationship_id"
+                " WHERE e.stage = 'staged'"
+                "   AND r.status = 'active' AND r.superseded_by IS NULL"
+                + (" AND e.relationship_id = ?" if relationship_id else "")
+                + " ORDER BY e.first_seen_at",
                 (relationship_id,) if relationship_id else (),
             )
         ]
@@ -1074,7 +1080,10 @@ class DeliveryService:
             "  JOIN events e ON e.event_id = d.event_id"
             " WHERE e.relationship_id = ? AND e.execution_generation = ?"
             "   AND d.event_id != ?"
-            "   AND d.state IN ('sending','held_uncertain','dispatched')",
+            # inbox_only is terminal and attempt() cannot revisit it, so a predecessor that
+            # settled there would stay reported as channel_closed with no supersession note
+            # even though acknowledgement currency already rejects it.
+            "   AND d.state IN ('sending','held_uncertain','dispatched','inbox_only')",
             (event["relationship_id"], event["execution_generation"], event_id),
         ).fetchall()
         for row in others:
@@ -1083,6 +1092,11 @@ class DeliveryService:
             reason = self._supersession_reason(db, row["event_id"])
             if reason:
                 self._annotate_supersession_in(db, row["event_id"], reason)
+
+    def annotate_predecessors(self, event_id: str) -> None:
+        """The same annotation in its own transaction, for a caller that has none."""
+        with self.store.transaction() as db:
+            self.annotate_predecessors_in(db, event_id)
 
     # -------------------------------------------------------- observability
 
@@ -1162,7 +1176,26 @@ class DeliveryService:
                 "nextRetryAt": row["next_eligible_at"],
                 "supersededNote": superseded,
             })
-        return {"deliveries": items}
+        # Events whose delivery was wanted and refused have no deliveries row at all, so a
+        # permanently paused or unauthorized assignment had no status entry, no phase and no
+        # retry time while the daemon went on retrying it. The most stuck state in the system
+        # was the one status could not show.
+        intents = [
+            {"eventId": row["event_id"], "relationshipId": row["relationship_id"],
+             "kind": row["kind"], "recipient": row["recipient_task_id"],
+             "phase": "refused_pre_queue", "attempts": row["attempts"],
+             "nextRetryAt": row["next_retry_at"], "lastError": row["last_error"],
+             "notedAt": row["noted_at"]}
+            for row in self.store.all(
+                "SELECT i.* FROM delivery_intent i"
+                "  LEFT JOIN deliveries d ON d.event_id = i.event_id"
+                " WHERE d.event_id IS NULL"
+                + (" AND i.relationship_id = ?" if relationship_id else "")
+                + " ORDER BY i.noted_at",
+                (relationship_id,) if relationship_id else (),
+            )
+        ]
+        return {"deliveries": items, "pendingIntents": intents}
 
 
 def _message_status(row, record) -> str:

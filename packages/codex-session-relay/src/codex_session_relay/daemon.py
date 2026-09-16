@@ -692,7 +692,13 @@ class RelayDaemon:
                 continue
             if record["deliveryState"] in (HELD_UNCERTAIN, DEFERRED_BUSY, WITHHELD_PRE_SEND):
                 struggling.add(parent)
-            report.delivered += 1
+            if record.get("sendAttempted") == "no":
+                # Suppressed before any transport call. Counting it as delivered reports a
+                # delivery that never reached the recipient, which is the opposite of what
+                # this counter is read for.
+                report.skipped += 1
+            else:
+                report.delivered += 1
             if row["kind"] != COMPLETION and record["deliveryState"] == DISPATCHED:
                 try:
                     self.ack.bind_dispatched_revision(row["event_id"])
