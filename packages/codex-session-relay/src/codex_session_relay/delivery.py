@@ -1142,7 +1142,10 @@ class DeliveryService:
             # inbox_only is terminal and attempt() cannot revisit it, so a predecessor that
             # settled there would stay reported as channel_closed with no supersession note
             # even though acknowledgement currency already rejects it.
-            "   AND d.state IN ('sending','held_uncertain','dispatched','inbox_only')",
+            # A predecessor capped in deferred_busy or withheld_pre_send is in the same
+            # position: its hold makes attempt() return early, so this is its only chance.
+            "   AND d.state IN ('sending','held_uncertain','dispatched','inbox_only',"
+            "                  'deferred_busy','withheld_pre_send')",
             (event["relationship_id"], event["execution_generation"], event_id),
         ).fetchall()
         for row in others:

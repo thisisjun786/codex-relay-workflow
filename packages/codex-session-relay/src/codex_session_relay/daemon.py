@@ -144,7 +144,11 @@ class RelayDaemon:
         accepted rather than refused as unbound.
         """
         try:
-            report.anchorsBound = len(self.ack.bind_pending_anchors())
+            # Added, not assigned. tick() runs this pass twice - once before reconciliation
+            # and once after the pass that can promote a revision - and assigning let the
+            # second pass erase what the first repaired, so a tick that bound a durable
+            # anchor reported anchorsBound 0 and even quiet.
+            report.anchorsBound += len(self.ack.bind_pending_anchors())
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
             report.notes.append(f"anchor recovery failed: {error}")
 

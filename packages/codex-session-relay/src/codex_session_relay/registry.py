@@ -269,8 +269,11 @@ class Registry:
             # before the pre-send supersession check, so generation advance is the ONLY
             # occasion on which they can ever be annotated. Without them a capped delivery
             # reports a current-looking cap forever.
+            # inbox_only belongs with them: it is terminal, attempt() cannot revisit it, and
+            # its acknowledgement is refused as stale - so without this it reports
+            # channel_closed as though it were still current.
             "   AND d.state IN ('sending','held_uncertain','dispatched',"
-            "                  'deferred_busy','withheld_pre_send')"
+            "                  'deferred_busy','withheld_pre_send','inbox_only')"
             " ON CONFLICT(event_id) DO NOTHING",
             (now, rid, number),
         )

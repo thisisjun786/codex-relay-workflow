@@ -179,3 +179,24 @@ class BindingAfterReconciliation(DaemonTestCase):
             order, ["bind", "reconcile", "bind"],
             "binding has to run again after the pass that can promote a revision",
         )
+
+    def test_both_binding_passes_are_counted(self):
+        """Assigning let the second pass erase what the first repaired.
+
+        A tick that bound a durable anchor then reported anchorsBound 0 and even quiet, which
+        is the opposite of what happened.
+        """
+        from codex_session_relay.daemon import TickReport
+
+        report = TickReport()
+        calls = {"n": 0}
+
+        def two_then_none():
+            calls["n"] += 1
+            return ["a", "b"] if calls["n"] == 1 else []
+
+        self.daemon.ack.bind_pending_anchors = two_then_none
+        self.daemon._bind_anchors(report)
+        self.daemon._bind_anchors(report)
+
+        self.assertEqual(report.anchorsBound, 2, "the second pass must not erase the first")
