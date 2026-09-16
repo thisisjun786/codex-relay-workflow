@@ -268,7 +268,12 @@ class RelayDaemon:
                     continue
                 self._record_poll(
                     relationship, turn_id,
-                    status=turn.status if turn is not None else "absent", error=None,
+                    status=turn.status if turn is not None else "absent",
+                    # An absent turn is not a successful poll. Recording it as one refreshed
+                    # last_polled_at on every tick, and observation_health reads only poll
+                    # freshness and settlement - so an anchor the host says is gone, which can
+                    # never settle, reported healthy forever.
+                    error=None if turn is not None else "the host reports this turn absent",
                 )
                 if turn is None or turn.status not in ("completed", "failed", "interrupted"):
                     continue

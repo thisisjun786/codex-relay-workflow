@@ -219,6 +219,28 @@ class AnchorBinding(DeliveryTestCase):
             "a stale attempt bound the generation to a turn the real dispatch never used",
         )
 
+    def test_a_revision_request_is_not_exempt_from_supersession(self):
+        """The execution-only exemption must not cover the relay's own ask.
+
+        A revision_request is not reviewable either, but it IS answered the moment the child
+        emits the receipt it asked for. Exempting it left the request reported as current -
+        awaiting_child_receipt - after that receipt had already arrived.
+        """
+        revision = self.revision_pending()
+        self.clock.advance(3600)
+        self.delivery.attempt(revision, self.adapter, now=self.clock.now())
+        self.ack.bind_pending_anchors()
+        accepted = self.child_receipt_for_generation_two()
+        self.assertEqual(accepted["executionGeneration"], 2)
+
+        with self.store.transaction() as db:
+            reason = self.delivery._supersession_reason(db, revision)
+
+        self.assertEqual(
+            reason, "superseded_revision",
+            "the relay's own revision request outlived the reply it asked for",
+        )
+
     def test_binding_is_idempotent_and_never_rebinds_a_bound_anchor(self):
 
         revision = self.revision_pending()

@@ -186,6 +186,30 @@ class AutomaticInvocation(DaemonTestCase):
         self.assertEqual(failure["outcome"], "failed")
         self.assertIn(failure["event_id"], sent[0])
 
+    def test_an_absent_anchor_is_not_counted_as_a_healthy_poll(self):
+        """observation_health reads poll freshness and settlement, nothing else.
+
+        Recording an absent turn as a successful poll refreshed last_polled_at on every tick,
+        so an anchor the host exhaustively reports gone - one that can never settle - stayed
+        healthy indefinitely. Process alive is not the same as work progressing, and neither
+        is a poll that found nothing.
+        """
+        self.register()  # the anchor turn is never created on the host
+
+        self.daemon.tick()
+
+        row = self.store.one(
+            "SELECT last_status, last_polled_at, last_error FROM poll_observations"
+            "  WHERE turn_id = ?", (DISPATCH_TURN,),
+        )
+        self.assertIsNotNone(row, "the anchor was never polled at all")
+        self.assertEqual(row["last_status"], "absent")
+        self.assertIsNone(
+            row["last_polled_at"],
+            "an absent anchor was recorded as a successful poll, so health never decays",
+        )
+        self.assertIsNotNone(row["last_error"])
+
     def test_a_pause_during_the_host_read_does_not_retire_a_failed_turn(self):
         """The scheduler selects active assignments and then reads the host.
 
