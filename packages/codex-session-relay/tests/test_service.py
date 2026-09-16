@@ -612,6 +612,47 @@ class Ownership(ServiceTestCase):
             "a later claim in the same process was refused by the abandoned lock",
         )
 
+    def test_stop_finalises_the_record_under_the_lock(self):
+        """The re-read that detects a replacement is a snapshot.
+
+        The daemon lock is free the moment the old supervisor and worker are gone, so a
+        replacement can acquire it after that read and publish its own record - and the
+        clearing write would erase the identity of a launch that is running, leaving every
+        later status and stop with no handle on it.
+        """
+        service = self.service("i")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+        order = []
+        original_lock = service.daemon_lock_if_free
+        original_write = service.write_record
+
+        @contextlib.contextmanager
+        def watched_lock():
+            order.append("lock")
+            with original_lock() as held:
+                yield held
+
+        def watched_write(payload):
+            order.append("write")
+            return original_write(payload)
+
+        service.daemon_lock_if_free = watched_lock
+        service.write_record = watched_write
+        try:
+            stopped = service.stop(actor="owner")
+        finally:
+            service.daemon_lock_if_free = original_lock
+            service.write_record = original_write
+
+        child.wait(timeout=10)
+        self.assertTrue(stopped["ok"], stopped)
+        self.assertEqual(
+            order[-2:], ["lock", "write"],
+            "the stopped record was published without holding the lock that keeps a"
+            " replacement out",
+        )
+
     def test_disable_refuses_a_lock_holder_nothing_here_can_identify(self):
         """A supervisor that has taken the lock and not yet published its record.
 
@@ -1419,6 +1460,14 @@ class Supervision(ServiceTestCase):
 
         self.assertEqual(caught.exception.reason, "service_disabled")
         self.assertEqual(launches, [], "a disabled service was supervised anyway")
+
+    def test_a_stopped_supervisor_reports_no_pending_restart(self):
+        """nextRestartAt named a restart this supervisor is no longer going to make, so a
+        stopped service read as though one were still scheduled."""
+        service = self.service("a")
+        service.enable(actor="test")
+        self.supervised(service, codes=[1, 1])
+        self.assertIsNone(service.record()["nextRestartAt"])
 
     def test_repeated_failure_backs_off_and_is_reported(self):
         service = self.service("a")

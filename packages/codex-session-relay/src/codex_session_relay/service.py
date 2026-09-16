@@ -885,7 +885,32 @@ class RelayService:
                 cleared["workerStartTicks"] = None
             if supervisor_done and worker_done:
                 cleared["stoppedAt"] = _now()
-            self.write_record(cleared)
+            # Written UNDER the lock, or not at all. The re-read above is a snapshot, and the
+            # daemon lock is free the moment the old supervisor and worker are gone - so a
+            # replacement can acquire it after that read and publish its own record, and this
+            # write would erase the identity of a launch that is running, leaving every later
+            # status and stop with no handle on it. Holding the lock means no replacement can
+            # start while we finalise; failing to take it means one already did.
+            with self.daemon_lock_if_free() as held:
+                latest = self.record()
+                replaced = (
+                    latest is not None
+                    and self._launch_identity(latest) != self._launch_identity(record)
+                )
+                if replaced:
+                    return {"ok": False, "reason": "replaced_by_new_launch",
+                            "detail": "a new launch published its record during this stop; it"
+                                      " was left untouched and is still running",
+                            "supervisor": outcome, "worker": worker}
+                if held is None and latest is None:
+                    # The lock is held by something that has published nothing. It is not
+                    # ours to describe, and writing a stopped record for it would say this
+                    # state directory is idle while that process starts serving.
+                    return {"ok": False, "reason": "ownership_unverifiable",
+                            "detail": "the daemon lock was taken during this stop by a"
+                                      " process that has published no record",
+                            "supervisor": outcome, "worker": worker}
+                self.write_record(cleared)
         if owner == NONE and worker == "gone":
             return {"ok": False, "reason": "not_running", "detail": detail,
                     "supervisor": "gone", "worker": "gone"}
@@ -1333,7 +1358,9 @@ class RelayService:
                     # state directory claim this socket beside the orphan.
                     self.scope.release(self.socket_path, shared=True)
                 current = self.record() or {}
-                cleared = dict(current, pid=None, stoppedAt=_now())
+                # nextRestartAt with it: it names a restart this supervisor is no longer going
+                # to make, and leaving it behind let a stopped service report a pending one.
+                cleared = dict(current, pid=None, stoppedAt=_now(), nextRestartAt=None)
                 if outstanding is None:
                     cleared["workerPid"] = None
                     cleared["workerStartTicks"] = None
