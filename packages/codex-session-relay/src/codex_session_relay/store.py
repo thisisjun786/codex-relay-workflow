@@ -595,6 +595,11 @@ class StateSelection:
     source: str
     detail: str
     socket_scope: str | None
+    # Every store that already records this socket, when there is more than one of them and
+    # no canonical store exists yet. Empty for every ordinary selection. It travels ON the
+    # selection because the decision not to create a store here has to reach whoever holds
+    # the path they would otherwise have created one at.
+    ambiguous: tuple = ()
 
     @property
     def db_path(self) -> Path:
@@ -604,7 +609,7 @@ class StateSelection:
         return {
             "path": str(self.path), "dbPath": str(self.db_path), "source": self.source,
             "detail": self.detail, "socketScope": self.socket_scope,
-            "precedence": list(PRECEDENCE),
+            "precedence": list(PRECEDENCE), "ambiguous": list(self.ambiguous),
         }
 
 
@@ -659,12 +664,25 @@ def resolve_state_dir(explicit=None, socket_path=None) -> StateSelection:
     # a canonical database here would hide it for good, because afterwards even the old
     # spelling finds the new one. So before creating anything, ask the stores themselves.
     # Only reached when no canonical database exists yet, which is the one moment it matters.
-    adopted = discover_store_for_socket(base / "codex-session-relay", socket_path, skip=scope)
-    if adopted is not None:
+    claims = stores_claiming_socket(base / "codex-session-relay", socket_path, skip=scope)
+    if len(claims) == 1:
+        adopted = Path(claims[0])
         return StateSelection(
             adopted, source,
             f"{detail}; adopted the store already recorded for this socket",
             adopted.name,
+        )
+    if len(claims) > 1:
+        # Returning the canonical directory with nothing to say about the conflict is how a
+        # THIRD store gets made. The first command to write here creates it, and from that
+        # moment the canonical-exists branch at the top of this function wins every later
+        # resolution, so both of the real stores - with their assignments, generations and
+        # pending deliveries - are invisible. Choosing between them would be just as wrong in
+        # a quieter way. So the ambiguity travels with the path and the caller refuses.
+        return StateSelection(
+            chosen, source,
+            f"{detail}; {len(claims)} stores already record this socket",
+            scope, tuple(claims),
         )
     return StateSelection(chosen, source, detail, scope)
 
@@ -693,31 +711,14 @@ def discover_store_for_socket(root, socket_path, *, skip=None):
     spelling we cannot guess is only findable if it says which socket it belongs to. Stores
     record that from now on; one created before it did says nothing and is reported by doctor
     instead of being adopted on a guess.
+
+    Exactly one, because two stores claiming one socket is an ambiguity rather than a choice.
+    This answers the narrow question "is there a single store to adopt". A caller that has to
+    ACT on the difference between none and several reads stores_claiming_socket, which is the
+    one walk both of them share.
     """
-    if not socket_path:
-        return None
-    try:
-        candidates = sorted(p for p in Path(root).iterdir() if p.is_dir())
-    except OSError:
-        return None
-    wanted = canonical_socket(socket_path)
-    matches = []
-    for directory in candidates:
-        if skip is not None and directory.name == skip:
-            continue
-        database = directory / "relay.sqlite3"
-        if not database.exists():
-            continue
-        if store_socket(database) == wanted:
-            matches.append(directory)
-    if len(matches) == 1:
-        return matches[0]
-    # Zero is the ordinary case. More than one means a copied store or separate explicit-state
-    # runs left two databases claiming the same socket, and picking whichever sorts first
-    # would silently operate on one set of assignments today and the other after a rename.
-    # Adopting nothing sends the caller to a fresh canonical store, which is wrong but VISIBLE:
-    # doctor reports the candidates and --state resolves it.
-    return None
+    claims = stores_claiming_socket(root, socket_path, skip=skip)
+    return Path(claims[0]) if len(claims) == 1 else None
 
 
 def stores_claiming_socket(root, socket_path, *, skip=None) -> list:

@@ -1390,12 +1390,55 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _refuse_ambiguous_state(services, args) -> None:
+    """Two stores already record this socket, so opening one of them would be a guess.
+
+    Falling through to the canonical directory is not the neutral outcome it looks like. The
+    first command that writes there creates a THIRD empty database, and once that exists it
+    wins every later resolution and hides the assignments and pending deliveries in both of
+    the others. Refusing costs one command; the third store costs the state.
+
+    doctor and ack-proof are exempt for opposite reasons. doctor is how an operator finds out
+    which store to pass to --state, so refusing it would remove the only way out. ack-proof is
+    a derivation over its own two arguments that opens no store at all.
+
+    An explicit --state or environment override never arrives here: both return from
+    resolve_state_dir before any discovery runs, because a caller who named a directory has
+    already decided which participants share it.
+
+    This guard is on the command line rather than on Services.store. A library caller that
+    builds Services itself bypasses it; every in-process caller in this package passes an
+    explicit directory, and raising from a property would turn a diagnostic into a crash.
+    """
+    if not services.selection.ambiguous:
+        return
+    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof):
+        return
+    raise PayloadExit({
+        "error": "refused",
+        "reason": "ambiguous_state_directory",
+        "detail": (
+            "more than one store already records this socket, and creating a new one here"
+            " would hide them both"
+        ),
+        "socketPath": services.socket_path,
+        "candidates": list(services.selection.ambiguous),
+        "wouldHaveCreated": str(services.selection.db_path),
+        "recover": [
+            "doctor lists the candidates",
+            "--state <candidate> doctor identifies the store",
+            "--state <candidate> service status shows which assignments it carries",
+        ],
+    }, EXIT_REFUSED)
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     services = None
     try:
         services = Services(args)
+        _refuse_ambiguous_state(services, args)
         payload = args.handler(services, args)
         print(json.dumps(payload, indent=2, default=str))
         return EXIT_OK

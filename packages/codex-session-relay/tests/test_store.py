@@ -280,6 +280,34 @@ class Precedence(unittest.TestCase):
             str(discover_store_for_socket(Path(root), socket)), directory,
         )
 
+    def test_two_stores_claiming_one_socket_do_not_produce_a_third(self):
+        """Adopting neither is not the visible failure it was argued to be.
+
+        The caller lands on the canonical directory, the first write there creates a THIRD
+        empty database, and from that moment the canonical-exists branch wins every later
+        resolution - so both real stores are hidden for good. The selection has to carry the
+        conflict instead, which is what lets the command line refuse.
+        """
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        socket = "/run/contested-selection.sock"
+        both = []
+        for name in ("aaaa333333333333", "bbbb333333333333"):
+            directory = os.path.join(root, name)
+            os.makedirs(directory)
+            Store(Path(directory) / "relay.sqlite3", socket_path=socket).close()
+            both.append(directory)
+
+        chosen = resolve_state_dir(None, socket)
+
+        self.assertEqual(sorted(chosen.ambiguous), sorted(both))
+        self.assertEqual(sorted(chosen.to_record()["ambiguous"]), sorted(both))
+        self.assertNotIn(str(chosen.path), both, "neither is adopted on a guess")
+
+    def test_an_ordinary_selection_carries_no_ambiguity(self):
+        """The field is a conflict report, not a list of neighbours."""
+        self.assertEqual(resolve_state_dir(None, "/run/quiet.sock").ambiguous, ())
+        self.assertEqual(resolve_state_dir(os.path.join(self.tmp, "flag")).ambiguous, ())
+
     def test_a_store_with_no_recorded_socket_is_never_adopted_on_a_guess(self):
         """Provenance or nothing. Adopting an unlabelled store is how the wrong one is served."""
         from codex_session_relay.store import socket_scope, stores_without_provenance

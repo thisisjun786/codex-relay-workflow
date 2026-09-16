@@ -491,3 +491,68 @@ class LazyServices(unittest.TestCase):
         built = Services(argparse.Namespace(state=empty, socket=None))
         built.close()
         self.assertFalse(os.path.exists(empty))
+
+
+class ContestedSocket(CliBase):
+    """Two stores recording one socket must not quietly become three.
+
+    These runs deliberately pass no --state: the whole question is what the environment alone
+    resolves to, and an explicit directory answers it before discovery ever runs.
+    """
+
+    def contested(self, name):
+        """A home holding two stores that both record one socket."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, name)
+        root = os.path.join(home, ".local", "state", "codex-session-relay")
+        socket = os.path.join(self.tmp, f"{name}.sock")
+        for directory in ("aaaa444444444444", "bbbb444444444444"):
+            os.makedirs(os.path.join(root, directory))
+            Store(Path(root) / directory / "relay.sqlite3", socket_path=socket).close()
+        return home, root, socket
+
+    def run_in_home(self, home, *args, expect=0):
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home)
+        for name in ("CODEX_SESSION_RELAY_STATE", "XDG_STATE_HOME"):
+            environment.pop(name, None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", *args],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(
+            completed.returncode, expect,
+            f"exit {completed.returncode}: {completed.stdout}{completed.stderr}",
+        )
+        return json.loads(completed.stdout)
+
+    def test_an_ordinary_command_refuses_rather_than_creating_a_third_store(self):
+        home, root, socket = self.contested("contested-status")
+
+        refused = self.run_in_home(home, "--socket", socket, "status", expect=2)
+
+        self.assertEqual(refused["reason"], "ambiguous_state_directory")
+        self.assertEqual(len(refused["candidates"]), 2)
+        self.assertFalse(
+            os.path.exists(refused["wouldHaveCreated"]),
+            "the refusal must not leave behind the store it refused to choose",
+        )
+        self.assertEqual(sorted(os.listdir(root)), ["aaaa444444444444", "bbbb444444444444"])
+
+    def test_doctor_still_describes_a_contested_socket(self):
+        home, _root, socket = self.contested("contested-doctor")
+
+        report = self.run_in_home(home, "--socket", socket, "doctor")
+
+        self.assertTrue(report["siblingStores"]["ambiguous"])
+        self.assertEqual(len(report["siblingStores"]["claimingThisSocket"]), 2)
+
+    def test_an_explicit_state_directory_resolves_the_contest(self):
+        home, root, socket = self.contested("contested-explicit")
+        chosen = os.path.join(root, "aaaa444444444444")
+
+        answer = self.run_in_home(home, "--state", chosen, "--socket", socket, "status")
+
+        self.assertEqual(answer["deliveries"], [])
