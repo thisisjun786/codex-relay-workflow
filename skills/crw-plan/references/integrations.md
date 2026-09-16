@@ -155,7 +155,8 @@ For an existing issue whose accepted criteria already require installation or
 live verification, preserve those obligations until fulfilled or explicitly
 re-scoped within authorization; a merge alone does not erase them. Operational
 work that is genuinely outside the issue's criteria does not delay its Done.
-Non-PR research, design or verification completes on its agreed observable result.
+Any accepted non-PR work, including research, design, verification or operations,
+completes on its agreed observable result.
 Completion evidence does not supply merge, closure, release or deployment authority.
 
 Read the team's current GitHub status automation when reconciling it with this
