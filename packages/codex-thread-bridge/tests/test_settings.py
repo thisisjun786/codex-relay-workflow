@@ -547,3 +547,22 @@ async def test_a_cancelled_annotation_propagates_instead_of_completing(
         await bridge._annotate_dispatch(receipt, contract)
     # The acceptance stays exactly as _mutate saved it.
     assert bridge.ledger.get("cancel-prep")["status"] == "accepted"
+
+
+@pytest.mark.parametrize("malformed", ["not-a-policy", 42, ["workspaceWrite"], {"no_type": 1}])
+async def test_an_unreadable_sandbox_answer_is_a_refusal_not_a_crash(
+    bridge, fake_server, tmp_path, malformed
+):
+    """A host answer we cannot read is a value we disagree with, not an outcome we do not know.
+
+    Indexing it would raise, and _mutate's generic handler would record outcome_unknown, which
+    tells the caller the message MAY have been delivered when nothing was ever sent.
+    """
+    fake, _ = fake_server
+    fake.override_creation = {"sandbox": malformed}
+    result = await bridge.create_thread("unreadable", str(tmp_path), prompt="hello")
+    assert result["status"] == "failed", "never outcome_unknown"
+    assert result["rpcError"]["code"] == "settings_not_preserved"
+    assert result["settings"]["findings"][0]["field"] == "sandbox"
+    assert result["settings"]["actual"]["sandbox"] == malformed
+    assert fake.count("turn/start") == 0

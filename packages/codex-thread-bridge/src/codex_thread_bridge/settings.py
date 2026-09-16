@@ -310,7 +310,13 @@ class SettingsContract:
             value = response.get(field)
             if value is None:
                 continue
-            seen[field] = normalise_policy(value) if field == "sandbox" else value
+            if field == "sandbox":
+                # Keep the raw value when it cannot be normalised. Storing None instead would
+                # make an unreadable answer look like no answer in the receipt's actual.
+                normalised = normalise_policy(value)
+                seen[field] = value if normalised is None else normalised
+            else:
+                seen[field] = value
         return seen
 
     def findings(self, response):
@@ -362,6 +368,20 @@ class SettingsContract:
             returned = seen[field]
             if field == "sandbox":
                 expected = normalise_policy(expected)
+                if not isinstance(returned, dict) or "type" not in returned:
+                    # The host answered with something that is not a sandbox policy. That is a
+                    # value we disagree with, not a value we could not see, and indexing it here
+                    # would raise: _mutate would then record outcome_unknown, claiming the
+                    # message may have been delivered when nothing was ever sent.
+                    found.append(
+                        {
+                            "code": SETTINGS_NOT_PRESERVED,
+                            "field": field,
+                            "expected": expected,
+                            "returned": returned,
+                        }
+                    )
+                    continue
                 if self.expected_policy is None:
                     # Only a mode was requested, so only the resolved type was asked about.
                     expected = {"type": expected["type"]}
