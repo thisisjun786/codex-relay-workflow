@@ -417,7 +417,8 @@ recovery path. Nothing here authorizes an install, a permission change, or a mid
 ## S19 Each side keeps its own conclusion
 
 Observed: an independent task's own workflow reaches a done state, its pull request is green, and its
-parent has not yet claimed or judged the receipt.
+parent has not yet claimed or judged the receipt. This coordinator has no active parent Loop
+and has verified its event-driven delivery and resume path as in S9.
 
 Clauses: OPS-10.1, OPS-8.1, OPS-6.4.
 
@@ -426,9 +427,9 @@ own work and its goal, and the pull request is evidence about the code. Neither 
 which happens against the registered criteria and belongs to the parent. A report that presents an
 internal done state as verification is claiming something nobody has decided yet.
 
-The parent, having delegated, stays idle and is resumed by a meaningful handoff rather than
-re-entering to ask whether the work is finished. The waiting rule written for a native subagent
-applies inside one turn and does not license that polling.
+This coordinator can stay idle until a meaningful handoff. Active parent Loops instead use the
+compatible waiting mode in OPS-8.1 and S9; a native subagent wait is not a substitute for either
+independent-task path.
 
 Preserved: the separation between a task's own state and the relay's, and the parent's idle time,
 which is the point of delegating in the first place.
