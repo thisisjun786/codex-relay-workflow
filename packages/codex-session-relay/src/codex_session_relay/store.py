@@ -450,6 +450,13 @@ def socket_scope(socket_path) -> str:
     ).hexdigest()[:16]
 
 
+def legacy_socket_scope(socket_path) -> str:
+    """What socket_scope produced before it canonicalised, for finding an existing store."""
+    if not socket_path:
+        return "default"
+    return hashlib.sha256(str(Path(socket_path).expanduser()).encode()).hexdigest()[:16]
+
+
 @dataclass(frozen=True)
 class StateSelection:
     """Which rule chose the state directory, and the exact value that won.
@@ -500,7 +507,22 @@ def resolve_state_dir(explicit=None, socket_path=None) -> StateSelection:
         base, source = Path.home() / ".local" / "state", "home"
         detail = f"default under {Path.home() / '.local' / 'state'}"
     scope = socket_scope(socket_path)
-    return StateSelection((base / "codex-session-relay" / scope).absolute(), source, detail, scope)
+    chosen = (base / "codex-session-relay" / scope).absolute()
+    # An existing store keeps its directory. Canonicalising the socket changed this hash, so
+    # a relative or symlinked socket that had been running would otherwise point at a fresh
+    # empty database while its assignments, generations and pending deliveries sat in the
+    # old one, invisible. The new name is used for anything new; the old one wins only when
+    # it actually holds a store and the new one does not.
+    legacy = legacy_socket_scope(socket_path)
+    if legacy != scope and not chosen.exists():
+        previous = (base / "codex-session-relay" / legacy).absolute()
+        if (previous / "relay.sqlite3").exists():
+            return StateSelection(
+                previous, source,
+                f"{detail}; kept the directory this socket was already using",
+                legacy,
+            )
+    return StateSelection(chosen, source, detail, scope)
 
 
 def state_dir(socket_path: str | None = None) -> Path:

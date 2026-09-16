@@ -162,6 +162,45 @@ class Precedence(unittest.TestCase):
         self.assertEqual(relative["store"]["storeId"], absolute["store"]["storeId"])
         self.assertEqual(relative["store"]["inode"], absolute["store"]["inode"])
 
+    def test_a_store_already_in_use_keeps_its_directory_after_the_hash_changed(self):
+        """Canonicalising the socket moved this hash, which is an upgrade hazard.
+
+        A relative or symlinked socket that had been running would otherwise open a fresh
+        empty database while its assignments, generations and pending deliveries sat in the
+        old directory, invisible.
+        """
+        from codex_session_relay.store import legacy_socket_scope
+
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            relative = os.path.join("run", "app-server.sock")
+            os.makedirs(os.path.join(self.tmp, "run"), exist_ok=True)
+            open(os.path.join(self.tmp, "run", "app-server.sock"), "w").close()
+            legacy = os.path.join(
+                self.home, ".local", "state", "codex-session-relay",
+                legacy_socket_scope(relative),
+            )
+            os.makedirs(legacy)
+            Store(Path(legacy) / "relay.sqlite3").close()
+
+            chosen = resolve_state_dir(None, relative)
+
+            self.assertEqual(str(chosen.path), legacy,
+                             "the store already in use keeps its directory")
+            self.assertIn("already using", chosen.detail)
+        finally:
+            os.chdir(here)
+
+    def test_a_fresh_socket_uses_the_canonical_directory(self):
+        """The fallback is for an existing store only; nothing new lands in the old name."""
+        from codex_session_relay.store import socket_scope
+
+        chosen = resolve_state_dir(None, "/run/brand-new.sock")
+
+        self.assertEqual(chosen.socket_scope, socket_scope("/run/brand-new.sock"))
+        self.assertTrue(str(chosen.path).endswith(socket_scope("/run/brand-new.sock")))
+
     def test_two_spellings_of_one_socket_choose_the_same_default_store(self):
         """The scope registry canonicalises the socket; this hash used to take it verbatim.
 

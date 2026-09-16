@@ -459,6 +459,14 @@ class RelayService:
                 foreign = self._foreign_markers(record)
                 if foreign:
                     return FOREIGN, None, "; ".join(foreign)
+                if record.get("bootId") is None and boot_id() is not None:
+                    # The same rule the live-supervisor path gets. _stop_worker checks only
+                    # start ticks, and a reboot resets those along with the pid space, so an
+                    # unrelated process holding the old worker number would be signalled.
+                    return UNVERIFIABLE, None, (
+                        "no boot id is recorded, so this worker pid cannot be"
+                        " distinguished from one reused after a reboot"
+                    )
             return NONE, None, "no daemon record"
         # Read from the record itself, so they survive the supervisor's death. A foreign
         # installation whose supervisor is gone can still have a live worker recorded, and
@@ -576,13 +584,17 @@ class RelayService:
         # boundary: writing enabled=false and only then discovering the supervisor is not
         # ours refused the stop while still shutting that supervisor down at its next
         # boundary. A refusal that still has an effect is not a refusal.
-        owner, handle, detail = self.ownership()
+        record = self.record()
+        owner, handle, detail = self.ownership(record)
         if handle is not None:
             handle.close()
-        if owner in (FOREIGN, UNVERIFIABLE):
+        # The same cleanup window enable guards: a supervisor clears its pids before it
+        # releases the lock, and ownership answers none once both are absent.
+        markers = self._foreign_markers(record) if record else []
+        if owner in (FOREIGN, UNVERIFIABLE) or (markers and self.lock_is_held()):
             return {"ok": False,
-                    "reason": "not_ours" if owner == FOREIGN else "ownership_unverifiable",
-                    "detail": detail, "intent": self.intent.read(),
+                    "reason": "ownership_unverifiable" if owner == UNVERIFIABLE else "not_ours",
+                    "detail": detail or "; ".join(markers), "intent": self.intent.read(),
                     "stop": {"ok": False, "reason": "refused", "supervisor": "untouched",
                              "worker": "untouched"},
                     "note": "intent is shared with the owner of this state directory and was"
@@ -897,6 +909,11 @@ class RelayService:
         environment["CODEX_SESSION_RELAY_STATE"] = str(self.selection.path)
         if self.launch_id:
             argv += ["--launch-id", self.launch_id]
+        if self.takeover:
+            # The supervisor is the process that CLAIMS the scope, so the flag has to reach
+            # it. Set only on this object, it was dropped at the process boundary and the
+            # takeover silently did nothing.
+            argv.append("--takeover-scope")
         self.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
         with open(self.selection.path / DAEMON_LOG, "a", encoding="utf-8") as log:
             return subprocess.Popen(
@@ -1022,8 +1039,12 @@ class RelayService:
                         ),
                         allow_isolated=allow_isolated,
                     )
-                    self._note(workerPid=child.pid, workerStartTicks=start_ticks(child.pid))
+                    # Marked outstanding BEFORE the bookkeeping that can fail. A _note that
+                    # raises after a successful spawn left a running worker the cleanup then
+                    # treated as never started, clearing the identity a stop needs while the
+                    # worker still holds the inherited locks.
                     outstanding = child
+                    self._note(workerPid=child.pid, workerStartTicks=start_ticks(child.pid))
                     code = child.wait()
                     outstanding = None
                     self._note(workerPid=None, workerStartTicks=None, lastExit=code,

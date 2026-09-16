@@ -940,6 +940,9 @@ def _supervise(services, service, args) -> dict:
     from .service import ServiceRefused
 
     service.launch_id = getattr(args, "launch_id", None)
+    # This process is the one that claims the scope, so the flag has to be honoured here and
+    # not only in the parent that decided to pass it.
+    service.takeover = getattr(args, "takeover_scope", False)
     # The probe that built this service answers from a file that may not exist yet, so on a
     # fresh state directory it reports no store id at all. Opening the store HERE is not the
     # side effect doctor and status refuse: a supervisor is about to use it either way. It
