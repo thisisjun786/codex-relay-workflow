@@ -650,6 +650,16 @@ def cmd_show(services, args) -> dict:
         "acknowledgementVerified": ack["verified"] if ack else None,
         "verdict": json.loads(verdict["record"]) if verdict else None,
     }
+    # The work report, whole. A delivered message may have had to elide part of it, and its
+    # omission notice sends the recipient here, so this is the one place that must always
+    # carry every field the message could have dropped. Imported locally to keep this change
+    # out of the module import block, which a parallel branch is editing.
+    from .report import read as read_work_report, read_all as read_work_reports
+
+    payload["workReport"] = read_work_report(services.store, args.event)
+    # Every submission, because an earlier message may have elided part of its report and
+    # sent its recipient here for the rest.
+    payload["workReportSubmissions"] = read_work_reports(services.store, args.event)
     if delivery is not None and args.message:
         # The bytes each attempt actually froze, with how far they got. A preview is offered
         # only when nothing has been prepared, and it is labelled a preview, because the old

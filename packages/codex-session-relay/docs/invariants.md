@@ -106,6 +106,64 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-68 | A delivery whose generation has moved on cannot be claimed | the claim statement refuses it, so the decision cannot be overtaken between checking and acting | implemented |
 | I-69 | An outstanding send is never rewritten as terminal | suppression annotates it instead, because reconciliation refuses to promote a terminal superseded aggregate and a lost response would become unresolvable | implemented |
 
+## Work reports and the CXC report contract
+
+| # | Invariant | Enforced in | Status |
+|---|---|---|---|
+| I-90 | A CXC report status never chooses a relay outcome; it is checked against the one the receipt asserted | `cxc.check_status`, called from `report.record` | implemented |
+| I-91 | An unrecognised report status is refused by name, with the accepted set and the contract version | `cxc.check_status` | implemented |
+| I-92 | DONE, an open pull request, a review PASS and a green check are never a relay verdict | `cxc.NOT_VERIFICATION`, `cxc.refuse_promotion`; no path writes a verdict outside `ack.record_verdict` | implemented |
+| I-93 | A verdict line is rendered only for a message carrying a review, in the fixed PASS / GO-WITH-FIXES (blockers=N) / FAIL form | `cxc.verdict_line`, `cxc.assert_reviewed` | implemented |
+| I-94 | A report is bound to one event, generation and revision, and cannot answer for a later head | `report.assert_current` | implemented |
+| I-95 | A pull request number is never rendered or compared without its repository | `report.pr_ref`, `report.pr_key` | implemented |
+| I-96 | A report naming a pull request names the head commit it is about | `report.record` | implemented |
+| I-97 | A shortened message names what it dropped and where to read it; a budget too small to hold the required parts refuses | `report._compose` | implemented |
+| I-98 | An event with no work report renders the pre-contract message unchanged | `delivery._render_completion`, `delivery._render_revision` | implemented |
+| I-99 | A wait result never authorises a re-run, and a bare timeout is neither failure nor success | `cxc.classify_wait` | implemented |
+| I-100 | A report reads its relationship, generation, revision and outcome from the stored event; no caller supplies them | `report.record` | implemented |
+| I-101 | A correction names the criteria the recorded verdict names; a review only adds notes and anchors, and anything it raises alone is labelled | `report._finding_lines` | implemented |
+| I-102 | A shape or length that could only fail at render time is refused at record time, because rendering runs inside the delivery claim | `report._check_evidence`, `_check_unresolved`, `_bounded` | implemented |
+| I-103 | A submission already frozen into a delivered attempt cannot be replaced in place; one never sent stays correctable | `report._assert_resubmission` against `attempt_report_submissions` | implemented |
+| I-104 | An omission notice is placed before the final verdict, so an elided correction still ends on its judgment | `report._compose` | implemented |
+| I-105 | A revision request cannot carry a PASS verdict | `report.record` | implemented |
+| I-106 | A report-backed message keeps the receipt manifestRef the pre-contract message carried | `report._manifest_lines` | implemented |
+| I-107 | The command an omission notice names returns the whole report, so every elided field stays recoverable | `cli.cmd_show` | implemented |
+| I-108 | A restore section naming a skill owner nobody has is refused at record time | `report._check_restore` | implemented |
+| I-109 | The frozen-manifest pointer is its own section, so shortening the file listing never drops it | `report._manifest_ref_lines` | implemented |
+| I-110 | Every malformed report shape is a named refusal, never a host exception from the validator itself | `report._check_restore`, `_check_evidence`, `_check_unresolved` | implemented |
+| I-111 | Every report field that lands on a line the composer cannot shorten is length-bounded at record time | `report._bounded`, `_bounded_optional` | implemented |
+| I-112 | A collection field that is not an ordered sequence is refused rather than iterated, so a mapping never becomes a list of its own keys and a string never becomes a list of characters | `report._sequence` | implemented |
+| I-113 | Recording a later submission preserves the earlier one, so a recipient holding an older elided message can still recover what it promised | `report.record` keyed on (event, submission); `report.read_all`; `cli.cmd_show` | implemented |
+| I-114 | Every delivered message states its report submission and survives elision doing so, so the frozen bytes identify which stored submission produced them | `report.render_completion`, `render_revision`; the identity is its own section with a floor covering it | implemented |
+| I-115 | A report with no pull request still renders its base, head and criteria digest rather than dropping them unannounced | `report._commit_lines` | implemented |
+| I-116 | An attempt that is proven never to have sent is not counted as a delivered submission; anything unproven is | `report._may_have_reached` | implemented |
+| I-117 | A manifest reference too long to render is truncated visibly rather than making the event unsendable | `report._manifest_ref_lines` | implemented |
+| I-118 | A submission number is a positive integer or a named refusal, never a coerced one, because it is half the identity and is printed in frozen bytes | `report._submission` | implemented |
+| I-119 | An exit code is an integer or absent, so evidence a reader cannot interpret is refused rather than delivered | `report._exit_code` | implemented |
+| I-120 | An inbox-only attempt counts as having reached the recipient, because its frozen message is the durable inbox item | `report._may_have_reached` | implemented |
+| I-121 | No report value, top-level or nested, may contain a line break, so nothing can splice an extra line into the message protocol | `report._single_line`, applied to fields, evidence, unresolved, findings and restore | implemented |
+| I-125 | A blocker count too large to render is refused, because it lands on a line the message cannot shorten | `cxc.verdict_line` | implemented |
+| I-126 | A required report field must be text, not a value coerced through `str()` into a Python repr | `report._required` | implemented |
+| I-127 | A line break is anything `str.splitlines` treats as one, so a separator other than CR or LF cannot splice a line either | `report._single_line` | implemented |
+| I-128 | A correction renders the unresolved items the report marked open, rather than storing them unseen | `report.render_revision` | implemented |
+| I-129 | A pull request number outside what the store can hold is refused, not left to raise `OverflowError` on insert | `report.record` | implemented |
+| I-130 | A finding disposition is one of the frozen criteria values, checked rather than passed through | `report._disposition` | implemented |
+| I-131 | The verdict parser and the verdict renderer accept the same language, including the blocker ceiling | `cxc.parse_verdict_line` | implemented |
+| I-132 | Every producer-supplied integer is inside what the store can hold, and its refusal never tries to print an unprintable value | `report._submission`, `report.record` | implemented |
+| I-133 | A blank evidence entry is refused, because an empty verification line is not verification | `report._check_evidence` | implemented |
+| I-134 | A finding that exists only to enrich an authoritative one needs no disposition of its own | `report._disposition` | implemented |
+| I-135 | A line value that cannot be encoded as UTF-8 is refused where it is recorded, not where it is measured or sent | `report._single_line` | implemented |
+| I-136 | A correction carries the CXC status and its reason, like a completion does | `report.render_revision` | implemented |
+| I-137 | One criterion carries one finding; a duplicate id is refused rather than silently replacing the first | `report._check_review` | implemented |
+| I-138 | Shortening carries a running byte total rather than recounting, so it stays linear inside the claim transaction | `report._compose` | implemented |
+| I-139 | Fixed protocol prose is never shortened away, because the advertised command returns records and not template text | `report._preserve_lines` | implemented |
+| I-140 | Every producer-supplied text field is required to be text, never coerced through `str()` into a representation of itself | `report._required`, `_text_or_none`, and the evidence, unresolved and finding checks | implemented |
+| I-141 | An exit code is a number a process could have exited with, so it can always be serialised | `report._exit_code` | implemented |
+| I-142 | An unrenderable receipt manifestRef is reported as present rather than blocking the delivery, because the receipt is contract-validated and the recipient is not at fault | `report._manifest_ref_lines` | implemented |
+| I-122 | Pull-request fields are refused when no pull request is named, rather than stored and never rendered | `report.record` | implemented |
+| I-123 | Every restore field is a supported, bounded, single-line string; an unsupported or unrenderable one is refused | `report._check_restore` | implemented |
+| I-124 | A submission must clear both floors, the delivered one and the highest stored one, so no write is accepted that nobody would ever see | `report._assert_resubmission` | implemented |
+
 
 ## Recorded limits, so a row above is not read as more than it is
 
@@ -119,3 +177,5 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | Scheduler fairness is not transport concurrency | the adapter serialises on one worker, so a stalled call still blocks the one behind it; what is guaranteed is that a struggling parent stops being handed the rest of the budget |
 | A live process is not a working one | health is computed from staged age, anchor poll freshness and backlog; liveness is reported separately and never counted |
 | Archive state can be unknown | an inconclusive listing withholds rather than guessing, and a later observation releases it |
+| A head commit is not observable from here | the relay cannot watch a forge, so `assert_current` enforces generation on the delivery path and takes `head_sha` only from a caller that already knows the current head. A push that changes the declared manifest is structurally a new event, because the revision hash and therefore the event id change with it; a push that changes nothing declared is not, and `_check_resubmission` is what stops an old report standing for it silently |
+| `work_reports` ships with its composite key | the schema is applied with `CREATE TABLE IF NOT EXISTS`, which never reshapes an existing table, so a store created from an intermediate revision of this change that used an event-only key cannot hold a second submission. No released version has this table, so there is nothing to migrate; a store built from such a revision is recreated rather than upgraded. The write itself no longer names a conflict target, so it does not depend on which revision created the table |

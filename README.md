@@ -6,7 +6,7 @@ CRW is a community project designed to work with CXC; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
-This is an experimental workflow built from a personal setup. It contains six
+This is an experimental workflow built from a personal setup. It contains seven
 skill instruction sets, a symlink installer, and the two Python packages the
 workflow delegates and reports through. CXC and Paperthin remain separate
 dependencies. Having the package source here does not install or activate a
@@ -17,7 +17,8 @@ compatibility.
 |---|---|
 | [crw-focus](skills/crw-focus/SKILL.md) | Make this task a project's fixed management point and restore its recorded link |
 | [crw-next](skills/crw-next/SKILL.md) | Choose one next action when starting or after finishing work, using readchk and nba |
-| [crw-plan](skills/crw-plan/SKILL.md) | Turn product context into canonical Linear documents, milestones, and issues |
+| [crw-define](skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
+| [crw-plan](skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
 | [crw-run](skills/crw-run/SKILL.md) | Delegate ready work to independent Codex tasks and verify CXC execution and delivery |
 | [crw-check](skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
 | [crw-logic](skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
@@ -133,7 +134,7 @@ belongs to the installation you are retiring, move that link to a backup directo
 outside Codex's scanned skill directories. Preserve foreign files, directories,
 and links for their owner to reconcile. Do not infer ownership from the old name,
 and do not move the linked source directory. Run `--check` again; a clean result
-means all six new links point to this checkout and no known old names remain.
+means all current skill links point to this checkout and no known old names remain.
 
 There are no old-name aliases or duplicate skill instruction folders. Refresh the
 client's skill catalog or start a fresh task, then invoke `$crw-run`, for example.
@@ -179,16 +180,30 @@ The bundled validator has its own dependencies. It checks skill structure, not t
 ```text
 $crw-focus [Linear project] 이 작업을 이 프로젝트의 고정 진행 관리 창구로 지정하고 연결을 기록해줘.
 $crw-next [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
-$crw-plan [Linear project or product repository] 정본 문서와 남은 실행 이슈를 정리해줘.
-$crw-run [Linear project] 준비된 첫 묶음을 기존 담당 하위 Codex 작업에 맡기고, 없으면 새 독립 하위 Codex 작업을 생성해 CXC Loop로 실행·검증해줘.
+$crw-define [idea or initiative] 목표·완료 기준·범위를 정의해 Linear에 반영해줘.
+$crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
+$crw-run [Linear project link]
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
 ```
 
 These are invocation examples, not requests to execute while reading this file.
 
+A submitted `$crw-run <Linear project link>` execution request defaults to
+fixed-parent designation and a CXC Loop over the agreed project scope, including
+child reuse/creation, verification and authorized integration. No expanded prompt
+is needed; [operation selection](skills/crw-run/SKILL.md#determine-the-requested-operation)
+owns the meaning and its narrower-request and host-rule limits.
+The parent actively finds independent ready work and fills available capacity
+without waiting for an entire batch; shared-target merges remain serial.
+The project Loop gives the parent its own coordination goal;
+each child keeps its issue goal. Before dispatch, choose a compatible observation
+and delivery mode under [parent continuation](skills/crw-run/SKILL.md#keep-a-project-run-moving).
+Explicit first-batch-only requests still stop at that batch's delivery boundary.
+
 `crw-run` keeps implementation in the responsible independent child task for
-one issue, an existing worktree, or a PR repair. The coordinator selects scope,
+one issue, including that issue’s worktree and PR repairs. Each parent orchestrates
+one project and each child one issue. The coordinator selects scope,
 reviews results, checks CI, and performs authorized integration. Internal
 subagents assist within those tasks and do not replace the independent child.
 
@@ -211,18 +226,32 @@ settings, including successor batches and resumes after compaction.
 
 If the conversation and prior authorization genuinely contain no creation intent
 for this scope, prepare the packet and ask only for the missing request when a
-new task is needed and the host requires it. Skill selection, unsubmitted UI text,
-quoted examples, and permission for an unrelated task do not supply that intent.
-A default prompt expressing creation/reuse intent counts when actually submitted.
+new task is needed and the host requires it. Automatic skill selection, unsubmitted
+UI text, quoted examples, and permission for an unrelated task do not supply that
+intent. The submitted project-run shorthand above does express that intent.
 Host restrictions and explicit current-task, read-only, or no-create limits still
 apply. See [Independent implementation tasks](skills/crw-run/SKILL.md#independent-implementation-tasks).
 
 `crw-focus` records the project and current task IDs in a linked Linear
 document, sets the task title and sidebar pin when supported, and restores that
-context for later requests. Management titles use `Initiative name - Project summary`.
+context for later requests. Management titles use a concise project summary;
+the binding uses the stable project ID regardless of names or initiative membership.
 It routes each request to its existing operation
 owner. Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
+
+`crw-define` explores intent and defines the initiative’s goal, finish condition
+and scope. `crw-plan` then decomposes the agreed goal into projects, useful
+milestones, and executable issues in one operation. A request for both chains
+them; definition-only stops before project and issue creation. It reuses existing
+items, creates missing ones within that request, and keeps narrow updates scoped.
+Consultation and draft-only planning do not write to Linear.
+Each implementation issue maps to one PR; work requiring several PRs is split
+into dependent issues. Non-PR research or design keeps a verified result instead.
+Initiatives represent goals; product family is a project label, while an issue's
+repository label identifies its actual edit target. Project names need no product prefix,
+and views remain the user's choice. See the shared
+[Linear operating model](skills/crw-plan/references/integrations.md#linear-operating-model).
 
 `crw-next` distinguishes choosing a first step from choosing what follows a
 delivery. It uses `readchk` to resolve ambiguous intent and `nba` to pick one

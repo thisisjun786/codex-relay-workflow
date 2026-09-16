@@ -38,6 +38,14 @@ State a suspected contradiction as: **given these conditions, rule A requires X,
 
 Use [Counterexample patterns](references/counterexamples.md) when selecting a numerical, state-transition, evaluation, or cross-document probe. Apply only patterns justified by the actual contract.
 
+When auditing status or delivery invariants, use
+[Implementation Done](../crw-plan/references/integrations.md#implementation-done):
+one current delivery PR and actual intended-target merge for new implementation,
+reconciled combined PR coverage for legacy multi-PR scope, and verified result for
+non-PR work. Existing accepted operational criteria remain binding. Test a reference or partial merge against a complete
+delivery; treat automated Done without matching evidence as a claim to investigate,
+not authority to rewrite status or criteria.
+
 ## Try to disprove the suspicion
 
 Find the smallest case that distinguishes a violation from a valid exception. Inspect or run it in the authorized environment and record input, expected relation, actual result, and source/artifact. A static code proof may establish a violation but must not be reported as live execution. Keep diagnostic writes in a task-owned temporary location when permitted.

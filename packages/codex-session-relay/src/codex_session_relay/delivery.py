@@ -29,6 +29,7 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
+from .report import read as read_work_report, render_completion, render_revision
 
 COMPLETION = "completion_event"
 REVISION = "revision_request"
@@ -179,7 +180,7 @@ class DeliveryService:
         with self.store.transaction() as db:
             db.execute("DELETE FROM delivery_intent WHERE event_id = ?", (event_id,))
 
-    def _render_for(self, row, record, request) -> str:
+    def _render_for(self, row, record, request, report=None) -> str:
         """Deterministic, directional, and carrying no turn id belonging to the recipient.
 
         The two directions are answered differently and must therefore be INSTRUCTED
@@ -195,10 +196,13 @@ class DeliveryService:
 
         Pure by construction: every input is passed in, so this cannot read a counter that has
         moved since the attempt it is rendering for.
+
+        The work report is passed in for the same reason. Whoever owns the transaction reads
+        it once and hands it over, so this stays a function of its arguments.
         """
         if row["kind"] == REVISION:
-            return self._render_revision(row, record, request)
-        return self._render_completion(row, record, request)
+            return self._render_revision(row, record, request, report)
+        return self._render_completion(row, record, request, report)
 
     def preview_message(self, event_id: str) -> str:
         """What the NEXT attempt would say. Never evidence of what any attempt DID say.
@@ -211,13 +215,18 @@ class DeliveryService:
         row = self.get(event_id)
         record = self.intake.get(event_id) or {}
         request = derive_request_id(event_id, row["attempt_count"] + 1)
-        return self._render_for(row, record, request)
+        return self._render_for(row, record, request, read_work_report(self.store, event_id))
 
     def render_message(self, event_id: str) -> str:
         """Kept as the preview alias so no caller can mean 'what was sent' by accident."""
         return self.preview_message(event_id)
 
-    def _render_completion(self, row, record, request) -> str:
+    def _render_completion(self, row, record, request, report=None) -> str:
+        # A report centred on a pull request needs a pull request. An event recorded before
+        # this contract has none, so it renders what it has always rendered rather than being
+        # dressed in a shape its own data cannot fill.
+        if report is not None:
+            return render_completion(row, record, request, report)
         lines = [
             "[codex-session-relay] verification request",
             f"requestId: {request}",
@@ -266,7 +275,9 @@ class DeliveryService:
         ]
         return NEWLINE.join(lines)
 
-    def _render_revision(self, row, record, request) -> str:
+    def _render_revision(self, row, record, request, report=None) -> str:
+        if report is not None:
+            return render_revision(row, record, request, report)
         lines = [
             "[codex-session-relay] revision request",
             f"requestId: {request}",
@@ -438,7 +449,10 @@ class DeliveryService:
                     f"request id {request_id!r} already belongs to event {clash['event_id']!r}",
                 )
             record = self.intake.get(event_id) or {}
-            message = self._render_for(row, record, request_id)
+            report = read_work_report(self.store, event_id)
+            message = self._render_for(
+                row, record, request_id, report
+            )
             db.execute(
                 "INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state,"
                 " state, sent_at, observed_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -452,6 +466,15 @@ class DeliveryService:
                 " message, rendered_at) VALUES (?,?,?,?,?,?)",
                 (request_id, event_id, attempt_no, row["kind"], message, self.clock.iso()),
             )
+            if report is not None:
+                # Which submission these bytes came from. The message says so for its reader;
+                # this is the same fact in a form the relay can compare against, so a
+                # submission that has never been frozen stays correctable in place.
+                db.execute(
+                    "INSERT OR REPLACE INTO attempt_report_submissions (request_id,"
+                    " event_id, submission_no, frozen_at) VALUES (?,?,?,?)",
+                    (request_id, event_id, report["submissionNo"], self.clock.iso()),
+                )
             # Capacity is reserved in the SAME transaction as the claim. Counting after the
             # send let two interleaved callers both pass a cap of one.
             self._count_send(db, recipient, now)

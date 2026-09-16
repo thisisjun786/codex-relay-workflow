@@ -108,7 +108,11 @@ the two task ids. A displayed key like `JUN-00` is unique inside one workspace a
 so one store serving two workspaces would conflate them and refuse the second legitimate child.
 Pass an identifier that is stable and unique across every workspace the store serves, and record
 the workspace or project it belongs to in `--scope-ref`, which the relationship keeps and reports.
-Use that same string everywhere afterwards, including in the packet the child is given: a lookup
+For a standalone issue, the scope reference names its workspace and stable issue/document
+URL instead of a project. Project membership is absent, not fabricated; the real coordinator
+and child IDs and both allowed recipients remain required. `--scope-ref` is descriptive
+context, not a checked Linear project binding.
+Use that same issue string everywhere afterwards, including in the packet the child is given: a lookup
 by a different spelling of the same issue finds nothing, and a child that follows it reports a
 perfectly good completion as UNEMITTED.
 
@@ -157,6 +161,11 @@ against no criteria. `criteria-show --relationship <rel>` returns the set and it
     codex-session-relay --state "$RELAY_STATE" emit --relationship <rel> --generation <n> \
       --outcome ready_for_review --turn-thread <own task id> --turn-id <own turn> \
       --artifact /abs/path [--supersedes-revision <hash>]
+
+For non-PR work, `--artifact` is still required. Freeze the result and verification
+evidence under an authorized artifact root, including any source and delivered
+document identities. A linked document alone has no manifest and cannot produce
+a `ready_for_review` receipt. Keep the snapshot private when its source is private.
 
 Without `--socket` the receipt is STAGED: recorded and visible, deliverable only once an
 independent observation sees that turn end normally. Staged is real progress; it is not delivery

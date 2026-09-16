@@ -1,6 +1,6 @@
 interface:
   display_name: "CRW Plan"
-  short_description: "제품 현황을 Linear 문서·프로젝트·실행 이슈로 정리"
-  default_prompt: "$crw-plan 이 제품의 코드와 기존 기획, Linear 현황을 대조해서 문서 정본과 남은 마일스톤·PR 단위 이슈를 정리해줘."
+  short_description: "정의된 목표를 프로젝트와 PR 단위 이슈로 한 번에 구체화"
+  default_prompt: "$crw-plan 정의된 목표와 코드·기존 기획·Linear 현황을 대조해서 프로젝트, 필요한 마일스톤, 이슈와 의존성까지 한 번에 계획하고 Linear에 작성·반영해줘. 기존 항목을 재사용하고 구현 이슈 하나를 PR 하나에 맞춰 나눠줘."
 policy:
   allow_implicit_invocation: true

@@ -8,7 +8,7 @@ one of them.
 
 ## S1 New installation on a host that has nothing
 
-Observed: no relay console script, no MCP registration, no state directory, and the six skills not
+Observed: no relay console script, no MCP registration, no state directory, and the seven current skills (including `crw-define`) not
 yet linked.
 
 Clauses: OPS-2.3 for the skill links, OPS-1.1 and OPS-1.3 for the combination, OPS-2.4 for the
@@ -185,24 +185,37 @@ Preserved: the shared service and store, the other parent's in-flight assignment
 parents' separate authorized settings. The one thing that must never happen here is one parent's
 completion silently ending another parent's work.
 
-## S9 The parent delegates and goes idle
+## S9 The parent selects a verified waiting mode
 
-Observed: a parent has dispatched an independent implementation task and has nothing left to do
-until that task delivers. Later the delivery arrives while the parent is mid-turn, and a second
-assignment's parent has meanwhile been paused by the user.
+Observed: a coordinator without an active parent Loop has dispatched an independent task.
+Its registered assignment, running delivery service and parent-resume path are verified.
+Later the delivery arrives while the parent is mid-turn, and a second assignment's parent
+has meanwhile been paused by the user. Separately, an active project Loop has a running child
+using recorded non-relay dispatch, and its first bounded transport wait times out. Another
+issue is already relay-registered to an active parent on a relay that defers busy recipients.
 
 Clauses: OPS-8.1, OPS-8.2, OPS-8.3, OPS-8.4.
 
-Action: the parent finishes its response and returns to idle rather than polling. When the child's
+Action: the event-driven coordinator finishes its response and returns to idle. When the child's
 turn ends normally, a host-capable observer promotes its staged receipt to a delivery and the
 service delivers it to that assignment's registered parent, which is what wakes the parent. If the
 parent is mid-turn the delivery waits and is retried rather than interrupting it. The paused
 parent's delivery also waits, and nothing resumes that task automatically, because resuming work a
 user deliberately stopped is the one thing a retry cannot undo.
 
-A native subagent is not this case and is not described as if it were: it completes inside its
-parent's own turn and needs no delivery at all. Where a host offers no automatic wake, the fallback
-is bounded observation with the transport's own wait, and a timeout leaves the work running.
+A native subagent completes inside its parent's own turn and is not this independent-task case.
+The active project Loop keeps its own goal and lifecycle and continues bounded transport waits
+using actual child identifiers. The timeout does not finish the project or justify a resend.
+After verifying and integrating the child's delivery, it dispatches the next ready issue within
+the agreed scope. A blocked issue holds its dependents, not independent ready work. Without a
+usable observation path it records the blocker and resume step instead of promising automatic
+progress. A service installation or staged receipt alone does not qualify for idle handoff.
+
+The already registered issue has a delivery-mode blocker: reading its child's result does not
+deliver or acknowledge its pending event. Preserve its relationship, owner and artifact, record
+the required supported handoff for recovery, and do not bypass its relay verdict or keep waiting
+as if time alone could resolve it. For new unassigned issues, inspect ownership before choosing
+non-relay dispatch so they never acquire that incompatible registration.
 
 Preserved: the user's decision to pause, the running child when a wait times out, and the honest
 distinction between a staged receipt and a delivered one. Any claim about how many parents and
@@ -404,7 +417,8 @@ recovery path. Nothing here authorizes an install, a permission change, or a mid
 ## S19 Each side keeps its own conclusion
 
 Observed: an independent task's own workflow reaches a done state, its pull request is green, and its
-parent has not yet claimed or judged the receipt.
+parent has not yet claimed or judged the receipt. This coordinator has no active parent Loop
+and has verified its event-driven delivery and resume path as in S9.
 
 Clauses: OPS-10.1, OPS-8.1, OPS-6.4.
 
@@ -413,9 +427,9 @@ own work and its goal, and the pull request is evidence about the code. Neither 
 which happens against the registered criteria and belongs to the parent. A report that presents an
 internal done state as verification is claiming something nobody has decided yet.
 
-The parent, having delegated, stays idle and is resumed by a meaningful handoff rather than
-re-entering to ask whether the work is finished. The waiting rule written for a native subagent
-applies inside one turn and does not license that polling.
+This coordinator can stay idle until a meaningful handoff. Active parent Loops instead use the
+compatible waiting mode in OPS-8.1 and S9; a native subagent wait is not a substitute for either
+independent-task path.
 
 Preserved: the separation between a task's own state and the relay's, and the parent's idle time,
 which is the point of delegating in the first place.
