@@ -417,3 +417,67 @@ async def test_a_failing_annotation_cannot_downgrade_an_accepted_turn(
     assert second["status"] == "accepted" and second["turnId"]
     assert "settingsAfterDispatch" not in second
     assert bridge.ledger.get("annot-fail")["status"] == "accepted"
+
+
+# ------------------------------------------------------ findings from the PR review
+
+
+async def test_a_misspelled_setting_key_is_refused_not_discarded(bridge, fake_server, tmp_path):
+    """A discarded key looks exactly like a setting that was never requested.
+
+    The MCP schema admits any object, so `reasoningEffort` instead of `reasoning_effort` would
+    otherwise request nothing: the resume carries no effort, nothing is compared, and the message
+    goes out under a "not_requested" receipt while the caller believes the setting was enforced.
+    """
+    fake, _ = fake_server
+    created = await bridge.create_thread("c", str(tmp_path), sandbox="workspace-write")
+    before = fake.count("turn/start")
+    with pytest.raises(ValueError, match="unknown keys"):
+        await bridge.send_message_to_thread(
+            "typo", created["threadId"], "hello", expected_settings={"reasoningEffort": "xhigh"}
+        )
+    assert fake.count("turn/start") == before, "nothing may be dispatched"
+    with pytest.raises(ValueError, match="unknown keys"):
+        await bridge.send_message_to_thread(
+            "typo2",
+            created["threadId"],
+            "hello",
+            expected_settings={"model": "anthropic/claude-opus-5", "sandboxPolicy": {}},
+        )
+
+
+async def test_a_replay_answers_from_the_ledger_without_touching_the_host(
+    bridge, fake_server, tmp_path
+):
+    """A retained receipt is the ledger's answer, and reading the host again would spoil it.
+
+    It would make a replay wait on a server that may be offline, observe state from long after
+    the dispatch, and overwrite the original annotation with that later observation.
+    """
+    fake, _ = fake_server
+    first = await bridge.create_thread(
+        "replayed", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
+    )
+    assert first["settingsAfterDispatch"]["concurrentChange"] is False
+    calls_before = len(fake.calls)
+
+    again = await bridge.create_thread(
+        "replayed", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
+    )
+    assert again["replayed"]
+    assert len(fake.calls) == calls_before, "a replay must issue no host call at all"
+    assert again["settingsAfterDispatch"] == first["settingsAfterDispatch"]
+
+
+async def test_a_replay_is_answered_even_when_the_host_has_gone_away(bridge, fake_server, tmp_path):
+    """Offline recovery is the case the ledger exists for; it must not wait on a read."""
+    fake, _ = fake_server
+    first = await bridge.create_thread(
+        "offline", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
+    )
+    fake.reject["thread/read"] = {"code": -32000, "message": "server is gone"}
+    again = await bridge.create_thread(
+        "offline", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
+    )
+    assert again["replayed"] and again["turnId"] == first["turnId"]
+    assert again["settingsAfterDispatch"] == first["settingsAfterDispatch"]

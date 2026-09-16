@@ -148,7 +148,9 @@ def make_server(bridge: Bridge):
         Supply expected_settings — any of cwd, sandbox, expected_sandbox_policy, model,
         reasoning_effort, runtime_workspace_roots — and the resume carries them and is read as an
         observation: this host reports a thread's real state rather than adopting an override, so
-        a match confirms the thread is already in the requested state. Any difference, or a
+        a match confirms the thread is already in the requested state. An unrecognised key is
+        rejected rather than ignored, because a discarded key is indistinguishable from a setting
+        that was never requested. Any difference, or a
         setting the host does not report, withholds the message and names its own cause. The turn
         is then started with no overrides, because turn/start reports only the turn and a binding
         it cannot read back would be unverifiable. "settings" describes the resume observation,

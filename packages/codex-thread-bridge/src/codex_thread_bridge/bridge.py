@@ -23,6 +23,19 @@ def absolute_directory(cwd: str):
 
 DISPLAY_FIELDS = frozenset({"text", "preview", "summary", "objective", "aggregatedOutput"})
 
+# The only keys send_message_to_thread's expected_settings accepts. Anything else is a caller
+# mistake and is refused, because a discarded key looks identical to a setting never requested.
+EXPECTED_SETTINGS_KEYS = frozenset(
+    {
+        "cwd",
+        "sandbox",
+        "expected_sandbox_policy",
+        "model",
+        "reasoning_effort",
+        "runtime_workspace_roots",
+    }
+)
+
 
 def validate_sandbox_policy(policy: dict):
     fields = {
@@ -77,6 +90,12 @@ class Bridge:
         dispatches again. Here a failure, timeout, disconnect, malformed body or cancellation
         simply leaves the accepted receipt and its turnId exactly as they are.
         """
+        if receipt.get("replayed"):
+            # A retained receipt is answered from the ledger and nothing else. Reading the host
+            # again would break that contract three ways: it makes a replay wait on a server that
+            # may be offline, it re-observes state from long after the dispatch, and it would
+            # overwrite the original annotation with that later observation.
+            return receipt
         if receipt.get("status") != "accepted" or not receipt.get("turnId") or not contract:
             return receipt
         try:
@@ -462,6 +481,18 @@ class Bridge:
         if expected_settings is not None and not isinstance(expected_settings, dict):
             raise ValueError("expected_settings must be an object")
         supplied = dict(expected_settings or {})
+        # An unrecognised key is refused, never ignored. The MCP schema admits any object, so a
+        # caller who writes reasoningEffort instead of reasoning_effort would otherwise request
+        # nothing at all: the resume would carry no effort, nothing would be compared, and the
+        # message would go out under a "not_requested" receipt while the caller believed the
+        # setting had been enforced. A silently discarded key is the exact failure this contract
+        # exists to prevent.
+        unknown = sorted(set(supplied) - EXPECTED_SETTINGS_KEYS)
+        if unknown:
+            raise ValueError(
+                f"expected_settings has unknown keys {unknown}; supported keys are "
+                f"{sorted(EXPECTED_SETTINGS_KEYS)}"
+            )
         if supplied.get("expected_sandbox_policy") is not None:
             validate_sandbox_policy(supplied["expected_sandbox_policy"])
         contract = SettingsContract(

@@ -121,6 +121,16 @@ fields were `verified`, and a `verification` state. Anything omitted is absent
 from `requested`: it is reported but never claimed about, so silence is never
 proof of preservation.
 
+For the same reason `send_message_to_thread` rejects an unrecognised
+`expected_settings` key instead of ignoring it. Writing `reasoningEffort` where
+`reasoning_effort` was meant would otherwise request nothing at all, and the
+message would go out under a `not_requested` receipt while the caller believed
+the setting had been enforced.
+
+Replaying a `request_id` returns its retained receipt from the ledger and makes
+no host call, so recovery works against a server that is offline and a stored
+observation is never overwritten by a later one.
+
 Four outcomes are kept apart, because each needs a different response:
 
 - `setting_untransmittable` — this protocol cannot carry the request, so it is
