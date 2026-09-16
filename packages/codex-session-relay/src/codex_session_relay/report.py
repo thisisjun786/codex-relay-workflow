@@ -718,16 +718,25 @@ def _check_unresolved(entries):
     checked = []
     for item in _sequence(entries, "unresolved"):
         if isinstance(item, str):
-            checked.append(_single_line(item, "an unresolved entry"))
+            checked.append(
+                _single_line(_required(item, "an unresolved entry"), "an unresolved entry")
+            )
             continue
-        if not isinstance(item, dict) or not str(item.get("id") or "").strip():
+        if (not isinstance(item, dict) or not isinstance(item.get("id"), str)
+                or not item["id"].strip()):
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 f"each unresolved entry is a string or an object naming its id, not {item!r}",
             )
+        note = item.get("note")
+        if note is not None and not isinstance(note, str):
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"an unresolved note is a line of text, not {type(note).__name__}",
+            )
         checked.append({
-            "id": _single_line(str(item["id"]).strip(), "an unresolved id"),
-            "note": _single_line(str(item.get("note") or "").strip(), "an unresolved note"),
+            "id": _single_line(item["id"].strip(), "an unresolved id"),
+            "note": _single_line((note or "").strip(), "an unresolved note"),
         })
     return checked
 
@@ -815,9 +824,24 @@ def _compose(sections, event_id, *, budget) -> str:
             body += blocks[tail]
         return NEWLINE.join(body)
 
+    def over_budget():
+        """Byte length counted, not rebuilt.
+
+        Shortening pops one line at a time, and re-joining and re-encoding every remaining
+        line on each pass made that quadratic in the length of the list being shortened.
+        The joined size is the sum of the encoded lines plus one separator between each
+        pair, so it can be counted directly.
+        """
+        count = sum(len(block) for block in blocks)
+        total = sum(_size(line) for block in blocks for line in block)
+        if removed:
+            count += 2
+            total += _size(_omission_line(removed, event_id))
+        return total + max(count - 1, 0) > budget
+
     order = sorted(range(len(sections)), key=lambda i: -sections[i].rank)
     for index in order:
-        if _size(rendered()) <= budget:
+        if not over_budget():
             break
         section = sections[index]
         if section.essential or not blocks[index]:
@@ -833,7 +857,7 @@ def _compose(sections, event_id, *, budget) -> str:
         # appended to it. Popping a line and then appending a marker leaves the block the
         # same length, which is a loop that never ends.
         kept = list(section.lines)
-        while _size(rendered()) > budget and len(kept) > section.keep:
+        while over_budget() and len(kept) > section.keep:
             kept.pop()
             dropped = len(section.lines) - len(kept)
             blocks[index] = kept + [f"  ... {dropped} more, see the full record"]

@@ -663,6 +663,22 @@ class Identity(DeliveryTestCase):
                     self.store, self.clock, event_id=event_id, **a_report(evidence=[bad])
                 ),
             )
+        # The unresolved path had the same two holes: a blank entry, and a mapping coerced
+        # through str() into a Python repr.
+        for bad in ([""], ["   "], [{"id": {"criterion": "c-1"}}],
+                    [{"id": "c-1", "note": ["a", "b"]}]):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id, **a_report(unresolved=bad)
+                ),
+            )
+        # A non-string evidence check name too.
+        self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(evidence=[{"check": {"cmd": "pytest"}}])),
+        )
 
     def test_an_enrichment_finding_needs_no_disposition_of_its_own(self):
         _relationship, event_id = self.queued_event()
