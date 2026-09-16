@@ -620,6 +620,12 @@ class RelayService:
 
         Opened with 'a+' so the probe is atomic even on a state directory that has never run
         a daemon: a supervisor starting there has to create and lock this same file.
+
+        Only CONTENTION yields None. Mapping every OSError to "someone holds it" made an
+        unreadable directory or an exhausted descriptor table indistinguishable from a running
+        supervisor, and callers act on that answer - stop reports a replacement, disable
+        refuses an owner. An operational failure is not a statement about who owns this
+        directory, so it is raised and reported as itself.
         """
         path = self.selection.path / DAEMON_LOCK
         handle = None
@@ -627,10 +633,12 @@ class RelayService:
             self.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
             handle = open(path, "a+")
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        except OSError as error:
             if handle is not None:
                 handle.close()
             handle = None
+            if error.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
         try:
             yield handle
         finally:
@@ -902,25 +910,33 @@ class RelayService:
             # write would erase the identity of a launch that is running, leaving every later
             # status and stop with no handle on it. Holding the lock means no replacement can
             # start while we finalise; failing to take it means one already did.
+            # One rule: this record is written only while we HOLD the lock. Three narrower
+            # versions of this guard each left a window - a replacement that had published, one
+            # that had not, an absent record - because each asked what the world looked like at
+            # a moment rather than excluding change for the duration. Holding the lock is the
+            # only thing that actually excludes a replacement, so that is the condition.
             with self.daemon_lock_if_free() as held:
-                latest = self.record()
-                replaced = (
-                    latest is not None
-                    and self._launch_identity(latest) != self._launch_identity(record)
-                )
-                if held is None and supervisor_done and worker_done:
-                    # Both of the processes this record named are confirmed gone, so whatever
-                    # holds the lock now is not one of them. A replacement usually has not
-                    # published yet, which means latest is still the OLD record and the
-                    # identity comparison cannot see it - so the failed acquisition is itself
-                    # the evidence, and it is the only evidence available in that window.
-                    replaced = True
-                if replaced:
+                if held is None:
+                    if supervisor_done and worker_done:
+                        # Both processes this stop acted on are confirmed gone, so whatever
+                        # holds the lock is neither of them.
+                        return {"ok": False, "reason": "replaced_by_new_launch",
+                                "detail": "the daemon lock was taken during this stop; that"
+                                          " launch was left untouched and is still running",
+                                "supervisor": outcome, "worker": worker}
+                    # Otherwise the worker we could not confirm is the likeliest holder,
+                    # through the descriptor it inherited. Nothing is written, and nothing
+                    # needs to be: the record still names the processes a later stop must
+                    # reach, which is exactly what this write would have preserved.
+                elif (latest := self.record()) is not None and (
+                    self._launch_identity(latest) != self._launch_identity(record)
+                ):
                     return {"ok": False, "reason": "replaced_by_new_launch",
                             "detail": "a new launch published its record during this stop; it"
                                       " was left untouched and is still running",
                             "supervisor": outcome, "worker": worker}
-                self.write_record(cleared)
+                else:
+                    self.write_record(cleared)
         if owner == NONE and worker == "gone":
             return {"ok": False, "reason": "not_running", "detail": detail,
                     "supervisor": "gone", "worker": "gone"}

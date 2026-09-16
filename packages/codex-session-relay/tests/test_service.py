@@ -5,6 +5,7 @@ flock; only a second process trying to start proves that the first one is actual
 """
 
 import contextlib
+import errno
 import json
 import os
 import shutil
@@ -696,6 +697,57 @@ class Ownership(ServiceTestCase):
         child.wait(timeout=10)
         self.assertFalse(stopped["ok"], stopped)
         self.assertEqual(stopped["reason"], "replaced_by_new_launch")
+
+    def test_stop_writes_nothing_when_it_cannot_hold_the_lock(self):
+        """One rule, because three narrower ones each left a window.
+
+        A replacement that has published, one that has not, and an absent record are all the
+        same situation: this process does not hold the state directory, so it does not get to
+        write the record. Holding the lock is the only thing that excludes a replacement for
+        the duration of the write rather than at one instant.
+        """
+        service = self.service("m")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+        before = service.record()
+
+        @contextlib.contextmanager
+        def never_free():
+            yield None
+
+        writes = []
+        original_write = service.write_record
+        service.daemon_lock_if_free = never_free
+        service.write_record = lambda payload: (writes.append(payload),
+                                                original_write(payload))[1]
+        try:
+            stopped = service.stop(actor="owner")
+        finally:
+            service.write_record = original_write
+
+        child.wait(timeout=10)
+        self.assertFalse(stopped["ok"], stopped)
+        self.assertEqual(stopped["reason"], "replaced_by_new_launch")
+        self.assertEqual(writes, [], "a stop that holds nothing wrote the shared record")
+        self.assertEqual(service.record()["launchId"], before["launchId"])
+
+    def test_a_lock_that_fails_operationally_is_not_reported_as_a_replacement(self):
+        """flock reports contention with EACCES or EAGAIN. Every other OSError is an
+        operational failure - an unreadable directory, no descriptors left - and mapping it
+        to "someone holds it" made stop announce a replacement that does not exist, which a
+        restart then refuses to work around."""
+        service = self.service("n")
+        service.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        def refuse_to_open(*_args, **_kwargs):
+            raise OSError(errno.EMFILE, "too many open files")
+
+        with mock.patch("builtins.open", side_effect=refuse_to_open):
+            with self.assertRaises(OSError) as caught:
+                with service.daemon_lock_if_free():
+                    pass
+
+        self.assertEqual(caught.exception.errno, errno.EMFILE)
 
     def test_disable_refuses_a_lock_holder_nothing_here_can_identify(self):
         """A supervisor that has taken the lock and not yet published its record.
