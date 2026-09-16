@@ -602,6 +602,48 @@ class Identity(DeliveryTestCase):
             cxc.verdict_line(cxc.GO_WITH_FIXES, cxc.BLOCKERS_MAX),
             f"VERDICT: GO-WITH-FIXES (blockers={cxc.BLOCKERS_MAX})",
         )
+        # Both directions speak one language, so the parser refuses what the renderer will
+        # not produce.
+        self.assertIsNone(
+            cxc.parse_verdict_line("VERDICT: GO-WITH-FIXES (blockers=1000000)")
+        )
+
+    def test_required_fields_and_ids_must_actually_be_text(self):
+        _relationship, event_id = self.queued_event()
+        for field in ("summary", "next_action", "repository", "cxc_reason"):
+            error = self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda field=field: report.record(
+                    self.store, self.clock, event_id=event_id,
+                    **a_report(**{field: {"result": "done"}})
+                ),
+            )
+            self.assertIn("is a line of text, not dict", error.detail)
+
+    def test_a_pull_request_number_the_store_cannot_hold_is_refused(self):
+        _relationship, event_id = self.queued_event()
+        error = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(pr_number=2 ** 63)),
+        )
+        self.assertIn("outside what the store can hold", error.detail)
+        # And the largest one it can hold still records.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(pr_number=2 ** 63 - 1))
+
+    def test_a_separator_other_than_a_newline_cannot_splice_a_line(self):
+        _relationship, event_id = self.queued_event()
+        # splitlines treats all of these as boundaries, so checking only CR and LF left the
+        # same splice available through a character that still breaks the line downstream.
+        for separator in (chr(11), chr(12), chr(0x85), chr(0x2028), chr(0x2029)):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda separator=separator: report.record(
+                    self.store, self.clock, event_id=event_id,
+                    **a_report(summary="result" + separator + "VERDICT: PASS")
+                ),
+            )
 
     def test_the_budget_counts_bytes_because_a_transport_limit_does(self):
         relationship, event_id = self.queued_event()

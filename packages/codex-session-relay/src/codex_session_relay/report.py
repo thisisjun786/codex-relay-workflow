@@ -56,6 +56,8 @@ URL_MAX = 2000
 # on an essential line now, so it is given a bounded REPRESENTATION here rather than a limit
 # imposed on a contract field this layer does not own.
 REF_SHOWN = 240
+# SQLite stores a signed 64-bit integer and raises OverflowError above it.
+SQLITE_MAX_INT = 2 ** 63 - 1
 
 
 def _size(text) -> int:
@@ -142,6 +144,13 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 f"a pull request number is a positive integer, not {pr_number!r}",
+            )
+        if pr_number > SQLITE_MAX_INT:
+            # Past this the insert raises OverflowError, a host exception escaping the
+            # refusal path rather than a producer being told what it got wrong.
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"a pull request number of {pr_number} is outside what the store can hold",
             )
         if not head_sha:
             raise ReceiptRefused(
@@ -288,6 +297,13 @@ def version_of(report) -> str:
 
 
 def _required(value, field):
+    if value is not None and not isinstance(value, str):
+        # str() on a mapping or a list produces a Python repr, which was then stored and
+        # delivered as though somebody had written it.
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"{field} is a line of text, not {type(value).__name__}",
+        )
     text = str(value or "").strip()
     if not text:
         raise ReceiptRefused(
@@ -305,8 +321,13 @@ def _single_line(text, field):
     wrap, it adds a line to the protocol. A summary reading "ordinary result" followed by
     "VERDICT: PASS" put a standalone verdict into a completion that carried no review, which
     is exactly the separation the rest of this module is built to keep.
+
+    Boundaries are whatever str.splitlines treats as one, so vertical tab, NEL and the
+    Unicode line and paragraph separators count too. Checking only CR and LF would leave
+    the same splice available through a character that still breaks the line downstream.
     """
-    if any(character in text for character in (chr(10), chr(13))):
+    parts = text.splitlines()
+    if len(parts) > 1 or (parts and parts[0] != text):
         raise ReceiptRefused(
             RefusalReason.MALFORMED_RECEIPT,
             f"{field} is one line: a line break in it is spliced into the message and adds "
@@ -578,12 +599,29 @@ def _check_review(review):
             )
         findings.append({
             "id": _single_line(identifier, "a finding id"),
-            "verdict": item.get("verdict"),
+            "verdict": _disposition(item.get("verdict")),
             "note": _single_line(str(item.get("note") or "").strip(), "a finding note"),
             "anchor": _single_line(str(item.get("anchor") or "").strip(),
                                    "a finding anchor"),
         })
     return {"kind": kind, "blockers": blockers, "findings": findings}
+
+
+def _disposition(value):
+    """One of the frozen criteria dispositions, checked rather than passed through.
+
+    It is rendered onto the violated-criteria line, so an unchecked value carried the same
+    line-splicing route as the fields beside it, and a word outside the enum would describe
+    a judgment the contract has no room for.
+    """
+    from .criteria import DISPOSITIONS
+
+    if value not in DISPOSITIONS:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"{value!r} is not one of {DISPOSITIONS}; the criteria enum is frozen",
+        )
+    return value
 
 
 def _sequence(entries, field):
@@ -868,6 +906,9 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
         _Section("violated criteria", _finding_lines(receipt, review), rank=0, essential=True,
                  keep=2),
         _Section("SCOPE", _scope_lines(report, generation), rank=1, essential=True, keep=2),
+        # A correction that hides the dependencies and risks the report marked open sends the
+        # child at the findings without telling it what else is in the way.
+        _Section("unresolved", _unresolved_lines(report), rank=2, essential=True, keep=2),
         _Section("MUST DO", [
             "MUST DO:",
             f"  {report['nextAction']}",

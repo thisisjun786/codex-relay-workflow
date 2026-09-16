@@ -264,7 +264,8 @@ def parse_verdict_line(line: str):
         rest = body[len(GO_WITH_FIXES):].strip()
         if rest.startswith("(blockers=") and rest.endswith(")"):
             digits = rest[len("(blockers="):-1]
-            if digits.isdigit() and int(digits) >= 1:
+            # The same ceiling the renderer applies, so both directions speak one language.
+            if digits.isdigit() and 1 <= int(digits) <= BLOCKERS_MAX:
                 return {"kind": GO_WITH_FIXES, "blockers": int(digits)}
     return None
 

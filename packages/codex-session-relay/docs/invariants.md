@@ -138,6 +138,12 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-120 | An inbox-only attempt counts as having reached the recipient, because its frozen message is the durable inbox item | `report._may_have_reached` | implemented |
 | I-121 | No report value, top-level or nested, may contain a line break, so nothing can splice an extra line into the message protocol | `report._single_line`, applied to fields, evidence, unresolved, findings and restore | implemented |
 | I-125 | A blocker count too large to render is refused, because it lands on a line the message cannot shorten | `cxc.verdict_line` | implemented |
+| I-126 | A required report field must be text, not a value coerced through `str()` into a Python repr | `report._required` | implemented |
+| I-127 | A line break is anything `str.splitlines` treats as one, so a separator other than CR or LF cannot splice a line either | `report._single_line` | implemented |
+| I-128 | A correction renders the unresolved items the report marked open, rather than storing them unseen | `report.render_revision` | implemented |
+| I-129 | A pull request number outside what the store can hold is refused, not left to raise `OverflowError` on insert | `report.record` | implemented |
+| I-130 | A finding disposition is one of the frozen criteria values, checked rather than passed through | `report._disposition` | implemented |
+| I-131 | The verdict parser and the verdict renderer accept the same language, including the blocker ceiling | `cxc.parse_verdict_line` | implemented |
 | I-122 | Pull-request fields are refused when no pull request is named, rather than stored and never rendered | `report.record` | implemented |
 | I-123 | Every restore field is a supported, bounded, single-line string; an unsupported or unrenderable one is refused | `report._check_restore` | implemented |
 | I-124 | A submission must clear both floors, the delivered one and the highest stored one, so no write is accepted that nobody would ever see | `report._assert_resubmission` | implemented |
