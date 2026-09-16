@@ -261,6 +261,86 @@ class Ownership(ServiceTestCase):
         )
         self.assertIsNone(child.poll())
 
+    def test_enable_is_refused_while_a_foreign_supervisor_is_shutting_down(self):
+        """A supervisor clears its pids BEFORE releasing the lock.
+
+        ownership answers none once both are absent, which is exactly the interval in which
+        a foreign shutdown could have its owner's disable reversed.
+        """
+        service = self.service("a")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+        service.intent.write(enabled=False, actor="owner")
+        service.write_record(dict(
+            service.record(), pid=None, workerPid=None, installationId="someone-else",
+        ))
+        self.assertTrue(service.lock_is_held(), "the fixture needs the lock still held")
+
+        refused = service.enable(actor="intruder")
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertFalse(service.intent.read()["enabled"])
+        self.assertIsNone(child.poll())
+
+    def test_a_host_with_no_boot_id_can_still_stop_its_own_service(self):
+        """Refusing every record without one traded a narrow risk for a certain failure.
+
+        Where no boot id is available at all, every record lacks one - including the record
+        this installation just wrote - so a blanket refusal makes the service unstoppable by
+        its own owner.
+        """
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        service.write_record(dict(service.record(), bootId=None))
+
+        with mock.patch.object(service_module, "boot_id", lambda: None):
+            stopped = service.stop()
+
+        self.assertTrue(stopped["ok"], stopped)
+        child.wait(timeout=10)
+
+    def test_a_stopped_registration_can_be_taken_over_deliberately(self):
+        """Otherwise a replaced database blocks its socket forever.
+
+        Recovery was finding and deleting an internal registry file by hand, which is not an
+        operation anyone should have to discover.
+        """
+        first = self.service("a")
+        child, _pid = self.holder(first)
+        child.terminate()
+        child.wait(timeout=10)
+        second = self.service("b")
+        self.assertNotEqual(second.store_id, first.store_id)
+
+        refused = second.scope.claim(second.socket_path, second.new_record(pid=os.getpid()))
+        self.assertEqual(refused["reason"], "scope_registered_to_other_store")
+        second.scope.release(second.socket_path)
+
+        second.takeover = True
+        taken = second.scope.claim(second.socket_path, second.new_record(pid=os.getpid()))
+
+        self.assertTrue(taken["ok"], taken)
+        self.assertEqual(second.scope.read(second.socket_path)["storeId"], second.store_id)
+        second.scope.release(second.socket_path)
+
+    def test_a_takeover_cannot_displace_a_live_owner(self):
+        """It only ever replaces a registration nothing is running behind."""
+        first = self.service("a")
+        self.holder(first)
+        second = self.service("b")
+        second.intent.write(enabled=True, actor="test")
+
+        refused = second.start(
+            allow_isolated=True, launcher=self._never_launch_here, takeover=True,
+        )
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "scope_owned_by_other_store")
+
+    def _never_launch_here(self, *_a, **_k):  # pragma: no cover - reaching it is the failure
+        self.fail("a takeover must not launch past a live owner")
+
     def test_enable_still_works_when_nothing_is_running_here(self):
         """A stopped registration is not a reason to make a state directory unusable."""
         service = self.service("b")

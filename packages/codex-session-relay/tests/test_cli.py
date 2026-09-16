@@ -180,6 +180,49 @@ class TerminalProof(CliBase):
         self.assertEqual(self.run_cli("status")["deliveries"], [])
 
 
+class ServiceExitCodes(CliBase):
+    """A refusal that exits zero is read by automation as a success."""
+
+    def test_a_refused_enable_does_not_exit_zero(self):
+        self.run_cli("service", "enable")
+        state = os.path.join(self.tmp, "daemon.json")
+        with open(state, "w", encoding="utf-8") as handle:
+            json.dump({"pid": os.getpid(), "installationId": "someone-else",
+                       "storeId": "another-store", "bootId": None,
+                       "startTicks": None, "workerPid": None}, handle)
+        # No lock is held here, so this must still succeed: a stopped foreign registration
+        # is not a reason to make a state directory unconfigurable.
+        self.assertTrue(self.run_cli("service", "enable")["ok"])
+
+    def test_a_refused_enable_is_a_refusal_the_shell_can_see(self):
+        """Returning the payload directly exits zero, and automation reads that as done."""
+        from unittest import mock
+
+        from codex_session_relay import cli
+
+        class Refusing:
+            def enable(self, *, actor):
+                return {"ok": False, "reason": "not_ours", "intent": {"enabled": False}}
+
+        args = argparse.Namespace(service_command="enable", actor=None)
+        with mock.patch.object(cli, "_service_for", lambda _services: Refusing()):
+            with self.assertRaises(cli.PayloadExit) as caught:
+                cli.cmd_service(object(), args)
+        self.assertEqual(caught.exception.code, cli.EXIT_REFUSED)
+        self.assertEqual(caught.exception.payload["reason"], "not_ours")
+
+    def test_a_refused_disable_does_not_exit_zero(self):
+        self.run_cli("service", "enable")
+        state = os.path.join(self.tmp, "daemon.json")
+        with open(state, "w", encoding="utf-8") as handle:
+            json.dump({"pid": os.getpid(), "installationId": "someone-else",
+                       "storeId": "another-store", "bootId": "irrelevant",
+                       "startTicks": 1, "workerPid": None}, handle)
+        refused = self.run_cli("service", "disable", expect=2)
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["reason"], "not_ours")
+
+
 class SettingsCommands(CliBase):
     """The registration interface JUN-92 populates from Run's creation result."""
 
