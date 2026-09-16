@@ -498,6 +498,81 @@ class Ownership(ServiceTestCase):
         self.assertTrue(disabled["ok"], disabled)
         self.assertFalse(service.intent.read()["enabled"])
         child.wait(timeout=10)
+
+    def test_disable_refuses_a_lock_holder_nothing_here_can_identify(self):
+        """A supervisor that has taken the lock and not yet published its record.
+
+        ownership() answers none, _foreign_markers has nothing to read from, and the old
+        condition asked only about foreign and unverifiable - so this wrote the shared
+        enabled=false anyway. The starting supervisor reads that at its first worker boundary
+        and exits, which is a refused disable that still shut another installation down.
+        """
+        import fcntl
+
+        service = self.service("c")
+        service.enable(actor="owner")
+        service.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        handle = open(service.selection.path / service_module.DAEMON_LOCK, "a+")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            refused = service.disable(actor="owner")
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertTrue(
+            service.intent.read()["enabled"],
+            "a refused disable must not change the intent the starting supervisor reads",
+        )
+
+    def test_a_stale_worker_number_does_not_make_a_held_lock_ours(self):
+        """A recorded worker pid is not ownership until its start time still matches.
+
+        Once that process is gone the number proves nothing, and something else is holding
+        this directory - which is the case the guard exists for.
+        """
+        import fcntl
+
+        service = self.service("d")
+        service.enable(actor="owner")
+        service.write_record(dict(
+            service.new_record(pid=os.getpid()), pid=None, workerPid=os.getpid(),
+            workerStartTicks=(service_module.start_ticks(os.getpid()) or 0) + 1,
+        ))
+        handle = open(service.selection.path / service_module.DAEMON_LOCK, "a+")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            refused = service.disable(actor="owner")
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertTrue(service.intent.read()["enabled"])
+
+    def test_disable_still_reaches_an_orphaned_worker_of_our_own(self):
+        """The guard must not refuse the case stop() deliberately still supports.
+
+        A supervisor that died leaving our own worker alive answers none, and the worker holds
+        the lock through the descriptor it inherited. Refusing here would leave an owner unable
+        to disable their own orphan.
+        """
+        service = self.service("e")
+        service.enable(actor="owner")
+        child, worker_pid = self.holder(service)
+        service.write_record(dict(
+            service.record(), pid=None, workerPid=worker_pid,
+            workerStartTicks=service_module.start_ticks(worker_pid),
+        ))
+
+        disabled = service.disable(actor="owner")
+
+        child.wait(timeout=10)
+        self.assertTrue(disabled["ok"], disabled)
+        self.assertFalse(service.intent.read()["enabled"])
     def test_stop_refuses_a_recycled_pid(self):
         service = self.service("a")
         child, pid = self.holder(service)

@@ -521,6 +521,53 @@ class RelayService:
             markers.append("it is using a different store")
         return markers
 
+    def _worker_identified(self, record) -> bool:
+        """Whether the recorded worker pid provably names OUR worker, still running.
+
+        The same three questions _stop_worker asks before it signals - the process exists, it
+        is readable, and its start time matches what we recorded - plus the boot question,
+        which ownership() does not always reach. When the recorded SUPERVISOR pid is gone it
+        answers none at the already-gone branch, before its own missing-boot check runs, so a
+        record written before a reboot arrives here naming a worker number that an unrelated
+        process may now hold.
+        """
+        pid = (record or {}).get("workerPid")
+        if not pid:
+            return False
+        if record.get("bootId") is None and boot_id() is not None:
+            # Conditional on the host for the reason ownership() gives: where no boot id is
+            # available at all, every record lacks one, and refusing them all would leave a
+            # service unusable by its own owner.
+            return False
+        handle = ProcessHandle(pid)
+        try:
+            if handle.already_gone or not handle.usable:
+                return False
+            ticks = record.get("workerStartTicks")
+            current = start_ticks(pid)
+            return ticks is not None and current is not None and current == ticks
+        finally:
+            handle.close()
+
+    def _holder_is_ours(self, record, owner, markers) -> bool:
+        """Whether whatever is holding this state directory can be attributed to us.
+
+        Not the same question as "is the owner ours". A supervisor that died leaving our own
+        worker alive answers none, and that worker still holds the daemon lock through the
+        descriptor it inherited - refusing there would stop an owner from disabling their own
+        orphan, which stop() deliberately still reaches.
+
+        Everything else that answers none while the lock is held is a holder we cannot name:
+        no record at all, a record whose process is gone, or a supervisor that has taken the
+        lock and not yet published. Writing the shared intent on any of those is how a refused
+        command still shuts down another installation.
+        """
+        if markers:
+            return False
+        if owner == OURS:
+            return True
+        return owner == NONE and self._worker_identified(record)
+
     def lock_is_held(self) -> bool:
         """Probed by trying to take it: the lock is the only honest liveness signal."""
         path = self.selection.path / DAEMON_LOCK
@@ -595,13 +642,17 @@ class RelayService:
         # clears its pids before releasing the lock, and ownership answers none once both are
         # absent - which is exactly the interval in which a foreign shutdown could be reversed.
         markers = self._foreign_markers(record) if record else []
-        if self.lock_is_held() and (owner in (FOREIGN, UNVERIFIABLE) or markers):
+        if self.lock_is_held() and not self._holder_is_ours(record, owner, markers):
             # Only while something is actually RUNNING here. A stopped registration belonging
             # to someone else is not a reason to refuse an owner configuring their own
             # installation, and refusing then would make a state directory unusable forever.
             return {"ok": False,
-                    "reason": "ownership_unverifiable" if owner == UNVERIFIABLE else "not_ours",
-                    "detail": detail or "; ".join(markers), "intent": self.intent.read(),
+                    "reason": ("not_ours" if (owner == FOREIGN or markers)
+                               else "ownership_unverifiable"),
+                    "detail": detail or "; ".join(markers) or (
+                        "the daemon lock is held but nothing here identifies its owner"
+                    ),
+                    "intent": self.intent.read(),
                     "note": "intent is shared with the owner of this state directory and was"
                             " left unchanged"}
         return {"ok": True, "reason": None,
@@ -629,12 +680,14 @@ class RelayService:
                 if handle is not None:
                     handle.close()
                 markers = self._foreign_markers(record) if record else []
-                if owner in (FOREIGN, UNVERIFIABLE) or markers:
+                if not self._holder_is_ours(record, owner, markers):
                     refusal = {
                         "ok": False,
-                        "reason": ("ownership_unverifiable" if owner == UNVERIFIABLE
-                                   else "not_ours"),
-                        "detail": detail or "; ".join(markers),
+                        "reason": ("not_ours" if (owner == FOREIGN or markers)
+                                   else "ownership_unverifiable"),
+                        "detail": detail or "; ".join(markers) or (
+                            "the daemon lock is held but nothing here identifies its owner"
+                        ),
                         "intent": self.intent.read(),
                         "stop": {"ok": False, "reason": "refused",
                                  "supervisor": "untouched", "worker": "untouched"},
