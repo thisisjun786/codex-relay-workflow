@@ -30,6 +30,11 @@ audit the whole workspace or launch every helper just to select an action.
 Distinguish these two situations. An empty backlog does not prove a fresh start;
 a Done label or completed agent turn does not prove the outcome is delivered.
 
+When repository identity affects readiness, apply the shared
+[repository resolution](../crw-plan/references/integrations.md#resolve-the-implementation-repository).
+Read the issue's actual target and existing assignment; do not choose all project
+repository labels. Distinguish resuming preserved work from a new baseline.
+
 ## When the user does not know where to start
 
 Establish the intended user outcome, what already exists, and the constraint or

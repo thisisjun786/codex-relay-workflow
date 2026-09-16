@@ -53,8 +53,11 @@ Title: [issue ID · short task name · agreed workflow, following Child task tit
 Workflow: [effective workflow per Default independent execution]
 
 Context:
-- Repository and existing worktree: [absolute paths]
-- Branch and full baseline commit: [actual values]
+- Code target: [verified GitHub owner/repo or URL; explicit none for non-code work]
+- Reference-only repositories: [if any, not assigned edit targets]
+- Repository and existing worktree: [absolute paths, when applicable]
+- Remote name/URL and intended integration branch: [verified repository-policy values]
+- Issue branch and full baseline commit: [actual values; new assignment or preserved resume]
 - Prerequisites: [verified contract/commits and how included]
 - Effective model/effort: [values from the request or Default independent execution;
   actual configuration is supplied by creation]

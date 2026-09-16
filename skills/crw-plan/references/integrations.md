@@ -98,6 +98,37 @@ it is not evidence that an independent child was created. Reuse the responsible
 child for the same issue’s follow-ups, not for a new issue. Explicit project-focus
 switches preserve old bindings and active ownership before establishing the new one.
 
+### Resolve the implementation repository
+
+Project repository labels are discovery context, never an instruction to modify
+all related repositories. Resolve one implementation issue's explicit GitHub
+owner/repo or URL against its accepted scope, current delivery PR and existing
+assignment. Identify reference-only repositories separately. If the issue's
+explicit target conflicts with its PR or ownership record, reconcile the conflict
+before writes; a label, folder name or convenient checkout does not break the tie.
+Ask only when the current evidence cannot settle a material target choice.
+
+Before new execution, verify the actual remote URL, intended integration branch
+from repository policy, and full fetched baseline commit. A default branch and a
+remote named `origin` are not universal integration targets. Record the selected
+remote name and distinguish a contribution fork from its integration repository.
+Use the existing workspace-assignment interface after this identity check; do not
+create a new checkout allocator or a fake repository/project to fill missing labels.
+
+On resume, recover the responsible task, checkout and issue branch first. Inspect
+its worktrees, dirty state, local-only commits, remote identity and recorded
+baseline. Fetching current truth does not authorize resetting, rebasing, cleaning,
+stashing, moving or recreating that work. Reconcile ancestry and prerequisites
+without replacing an existing assignment with a freshly cloned default branch.
+For a new task, use a task-owned checkout under the applicable workspace policy.
+
+Work needing PRs in multiple repositories becomes separate dependent issue/PR
+pairs; reading or validating another repository alone does not make it a code
+target. Common projects and standalone issues follow the same resolution rule.
+Research or design with no repository change may explicitly have no code target;
+do not require a remote, branch or Git baseline for that non-PR result.
+Keep its source baseline and delivered output identity under the non-PR evidence rules.
+
 ## Linear holds canonical documents
 
 Jun keeps product intent, specifications, plans, accepted decisions, and human-readable coordination records in Linear documents linked to the relevant project/issues. Use stable document IDs/URLs and available revision or updated-at evidence. Repositories remain authoritative for source, executable configuration, repository policy, and reproducible implementation evidence.
