@@ -615,12 +615,26 @@ def _check_review(review):
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT, "each review finding names a criterion id"
             )
+        if identifier in {finding["id"] for finding in findings}:
+            # The renderer keys enrichment on the id, so a second entry replaced the first
+            # and its note or anchor vanished with no omission notice.
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"two findings name criterion {identifier!r}; one criterion carries one "
+                "finding, so the second would silently replace the first",
+            )
+        for field in ("note", "anchor"):
+            value = item.get(field)
+            if value is not None and not isinstance(value, str):
+                raise ReceiptRefused(
+                    RefusalReason.MALFORMED_RECEIPT,
+                    f"a finding {field} is a line of text, not {type(value).__name__}",
+                )
         findings.append({
             "id": _single_line(identifier, "a finding id"),
             "verdict": _disposition(item.get("verdict")),
-            "note": _single_line(str(item.get("note") or "").strip(), "a finding note"),
-            "anchor": _single_line(str(item.get("anchor") or "").strip(),
-                                   "a finding anchor"),
+            "note": _single_line((item.get("note") or "").strip(), "a finding note"),
+            "anchor": _single_line((item.get("anchor") or "").strip(), "a finding anchor"),
         })
     return {"kind": kind, "blockers": blockers, "findings": findings}
 
@@ -825,19 +839,24 @@ def _compose(sections, event_id, *, budget) -> str:
         return NEWLINE.join(body)
 
     def over_budget():
-        """Byte length counted, not rebuilt.
+        """Byte length from a running total, never recounted.
 
-        Shortening pops one line at a time, and re-joining and re-encoding every remaining
-        line on each pass made that quadratic in the length of the list being shortened.
-        The joined size is the sum of the encoded lines plus one separator between each
-        pair, so it can be counted directly.
+        Shortening pops one line at a time. Summing every remaining line on each pass was
+        still quadratic in the length of the list being shortened, and this runs inside the
+        claim transaction, where a long report would hold the single SQLite writer for the
+        duration. The totals below are adjusted by each mutation instead.
         """
-        count = sum(len(block) for block in blocks)
-        total = sum(_size(line) for block in blocks for line in block)
+        count, total = state["lines"], state["bytes"]
         if removed:
             count += 2
             total += _size(_omission_line(removed, event_id))
         return total + max(count - 1, 0) > budget
+
+    sizes = [[_size(line) for line in block] for block in blocks]
+    state = {
+        "lines": sum(len(block) for block in blocks),
+        "bytes": sum(size for block in sizes for size in block),
+    }
 
     order = sorted(range(len(sections)), key=lambda i: -sections[i].rank)
     for index in order:
@@ -847,7 +866,10 @@ def _compose(sections, event_id, *, budget) -> str:
         if section.essential or not blocks[index]:
             continue
         removed.append(section.name)
+        state["lines"] -= len(blocks[index])
+        state["bytes"] -= sum(sizes[index])
         blocks[index] = []
+        sizes[index] = []
 
     for index in order:
         section = sections[index]
@@ -857,10 +879,19 @@ def _compose(sections, event_id, *, budget) -> str:
         # appended to it. Popping a line and then appending a marker leaves the block the
         # same length, which is a loop that never ends.
         kept = list(section.lines)
+        kept_sizes = list(sizes[index])
+        marker_size = 0
         while over_budget() and len(kept) > section.keep:
             kept.pop()
+            state["bytes"] -= kept_sizes.pop()
+            state["lines"] -= 1
             dropped = len(section.lines) - len(kept)
-            blocks[index] = kept + [f"  ... {dropped} more, see the full record"]
+            marker = f"  ... {dropped} more, see the full record"
+            state["bytes"] += _size(marker) - marker_size
+            state["lines"] += 0 if marker_size else 1
+            marker_size = _size(marker)
+            blocks[index] = kept + [marker]
+            sizes[index] = kept_sizes + [marker_size]
             if section.name not in removed:
                 removed.append(section.name)
 
@@ -962,6 +993,7 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
         _Section("violated criteria", _finding_lines(receipt, review), rank=0, essential=True,
                  keep=2),
         _Section("SCOPE", _scope_lines(report, generation), rank=1, essential=True, keep=2),
+        _Section("preserve", _preserve_lines(), rank=0, essential=True, keep=2),
         # A correction that hides the dependencies and risks the report marked open sends the
         # child at the findings without telling it what else is in the way.
         _Section("unresolved", _unresolved_lines(report), rank=2, essential=True, keep=2),
@@ -1157,9 +1189,20 @@ def _scope_lines(report, generation):
     if report.get("criteriaDigest"):
         lines.append(f"  criteria {report['criteriaDigest']}")
     lines.append(f"  execution generation {generation} (new)")
-    lines.append("  preserve: everything outside the findings above, including work this")
-    lines.append("    request does not mention and any other task in-flight beside it")
     return lines
+
+
+def _preserve_lines():
+    """Fixed protocol prose, kept out of the shortenable part of SCOPE.
+
+    Mixed in with the variable data, the preserve boundary could be shortened away, and the
+    omission marker points at show, which returns the receipt and the work report but not
+    template text. So those lines were not recoverable anywhere once dropped.
+    """
+    return [
+        "  preserve: everything outside the findings above, including work this",
+        "    request does not mention and any other task in-flight beside it",
+    ]
 
 
 def _proof_lines(report):

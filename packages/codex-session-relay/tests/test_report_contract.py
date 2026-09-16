@@ -196,6 +196,27 @@ class Elision(DeliveryTestCase):
         self.assertIn("submission: 1", tight, "nor which submission produced these bytes")
         self.assertIn("requestId: del-x-a1", tight)
 
+    def test_shortening_a_long_list_stays_correct_and_does_not_rescan(self):
+        _relationship, event_id = self.queued_event()
+        receipt = self.intake.get(event_id)
+        # The byte total is carried incrementally now, so the risk this covers is the
+        # accounting drifting from what the message actually measures.
+        report.record(
+            self.store, self.clock, event_id=event_id,
+            **a_report(unresolved=[f"open item {n} with text" for n in range(2000)])
+        )
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        for budget in (1700, 2500, 4000):
+            message = report.render_completion(row, receipt, "del-x-a1", stored, budget=budget)
+            self.assertLessEqual(
+                len(message.encode("utf-8")), budget,
+                "the running total has to agree with the message it describes",
+            )
+            self.assertIn("omitted:", message)
+            self.assertIn("unresolved:", message)
+            self.assertIn("next:", message)
+
     def test_a_long_manifest_reference_is_truncated_visibly_not_left_unsendable(self):
         _relationship, event_id = self.queued_event()
         receipt = dict(self.intake.get(event_id))
@@ -845,6 +866,50 @@ class FinalLine(Directions):
         message = report.render_revision(row, receipt, "del-y-a1", stored)
         self.assertIn("c-1: needs_changes", message, "the receipt disposition still leads")
         self.assertIn("anchor: migrations/004.sql", message)
+
+    def test_two_findings_for_one_criterion_are_refused_not_silently_merged(self):
+        _source, revision_event = self._revision()
+        error = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(
+                self.store, self.clock, event_id=revision_event,
+                **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
+                           review={"kind": cxc.GO_WITH_FIXES, "blockers": 1, "findings": [
+                               {"id": "c-1", "note": "the first thing"},
+                               {"id": "c-1", "anchor": "migrations/004.sql"}]})
+            ),
+        )
+        self.assertIn("would silently replace the first", error.detail)
+
+    def test_a_finding_note_or_anchor_must_be_text(self):
+        _source, revision_event = self._revision()
+        for field in ("note", "anchor"):
+            for bad in ({"text": "x"}, ["x"], 0):
+                self.assertRefused(
+                    RefusalReason.MALFORMED_RECEIPT,
+                    lambda field=field, bad=bad: report.record(
+                        self.store, self.clock, event_id=revision_event,
+                        **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
+                                   review={"kind": cxc.FAIL, "findings": [
+                                       {"id": "c-1", field: bad}]})
+                    ),
+                )
+
+    def test_the_fixed_preserve_boundary_is_never_shortened_away(self):
+        _source, revision_event = self._revision()
+        receipt = self.intake.get(revision_event)
+        row = self.delivery.get(revision_event)
+        stored = report.record(
+            self.store, self.clock, event_id=revision_event,
+            **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
+                       unresolved=[f"open item {n} with some length to it" for n in range(40)])
+        )
+        message = report.render_revision(row, receipt, "del-p-a1", stored, budget=2600)
+        self.assertIn("omitted:", message, "something had to go")
+        # show returns the receipt and the work report, not template prose, so these lines
+        # are recoverable nowhere once dropped.
+        self.assertIn("preserve: everything outside the findings above", message)
+        self.assertIn("request does not mention", message)
 
 
 class Bounds(DeliveryTestCase):

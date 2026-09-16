@@ -149,6 +149,9 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-134 | A finding that exists only to enrich an authoritative one needs no disposition of its own | `report._disposition` | implemented |
 | I-135 | A line value that cannot be encoded as UTF-8 is refused where it is recorded, not where it is measured or sent | `report._single_line` | implemented |
 | I-136 | A correction carries the CXC status and its reason, like a completion does | `report.render_revision` | implemented |
+| I-137 | One criterion carries one finding; a duplicate id is refused rather than silently replacing the first | `report._check_review` | implemented |
+| I-138 | Shortening carries a running byte total rather than recounting, so it stays linear inside the claim transaction | `report._compose` | implemented |
+| I-139 | Fixed protocol prose is never shortened away, because the advertised command returns records and not template text | `report._preserve_lines` | implemented |
 | I-122 | Pull-request fields are refused when no pull request is named, rather than stored and never rendered | `report.record` | implemented |
 | I-123 | Every restore field is a supported, bounded, single-line string; an unsupported or unrenderable one is refused | `report._check_restore` | implemented |
 | I-124 | A submission must clear both floors, the delivered one and the highest stored one, so no write is accepted that nobody would ever see | `report._assert_resubmission` | implemented |
