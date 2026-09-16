@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .ledger import Ledger
 from .rpc import AppServer, RpcError
+from .settings import SettingsContract, annotation
 from .worktrees import Worktree, WorktreeError
 
 
@@ -67,6 +68,25 @@ class Bridge:
         self.ledger = ledger
         self._mutation_lock = asyncio.Lock()
 
+    async def _annotate_dispatch(self, receipt, contract):
+        """Record what the thread reported after an accepted turn, without risking that turn.
+
+        This runs only once _mutate has already persisted the acceptance, and never inside
+        action(): a cancellation in there reaches _mutate's CancelledError handler, which would
+        overwrite an acknowledged turn with outcome_unknown and leave a replay that never
+        dispatches again. Here a failure, timeout, disconnect, malformed body or cancellation
+        simply leaves the accepted receipt and its turnId exactly as they are.
+        """
+        if receipt.get("status") != "accepted" or not receipt.get("turnId") or not contract:
+            return receipt
+        try:
+            state = await self.rpc.call("thread/read", {"threadId": receipt["threadId"]})
+            observed = (receipt.get("settings") or {}).get("actual") or {}
+            note = annotation(observed, state["thread"])
+        except BaseException:  # noqa: BLE001 - a diagnostic must never endanger the dispatch
+            return receipt
+        return self.ledger.save({**receipt, "settingsAfterDispatch": note})
+
     async def capabilities(self):
         await self.rpc.connect()
         return {
@@ -125,23 +145,54 @@ class Bridge:
         sandbox: str = "read-only",
         model: str | None = None,
         app_server_project_id: str | None = None,
+        reasoning_effort: str | None = None,
+        runtime_workspace_roots: list[str] | None = None,
+        expected_sandbox_policy: dict | None = None,
     ):
         nonempty(cwd, "cwd")
         if not Path(cwd).is_absolute():
             raise ValueError("cwd must be an existing absolute directory on the App Server host")
         if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
             raise ValueError("Unsupported sandbox")
-        for name, value in [("prompt", prompt), ("title", title), ("model", model)]:
+        for name, value in [
+            ("prompt", prompt),
+            ("title", title),
+            ("model", model),
+            ("reasoning_effort", reasoning_effort),
+        ]:
             if value is not None:
                 nonempty(value, name, 100_000 if name == "prompt" else 500)
+        if expected_sandbox_policy is not None:
+            validate_sandbox_policy(expected_sandbox_policy)
+        contract = SettingsContract(
+            cwd=cwd,
+            sandbox=sandbox,
+            expected_sandbox_policy=expected_sandbox_policy,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            runtime_workspace_roots=runtime_workspace_roots,
+        )
         params = {"cwd": cwd, "sandbox": sandbox, "approvalPolicy": "never", "ephemeral": False}
         if model is not None:
             params["model"] = model
         if app_server_project_id is not None:
             nonempty(app_server_project_id, "app_server_project_id", 128)
             params["projectId"] = app_server_project_id
+        # Appended only when supplied, so a caller that asks for nothing new keeps a
+        # byte-identical fingerprint and its retained receipts still replay.
+        if reasoning_effort is not None:
+            params["reasoning_effort"] = reasoning_effort
+        if runtime_workspace_roots is not None:
+            params["runtime_workspace_roots"] = list(runtime_workspace_roots)
+        if expected_sandbox_policy is not None:
+            params["expected_sandbox_policy"] = expected_sandbox_policy
 
         launch_params = dict(params)
+        for key in ("reasoning_effort", "runtime_workspace_roots", "expected_sandbox_policy"):
+            launch_params.pop(key, None)
+        launch_params.update(contract.start_params())
+        launch_params["cwd"] = cwd
+        launch_params["sandbox"] = sandbox
         request_params = {**params, "prompt": prompt, "title": title}
 
         def legacy_params():
@@ -159,23 +210,26 @@ class Bridge:
             thread_id = created["thread"]["id"]
             receipt.update(threadId=thread_id, creation=created)
             self.ledger.save(receipt)  # Retain the ID even if naming or the first turn fails.
-            actual = created.get("sandbox", {}).get("type")
-            expected = {
-                "read-only": "readOnly",
-                "workspace-write": "workspaceWrite",
-                "danger-full-access": "dangerFullAccess",
-            }[sandbox]
-            if (
-                created.get("cwd") != launch_params["cwd"]
-                or created.get("approvalPolicy") != "never"
-                or actual != expected
-            ):
+            checked = SettingsContract(
+                cwd=launch_params["cwd"],
+                sandbox=sandbox,
+                expected_sandbox_policy=expected_sandbox_policy,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                runtime_workspace_roots=runtime_workspace_roots,
+            )
+            receipt["settings"] = checked.receipt(created, at="creation")
+            self.ledger.save(receipt)
+            findings = receipt["settings"]["findings"]
+            if findings:
+                first = findings[0]
                 raise RpcError(
                     "thread/start",
                     {
-                        "code": "environment_mismatch",
-                        "message": "Created environment differs; initial prompt withheld. "
-                        "Inspect creation receipt. The thread remains retained.",
+                        "code": first["code"],
+                        "message": f"{first['code']}: {first['field']} returned "
+                        f"{first['returned']!r}, expected {first['expected']!r}; initial prompt "
+                        "withheld. Inspect creation receipt. The thread remains retained.",
                     },
                 )
             if title is not None:
@@ -193,7 +247,7 @@ class Bridge:
                 receipt["turnId"] = turn["turn"]["id"]
             receipt["desktopProjectAssociation"] = "unverified; check Desktop listing"
 
-        return await self._mutate(
+        receipt = await self._mutate(
             request_id,
             "create_thread",
             request_params,
@@ -201,6 +255,7 @@ class Bridge:
             validate_fresh=validate_fresh,
             legacy_params=legacy_params,
         )
+        return await self._annotate_dispatch(receipt, contract)
 
     async def create_worktree_thread(
         self,
@@ -256,6 +311,13 @@ class Bridge:
             "app_server_project_id": app_server_project_id,
         }
 
+        contract = SettingsContract(
+            sandbox=sandbox,
+            expected_sandbox_policy=expected_sandbox_policy,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+
         async def action(receipt):
             def checkpoint(phase, **fields):
                 receipt.update(phase=phase, **fields)
@@ -302,16 +364,28 @@ class Bridge:
             }
             if model is not None:
                 launch["model"] = model
-            if reasoning_effort is not None:
-                launch["config"] = {"model_reasoning_effort": reasoning_effort}
+            # Carries the effort AND every transmittable sandbox policy field; the mode string
+            # alone cannot express writable roots or the network flag.
+            config = contract.config()
+            if config:
+                launch["config"] = config
             if app_server_project_id is not None:
                 launch["projectId"] = app_server_project_id
             checkpoint("creating_thread")
             created = await self.rpc.call("thread/start", launch)
+            placed = SettingsContract(
+                cwd=str(worktree.destination),
+                sandbox=sandbox,
+                expected_sandbox_policy=expected_sandbox_policy,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                runtime_workspace_roots=[str(worktree.destination)],
+            )
             checkpoint(
                 "checking_environment",
                 threadId=created["thread"]["id"],
                 creation=created,
+                settings=placed.receipt(created, at="creation"),
                 permissionReceipt={
                     key: created.get(key)
                     for key in (
@@ -328,24 +402,22 @@ class Bridge:
                     "appServerProjectId": created["thread"].get("projectId"),
                 },
             )
-            if (
-                created.get("cwd") != str(worktree.destination)
-                or created["thread"].get("cwd") != str(worktree.destination)
-                or created.get("runtimeWorkspaceRoots") != [str(worktree.destination)]
-                or created.get("approvalPolicy") != "never"
-                or created.get("sandbox") != expected_sandbox_policy
-                or (model is not None and created.get("model") != model)
-                or (
-                    reasoning_effort is not None
-                    and created.get("reasoningEffort") != reasoning_effort
+            findings = receipt["settings"]["findings"]
+            if findings:
+                first = findings[0]
+                raise WorktreeError(
+                    f"{first['code']}: {first['field']} returned {first['returned']!r}, expected "
+                    f"{first['expected']!r}; initial prompt withheld. Inspect creation receipt"
                 )
-                or (
-                    app_server_project_id is not None
-                    and created["thread"].get("projectId") != app_server_project_id
-                )
+            # The worktree path owns two checks the shared contract does not: the thread's own
+            # cwd, and the App Server project this checkout was meant to join.
+            if created["thread"].get("cwd") != str(worktree.destination) or (
+                app_server_project_id is not None
+                and created["thread"].get("projectId") != app_server_project_id
             ):
                 raise WorktreeError(
-                    "Created environment differs; initial prompt withheld. Inspect creation receipt"
+                    "Created thread placement differs; initial prompt withheld. "
+                    "Inspect creation receipt"
                 )
             if title is not None:
                 checkpoint("naming_thread")
@@ -378,9 +450,34 @@ class Bridge:
 
         return await self._mutate(request_id, "create_worktree_thread", params, action)
 
-    async def send_message_to_thread(self, request_id: str, thread_id: str, message: str):
+    async def send_message_to_thread(
+        self,
+        request_id: str,
+        thread_id: str,
+        message: str,
+        expected_settings: dict | None = None,
+    ):
         nonempty(thread_id, "thread_id", 128)
         nonempty(message, "message")
+        if expected_settings is not None and not isinstance(expected_settings, dict):
+            raise ValueError("expected_settings must be an object")
+        supplied = dict(expected_settings or {})
+        if supplied.get("expected_sandbox_policy") is not None:
+            validate_sandbox_policy(supplied["expected_sandbox_policy"])
+        contract = SettingsContract(
+            cwd=supplied.get("cwd"),
+            sandbox=supplied.get("sandbox"),
+            expected_sandbox_policy=supplied.get("expected_sandbox_policy"),
+            model=supplied.get("model"),
+            reasoning_effort=supplied.get("reasoning_effort"),
+            runtime_workspace_roots=supplied.get("runtime_workspace_roots"),
+        )
+        params = {"threadId": thread_id, "message": message}
+        # Only when supplied, so an existing caller's fingerprint is unchanged. When it IS
+        # supplied it belongs to the request identity: retrying the same id with different
+        # settings is a different request and the ledger must reject it.
+        if expected_settings is not None:
+            params["expected_settings"] = expected_settings
 
         async def action(receipt):
             receipt["threadId"] = thread_id
@@ -394,26 +491,29 @@ class Bridge:
                         "message": "Thread is active; message withheld. Wait for completion.",
                     },
                 )
-            # Resume is an explicit part of messaging, never part of discovery.
-            # No cwd, model, sandbox, or reasoning overrides are supplied.
-            resumed = await self.rpc.call(
-                "thread/resume",
-                {
-                    "threadId": thread_id,
-                    "excludeTurns": True,
-                },
-            )
+            # Resume is an explicit part of messaging, never part of discovery. It carries the
+            # authorized settings and is then read as an OBSERVATION: this host reports a
+            # thread's real state rather than adopting an override, which is exactly what
+            # confirms the thread is already in the requested state. With nothing requested the
+            # params stay {threadId, excludeTurns}, byte-identical to the original behaviour.
+            resumed = await self.rpc.call("thread/resume", contract.resume_params(thread_id))
             receipt["resumed"] = resumed
+            receipt["settings"] = contract.receipt(resumed, at="resume")
             self.ledger.save(receipt)
-            if resumed.get("approvalPolicy") != "never":
-                raise RpcError(
-                    "thread/resume",
-                    {
-                        "code": "unsupported_approval_policy",
-                        "message": "Interactive approvals unsupported; message withheld. "
-                        "Continue the thread in Desktop.",
-                    },
+            findings = receipt["settings"]["findings"]
+            if findings:
+                first = findings[0]
+                message_text = (
+                    "Interactive approvals unsupported; message withheld. "
+                    "Continue the thread in Desktop."
+                    if first["code"] == "unsupported_approval_policy"
+                    else f"{first['code']}: {first['field']} returned {first['returned']!r}, "
+                    f"expected {first['expected']!r}; message withheld"
                 )
+                raise RpcError("thread/resume", {"code": first["code"], "message": message_text})
+            # No turn/start overrides. TurnStartResponse reports only the turn, so a setting
+            # bound here could never be read back; a clean resume already shows the thread is in
+            # the requested state, which is the strongest claim this host supports.
             turn = await self.rpc.call(
                 "turn/start",
                 {
@@ -423,12 +523,8 @@ class Bridge:
             )
             receipt["turnId"] = turn["turn"]["id"]
 
-        return await self._mutate(
-            request_id,
-            "send_message_to_thread",
-            {"threadId": thread_id, "message": message},
-            action,
-        )
+        receipt = await self._mutate(request_id, "send_message_to_thread", params, action)
+        return await self._annotate_dispatch(receipt, contract)
 
     async def get_goal(self, thread_id: str):
         nonempty(thread_id, "thread_id", 128)

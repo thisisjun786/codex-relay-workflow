@@ -55,7 +55,7 @@ API key is needed; the existing App Server owns its authentication and model usa
 | `get_capabilities` | Connect and report server identity and bridge limitations |
 | `create_thread` | Create one durable session in an existing directory; optionally name it and send its initial prompt |
 | `create_worktree_thread` | Create a locked, retained bridge-managed Git worktree at an explicit commit and start a task; no Desktop-managed lifecycle |
-| `send_message_to_thread` | Resume an explicitly selected idle thread without configuration overrides, then send one message |
+| `send_message_to_thread` | Resume an explicitly selected idle thread, optionally under stated settings, then send one message |
 | `list_threads` | Read a page of unarchived backend thread summaries |
 | `read_thread` | Read metadata and a paginated history without resuming |
 | `wait_thread` | Wait up to 50 seconds for the supplied recent turn ID |
@@ -100,9 +100,53 @@ use them with `wait_thread`. After checking the session in Desktop, use
 Creation defaults to `read-only` and approval policy `never`. `workspace-write`
 and `danger-full-access` are explicit options; obtain authorization for the
 chosen environment before calling. Omitted model/reasoning use the server's
-configured defaults. Initial dispatch is withheld if the returned cwd, sandbox
-kind, or approval policy differs from the request. Compare the full returned
-permission profile before sending further instructions.
+configured defaults and are neither transmitted nor checked.
+
+## Settings, and what the host lets you check
+
+`create_thread`, `create_worktree_thread` and `send_message_to_thread` all take the
+execution settings explicitly, transmit them, and return what the host actually
+reported under `settings`:
+
+| Setting | How it is transmitted |
+| --- | --- |
+| `cwd`, `model`, `runtime_workspace_roots` | Their own protocol parameters |
+| `reasoning_effort` | `config.model_reasoning_effort`; the protocol has no effort parameter |
+| sandbox kind | The `sandbox` mode string |
+| `expected_sandbox_policy` write roots and flags | `config.sandbox_workspace_write.*`; the mode string cannot carry them |
+| approval policy | Always `never`; this bridge cannot service interactive approvals |
+
+The `settings` receipt reports `requested`, the host's `actual` values, which
+fields were `verified`, and a `verification` state. Anything omitted is absent
+from `requested`: it is reported but never claimed about, so silence is never
+proof of preservation.
+
+Four outcomes are kept apart, because each needs a different response:
+
+- `setting_untransmittable` — this protocol cannot carry the request, so it is
+  refused locally before any call is made. A read-only policy asking for network
+  access is the current example; no config spelling applies it.
+- `settings_not_preserved` — the host reported a value different from the request.
+- `setting_unobservable` — the host reported no value, so nothing says whether the
+  setting was applied. This withholds the prompt or message; it is never a warning
+  attached to a success.
+- A transport or RPC failure stays on the delivery path and lands as `failed` or
+  `outcome_unknown`: the request may not have arrived, which is a different
+  question from what the host did with one that did.
+
+Two limits are real and are reported rather than worked around. `turn/start`
+returns only the turn, so the bridge binds no setting there and instead verifies
+at creation or resume and withholds when the answer disagrees. And the bridge
+holds no host-side exclusivity, so `verification` says `observed_at_creation` or
+`observed_at_resume` rather than "verified": another client can change a thread's
+settings between the observation and dispatch. Where the protocol allows it, a
+best-effort `settingsAfterDispatch` re-reads model, effort and cwd after an
+accepted turn and flags `concurrentChange`; it covers nothing else and can never
+downgrade a turn that was already accepted.
+
+A matching value means the host recorded what was asked for. It is not evidence
+that a provider honours it: a deliberately invalid effort string is echoed back
+unchanged.
 
 ## Delivery and recovery
 

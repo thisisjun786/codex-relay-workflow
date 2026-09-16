@@ -55,17 +55,36 @@ def make_server(bridge: Bridge):
         sandbox: Literal["read-only", "workspace-write", "danger-full-access"] = "read-only",
         model: str | None = None,
         app_server_project_id: str | None = None,
+        reasoning_effort: str | None = None,
+        runtime_workspace_roots: list[str] | None = None,
+        expected_sandbox_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create a retained session in an existing cwd, optionally with an initial prompt.
 
         Requires approval of this action and sandbox. No worktree or persistent Goal is created.
-        Approval policy is never. Omitted model/reasoning use configured defaults. Supply only an
-        App Server project ID, never assume a Desktop saved-project ID is interchangeable.
-        Returns actual settings and IDs; verify Desktop association separately. Reusing request_id
-        returns its receipt without resending. A failed/unknown operation may have created a thread.
+        Approval policy is never. Omitted model/reasoning/roots/policy use configured defaults and
+        are neither transmitted nor checked. Supplied ones are transmitted: effort and the
+        workspace-write policy fields travel in the start config, because the protocol has no
+        effort parameter and its sandbox parameter is only a mode. The response's actual values
+        are returned under "settings", and any difference or unreported field withholds the
+        initial prompt rather than reporting success. A read-only policy asking for network access
+        is refused before any request, because this protocol cannot carry it. "settings" describes
+        what the host reported at creation, not a guarantee about the dispatched turn. Supply only
+        an App Server project ID, never assume a Desktop saved-project ID is interchangeable.
+        Verify Desktop association separately. Reusing request_id returns its receipt without
+        resending. A failed/unknown operation may have created a thread.
         """
         return await bridge.create_thread(
-            request_id, cwd, prompt, title, sandbox, model, app_server_project_id
+            request_id,
+            cwd,
+            prompt,
+            title,
+            sandbox,
+            model,
+            app_server_project_id,
+            reasoning_effort,
+            runtime_workspace_roots,
+            expected_sandbox_policy,
         )
 
     @mcp.tool(annotations=WRITE)
@@ -91,8 +110,10 @@ def make_server(bridge: Bridge):
         files, runs no setup, sets no Goal. No automatic cleanup, archive or Desktop binding.
         Approval policy is never. expected_sandbox_policy is the complete expected response:
         e.g. {"type":"readOnly","networkAccess":false}. Actual settings and workspace roots
-        must match before prompt dispatch. Omit prompt for readiness-only creation; caller owns
-        further readiness and Goal policy. Model/reasoning defaults are preserved when omitted.
+        must match before prompt dispatch, and a difference or an unreported setting names its own
+        cause instead of one generic mismatch. Effort and the transmittable policy fields travel in
+        the start config. Omit prompt for readiness-only creation; caller owns further readiness
+        and Goal policy. Model/reasoning defaults are preserved when omitted.
         Reuse request_id after uncertainty: receipts replay without continuing partial work.
         Known artifacts and recovery requirements are retained even on failure/cancellation.
         """
@@ -113,15 +134,32 @@ def make_server(bridge: Bridge):
 
     @mcp.tool(annotations=WRITE)
     async def send_message_to_thread(
-        request_id: str, thread_id: str, message: str
+        request_id: str,
+        thread_id: str,
+        message: str,
+        expected_settings: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Resume the explicitly selected idle session without overrides and send one message.
+        """Resume the explicitly selected idle session and send one message under known settings.
 
         Requires user authorization. Refuses an active thread and an interactive approval policy.
-        Resume may load the session; its actual settings are returned. Does not steer, interrupt,
-        set Goals, or retry delivery. Use a stable request_id; inspect get_operation on uncertainty.
+        Omit expected_settings to keep the original behaviour exactly: the resume carries no
+        overrides, nothing is checked, and "settings" reports the observed values with
+        verification "not_requested" so silence is never read as proof of preservation.
+        Supply expected_settings — any of cwd, sandbox, expected_sandbox_policy, model,
+        reasoning_effort, runtime_workspace_roots — and the resume carries them and is read as an
+        observation: this host reports a thread's real state rather than adopting an override, so
+        a match confirms the thread is already in the requested state. Any difference, or a
+        setting the host does not report, withholds the message and names its own cause. The turn
+        is then started with no overrides, because turn/start reports only the turn and a binding
+        it cannot read back would be unverifiable. "settings" describes the resume observation,
+        not the dispatched turn: no host-side exclusivity is held. Does not steer, interrupt, set
+        Goals, or retry delivery. Use a stable request_id; inspect get_operation on uncertainty.
+        Supplied settings are part of the request identity, so reusing an id with different
+        settings is refused.
         """
-        return await bridge.send_message_to_thread(request_id, thread_id, message)
+        return await bridge.send_message_to_thread(
+            request_id, thread_id, message, expected_settings
+        )
 
     @mcp.tool(annotations=READ)
     async def list_threads(
