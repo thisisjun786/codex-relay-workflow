@@ -11,7 +11,9 @@ side effect.
 import json
 
 from .errors import DeliveryRefused, RefusalReason
-from .currency import STALE_GENERATION, SUPERSEDED as SUPERSEDED_REVISION, head_revision
+from .currency import (
+    REVIEWABLE, STALE_GENERATION, SUPERSEDED as SUPERSEDED_REVISION, head_revision,
+)
 from .identity import request_id as derive_request_id
 from .lifecycle import UNKNOWN as LIFECYCLE_UNKNOWN, hold_reason_for, observe, record as record_lifecycle
 from .policy import RetryPolicy
@@ -1088,6 +1090,17 @@ class DeliveryService:
             return None
         if event["execution_generation"] < relationship["execution_generation"]:
             return STALE_GENERATION
+        # The head rule is one REVISION replacing another, and head_revision only ever
+        # considers reviewable events. An execution-only outcome - failed, interrupted,
+        # blocked without a manifest - is not competing for that head: it is a different kind
+        # of fact about the same generation, and a later one. Measuring it against a head that
+        # is already final suppressed it before any transport call, so a generation that ended
+        # badly after producing a reviewable revision never told the parent it had ended,
+        # while the generation was still current and the event declared no supersession of its
+        # own. The generation rule above still covers these, because a generation that has
+        # moved on invalidates every outcome of the previous one whatever its shape.
+        if event["outcome"] != REVIEWABLE:
+            return None
         head = head_revision(
             db, event["relationship_id"], event["execution_generation"],
         )

@@ -236,6 +236,35 @@ class PreSendSupersession(DeliveryTestCase):
             "a retry could not tell the caller this receipt still needs queuing",
         )
 
+    def test_a_later_execution_only_outcome_survives_a_final_revision_head(self):
+        """The head rule is one REVISION replacing another, and it was applied to everything.
+
+        A generation that produced a reviewable revision and then ended failed, interrupted
+        or blocked was measured against its own final head and suppressed before any
+        transport call - so the parent never learned the assignment had ended, while the
+        generation was still current and the event declared no supersession of its own.
+        """
+        relationship, reviewable = self.queued_outcome("ready_for_review")
+        self.attempt(reviewable)
+        self.assertEqual(self.intake.row(reviewable)["stage"], "final")
+
+        later = self.execution_payload(relationship, "failed")
+        self.accept(later)
+        self.delivery.enqueue(later["eventId"])
+
+        # The rule itself, which is what _claim consults immediately before the send.
+        with self.store.transaction() as db:
+            reason = self.delivery._supersession_reason(db, later["eventId"])
+
+        self.assertIsNone(
+            reason,
+            "the generation's own terminal outcome was read as replaced by its revision, so"
+            " the parent never learns the assignment ended",
+        )
+        self.assertNotEqual(
+            self.delivery.get(later["eventId"])["state"], SUPERSEDED,
+        )
+
     def test_a_queued_predecessor_is_annotated_by_its_successor(self):
         """Same generation, and the predecessor has not reached the transport at all.
 
