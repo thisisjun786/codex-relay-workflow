@@ -529,6 +529,22 @@ class RelayService:
                 "intent": self.intent.write(enabled=True, actor=actor)}
 
     def disable(self, *, actor: str = "cli", timeout: float = 10.0) -> dict:
+        # Ownership BEFORE the intent write. service.json is shared by everything pointed at
+        # this state directory, and a foreign supervisor re-reads it at every worker
+        # boundary: writing enabled=false and only then discovering the supervisor is not
+        # ours refused the stop while still shutting that supervisor down at its next
+        # boundary. A refusal that still has an effect is not a refusal.
+        owner, handle, detail = self.ownership()
+        if handle is not None:
+            handle.close()
+        if owner in (FOREIGN, UNVERIFIABLE):
+            return {"ok": False,
+                    "reason": "not_ours" if owner == FOREIGN else "ownership_unverifiable",
+                    "detail": detail, "intent": self.intent.read(),
+                    "stop": {"ok": False, "reason": "refused", "supervisor": "untouched",
+                             "worker": "untouched"},
+                    "note": "intent is shared with the owner of this state directory and was"
+                            " left unchanged"}
         written = self.intent.write(enabled=False, actor=actor)
         stopped = self.stop(actor=actor, timeout=timeout)
         # A stop that had nothing to stop is not a failure; the intent is what disable owns.
@@ -642,7 +658,12 @@ class RelayService:
         finally:
             if handle is not None:
                 handle.close()
-        worker = self._stop_worker(record, timeout=timeout, grace=grace)
+        # Re-read AFTER the supervisor is gone. A supervisor replacing a worker between our
+        # first read and now means the pid we started with names a worker that has already
+        # exited, and stopping that one would report success while the replacement, which
+        # holds the inherited locks, is still delivering.
+        worker = self._stop_worker(self.record() or record, timeout=timeout, grace=grace)
+        record = self.record() or record
         supervisor_done = outcome in ("exited", "gone")
         worker_done = worker in ("exited", "gone")
         if record is not None:

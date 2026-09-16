@@ -199,6 +199,39 @@ class Ownership(ServiceTestCase):
         self.assertIn("another installation", refused["detail"])
         self.assertIsNone(child.poll(), "a foreign process must not be signalled")
 
+    def test_disable_refuses_a_foreign_service_without_touching_shared_intent(self):
+        """service.json is shared by everything pointed at this state directory.
+
+        Writing enabled=false and only then discovering the supervisor is foreign refused
+        the stop while still shutting that supervisor down at its next worker boundary,
+        because it re-reads intent there. A refusal that still has an effect is not one.
+        """
+        service = self.service("a")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+        service.write_record(dict(service.record(), installationId="someone-else"))
+
+        refused = service.disable(actor="intruder")
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertTrue(
+            service.intent.read()["enabled"],
+            "the owner's intent must survive a refused disable",
+        )
+        self.assertIsNone(child.poll())
+        self.assertFalse(service.stop_request_path.exists())
+
+    def test_disable_still_works_on_a_service_this_installation_owns(self):
+        service = self.service("b")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+
+        disabled = service.disable(actor="owner")
+
+        self.assertTrue(disabled["ok"], disabled)
+        self.assertFalse(service.intent.read()["enabled"])
+        child.wait(timeout=10)
     def test_stop_refuses_a_recycled_pid(self):
         service = self.service("a")
         child, pid = self.holder(service)
@@ -243,6 +276,47 @@ class Ownership(ServiceTestCase):
         self.assertIsNone(service.record()["pid"])
         self.assertFalse(service.lock_is_held())
 
+    def test_stop_reaches_the_worker_the_record_names_now(self):
+        """A supervisor replacing a worker while stop runs left the first read stale.
+
+        Stopping the worker that already exited reports success while its replacement,
+        which holds the inherited locks, is still delivering.
+        """
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        first = subprocess.Popen(
+            [sys.executable, "-c", "import time\nwhile True:\n    time.sleep(0.05)\n"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.children.append(first)
+        first.terminate()
+        first.wait(timeout=10)
+        service.write_record(dict(
+            service.record(), workerPid=first.pid, workerStartTicks=1,
+        ))
+        replacement = subprocess.Popen(
+            [sys.executable, "-c", "import time\nwhile True:\n    time.sleep(0.05)\n"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.children.append(replacement)
+        original = service._terminate
+
+        def replace_then_terminate(handle, **kwargs):
+            # The supervisor swapping workers in the window stop() used to read across.
+            service.write_record(dict(
+                service.record(), workerPid=replacement.pid,
+                workerStartTicks=service_module.start_ticks(replacement.pid),
+            ))
+            return original(handle, **kwargs)
+
+        with mock.patch.object(service, "_terminate", replace_then_terminate):
+            stopped = service.stop()
+
+        child.wait(timeout=10)
+        self.assertIsNotNone(
+            replacement.poll(), "the worker the record names NOW is the one stop must reach",
+        )
+        self.assertEqual(stopped["worker"], "exited")
     def test_a_stale_record_does_not_block_a_fresh_start(self):
         service = self.service("a")
         child, pid = self.holder(service)
@@ -474,6 +548,19 @@ class SupervisorCleanup(ServiceTestCase):
             "the unclamped delay is the policy interval, which outlives the whole bound",
         )
         self.assertTrue(all(value <= 0.01 for value in slept), slept)
+
+    def test_a_long_failure_streak_keeps_retrying_at_the_cap(self):
+        """The backoff built the product and clamped after, so it overflowed and killed the
+        supervisor it was meant to pace.
+        """
+        policy = RetryPolicy()
+        ceiling = policy.restart_backoff_max_seconds
+        for failures in (1, 2, 10, 1024, 1025, 10 ** 6):
+            delay = policy.restart_delay_for(failures)
+            self.assertIsInstance(delay, (int, float))
+            self.assertLessEqual(delay, ceiling)
+        self.assertEqual(policy.restart_delay_for(10 ** 6), ceiling)
+        self.assertLess(policy.restart_delay_for(1), policy.restart_delay_for(4))
 
 
 class Intent(ServiceTestCase):
