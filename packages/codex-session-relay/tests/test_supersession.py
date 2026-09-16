@@ -37,6 +37,25 @@ class PreSendSupersession(DeliveryTestCase):
         self.delivery.enqueue(payload["eventId"])
         return relationship, payload["eventId"]
 
+    def test_a_queued_delivery_is_annotated_when_the_generation_advances(self):
+        """_claim does suppress a stale queued row - but attempt() can return BEFORE _claim.
+
+        Rate limiting, a busy recipient, an unavailable host all return early, and a recipient
+        that is never free means _claim is never reached at all. Generation advance already
+        knows the row is stale, so leaving it unannotated let it retry indefinitely while
+        every status read reported it as current.
+        """
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        self.assertEqual(self.delivery.get(event_id)["state"], "queued")
+
+        self.advance_generation(relationship, 2)
+
+        note = self.store.one(
+            "SELECT * FROM delivery_supersession WHERE event_id = ?", (event_id,),
+        )
+        self.assertIsNotNone(note, "a stale queued delivery said nothing about being stale")
+        self.assertEqual(note["reason"], STALE_GENERATION)
+
     def test_an_outstanding_send_is_annotated_when_the_generation_advances(self):
         """attempt() rejects a non-claimable state, so nothing reached the pre-send check.
 

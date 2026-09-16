@@ -432,7 +432,13 @@ def cmd_deliver(services, args) -> dict:
         services.ack.bind_pending_anchors()
         return {"attempt": record}
     out = []
-    for row in services.delivery.eligible(now=services.clock.now(), limit=args.limit):
+    # per_parent_limit is the TICK's fairness share, and an operator asking for --limit 20 is
+    # not running a tick: capping each parent at two made a bulk deliver quietly send two.
+    # The share still governs the daemon. Fairness across parents is unaffected, because
+    # eligible() deals the rows one parent at a time whatever the per-parent window is.
+    for row in services.delivery.eligible(
+        now=services.clock.now(), limit=args.limit, per_parent_limit=args.limit,
+    ):
         out.append(services.delivery.attempt(row["event_id"], services.adapter))
     # The bulk path dispatches revisions too, so it binds for exactly the same reason the
     # single-event path does.

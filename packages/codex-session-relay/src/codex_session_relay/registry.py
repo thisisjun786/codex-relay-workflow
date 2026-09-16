@@ -272,7 +272,12 @@ class Registry:
             # inbox_only belongs with them: it is terminal, attempt() cannot revisit it, and
             # its acknowledgement is refused as stale - so without this it reports
             # channel_closed as though it were still current.
-            "   AND d.state IN ('sending','held_uncertain','dispatched',"
+            # queued belongs here for a reason of the same shape: _claim does suppress a stale
+            # queued row, but attempt() can return BEFORE _claim - rate limiting, a busy
+            # recipient, an unavailable host - and a recipient that is never free means _claim
+            # is never reached at all. Generation advance already knows the row is stale, so
+            # leaving it unannotated let it keep retrying while reporting as current.
+            "   AND d.state IN ('queued','sending','held_uncertain','dispatched',"
             "                  'deferred_busy','withheld_pre_send','inbox_only')"
             " ON CONFLICT(event_id) DO NOTHING",
             (now, rid, number),

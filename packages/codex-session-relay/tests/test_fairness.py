@@ -63,6 +63,35 @@ class DeliveryFairness(ParentFixture):
         self.assertIn("01parent-b", parents, "the newer parent was never even considered")
         self.assertIn(newer[0], [row["event_id"] for row in chosen])
 
+    def test_an_explicit_bulk_limit_is_not_capped_by_the_per_tick_share(self):
+        """deliver --limit is an operator asking for a bulk send, not a tick.
+
+        The per-parent share exists so one parent cannot fill a tick's window against the
+        others. Applying it to an explicit limit made `deliver --limit 20` against a single
+        parent quietly send two. Fairness across parents does not depend on the share:
+        eligible() deals rows one parent at a time whatever the window is.
+        """
+        self.assignment("solo", events=20)
+        share = self.delivery.policy.max_sends_per_parent_per_tick
+        self.assertLess(share, 20, "the fixture has to exceed the share to say anything")
+
+        tick = self.delivery.eligible(now=self.clock.now(), limit=20)
+        bulk = self.delivery.eligible(now=self.clock.now(), limit=20, per_parent_limit=20)
+
+        self.assertEqual(len(tick), share, "the tick still respects its own share")
+        self.assertEqual(len(bulk), 20, "an explicit limit was capped by the tick share")
+
+    def test_a_bulk_limit_still_deals_between_parents(self):
+        """Lifting the per-parent window must not turn a bulk send into one parent's queue."""
+        self.assignment("x", events=10)
+        self.assignment("y", events=10)
+
+        chosen = self.delivery.eligible(now=self.clock.now(), limit=6, per_parent_limit=6)
+
+        parents = [row["parent_task_id"] for row in chosen]
+        self.assertEqual(len(chosen), 6)
+        self.assertEqual(len(set(parents)), 2, f"one parent took the whole bulk: {parents}")
+
     def test_the_share_is_even_rather_than_dealt_in_blocks(self):
         for name in ("a", "b", "c"):
             self.assignment(name, events=10)

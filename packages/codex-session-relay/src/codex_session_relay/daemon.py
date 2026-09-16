@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .delivery import COMPLETION
-from .errors import DeliveryRefused, RegistrationError, RelayError, ScopeError
+from .errors import (
+    DeliveryRefused, RefusalReason, RegistrationError, RelayError, ScopeError,
+)
 from .models import TurnRef
 from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
@@ -488,8 +490,21 @@ class RelayDaemon:
                 relationship["relationshipId"], reference,
             )["eventId"], False
         except RelayError as refusal:
-            # A refusal is a decision - this daemon may not assert anything about that turn -
-            # so settlement proceeds and records what it did observe.
+            if refusal.reason == RefusalReason.RELATIONSHIP_NOT_ACTIVE:
+                # NOT a decision about this turn. The scheduler selected an active assignment
+                # and the relationship paused while the host read was in flight, so the pause
+                # says nothing about what the turn did. Recording a settlement here would
+                # retire the turn - _worth_polling drops it - while the only carrier of the
+                # outcome, this synthesized receipt, was never written. A resume would then
+                # find nothing left to observe and the parent would wait forever. So this is
+                # transient like any other: keep nothing and look again once it is active.
+                report.notes.append(
+                    f"observation deferred, {relationship['relationshipId']} is not active:"
+                    f" {refusal}"
+                )
+                return None, True
+            # Any other refusal IS a decision - this daemon may not assert anything about that
+            # turn - so settlement proceeds and records what it did observe.
             report.notes.append(f"daemon observation refused: {refusal}")
             return None, False
         except Exception as error:  # noqa: BLE001 - transient: nothing is known yet
