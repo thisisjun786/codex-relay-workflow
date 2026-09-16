@@ -680,14 +680,15 @@ def _check_evidence(entries):
                 _single_line(_required(item, "an evidence entry"), "an evidence entry")
             )
             continue
-        if not isinstance(item, dict) or not str(item.get("check") or "").strip():
+        if not isinstance(item, dict) or not isinstance(item.get("check"), str) \
+                or not item["check"].strip():
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 f"each verification entry is a string or an object naming its check, not "
                 f"{item!r}",
             )
         checked.append({
-            "check": _single_line(str(item["check"]).strip(), "an evidence check"),
+            "check": _single_line(item["check"].strip(), "an evidence check"),
             "exitCode": _exit_code(item.get("exitCode")),
             "detail": _single_line(str(item.get("detail") or "").strip(),
                                    "an evidence detail") or None,
@@ -1089,6 +1090,11 @@ def _finding_lines(receipt, review):
 
     lines = ["", "violated criteria:"]
     seen = set()
+    if not authoritative:
+        # A legacy relationship can reach needs_changes with no registered criteria, so the
+        # review findings are all there is. Saying where they came from still matters: the
+        # child should not read them as a recorded verdict it can look up.
+        lines.append("  from the review; this assignment has no recorded criteria set:")
     for item in authoritative or list(enrichment.values()):
         extra = enrichment.get(item["id"], {})
         seen.add(item["id"])
