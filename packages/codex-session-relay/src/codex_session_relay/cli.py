@@ -1385,6 +1385,11 @@ def _refuse_ambiguous_state(services, args) -> None:
     wins every later resolution and hides the assignments and pending deliveries in both of
     the others. Refusing costs one command; the third store costs the state.
 
+    The same refusal covers a store that records NO socket. Its directory hash cannot be
+    inverted, so if it is this socket's - created from a spelling we cannot reconstruct - then
+    creating a canonical database beside it hides it just as permanently. That case fires only
+    when a store would be created; an existing canonical store has already settled it.
+
     doctor and ack-proof are exempt for opposite reasons. doctor is how an operator finds out
     which store to pass to --state, so refusing it would remove the only way out. ack-proof is
     a derivation over its own two arguments that opens no store at all.
@@ -1397,24 +1402,31 @@ def _refuse_ambiguous_state(services, args) -> None:
     builds Services itself bypasses it; every in-process caller in this package passes an
     explicit directory, and raising from a property would turn a diagnostic into a crash.
     """
-    if not services.selection.ambiguous:
+    selection = services.selection
+    if not (selection.ambiguous or selection.unidentified):
         return
     if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof):
         return
+    contested = bool(selection.ambiguous)
     raise PayloadExit({
         "error": "refused",
-        "reason": "ambiguous_state_directory",
+        "reason": ("ambiguous_state_directory" if contested
+                   else "unidentified_state_directory"),
         "detail": (
             "more than one store already records this socket, and creating a new one here"
             " would hide them both"
+        ) if contested else (
+            "a store here records no socket, so it cannot be ruled out as this one's;"
+            " creating a new store beside it would hide it permanently"
         ),
         "socketPath": services.socket_path,
-        "candidates": list(services.selection.ambiguous),
-        "wouldHaveCreated": str(services.selection.db_path),
+        "candidates": list(selection.ambiguous or selection.unidentified),
+        "wouldHaveCreated": str(selection.db_path),
         "recover": [
             "doctor lists the candidates",
             "--state <candidate> doctor identifies the store",
             "--state <candidate> service status shows which assignments it carries",
+            "--state <the directory above> once, to adopt it deliberately",
         ],
     }, EXIT_REFUSED)
 

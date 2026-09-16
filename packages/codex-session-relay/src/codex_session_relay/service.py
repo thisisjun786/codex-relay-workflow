@@ -1231,6 +1231,16 @@ class RelayService:
         segments, failures, degraded = [], 0, None
         outstanding = None
         with SingleInstance(self.selection.path, shared=True) as lock:
+            # Re-read UNDER the lock. The check above ran while nothing was held, so a disable
+            # landing between them is missed: this supervisor starts, and the disabling caller
+            # - which classified the PREVIOUS holder and wrote outside the lock - has written
+            # enabled=false at a supervisor it never examined, which this one then obeys at its
+            # first worker boundary. Whoever holds this lock is the one whose intent decides.
+            if not self.intent.read()["enabled"]:
+                raise ServiceRefused(
+                    "service_disabled",
+                    "this service was disabled while this supervisor was starting",
+                )
             scope_fd = None
             if self.socket_path:
                 claim = self.scope.claim(
@@ -1298,6 +1308,14 @@ class RelayService:
                         self.store_journal_note(degraded)
                     self._note(consecutiveFailures=failures, degraded=degraded)
                     if self.stop_requested() or not self.intent.read()["enabled"]:
+                        break
+                    if max_segments is not None and len(segments) >= max_segments:
+                        # The top of the loop stops for this too, but only AFTER the restart
+                        # delay below - so a finite run outran its own bound by up to the
+                        # backoff cap, which after repeated failures is five minutes, before
+                        # returning. There is nothing left to wait for.
+                        break
+                    if deadline is not None and time.monotonic() - started >= deadline:
                         break
                     wait = policy.restart_delay_for(failures)
                     if deadline is not None:

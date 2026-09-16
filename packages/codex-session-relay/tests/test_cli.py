@@ -496,6 +496,26 @@ class ContestedSocket(CliBase):
         self.assertTrue(report["siblingStores"]["ambiguous"])
         self.assertEqual(len(report["siblingStores"]["claimingThisSocket"]), 2)
 
+    def test_a_store_recording_no_socket_also_refuses_before_creating_one(self):
+        """A store older than provenance cannot be matched to a socket by anything but its
+        directory hash, which cannot be inverted. Reporting it through doctor was not enough,
+        because an ordinary command does not run doctor and creates the store anyway."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "unlabelled-home")
+        root = os.path.join(home, ".local", "state", "codex-session-relay")
+        os.makedirs(os.path.join(root, "0123456789abcdef"))
+        Store(Path(root) / "0123456789abcdef" / "relay.sqlite3").close()
+        socket = os.path.join(self.tmp, "unlabelled.sock")
+
+        refused = self.run_in_home(home, "--socket", socket, "status", expect=2)
+
+        self.assertEqual(refused["reason"], "unidentified_state_directory")
+        self.assertFalse(os.path.exists(refused["wouldHaveCreated"]))
+        self.assertEqual(os.listdir(root), ["0123456789abcdef"], "no store was created")
+
     def test_an_explicit_state_directory_resolves_the_contest(self):
         home, root, socket = self.contested("contested-explicit")
         chosen = os.path.join(root, "aaaa444444444444")

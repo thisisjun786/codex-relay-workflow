@@ -1388,6 +1388,38 @@ class Supervision(ServiceTestCase):
         self.assertIsNotNone(launches[0]["lock_fd"])
         self.assertIsNotNone(launches[0]["scope_fd"])
 
+    def test_supervision_refuses_a_disable_that_landed_while_it_was_starting(self):
+        """The first intent check runs while nothing is held.
+
+        A disable that lands between it and the instance lock would otherwise start a
+        supervisor its owner had already turned off - and one the disabling caller never
+        examined, because what it classified was the PREVIOUS holder. Whoever holds the lock
+        is the one whose intent decides, so the answer is re-read under it.
+        """
+        service = self.service("a")
+        service.enable(actor="test")
+        enabled = service.intent.read()
+        reads = []
+
+        def once_then_disabled():
+            reads.append(1)
+            return enabled if len(reads) == 1 else dict(enabled, enabled=False)
+
+        service.intent.read = once_then_disabled
+        launches = []
+
+        def spawn(**call):  # pragma: no cover - reaching it is the failure
+            launches.append(call)
+            return FakeWorker(0)
+
+        with self.assertRaises(ServiceRefused) as caught:
+            service.supervise(
+                allow_isolated=True, spawn=spawn, sleeper=lambda _s: None, max_segments=1,
+            )
+
+        self.assertEqual(caught.exception.reason, "service_disabled")
+        self.assertEqual(launches, [], "a disabled service was supervised anyway")
+
     def test_repeated_failure_backs_off_and_is_reported(self):
         service = self.service("a")
         service.enable(actor="test")
@@ -1403,9 +1435,23 @@ class Supervision(ServiceTestCase):
     def test_a_clean_segment_resets_the_failure_count(self):
         service = self.service("a")
         service.enable(actor="test")
-        outcome, _launches, slept = self.supervised(service, codes=[1, 1, 0])
-        self.assertEqual(outcome["consecutiveFailures"], 0)
+        # A fourth segment so the reset is observable as a delay. The delay after the LAST
+        # segment no longer exists - there is nothing left to wait for - so a three-code run
+        # would show the backoff climbing and never show it come back down.
+        outcome, _launches, slept = self.supervised(service, codes=[1, 1, 0, 1])
+        self.assertEqual(outcome["consecutiveFailures"], 1)
         self.assertEqual(slept[:3], [2.0, 4.0, 2.0])
+
+    def test_the_last_allowed_segment_does_not_wait_to_restart_nothing(self):
+        """The segment bound was only checked at the top of the loop, so every finite run
+        slept one restart delay it had no use for - up to the backoff cap after repeated
+        failures - before returning."""
+        service = self.service("a")
+        service.enable(actor="test")
+        _outcome, launches, slept = self.supervised(service, codes=[1, 1])
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(slept, [2.0], "the run waited after the segment it was never going"
+                                       " to replace")
 
     def test_disabling_the_service_ends_supervision_at_the_boundary(self):
         service = self.service("a")
