@@ -41,15 +41,47 @@ class Reconciler:
         self.clock = clock
         self.policy = policy or delivery.policy
 
-    def open_attempts(self) -> list:
-        """Everything a restart has to look at: in-flight sends and unresolved attempts."""
-        return self.store.all(
-            "SELECT a.* FROM attempts a JOIN deliveries d ON d.event_id = a.event_id"
-            " WHERE a.internal_state = 'in_flight'"
-            "    OR (a.state = ? AND d.state IN (?, ?))"
-            " ORDER BY a.observed_at",
+    UNRESOLVED = (
+        " WHERE (a.internal_state = 'in_flight'"
+        "        OR (a.state = ? AND d.state IN (?, ?)))"
+    )
+
+    def open_attempts(self, *, limit=None, parents=None) -> list:
+        """Everything a restart has to look at: in-flight sends and unresolved attempts.
+
+        With no arguments this stays exhaustive, because recover_on_start has to see all of
+        it. The bounded, parent-filtered form is what a tick uses, so one parent's backlog of
+        unchanged attempts cannot hide another parent's actionable one. Deliberately NOT
+        filtered on active status: an unresolved send belonging to a cancelled assignment
+        still needs its evidence settled.
+        """
+        sql = (
+            "SELECT a.*, r.parent_task_id AS parent_task_id FROM attempts a"
+            " JOIN deliveries d ON d.event_id = a.event_id"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            + self.UNRESOLVED
+        )
+        params = [HELD_UNCERTAIN, HELD_UNCERTAIN, SENDING]
+        if parents:
+            sql += " AND r.parent_task_id IN (" + ",".join("?" * len(parents)) + ")"
+            params.extend(parents)
+        sql += " ORDER BY a.observed_at"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return self.store.all(sql, tuple(params))
+
+    def open_parents(self) -> list:
+        """Which parents have unresolved work, independent of how much each of them has."""
+        rows = self.store.all(
+            "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM attempts a"
+            " JOIN deliveries d ON d.event_id = a.event_id"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            + self.UNRESOLVED +
+            " ORDER BY r.parent_task_id",
             (HELD_UNCERTAIN, HELD_UNCERTAIN, SENDING),
         )
+        return [row["parent_task_id"] for row in rows]
 
     def reconcile_attempt(self, request_id: str, adapter, *, now=None) -> dict:
         now = self.clock.now() if now is None else now

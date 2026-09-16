@@ -21,7 +21,7 @@ from .models import TurnRef
 from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
 from .scope import assert_assignment_delivery
-from .transport import DISPATCHED, HELD_UNCERTAIN
+from .transport import DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, WITHHELD_PRE_SEND
 
 
 @dataclass
@@ -468,7 +468,29 @@ class RelayDaemon:
 
     def _reconcile(self, report, now) -> None:
         budget = self.policy.max_reconciles_per_tick
-        for attempt in self.reconciler.open_attempts()[:budget]:
+        parents = self.reconciler.open_parents()
+        if not parents:
+            return
+        # Same starvation, one layer over. Slicing a global prefix meant one parent's
+        # unchanged attempts occupied every reconciliation slot - and a gate skip still
+        # consumed its place - so another parent's revision never reached dispatched and its
+        # anchor never bound.
+        cursor = self._cursor("reconcile_parents", len(parents))
+        order = parents[cursor:] + parents[:cursor]
+        self._advance_cursor("reconcile_parents", 1, len(parents))
+        share = max(1, budget // len(order))
+        queues = [
+            list(self.reconciler.open_attempts(limit=share, parents=[parent]))
+            for parent in order
+        ]
+        dealt = []
+        while len(dealt) < budget and any(queues):
+            for queue in queues:
+                if len(dealt) >= budget:
+                    break
+                if queue:
+                    dealt.append(queue.pop(0))
+        for attempt in dealt:
             request_id = attempt["request_id"]
             decision, fingerprint = self._gate(attempt)
             if not decision:
@@ -540,16 +562,42 @@ class RelayDaemon:
     # ---------------------------------------------------------------- deliver
 
     def _deliver(self, report, now) -> None:
-        eligible = self.delivery.eligible(now=now, limit=self.policy.max_sends_per_tick)
+        parents = self.delivery.eligible_parents(now=now)
+        if not parents:
+            return
+        cursor = self._cursor("delivery_parents", len(parents))
+        eligible = self.delivery.eligible(
+            now=now, limit=self.policy.max_sends_per_tick, cursor=cursor,
+        )
+        # Moved on by ONE position after every window, whatever the outcomes were. Every
+        # eligible parent is dealt from, so the rotation is not about who is included - it
+        # decides who goes FIRST, and therefore who gets the odd slot when the budget does
+        # not divide evenly. Advancing by the parent count would wrap to the same head and
+        # hand that slot to the same parent forever.
+        self._advance_cursor("delivery_parents", 1, len(parents))
+        struggling = set()
         for row in eligible:
+            parent = row["parent_task_id"]
+            if parent in struggling:
+                # Skipped for the REST OF THIS TICK only. It reserves no capacity, opens no
+                # attempt and creates no hold, so the next tick reconsiders this parent
+                # normally; it simply cannot spend the whole budget failing.
+                report.skipped += 1
+                continue
             try:
                 record = self.delivery.attempt(row["event_id"], self.adapter, now=now)
             except Exception as error:
                 report.notes.append(f"delivery refused for {row['event_id']}: {error}")
+                struggling.add(parent)
                 continue
             if record is None:
+                # A busy parent or a withheld send is a returned outcome, not an exception,
+                # and it is exactly the case that used to consume a whole tick.
+                struggling.add(parent)
                 report.deferred += 1
                 continue
+            if record["deliveryState"] in (HELD_UNCERTAIN, DEFERRED_BUSY, WITHHELD_PRE_SEND):
+                struggling.add(parent)
             report.delivered += 1
             if row["kind"] != COMPLETION and record["deliveryState"] == DISPATCHED:
                 try:

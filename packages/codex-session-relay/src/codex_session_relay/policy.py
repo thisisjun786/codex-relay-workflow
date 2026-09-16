@@ -33,6 +33,7 @@ class RetryPolicy:
     # rather than implied by a per-relationship slice that grows with the relationship count.
     max_turn_reads_per_tick: int = 8
     min_relationship_share: int = 2
+    max_sends_per_parent_per_tick: int = 2
     # Supervision cadence. A worker is bounded by segment_seconds; the supervisor replaces it,
     # which is what carries an assignment past any single process lifetime.
     segment_seconds: float = 3600.0

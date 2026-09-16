@@ -277,17 +277,68 @@ class DeliveryService:
         ]
         return NEWLINE.join(lines)
 
-    def eligible(self, *, now: float, limit: int = 10) -> list:
-        return self.store.all(
-            "SELECT d.* FROM deliveries d"
+    ELIGIBLE_WHERE = (
+        " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL"
+        "   AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ?)"
+        "   AND r.status = 'active' AND r.superseded_by IS NULL AND e.stage = 'final'"
+    )
+
+    def eligible_parents(self, *, now: float) -> list:
+        """Who has anything to send, decided independently of how much each of them has.
+
+        This is the half that removes starvation. A single ORDER BY created_at LIMIT is a
+        global prefix: a parent with forty thousand older rows fills it by itself and a parent
+        with one newer row is never seen. Asking which PARENTS are eligible cannot be crowded
+        out by row counts.
+        """
+        rows = self.store.all(
+            "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM deliveries d"
             " JOIN relationships r ON r.relationship_id = d.relationship_id"
             " JOIN events e ON e.event_id = d.event_id"
-            " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL"
-            "   AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ?)"
-            "   AND r.status = 'active' AND r.superseded_by IS NULL AND e.stage = 'final'"
-            " ORDER BY d.created_at LIMIT ?",
-            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, limit),
+            + self.ELIGIBLE_WHERE +
+            " ORDER BY r.parent_task_id",
+            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now),
         )
+        return [row["parent_task_id"] for row in rows]
+
+    def eligible_for_parent(self, parent: str, *, now: float, limit: int, offset: int = 0):
+        return self.store.all(
+            "SELECT d.*, r.parent_task_id AS parent_task_id FROM deliveries d"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            " JOIN events e ON e.event_id = d.event_id"
+            + self.ELIGIBLE_WHERE +
+            "   AND r.parent_task_id = ?"
+            " ORDER BY d.created_at LIMIT ? OFFSET ?",
+            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, parent, limit, offset),
+        )
+
+    def eligible(self, *, now: float, limit: int = 10, per_parent_limit=None, cursor: int = 0,
+                 offsets=None) -> list:
+        """A fair slice: every eligible parent, then a bounded share each, dealt one at a time.
+
+        Dealt singly rather than in contiguous blocks, because a block allocation leaves the
+        last parent short whenever the budget is not a multiple of the share.
+        """
+        parents = self.eligible_parents(now=now)
+        if not parents:
+            return []
+        share = per_parent_limit or self.policy.max_sends_per_parent_per_tick
+        start = cursor % len(parents)
+        order = parents[start:] + parents[:start]
+        queues = {
+            parent: list(self.eligible_for_parent(
+                parent, now=now, limit=share, offset=(offsets or {}).get(parent, 0),
+            ))
+            for parent in order
+        }
+        selected = []
+        while len(selected) < limit and any(queues[parent] for parent in order):
+            for parent in order:
+                if len(selected) >= limit:
+                    break
+                if queues[parent]:
+                    selected.append(queues[parent].pop(0))
+        return selected
 
     # ---------------------------------------------------------------- claim
 

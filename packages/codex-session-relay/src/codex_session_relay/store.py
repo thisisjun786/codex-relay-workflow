@@ -434,6 +434,11 @@ CREATE TABLE IF NOT EXISTS delivery_intent (
 );
 
 CREATE INDEX IF NOT EXISTS deliveries_state ON deliveries (state, next_eligible_at);
+-- Per-parent selection reads one parent's oldest eligible rows at a time, which is a
+-- different access pattern from deliveries_state. Declaring it is not proof it is used:
+-- the query plan is inspected in the fairness tests rather than assumed.
+CREATE INDEX IF NOT EXISTS deliveries_relationship_created ON deliveries
+    (relationship_id, created_at);
 CREATE INDEX IF NOT EXISTS attempts_open ON attempts (internal_state);
 CREATE INDEX IF NOT EXISTS events_relationship ON events (relationship_id, execution_generation);
 CREATE INDEX IF NOT EXISTS events_stage ON events (stage, turn_id);
