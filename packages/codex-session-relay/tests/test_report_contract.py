@@ -635,6 +635,33 @@ class Bounds(DeliveryTestCase):
                       **a_report(summary="openly revised", submission_no=2))
         self.assertIn("submission: 2", self.delivery.preview_message(event_id))
 
+    def test_a_first_report_after_a_legacy_delivery_is_also_a_change(self):
+        _relationship, event_id = self.queued_event()
+        # Nothing recorded, so this attempt froze the pre-contract message.
+        self.attempt(event_id)
+        error = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id, **a_report()),
+        )
+        self.assertIn("pre-contract message has already been delivered", error.detail)
+        # Announced, it is allowed, and the retry says which submission it is.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(submission_no=2))
+        self.assertIn("submission: 2", self.delivery.preview_message(event_id))
+
+    def test_an_invalid_verdict_is_a_refusal_not_a_host_exception(self):
+        _source = self.queued_event()
+        _relationship, revision_like = _source
+        for bad in ({"kind": "LOOKS FINE"}, {"kind": cxc.GO_WITH_FIXES},
+                    {"kind": cxc.GO_WITH_FIXES, "blockers": 0},
+                    {"kind": cxc.FAIL, "blockers": 3}):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=revision_like, **a_report(review=bad)
+                ),
+            )
+
     def test_a_report_backed_message_still_carries_the_frozen_manifest_pointer(self):
         _relationship, event_id = self.queued_event()
         receipt = dict(self.intake.get(event_id))

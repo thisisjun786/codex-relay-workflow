@@ -315,24 +315,38 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     Takes the transaction handle rather than the store, so this cannot be satisfied by a
     read that was already stale by the time the row was written.
     """
-    existing = db.execute(
-        "SELECT MAX(submission_no) AS submission_no FROM work_reports WHERE event_id = ?",
-        (event_id,),
-    ).fetchone()
-    if existing is None or existing["submission_no"] is None:
-        return
     attempted = db.execute(
         "SELECT 1 FROM attempts WHERE event_id = ? LIMIT 1", (event_id,)
     ).fetchone()
     if attempted is None:
         return
-    if int(submission_no) <= existing["submission_no"]:
+    existing = db.execute(
+        "SELECT MAX(submission_no) AS submission_no FROM work_reports WHERE event_id = ?",
+        (event_id,),
+    ).fetchone()
+    stored = existing["submission_no"] if existing else None
+    if stored is None:
+        # A message has already gone out for this event and it was the pre-contract one, so
+        # the FIRST report is also a change to what a retry will say. Counting the delivered
+        # legacy message as submission 1 is what makes that change announce itself; the null
+        # MAX used to return early here and let the switch happen silently.
+        delivered = 1
+        detail = (
+            "a pre-contract message has already been delivered for this event, so a first "
+            "report would change what a retry says without changing what it calls itself; "
+            "record it as submission 2 or higher"
+        )
+    else:
+        delivered = stored
+        detail = (
+            f"submission {stored} of this report has already been delivered, so replacing it "
+            f"in place would change what a retry says without changing what it calls itself; "
+            f"record this as submission {stored + 1} or higher"
+        )
+    if int(submission_no) <= delivered:
         raise ReceiptRefused(
             RefusalReason.MALFORMED_RECEIPT,
-            f"submission {existing['submission_no']} of this report has already been "
-            f"delivered, so replacing it in place would change what a retry says without "
-            f"changing what it calls itself; record this as submission "
-            f"{existing['submission_no'] + 1} or higher",
+            detail,
         )
 
 
@@ -402,7 +416,13 @@ def _check_review(review):
     blockers = review.get("blockers")
     # Raises on an unknown kind, on GO-WITH-FIXES without a count, and on a count attached
     # to PASS or FAIL. Rendering the line here is what makes those refusals reachable.
-    cxc.verdict_line(kind, blockers)
+    # Translated, because everything else a producer can get wrong here comes back as a
+    # named refusal and a bare ValueError would be the one typo that escapes as a host
+    # exception instead.
+    try:
+        cxc.verdict_line(kind, blockers)
+    except ValueError as invalid:
+        raise ReceiptRefused(RefusalReason.MALFORMED_RECEIPT, str(invalid)) from invalid
     findings = []
     for item in review.get("findings") or []:
         if not isinstance(item, dict):
