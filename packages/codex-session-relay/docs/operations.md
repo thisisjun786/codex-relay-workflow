@@ -141,6 +141,50 @@ working.
 
 Status: planned in PR-B.
 
+## What one tick guarantees
+
+The loop is bounded, so the interesting question is not what it does but what it cannot
+starve or lose.
+
+**No anchor is left behind.** A revision can reach `dispatched` by several routes, and binding
+used to happen on only one of them, which left the generation unbound and made every later
+receipt for it refused. Binding is now a recovery over state that runs first in each tick, so
+whichever route dispatched it, the next tick repairs it and a receipt arriving in that same
+tick is accepted.
+
+**A refused queue is remembered, not lost.** Finalizing a claim, recording the observation
+that finalized it and queuing what it produced are one commit. A refusal that may not last -
+a paused relationship, a recipient not yet authorized - records a delivery intent, and
+recovery retries that intent with an exponential backoff so one permanently unqueueable event
+cannot hold a slot. Anything else rolls the whole thing back, and the next tick re-observes.
+
+Absence of a delivery row is deliberately NOT treated as evidence that delivery was wanted: a
+receipt emitted with `--no-enqueue` and an event stranded by an old generation look exactly
+the same from outside, and neither should be sent.
+
+**The current generation is always reachable.** Observation reads are capped per tick. Within
+that cap the tick serves a rotating subset of relationships rather than promising every one
+of them a read, because that promise stops being possible once the relationship count passes
+the budget. Each served relationship gets its current anchor first and then a rotating slice
+of the rest, from a cursor persisted in the database so a restart resumes the rotation.
+
+| | anchor revisit | full backlog coverage |
+|---|---|---|
+| share of two or more | every service round | `ceil(R / served) * ceil(N / (share - 1))` ticks |
+| share of one | every two service rounds | `ceil(R / served) * 2N` ticks |
+
+A candidate with nothing left to learn is dropped before the budget rather than after it,
+which is what the old prefix got wrong: past eight generations the slice was permanently the
+first eight, every one already observed, and the generation actually running was never
+selected again.
+
+An observation is also no longer treated as the end of a turn. A receipt written just after
+the completion was seen still has to be resolved, so a turn is skipped only when it has been
+observed and has no unresolved staged claim.
+
+Status: implemented. Per-parent send fairness, the delivery phase taxonomy and pre-send
+supersession are still planned.
+
 ## What a restart preserves
 
 Assignments, generations and anchors, queued and deferred deliveries, attempt history and
