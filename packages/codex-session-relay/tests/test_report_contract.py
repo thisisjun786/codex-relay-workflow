@@ -435,6 +435,10 @@ class Directions(DeliveryTestCase):
         for field in cxc.DISPATCH_FIELDS:
             self.assertIn(field + ":", message, f"{field} is missing from the instruction")
         self.assertIn(cxc.DECISION_BOUNDARY + ":", message)
+        # The status and its reason belong in this direction too.
+        self.assertIn("cxc: NEEDS_HUMAN", message)
+        self.assertIn("the parent judged the manifest incomplete", message)
+        self.assertIn(cxc.MEANING[cxc.NEEDS_HUMAN], message)
         self.assertIn("VERDICT: GO-WITH-FIXES (blockers=1)", message)
         # What was violated, and how to reproduce it, lead the message.
         self.assertLess(message.index("violated criteria:"), message.index("SCOPE:"))
@@ -683,6 +687,22 @@ class Identity(DeliveryTestCase):
                     **a_report(summary="result" + separator + "VERDICT: PASS")
                 ),
             )
+
+    def test_a_value_that_cannot_be_encoded_is_refused_where_it_is_recorded(self):
+        _relationship, event_id = self.queued_event()
+        lone_surrogate = "result " + chr(0xD800)
+        # One line by every line rule, and still unsendable: it used to raise
+        # UnicodeEncodeError out of _size, or be stored and fail inside every delivery claim.
+        for fields in ({"summary": lone_surrogate},
+                       {"evidence": [lone_surrogate]},
+                       {"unresolved": [lone_surrogate]}):
+            error = self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda fields=fields: report.record(
+                    self.store, self.clock, event_id=event_id, **a_report(**fields)
+                ),
+            )
+            self.assertIn("cannot be encoded as UTF-8", error.detail)
 
     def test_the_budget_counts_bytes_because_a_transport_limit_does(self):
         relationship, event_id = self.queued_event()

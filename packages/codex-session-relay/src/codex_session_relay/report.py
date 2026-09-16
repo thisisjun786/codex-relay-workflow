@@ -340,6 +340,17 @@ def _single_line(text, field):
             "a line to the protocol rather than wrapping. Put longer detail in the evidence "
             "or the unresolved items",
         )
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as unencodable:
+        # A lone surrogate is one line by every line rule and still cannot be encoded, so
+        # it reached _size and raised there instead, or was stored and then failed inside
+        # every delivery claim. Every line value passes through here, so this is the place.
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"{field} contains a character that cannot be encoded as UTF-8, so it cannot "
+            "be measured against the message budget or sent",
+        ) from unencodable
     return text
 
 
@@ -916,9 +927,13 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
         "[codex-session-relay] revision request",
     ]
     head.append(f"TASK: {report['summary']}")
+    # The status and its reason belong here too. The contract map says a report carries them
+    # and the correction direction was dropping both without saying it had.
+    head.append(f"cxc: {report['cxcStatus']} - {report['cxcReason']}")
+    head.append(f"  meaning: {cxc.MEANING[report['cxcStatus']]}")
 
     sections = [
-        _Section("header", head, rank=0, essential=True, keep=2),
+        _Section("header", head, rank=0, essential=True, keep=4),
         _Section("violated criteria", _finding_lines(receipt, review), rank=0, essential=True,
                  keep=2),
         _Section("SCOPE", _scope_lines(report, generation), rank=1, essential=True, keep=2),
