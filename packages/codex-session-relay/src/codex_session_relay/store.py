@@ -98,6 +98,20 @@ CREATE TABLE IF NOT EXISTS observations (
     PRIMARY KEY (thread_id, turn_id, terminal_status)
 );
 
+-- Which ASSIGNMENT has settled a turn, which observations cannot answer: its key is the
+-- turn alone, so when two assignments share a child turn only the first records a row and
+-- every other one looks permanently unsettled. Kept as a separate table rather than by
+-- re-keying observations, because this store has no migration path and an existing database
+-- would silently keep the old key. New databases and old ones both gain this on open.
+CREATE TABLE IF NOT EXISTS assignment_settlements (
+    relationship_id TEXT NOT NULL,
+    thread_id       TEXT NOT NULL,
+    turn_id         TEXT NOT NULL,
+    terminal_status TEXT NOT NULL,
+    settled_at      TEXT NOT NULL,
+    PRIMARY KEY (relationship_id, thread_id, turn_id, terminal_status)
+);
+
 CREATE TABLE IF NOT EXISTS refusals (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     at              TEXT NOT NULL,

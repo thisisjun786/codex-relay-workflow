@@ -663,6 +663,15 @@ class ReceiptIntake:
                 event, now,
             ),
         )
+        if relationship_id is not None:
+            # observations is keyed by the turn alone, so the row above belongs to whichever
+            # assignment settled it first. This is the per-assignment fact, and it is what
+            # the scheduler and the health block ask.
+            db.execute(
+                "INSERT OR IGNORE INTO assignment_settlements (relationship_id, thread_id,"
+                " turn_id, terminal_status, settled_at) VALUES (?,?,?,?,?)",
+                (relationship_id, turn.thread_id, turn.turn_id, turn.turn_status, now),
+            )
 
 
 def contract_record(receipt: dict) -> dict:

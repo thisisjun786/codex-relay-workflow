@@ -144,6 +144,13 @@ settled and excluded from freshness: the scheduler deliberately stops reading it
 last poll cannot advance, and ageing it out would report every quiet assignment as stalled.
 New staged work on that turn makes it eligible again.
 
+Settlement is recorded per assignment. Two assignments can legitimately watch the same child
+turn, and the `observations` table is keyed by the turn alone, so it can only ever name whichever
+assignment settled it first. `assignment_settlements` carries the per-assignment fact, which is
+what the observation scheduler and this health block ask. Without it every other assignment
+on a shared turn looked permanently unsettled, was re-polled on every round and spent
+observation budget forever.
+
 Status: implemented. `status` reports the phase, the most recent failed operation with its
 error code and, for a settings rejection, the exact fields the host disagreed on, plus the
 next retry time. The field-level difference is read from the raw receipt, because the

@@ -356,7 +356,7 @@ class RelayDaemon:
             return True
         if relationship_id is not None:
             return self.store.one(
-                "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?"
+                "SELECT 1 FROM assignment_settlements WHERE thread_id = ? AND turn_id = ?"
                 "   AND relationship_id = ?",
                 (thread, turn_id, relationship_id),
             ) is None
@@ -407,7 +407,7 @@ class RelayDaemon:
         """
         if relationship_id is not None:
             return self.store.one(
-                "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?"
+                "SELECT 1 FROM assignment_settlements WHERE thread_id = ? AND turn_id = ?"
                 " AND terminal_status = ? AND relationship_id = ?",
                 (reference.thread_id, reference.turn_id, reference.turn_status,
                  relationship_id),

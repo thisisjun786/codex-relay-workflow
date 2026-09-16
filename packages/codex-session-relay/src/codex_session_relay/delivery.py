@@ -892,13 +892,15 @@ class DeliveryService:
         for row in self.store.all(
             "SELECT g.relationship_id, g.dispatch_turn_id, p.last_polled_at, p.last_error"
             "     , r.child_task_id"
-            "     , (SELECT COUNT(*) FROM observations o"
+            "     , (SELECT COUNT(*) FROM assignment_settlements o"
             "         WHERE o.thread_id = r.child_task_id"
             "           AND o.turn_id = g.dispatch_turn_id"
             # Per assignment, like the scheduler's own check. Two assignments can share a
             # child turn, and asking globally let one assignment's observation mark the
             # other settled - excluding an assignment whose own settlement was still
             # outstanding from the very freshness check that would have shown it.
+            # assignment_settlements is the per-assignment fact; observations is keyed by
+            # the turn alone and can only ever name whoever settled it first.
             "           AND o.relationship_id = r.relationship_id) AS observed"
             "     , (SELECT COUNT(*) FROM events e"
             "         WHERE e.turn_thread_id = r.child_task_id"

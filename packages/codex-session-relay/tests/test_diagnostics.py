@@ -329,12 +329,12 @@ class ObservationHealth(DaemonTestCase):
         self.assertEqual(health["health"], "stalled",
                          "there is staged work here and nothing has looked at it since")
 
-    def test_one_assignments_observation_does_not_settle_another_on_the_same_turn(self):
-        """The observed subquery asked only by thread and turn.
+    def test_each_assignment_settles_a_shared_turn_for_itself(self):
+        """observations is keyed by the turn alone, so it can only name who settled it first.
 
-        Two assignments can share a child anchor, so one assignment's observation marked the
-        other settled - excluding an assignment whose own settlement was still outstanding
-        from the very freshness check that would have surfaced it.
+        Every other assignment on a shared child turn therefore looked permanently unsettled,
+        was polled again on every round, reported the tick non-quiet and spent observation
+        budget forever. assignment_settlements records the per-assignment fact.
         """
         import os
 
@@ -361,26 +361,31 @@ class ObservationHealth(DaemonTestCase):
         self.adapter.add_thread(child)
         self.adapter.start_turn(child, turn_id=turn, status="inProgress")
         self.adapter.finish_turn(child, turn)
+        for _tick in range(4):
+            self.clock.advance(1)
+            self.daemon.tick(now=self.clock.now())
 
-        # One tick serves a bounded number of assignments, so exactly one is settled here.
-        self.daemon.tick(now=self.clock.now())
-        settled = {
-            row["relationship_id"]
-            for row in self.store.all("SELECT relationship_id FROM observations")
-        }
-        self.assertEqual(len(settled), 1, "the fixture needs exactly one settled so far")
-        outstanding = next(
-            r["relationshipId"] for r in made if r["relationshipId"] not in settled
+        self.assertEqual(
+            len(self.store.all("SELECT * FROM observations")), 1,
+            "the turn table is unchanged and still holds one row",
         )
+        self.assertEqual(
+            {row["relationship_id"]
+             for row in self.store.all("SELECT * FROM assignment_settlements")},
+            {r["relationshipId"] for r in made},
+            "but each assignment has settled it for itself",
+        )
+
         self.clock.advance(7200)
-
         health = self.delivery.observation_health(now=self.clock.now())
+        for relationship in made:
+            self.assertTrue(health["anchors"][relationship["relationshipId"]]["settled"])
+        self.assertEqual(health["health"], "healthy")
 
-        self.assertFalse(
-            health["anchors"][outstanding]["settled"],
-            "this assignment has not observed its own turn yet",
-        )
-        self.assertEqual(health["health"], "stalled")
+        # And nothing is re-polled: a settled assignment costs no further budget.
+        self.clock.advance(1)
+        quiet = self.daemon.tick(now=self.clock.now())
+        self.assertEqual(quiet.observed, 0, "neither assignment is settled a second time")
 
     def test_another_assignments_staged_work_does_not_unsettle_this_one(self):
         """staged_here counted by thread and turn, so a shared anchor contaminated both.
