@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-focus`, `crw-next`, `crw-plan`, `crw-run`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-focus`, `crw-next`, `crw-plan`, `crw-run`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Resolve the project target
 
@@ -9,13 +9,94 @@ current assignment and the verified management binding for this task. A
 temporary question or link for another project does not change the persistent
 binding; a change to that binding needs an explicit designation or switch.
 Distinguish Linear project IDs, Codex task/host IDs, Desktop project IDs, and
-repository identity. One repository may support several Linear projects.
+repository identity. One repository may support several Linear projects, and
+one project may involve several repositories. Resolve names to stable project
+IDs using the supplied link, verified binding, and semantic scope. If same-name
+candidates remain ambiguous, ask before writing or binding; do not pick by
+title alone. A rename or changed initiative relation does not change a binding.
 
 Use [crw-focus](../../crw-focus/SKILL.md) to designate, record, restore,
 or switch the fixed management task, including its app title and pin. Refresh
 volatile state before acting. An old or copied record locates context but does
 not transfer another task's ownership or execution permissions. Keep binding
 setup with `crw-focus` and the requested operation with its existing owner.
+
+## Linear operating model
+
+Keep goals, product classification, and repository identity separate:
+
+- An initiative describes a goal and its completion condition, not a permanent
+  product bucket. A project may have no initiative or contribute to several.
+  Preserve its stable ID and issues across those relations; do not clone them
+  or sum shared progress as separate output. Verify connector support and read
+  back relations before claiming that a requested link exists.
+- Create a project when the user requests one, including an accepted proposal
+  or a request to create/update a full Linear plan from goal through issues.
+  That write request covers the needed hierarchy in its agreed scope; a narrow plan update, large backlog, or multiple
+  repositories alone does not authorize extra projects. Consultation and
+  draft-only planning do not authorize Linear writes. Reuse existing IDs and meaningful scope. Name the
+  result naturally without a fixed product prefix. Do not rename existing
+  projects or migrate their relations merely by loading these instructions.
+- Product family is a single-choice project label group. Reuse the existing
+  workspace values; a common project without one owning product may leave it
+  empty and describe its shared scope. Do not split the project automatically
+  or treat that empty classification as an error.
+- Related repositories use multiple independent project labels, outside a
+  group. Use `저장소 · repo`, adding the owner when short names collide; keep
+  the description to the exact repository URL. Verify label identity, parent
+  group, and resulting assignments. These labels classify related code; they
+  do not assign all those repositories to every issue or select a checkout.
+  Non-code work may have no repository label.
+- Reuse agreed labels. Discuss any additional label scheme when a need arises
+  instead of creating it automatically. Preserve unrelated labels; do not copy
+  all project labels to issues. Keep descriptions brief. Views, filters, and
+  default screens belong to the user and are configured only when requested.
+
+For example, a requested “Complete installation and first launch” project can
+have one product family and independent core, desktop, and installer repository
+labels. An installer fix within it still names only its actual code targets.
+A shared planning project can have neither product family nor repository labels.
+Neither example requires an initiative or a product prefix in the project name.
+
+### Issue-to-PR mapping
+
+One implementation issue corresponds to one PR, and that PR delivers one
+implementation issue. Split work requiring several PRs into separate issues
+with explicit dependencies, even within one repository. Keep a multi-repository
+outcome in one project when appropriate, with one issue per repository PR.
+Batches coordinate separate issue/PR pairs; they do not combine issues into one
+PR. Referencing a related issue is not claiming to deliver or close it.
+
+Keep review fixes on the same issue and PR. A necessary replacement PR retains
+the superseded link and names the one current delivery PR; it does not create a
+second simultaneous delivery for the issue. A new change after that delivery
+has merged gets a new issue and PR. Research, design, or operational work with
+no repository change uses an explicit non-PR result and verification; do not
+create an empty PR merely to fit the rule.
+
+When existing work breaks this mapping, reconcile its scope and ownership
+through `crw-plan` before new dispatch. Preserve active work, IDs, and history;
+do not silently split, close, or reassign live issues. Editing these instructions
+does not migrate existing work or alter the relay's runtime contracts.
+
+### Parent and child scope
+
+One parent Codex task orchestrates one Linear project: issue dependencies,
+sequencing, parallel children, delivery verification and project integration.
+One child Codex task orchestrates one Linear issue: implementation, tests, its
+PR and review fixes, with internal helpers as needed. A ready batch means
+several separate children, not several issues assigned to one child. Internal
+helpers do not acquire project or issue ownership by receiving a subtask.
+
+Bind the parent by stable project ID and each child by its issue ID. An initiative
+spanning projects is a planning scope, not a combined execution-parent binding.
+Preserve other project coordinators and route cross-project prerequisites by
+relation; do not absorb their issues. Standalone issues may remain projectless
+and run in an issue-scoped task without inventing a project or a project parent.
+An explicit current-task implementation request keeps that mode and issue scope;
+it is not evidence that an independent child was created. Reuse the responsible
+child for the same issue’s follow-ups, not for a new issue. Explicit project-focus
+switches preserve old bindings and active ownership before establishing the new one.
 
 ## Linear holds canonical documents
 
@@ -41,7 +122,7 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 The effective Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-next` selects the next action, `crw-plan` defines work, `crw-run` coordinates execution, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` coordinates execution, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 ### Completion follow-up in an existing execution workflow
 
@@ -58,6 +139,8 @@ Recover the existing task first. A replacement is routine only when task creatio
 Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs `anthropic/claude-opus-5` at `xhigh` reasoning effort with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
 
 This default binds only `crw-run`'s independent children. The coordinator task, other products' global configuration, and CXC internal helper role routing keep their own settings.
+
+Non-PR work without repository changes uses the working directory, source/result access and durable evidence defined in OPS-5.1 of the [Operations contract](../../crw-run/references/operations.md#ops-51-placement); it does not need Git or PR capability.
 
 A new independent child is also created with enough capability to finish its delivery: file access for its checkout and evidence, git metadata access for its branch and commits, and the network access its push, pull request, and checks require. Broad local capability is the normal case. Worktrees, branches, scope, and recorded ownership separate concurrent work; the effective sandbox and permission profile define the enforced access boundary. The default covers a trusted implementation task inside the operating scope that creates it; an explicit narrower policy for the scope or the assignment governs over it, the effective profile is read back from the creation receipt, and the sandbox itself is never bypassed. Changing the default is a recorded decision rather than something a review performs. Apply the settings through the creation tool's real arguments and verify the returned profile. Tasks already running keep the settings they were created with; this is not authority to widen a live task or bypass a sandbox. See [Operations contract](../../crw-run/references/operations.md) for the owning rules.
 

@@ -15,10 +15,11 @@ Use the real Linear identifier, a concise Korean description of the assigned
 result, and the agreed execution mode. Use `CXC Loop` when it is the effective
 workflow; otherwise use the actual mode, such as `구현` or `검증`. The suffix names
 the assignment, not proof that a loop started. Keep runtime verification separate.
-Preserve an explicit user-supplied title. For a grouped delivery, use its primary
-issue and retain the full issue mapping in the packet. If no primary issue exists,
-use the verified issue identifiers together; if no issue is linked, use the known
-project name instead of inventing an issue number.
+Preserve an explicit user-supplied title. Each implementation packet names its
+one issue and intended PR. A batch retains separate packets and issue/PR pairs;
+do not use a primary issue to hide a combined delivery. If no issue is linked,
+use the known project name instead of inventing an issue number and reconcile
+the mapping through `crw-plan` before new implementation dispatch.
 
 The coordinator passes the title through the creation tool's supported title/name
 field and includes it in the packet. Prompt text alone does not prove the app title
@@ -31,13 +32,23 @@ authorized work. Task identity and recovery always use stable IDs, not title mat
 
 ## Launch packet
 
-This packet targets a verified independent implementation task for any issue
-count or checkout arrangement. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
+This packet targets a verified independent implementation task for one issue/PR
+pair, or an explicitly non-PR result. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
 before dispatch. A packet's wording cannot turn an internal subagent into that
 task. Record the existing owner and creation/reuse authorization before sending.
+For non-PR work, remove inapplicable Git/worktree/PR/OPS delivery fields and steps
+below. Carry the input baseline and delivered output identity separately: stable
+link plus output revision/updated-at evidence, or durable file locator plus digest.
+Retain a verified snapshot when old linked revisions cannot be recovered. Retain task identity, permissions and recovery information.
 
 ```text
-Task: [bounded result and issue links]
+Task: [one issue ID and bounded result]
+Parent: [one Linear project ID and verified coordinator task ID, or no project
+  for a standalone issue; retain the real coordinator task ID if delegated.
+  Initiative membership does not assign another project]
+Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
+  or existing PR URL; related issues are dependencies, not additional deliveries.
+  For non-PR work, state the result and how it will be verified]
 Title: [issue ID · short task name · agreed workflow, following Child task titles]
 Workflow: [effective workflow per Default independent execution]
 
@@ -75,7 +86,8 @@ Outcome and scope:
 
 Execution:
 - Read applicable project instructions and relevant source.
-- You are the independent implementation task; the parent owns coordination,
+- You orchestrate this one issue and its internal helpers. Do not absorb another
+  issue into this task or PR. The parent orchestrates one project and owns coordination,
   delivery validation, and authorized integration. Do not adopt the parent's CXC binding.
 - Where the assignment covers publication and you can push, own the delivery end to
   end: implement, test, commit, push, open the pull request, then triage, fix, reply
@@ -162,16 +174,48 @@ Return:
 Stop after this assigned result; do not auto-start another issue.
 ```
 
+## Non-PR packet
+
+Use this reduced shape for research, design or verification without repository changes.
+Keep the shared authorization, task settings and recovery rules above; omit code-only
+fields and OPS publication clauses. Relay-specific fields apply only when used. When using the relay, freeze the result
+and its verification evidence in a file under an authorized artifact root and emit
+that file; link-only completion has no manifest and is not a valid ready receipt.
+
+```text
+Task: [one stable issue ID, bounded result, existing owner]
+Coordinator: [actual task/host IDs if delegated; project ID only if one exists]
+Scope: [accepted question/outcome, exclusions, dependencies and write authority]
+Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
+Workflow/settings: [effective workflow, model/effort and actual permission profile]
+Working location: [permitted cwd/artifact roots; no invented Git repository]
+Verification: [observable acceptance criteria and independent evidence needed]
+Return: [actual task ID, result link plus delivered revision/updated-at evidence,
+  or durable artifact locator plus digest; verified output snapshot if needed;
+  criterion evidence, unresolved limitations and next handoff]
+Recovery: [issue-linked record or private receipt, dispatch/turn IDs and actual owner]
+Relay, if used: [exact issue identity, scope reference, real coordinator/child IDs,
+  state directory and authorized recipients; frozen result/evidence artifact path
+  and digest under an authorized root; current generation/receipt outcome]
+Stop after this issue; do not start another issue or create an empty PR.
+```
+
 ## Coordination record
 
 Use the project's linked canonical Linear coordination document as part of the
-management assignment, following [Integrations](../../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
+management assignment. For a standalone issue, use its existing linked document
+or an owned section in that issue and private issue/task recovery receipts. A
+project binding is optional; the actual coordinator identity remains required
+when delegating or routing relay delivery. Follow [Integrations](../../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
 For explicit read-only scope or unavailable access, return an unsynced update;
 retain private recovery receipts so an interrupted task can still be reconciled. Record only what is
 needed to resume:
 
-- Coordinator task ID and fixed project/backlog link.
-- Each task's scope, dependency edges, overlap decisions, and full baseline SHA.
+- Coordinator task ID and fixed project or standalone issue link.
+- Each implementation issue's one current PR, repository, and integration target;
+  retain superseded PR links as history. Record non-PR results separately.
+- Each task's scope, dependency edges, overlap decisions, and code baseline SHA
+  or non-PR source revision.
 - Where a relay holds the assignment: relationship id, current generation, current
   revision, assignment state, and the synchronisation jobs still owed.
 - Actual worktree/branch ownership and how local-only prerequisites are preserved.

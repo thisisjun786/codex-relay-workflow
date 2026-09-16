@@ -6,7 +6,9 @@ description: "Coordinate one Linear issue or a ready batch through independent c
 # CRW Run
 
 Use the selected Linear project as the planning source and keep this Codex task
-as its coordinator. Each implementation task owns its
+as its coordinator: one parent per project, one child per issue. Follow the shared
+[parent and child scope](../crw-plan/references/integrations.md#parent-and-child-scope),
+including standalone issues and explicit current-task work. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
@@ -65,7 +67,7 @@ implementation worker.
 Read the coordination record and inspect the existing responsible task and any
 current writer before creating or assigning work. Verify its actual task/host
 ID, issue scope, current turn, checkout ownership, and execution settings. Reuse
-that task for compatible follow-up work under the existing assignment. A busy
+that task for compatible follow-up work on the same issue under the existing assignment. A busy
 task, an uncertain send, or an inaccessible record is not evidence that no writer
 exists; reconcile before retrying or considering a replacement.
 
@@ -139,7 +141,14 @@ milestone percentage, issue status, merged PR, and deployed behavior can disagre
 record the discrepancy rather than silently treating them as equivalent.
 Missing connector access is a concrete limitation, not permission to invent issue details.
 
-Compare local and remote commit ancestry. Preserve local-only commits and dirty
+For a standalone issue, read that issue, its linked canonical documents and
+blocking relations directly; project and milestone reads are inapplicable. Keep
+its issue-scoped ownership and the existing management binding unchanged. Do not
+create a project or call `crw-focus` to satisfy this baseline. If a transport
+requires a project binding, use a permitted projectless execution path or report
+that capability gap; never invent a project ID for a receipt.
+
+For repository-changing work, compare local and remote commit ancestry. Preserve local-only commits and dirty
 work. Record a full baseline commit for each task and decide how any prerequisite
 changes will reach it. Do not push shared baseline commits through every task.
 
@@ -147,11 +156,20 @@ Derive batches from both dependency edges and overlapping edit surfaces.
 Independent issue statuses do not prove independent code changes. Serialize
 shared schema, persistence, contract, or central UI changes when separation would
 cost more than it saves. A small project may have only two useful parallel tasks.
-Prefer one Linear issue per reviewable delivery when its scope already fits.
-Group tightly coupled issues only with an explicit issue-to-delivery mapping.
+Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
+one implementation issue per PR, with one issue/PR pair per implementation
+packet. A batch retains those separate pairs. If one issue needs several PRs,
+or a proposed PR would deliver several issues, reconcile the plan through
+`crw-plan` before new dispatch; preserve existing owners and active work.
 
 Keep the human-readable coordination record in the project's linked Linear
 document as part of the management assignment, without a separate recording request.
+For a standalone issue, use its existing linked coordination document or a compact
+owned section in the issue within the authorized recording scope. Keep private
+recovery receipts keyed by the issue and actual task IDs; no project record or
+project-level parent binding is required. If delegation or a relay is used, retain
+the real coordinator task ID and routing identity; projectless does not mean
+coordinatorless. Preserve unrelated issue content on each update.
 For explicit read-only scope or unavailable access, return the unsynced update and
 retain the task's private recovery receipt. Keep raw launch
 receipts and sensitive evidence in an appropriate private location; local
@@ -162,9 +180,17 @@ Do not store project state or credentials inside this installed skill.
 
 Read [Task packet](references/task-packet.md) when preparing prompts. Each packet
 must stand alone in a fresh context and name its prerequisites, scope, baseline,
-acceptance criteria, verification, and return artifacts.
+acceptance criteria, verification, and return artifacts. For non-PR work without
+repository changes, use the source document/data revision as the baseline and
+return both that input baseline and the verified output identity: a stable result
+link plus delivered revision/updated-at evidence, or a durable file locator plus
+its digest. Snapshot the verified output when the source cannot recover old revisions. Omit Git
+ancestry, worktree/branch/commit, push/PR/review/merge requirements and their OPS
+clauses when they do not apply; do not create a repository or empty PR. Keep task
+ownership, access, settings, criteria and recovery evidence. This non-PR path
+applies throughout dispatch, observation and completion below.
 
-Every packet carries the current delivery contract, and where the template's older
+For repository-changing work, every packet carries the current delivery contract, and where the template's older
 delivery menu disagrees the contract wins. Name in the packet that the child owns its
 commits, push, the pull request and the review on that same pull request through to
 the applicable gates, and that the coordinator performs the merge while release and
@@ -187,7 +213,8 @@ creation field, verify the actual title by task ID, and correct it on the same
 managed task when supported. The packet's title alone is not app-state evidence.
 
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
-when no new branch or worktree is needed. Reuse a checkout whose ownership is
+when no new branch or worktree is needed. Non-PR work uses its permitted working
+directory and artifact access without Git metadata. For code work, reuse a checkout whose ownership is
 verified for the responsible child; a coordinator may prepare it before handoff.
 Otherwise follow the project/user placement convention. Record the actual path,
 branch, and owner; do not create a second checkout just to prove task separation.
@@ -222,8 +249,10 @@ model” is not a configuration override. A catalog entry is not proof of the mo
 that served the request. Settle a setting the creation path cannot apply before
 creating the task rather than downgrading it.
 
-Record request ID, task ID, host ID when supplied, turn ID, checkout, full
-baseline SHA, requested/actual title and settings, and launch outcome. Do not put raw
+Record request ID, task ID, host ID when supplied, turn ID, requested/actual title
+and settings, and launch outcome. For code work include the checkout and full Git
+baseline SHA. For non-PR work include the permitted working location and input
+source revision; add the delivered output identity when the result exists. Do not put raw
 credentials or full private prompts in public project records.
 
 Where a relay holds the assignment, register the relationship with its authorized
@@ -269,7 +298,7 @@ Describe evidence separately:
 | Prompt dispatched | Accepted turn ID and matching user message |
 | Requested settings applied | Actual returned settings, not prompt text |
 | CXC Loop active | Child's active goal and current goalplan/FSM evidence |
-| Work delivered | Completed turn plus actual commit/diff and check artifacts |
+| Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
@@ -282,7 +311,10 @@ Describe evidence separately:
 Do not assume a worktree/task returned by a backend appears in the app's project.
 Check the Desktop listing separately when the user needs that association.
 
-After delivery, identify the final commit or frozen hashed diff/file bundle, then
+After non-PR delivery, verify the delivered output revision/digest against its
+input baseline and acceptance criteria. A later edit at the same URL invalidates
+reused verification; it is not the same output. No commit or merge is required. After code delivery, identify the
+final commit or frozen hashed diff/file bundle, then
 check the prerequisite ancestry, scoped diff, acceptance criteria,
 meaningful negative cases, and relevant user-visible behavior. Reuse valid proof
 for the same revision and criteria; run missing checks or checks invalidated by

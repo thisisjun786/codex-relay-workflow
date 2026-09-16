@@ -1,0 +1,6 @@
+interface:
+  display_name: "CRW Define"
+  short_description: "의도를 탐색하고 완료 기준이 있는 이니셔티브 목표 정의"
+  default_prompt: "$crw-define 이 아이디어의 의도와 중요한 전제를 확인하고, 목표·완료 기준·범위·미결정을 정리해 Linear 이니셔티브와 정본 문서에 반영해줘. 프로젝트와 이슈 분해는 아직 하지 마."
+policy:
+  allow_implicit_invocation: true

@@ -415,6 +415,21 @@ migration deliberately rather than as a side effect of an install.
 
 ### OPS-5.1 Placement
 
+The checkout, branch, Git ownership and commit/PR capability rules in OPS-5 apply
+to repository-changing implementation. Non-PR research, design and verification
+use a permitted task working directory and durable private evidence root under
+the applicable user/project placement convention. Record its creator, editing owner,
+retention owner and cleanup authority; Git metadata ownership is inapplicable.
+Do not create a repository, branch or PR to satisfy this contract. Grant the access
+needed for the actual sources and result; explicit narrower scope and existing
+permission limits still win, with returned settings verified under OPS-5.5.
+
+A non-PR assignment using the relay must freeze its delivered result and evidence
+in at least one file under an authorized artifact root. Emit that artifact so the
+ready receipt has a nonempty manifest; a document URL alone cannot be relayed.
+For a mutable linked result, include its stable ID/link, delivered revision or
+updated-at evidence and verified output snapshot. Keep the input baseline separate.
+
 An implementation task works in `/home/jun/code-worktrees/<original-project>/<task>`, where the
 project segment comes from the original repository's project name rather than the directory name of
 whatever checkout is currently open, and the task segment is short kebab-case. The branch is
@@ -591,15 +606,22 @@ and something can be merged that this field never covered, so neither is read fr
 
 Because one service carries assignments belonging to several parents, several repositories and
 several Linear projects, each assignment binds a full identity and routing uses nothing outside it.
-The binding is the stable Linear workspace, project and issue identifiers; the host; the native
-parent and child task identifiers; the execution generation; the repository, worktree, branch and
-owner; the artifact roots; and the allowed recipients.
+The binding is the stable Linear workspace and issue identifiers, plus the project identifier
+when one exists; the host; the native coordinator and child task identifiers; the execution
+generation; the repository, worktree and branch for code work; the owner, artifact roots and
+allowed recipients. A standalone issue records no project, but delegated delivery still names
+its actual coordinator. Non-PR work retains its permitted artifact roots and result identity
+without inventing Git metadata.
 
 A displayed issue key is a label, not an identifier. It is unique inside one workspace and nowhere
 else, so two workspaces can both hold the same key, and a registration or a lookup carrying only
 that key can match the wrong assignment and refuse a legitimate second child as a duplicate. Every
-registration therefore carries the stable workspace and project identifiers alongside it, and any
-command that accepts a key is given enough identity to resolve it unambiguously.
+registration therefore uses a globally stable issue identity and records its workspace and,
+when present, project in the canonical scope reference. For a projectless issue, use a
+workspace-qualified issue document or issue record as that reference. The bundled relay keeps
+`--scope-ref` as descriptive context and routes on the exact `--issue` string and task IDs;
+it does not validate Linear membership. Any command accepting a display key needs enough
+identity to resolve it unambiguously before registration. See [relay registration](relay.md#register-the-assignment).
 
 ### OPS-7.2 Never route on a display name or a working directory
 

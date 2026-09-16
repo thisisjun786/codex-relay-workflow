@@ -38,7 +38,8 @@ open work before proposing a new project or duplicate issue.
 
 If the outcome is unclear, choose the smallest discovery step that would change
 the decision: a focused user question, an external observation, or a bounded
-experiment. If it is clear, choose the smallest useful first delivery with ready
+experiment. Use [crw-define](../crw-define/SKILL.md) when the initiative goal
+itself needs definition. If it is clear, choose the smallest useful first delivery with ready
 prerequisites. Missing documents alone do not justify a full planning exercise;
 use [crw-plan](../crw-plan/SKILL.md) when missing scope or dependencies
 actually prevent execution. Prefer a step that produces evidence or user value
