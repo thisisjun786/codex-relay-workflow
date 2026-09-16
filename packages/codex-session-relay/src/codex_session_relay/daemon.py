@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .delivery import COMPLETION
+from .errors import DeliveryRefused, ScopeError
 from .models import TurnRef
 from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
@@ -30,6 +31,8 @@ class TickReport:
     deferred: int = 0
     skipped: int = 0
     acksVerified: int = 0
+    anchorsBound: int = 0
+    requeued: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -38,6 +41,8 @@ class TickReport:
             "observed": self.observed, "reconciled": self.reconciled,
             "delivered": self.delivered, "deferred": self.deferred,
             "skipped": self.skipped, "acksVerified": self.acksVerified,
+            "anchorsBound": self.anchorsBound,
+            "requeued": self.requeued,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -113,15 +118,53 @@ class RelayDaemon:
     def tick(self, *, now=None) -> TickReport:
         now = self.clock.now() if now is None else now
         report = TickReport()
+        self._bind_anchors(report)
         self._observe(report, now)
+        self._requeue_missing(report)
         self._reconcile(report, now)
         self._verify_acks(report, now)
         self._deliver(report, now)
         report.quiet = not (report.observed or report.reconciled or report.delivered
-                            or report.deferred or report.acksVerified)
+                            or report.deferred or report.acksVerified or report.anchorsBound
+                            or report.requeued)
         return report
 
+    def _bind_anchors(self, report) -> None:
+        """Repair any generation left anchor_pending by a dispatch this loop did not make.
+
+        First in the tick on purpose: a receipt arriving during this same tick is then
+        accepted rather than refused as unbound.
+        """
+        try:
+            report.anchorsBound = len(self.ack.bind_pending_anchors())
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+            report.notes.append(f"anchor recovery failed: {error}")
+
+    def _requeue_missing(self, report) -> None:
+        """Queue a final event that has no delivery row.
+
+        A refusal at enqueue time can be perfectly legitimate - a relationship paused between
+        selection and queuing - and the observation that produced the event is still true. So
+        the obligation is derived from state and retried here, instead of the event being lost
+        because the turn it came from will never look new again.
+        """
+        try:
+            candidates = self.delivery.unqueued_final_events(
+                limit=self.policy.max_sends_per_tick,
+            )
+        except Exception as error:  # noqa: BLE001
+            report.notes.append(f"requeue scan failed: {error}")
+            return
+        for row in candidates:
+            try:
+                self.delivery.enqueue(row["event_id"])
+            except Exception as error:  # noqa: BLE001 - still refused; try again next tick
+                report.notes.append(f"requeue refused for {row['event_id']}: {error}")
+                continue
+            report.requeued += 1
+
     def _verify_acks(self, report, now) -> None:
+        pass_placeholder = None
         """Complete acknowledgements a parent authored without a host.
 
         This is the process that holds host access, so it is where recorded intent becomes
@@ -210,32 +253,71 @@ class RelayDaemon:
         ) is not None
 
     def _settle_turn(self, relationship, reference, report) -> None:
-        resolved = self.intake.resolve_staged(reference)
+        """Finalize, record and queue as ONE commit, with a rule for each kind of failure.
+
+        Recording the observation first and queuing after is what lost events: a refusal at
+        the queue left a final event with no delivery row, and the next tick skipped the turn
+        because it had already been observed.
+
+        A DURABLE refusal - a paused relationship, an unauthorized recipient - is a legitimate
+        answer, so the observation stands and _requeue_missing picks the event up once the
+        refusal no longer applies. Anything else is transient and nothing is known, so the
+        whole transaction rolls back and the next tick re-observes cleanly.
+        """
         outcome = classify_observation(reference.turn_status, None)
-        event_id = None
-        synthesized = None
-        if reference.turn_status in ("failed", "interrupted") and not resolved["finalized"]:
-            try:
-                receipt = self.intake.daemon_observation(
-                    relationship["relationshipId"], reference
-                )
-                event_id = receipt["eventId"]
-                synthesized = event_id
-            except Exception as error:
-                report.notes.append(f"daemon observation refused: {error}")
-        self.intake.record_observation(
-            reference, outcome, relationship_id=relationship["relationshipId"], event=event_id
-        )
-        # Storing an execution-only receipt is not telling anyone. A parent that is waiting for
-        # a verdict has to learn that the child failed, so a synthesized observation is queued
-        # like any other event; persistence and notification are separate outcomes and are
-        # reported separately.
-        for queueable in list(resolved["finalized"]) + ([synthesized] if synthesized else []):
-            try:
-                self.delivery.enqueue(queueable)
-            except Exception as error:
-                report.notes.append(f"enqueue refused for {queueable}: {error}")
+        synthesized = self._synthesize(relationship, reference, report)
+        try:
+            self._commit_settlement(relationship, reference, outcome, synthesized, queue=True)
+        except (DeliveryRefused, ScopeError) as refusal:
+            report.notes.append(f"enqueue refused for {reference.turn_id}: {refusal}")
+            self._commit_settlement(
+                relationship, reference, outcome, synthesized, queue=False,
+            )
+        except Exception as error:  # noqa: BLE001 - transient: keep nothing, retry next tick
+            report.notes.append(f"settlement rolled back for {reference.turn_id}: {error}")
+            return
         report.observed += 1
+
+    def _synthesize(self, relationship, reference, report):
+        """An execution-only receipt for a turn that failed with no claim of its own.
+
+        Written before the settlement transaction because it is a durable fact in its own
+        right and opens its own writes. If queuing it then fails, _requeue_missing finds it,
+        which is why storing it separately does not lose it.
+        """
+        if reference.turn_status not in ("failed", "interrupted"):
+            return None
+        # A staged claim on this turn is no reason to skip: a failed or interrupted ending
+        # SUPPRESSES that claim rather than finalizing it, so without a synthesized receipt
+        # the parent is left waiting on a verdict that can never arrive.
+        try:
+            return self.intake.daemon_observation(
+                relationship["relationshipId"], reference,
+            )["eventId"]
+        except Exception as error:  # noqa: BLE001
+            report.notes.append(f"daemon observation refused: {error}")
+            return None
+
+    def _commit_settlement(self, relationship, reference, outcome, synthesized, *, queue):
+        with self.store.transaction() as db:
+            resolved = self.intake.resolve_staged_in(db, reference)
+            self.intake.record_observation_in(
+                db, reference, outcome, relationship_id=relationship["relationshipId"],
+                event=synthesized,
+            )
+            if not queue:
+                return
+            queueable = list(resolved["finalized"])
+            if synthesized:
+                queueable.append(synthesized)
+            for event_id in queueable:
+                # Storing a receipt is not telling anyone. A parent waiting for a verdict has
+                # to learn that the child failed, so a synthesized observation is queued like
+                # any other event.
+                self.delivery.enqueue_in(
+                    db, event_id, relationship_id=relationship["relationshipId"],
+                    kind=COMPLETION, recipient_task_id=relationship["parent"]["taskId"],
+                )
 
     # ------------------------------------------------------------- reconcile
 

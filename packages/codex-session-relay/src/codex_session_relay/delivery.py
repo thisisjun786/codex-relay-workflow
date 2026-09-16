@@ -110,6 +110,23 @@ class DeliveryService:
         )
         self.store.journal("delivery_queued", event_id, {"kind": kind}, at=now)
 
+    def unqueued_final_events(self, *, limit: int = 10) -> list:
+        """Final events with no delivery row at all, under a relationship that can receive one.
+
+        Derived from state rather than kept in a queue of its own, so an event stranded before
+        this recovery existed is picked up too, not only one stranded afterwards. A suppressed
+        event is excluded: it was decided against, not lost.
+        """
+        return self.store.all(
+            "SELECT e.event_id, e.relationship_id FROM events e"
+            "  JOIN relationships r ON r.relationship_id = e.relationship_id"
+            "  LEFT JOIN deliveries d ON d.event_id = e.event_id"
+            " WHERE e.stage = 'final' AND e.suppressed_reason IS NULL AND d.event_id IS NULL"
+            "   AND r.status = 'active' AND r.superseded_by IS NULL"
+            " ORDER BY e.first_seen_at LIMIT ?",
+            (limit,),
+        )
+
     def _render_for(self, row, record, request) -> str:
         """Deterministic, directional, and carrying no turn id belonging to the recipient.
 

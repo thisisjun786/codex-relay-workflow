@@ -558,12 +558,27 @@ class ReceiptIntake:
         """
         if turn.turn_status not in TERMINAL:
             return {"finalized": [], "suppressed": [], "pending": True}
+        rows = self.staged_events(thread_id=turn.thread_id, turn_id=turn.turn_id)
+        if not rows:
+            return {"finalized": [], "suppressed": [], "pending": False}
+        with self.store.transaction() as db:
+            return self.resolve_staged_in(db, turn)
+
+    def resolve_staged_in(self, db, turn: TurnRef) -> dict:
+        """The same settlement inside a caller's transaction.
+
+        Exists so that finalizing a claim, recording the observation that finalized it, and
+        queuing what it produced can be ONE commit. Split across three, a failure in the third
+        leaves a final event nobody will ever look at again.
+        """
+        if turn.turn_status not in TERMINAL:
+            return {"finalized": [], "suppressed": [], "pending": True}
         finalized, suppressed = [], []
         now = self.clock.iso()
         rows = self.staged_events(thread_id=turn.thread_id, turn_id=turn.turn_id)
         if not rows:
             return {"finalized": [], "suppressed": [], "pending": False}
-        with self.store.transaction() as db:
+        if True:
             for row in rows:
                 if turn.turn_status == "completed":
                     db.execute(
@@ -631,17 +646,23 @@ class ReceiptIntake:
 
     def record_observation(self, turn: TurnRef, classification, *, relationship_id=None, event=None):
         """The daemon's own key, (thread, turn, terminal status), deduplicating its stream."""
-        now = self.clock.iso()
         with self.store.transaction() as db:
-            db.execute(
-                "INSERT OR IGNORE INTO observations (thread_id, turn_id, terminal_status,"
-                " relationship_id, classification, event_id, observed_at) VALUES (?,?,?,?,?,?,?)",
-                (
-                    turn.thread_id, turn.turn_id, turn.turn_status, relationship_id,
-                    classification.value if hasattr(classification, "value") else str(classification),
-                    event, now,
-                ),
+            self.record_observation_in(
+                db, turn, classification, relationship_id=relationship_id, event=event,
             )
+
+    def record_observation_in(self, db, turn: TurnRef, classification, *, relationship_id=None,
+                              event=None):
+        now = self.clock.iso()
+        db.execute(
+            "INSERT OR IGNORE INTO observations (thread_id, turn_id, terminal_status,"
+            " relationship_id, classification, event_id, observed_at) VALUES (?,?,?,?,?,?,?)",
+            (
+                turn.thread_id, turn.turn_id, turn.turn_status, relationship_id,
+                classification.value if hasattr(classification, "value") else str(classification),
+                event, now,
+            ),
+        )
 
 
 def contract_record(receipt: dict) -> dict:

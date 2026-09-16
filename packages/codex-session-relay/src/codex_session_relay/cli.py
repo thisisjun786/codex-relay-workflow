@@ -420,6 +420,8 @@ def cmd_deliver(services, args) -> dict:
     _require_adapter(services)
     if args.event:
         record = services.delivery.attempt(args.event, services.adapter)
+        # Every route to dispatched binds its anchor, not only the daemon's own.
+        services.ack.bind_pending_anchors()
         return {"attempt": record}
     out = []
     for row in services.delivery.eligible(now=services.clock.now(), limit=args.limit):
@@ -429,12 +431,16 @@ def cmd_deliver(services, args) -> dict:
 
 def cmd_reconcile(services, args) -> dict:
     _require_adapter(services)
-    return services.reconciler.reconcile_attempt(args.request_id, services.adapter)
+    outcome = services.reconciler.reconcile_attempt(args.request_id, services.adapter)
+    services.ack.bind_pending_anchors()
+    return outcome
 
 
 def cmd_recover(services, args) -> dict:
     _require_adapter(services)
-    return services.reconciler.recover_on_start(services.adapter)
+    outcome = services.reconciler.recover_on_start(services.adapter)
+    outcome["anchorsBound"] = services.ack.bind_pending_anchors()
+    return outcome
 
 
 def cmd_claim(services, args) -> dict:
