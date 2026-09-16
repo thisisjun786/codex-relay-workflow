@@ -222,6 +222,57 @@ class Ownership(ServiceTestCase):
         self.assertIsNone(child.poll())
         self.assertFalse(service.stop_request_path.exists())
 
+    def test_a_record_with_no_boot_id_is_unverifiable(self):
+        """A reboot resets the pid space AND the start-tick counter together.
+
+        Without a recorded boot, a matching pid with a matching tick count proves nothing:
+        an unrelated process holding the old number passes both checks and would be signalled.
+        """
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        service.write_record(dict(service.record(), bootId=None))
+
+        refused = service.stop()
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertIn("boot id", refused["detail"])
+        self.assertIsNone(child.poll(), "refusing is the point")
+
+    def test_enable_refuses_to_reverse_a_foreign_owners_intent(self):
+        """service.json is shared, and disable already asks this question.
+
+        An owner who has just disabled a service whose supervisor is still exiting must not
+        have that reversed by another installation, leaving it eligible to restart.
+        """
+        service = self.service("a")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+        service.intent.write(enabled=False, actor="owner")
+        service.write_record(dict(service.record(), installationId="someone-else"))
+
+        refused = service.enable(actor="intruder")
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertFalse(
+            service.intent.read()["enabled"],
+            "the owner's disable must not be reversed by another installation",
+        )
+        self.assertIsNone(child.poll())
+
+    def test_enable_still_works_when_nothing_is_running_here(self):
+        """A stopped registration is not a reason to make a state directory unusable."""
+        service = self.service("b")
+        service.write_record(dict(
+            service.new_record(pid=os.getpid()), installationId="someone-else",
+        ))
+
+        enabled = service.enable(actor="owner")
+
+        self.assertTrue(enabled["ok"], enabled)
+        self.assertTrue(service.intent.read()["enabled"])
+
     def test_disable_still_works_on_a_service_this_installation_owns(self):
         service = self.service("b")
         service.enable(actor="owner")

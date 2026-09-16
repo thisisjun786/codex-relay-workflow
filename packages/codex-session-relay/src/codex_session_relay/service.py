@@ -477,6 +477,13 @@ class RelayService:
             # the record is foreign on their own, and answering unverifiable would discard a
             # definite answer in favour of an uncertain one.
             return FOREIGN, handle, "; ".join(mismatches)
+        if record.get("bootId") is None:
+            # A reboot resets both the pid space and the start-tick counter, so without a
+            # recorded boot the two together prove nothing: an unrelated process can hold the
+            # old number with a matching tick count and would be classified as ours.
+            return UNVERIFIABLE, handle, (
+                "no boot id is recorded, so a pid from before a reboot cannot be ruled out"
+            )
         if record.get("startTicks") is None or ticks is None:
             # Nothing proves it foreign, and without a start time a pid is just a number that
             # anything could be holding now. Unverifiable is the honest answer; stop refuses.
@@ -533,6 +540,22 @@ class RelayService:
         return {"ok": True, "reason": None}
 
     def enable(self, *, actor: str = "cli") -> dict:
+        # The same ownership question disable asks, for the same reason: service.json is
+        # shared by everything pointed at this state directory. An owner who has just
+        # disabled a service whose supervisor is still exiting must not have that reversed
+        # by another installation, which would leave it eligible to restart.
+        owner, handle, detail = self.ownership()
+        if handle is not None:
+            handle.close()
+        if owner in (FOREIGN, UNVERIFIABLE) and self.lock_is_held():
+            # Only while something is actually RUNNING here. A stopped registration belonging
+            # to someone else is not a reason to refuse an owner configuring their own
+            # installation, and refusing then would make a state directory unusable forever.
+            return {"ok": False,
+                    "reason": "not_ours" if owner == FOREIGN else "ownership_unverifiable",
+                    "detail": detail, "intent": self.intent.read(),
+                    "note": "intent is shared with the owner of this state directory and was"
+                            " left unchanged"}
         return {"ok": True, "reason": None,
                 "intent": self.intent.write(enabled=True, actor=actor)}
 
