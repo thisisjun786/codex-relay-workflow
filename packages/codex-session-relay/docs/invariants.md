@@ -152,6 +152,9 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-137 | One criterion carries one finding; a duplicate id is refused rather than silently replacing the first | `report._check_review` | implemented |
 | I-138 | Shortening carries a running byte total rather than recounting, so it stays linear inside the claim transaction | `report._compose` | implemented |
 | I-139 | Fixed protocol prose is never shortened away, because the advertised command returns records and not template text | `report._preserve_lines` | implemented |
+| I-140 | Every producer-supplied text field is required to be text, never coerced through `str()` into a representation of itself | `report._required`, `_text_or_none`, and the evidence, unresolved and finding checks | implemented |
+| I-141 | An exit code is a number a process could have exited with, so it can always be serialised | `report._exit_code` | implemented |
+| I-142 | An unrenderable receipt manifestRef is reported as present rather than blocking the delivery, because the receipt is contract-validated and the recipient is not at fault | `report._manifest_ref_lines` | implemented |
 | I-122 | Pull-request fields are refused when no pull request is named, rather than stored and never rendered | `report.record` | implemented |
 | I-123 | Every restore field is a supported, bounded, single-line string; an unsupported or unrenderable one is refused | `report._check_restore` | implemented |
 | I-124 | A submission must clear both floors, the delivered one and the highest stored one, so no write is accepted that nobody would ever see | `report._assert_resubmission` | implemented |

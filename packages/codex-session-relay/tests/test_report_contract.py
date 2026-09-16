@@ -700,6 +700,37 @@ class Identity(DeliveryTestCase):
             lambda: report.record(self.store, self.clock, event_id=event_id,
                                   **a_report(evidence=[{"check": {"cmd": "pytest"}}])),
         )
+        # A detail coerced through str() turned a mapping into a repr and 0 into absence.
+        for bad in ({"result": "passed"}, ["passed"], 0, False):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id,
+                    **a_report(evidence=[{"check": "pytest", "detail": bad}])
+                ),
+            )
+        # And an exit code no process could have produced, which json.dumps could not
+        # serialise either.
+        self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(
+                self.store, self.clock, event_id=event_id,
+                **a_report(evidence=[{"check": "pytest", "exitCode": 10 ** 5000}])
+            ),
+        )
+
+    def test_an_unrenderable_manifest_reference_does_not_block_the_delivery(self):
+        _relationship, event_id = self.queued_event()
+        receipt = dict(self.intake.get(event_id))
+        receipt["manifestRef"] = "/frozen/" + chr(0xD800)
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        # The receipt is contract-validated and has no encodability rule for this field, so
+        # refusing the delivery would punish the recipient for the producer.
+        message = report.render_completion(row, receipt, "del-u-a1", stored)
+        self.assertIn("manifestRef: present but not renderable", message)
+        self.assertIn("show --event", message)
 
     def test_an_enrichment_finding_needs_no_disposition_of_its_own(self):
         _relationship, event_id = self.queued_event()
@@ -894,6 +925,18 @@ class FinalLine(Directions):
                                        {"id": "c-1", field: bad}]})
                     ),
                 )
+
+    def test_a_finding_id_must_be_text_not_a_coerced_repr(self):
+        _source, revision_event = self._revision()
+        for bad in ({"criterion": "c-1"}, ["c-1"], 1, True):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=revision_event,
+                    **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
+                               review={"kind": cxc.FAIL, "findings": [{"id": bad}]})
+                ),
+            )
 
     def test_the_fixed_preserve_boundary_is_never_shortened_away(self):
         _source, revision_event = self._revision()

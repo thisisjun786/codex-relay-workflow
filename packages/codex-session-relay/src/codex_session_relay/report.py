@@ -58,6 +58,8 @@ URL_MAX = 2000
 REF_SHOWN = 240
 # SQLite stores a signed 64-bit integer and raises OverflowError above it.
 SQLITE_MAX_INT = 2 ** 63 - 1
+# Wider than any real exit status or signal, and far inside what can be serialised.
+EXIT_CODE_MAX = 2 ** 31
 
 
 def _size(text) -> int:
@@ -610,11 +612,11 @@ def _check_review(review):
                 RefusalReason.MALFORMED_RECEIPT,
                 f"each review finding is an object naming a criterion, not {item!r}",
             )
-        identifier = str(item.get("id") or "").strip()
-        if not identifier:
+        if not isinstance(item.get("id"), str) or not item["id"].strip():
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT, "each review finding names a criterion id"
             )
+        identifier = item["id"].strip()
         if identifier in {finding["id"] for finding in findings}:
             # The renderer keys enrichment on the id, so a second entry replaced the first
             # and its note or anchor vanished with no omission notice.
@@ -704,10 +706,22 @@ def _check_evidence(entries):
         checked.append({
             "check": _single_line(item["check"].strip(), "an evidence check"),
             "exitCode": _exit_code(item.get("exitCode")),
-            "detail": _single_line(str(item.get("detail") or "").strip(),
+            "detail": _single_line(_text_or_none(item.get("detail"), "an evidence detail"),
                                    "an evidence detail") or None,
         })
     return checked
+
+
+def _text_or_none(value, field) -> str:
+    """A string or nothing. Coercion here turned a mapping into a repr and 0 into absence."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"{field} is a line of text when it is given at all, not {type(value).__name__}",
+        )
+    return value.strip()
 
 
 def _exit_code(value):
@@ -724,6 +738,14 @@ def _exit_code(value):
             RefusalReason.MALFORMED_RECEIPT,
             f"an exit code is an integer or absent, not {value!r}; evidence a reader cannot "
             "interpret is not evidence",
+        )
+    if not -EXIT_CODE_MAX <= value <= EXIT_CODE_MAX:
+        # Past the integer-to-string digit limit, json.dumps raises ValueError while
+        # serialising the row, which is a host exception rather than a named refusal, and a
+        # process never exited with a number this size anyway.
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            "an exit code is a number a process could actually have exited with",
         )
     return value
 
@@ -1269,6 +1291,13 @@ def _manifest_ref_lines(receipt):
     if not reference:
         return []
     text = str(reference)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        # The receipt is contract-validated and this field has no encodability rule there,
+        # so an unencodable one reached here and made every delivery claim raise while
+        # measuring. Say it exists and where to read it rather than refusing the delivery.
+        return ["", "manifestRef: present but not renderable; read it in the record"]
     if _size(text) > REF_SHOWN:
         # Truncated visibly, never quietly. A pointer nobody can read is still better than a
         # message that cannot be sent, and the whole value is in the record.
