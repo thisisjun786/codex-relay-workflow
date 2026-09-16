@@ -149,3 +149,48 @@ class EnqueueDurability(DeliveryTestCase):
         )
         self.assertGreater(second["attempts"], first["attempts"])
         self.assertGreater(second["next_retry_at"], first["next_retry_at"])
+
+    def test_the_backoff_survives_an_intent_that_is_refused_indefinitely(self):
+        """base * 2 ** (attempts - 1) was computed and only then clamped.
+
+        A relationship that stays paused has no cap on its attempt count, and around the
+        1025th refusal the product is an integer too large to convert to a float. The
+        OverflowError escaped the handler meant to absorb the refusal, the transaction
+        rolled back with the intent still due, and every later tick failed the same way.
+        """
+        ceiling = self.delivery.policy.presend_max_seconds
+        for attempts in (1, 2, 10, 1024, 1025, 5000, 10 ** 6):
+            delay = self.delivery._backoff(attempts)
+            self.assertIsInstance(delay, (int, float))
+            self.assertLessEqual(delay, ceiling)
+            self.assertGreaterEqual(delay, 0)
+        self.assertEqual(self.delivery._backoff(10 ** 6), ceiling)
+        self.assertLess(
+            self.delivery._backoff(1), self.delivery._backoff(4),
+            "and it still backs off before the ceiling",
+        )
+
+    def test_an_intent_refused_past_the_overflow_point_still_records_its_retry(self):
+        """The end-to-end shape: the write must survive, not just the arithmetic."""
+        relationship, event_id = self.staged_completion()
+        self.refuse_enqueue_once()
+        self.daemon().tick(now=self.clock.now())
+        self.registry.set_status(relationship["relationshipId"], "paused", actor="test")
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE delivery_intent SET attempts = 1024, next_retry_at = 0"
+                " WHERE event_id = ?", (event_id,),
+            )
+
+        self.clock.advance(3600)
+        report = self.daemon().tick(now=self.clock.now())
+
+        intent = self.store.one(
+            "SELECT * FROM delivery_intent WHERE event_id = ?", (event_id,),
+        )
+        self.assertEqual(intent["attempts"], 1025)
+        self.assertEqual(
+            intent["next_retry_at"],
+            self.clock.now() + self.delivery.policy.presend_max_seconds,
+        )
+        self.assertIsNotNone(report)

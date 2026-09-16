@@ -348,7 +348,6 @@ class RelayDaemon:
 
     def _worth_polling(self, thread, turn_id) -> bool:
         """Is there anything left to learn from this turn?"""
-        """Is there anything left to learn from this turn?"""
         if self.intake.staged_events(thread_id=thread, turn_id=turn_id):
             return True
         return self.store.one(
@@ -510,10 +509,7 @@ class RelayDaemon:
         order = parents[cursor:] + parents[:cursor]
         self._advance_cursor("reconcile_parents", 1, len(parents))
         share = max(1, budget // len(order))
-        queues = [
-            list(self.reconciler.open_attempts(limit=share, parents=[parent]))
-            for parent in order
-        ]
+        queues = [list(self._attempts_for(parent, share)) for parent in order]
         dealt = []
         while len(dealt) < budget and any(queues):
             for queue in queues:
@@ -539,6 +535,35 @@ class RelayDaemon:
                 error=None if complete else "reads incomplete",
             )
             report.reconciled += 1
+
+    def _attempts_for(self, parent, share) -> list:
+        """One parent's slice, taken from a rotating position rather than the head.
+
+        The parent order already has a cursor; the attempts inside a parent did not. A
+        parent with more unresolved attempts than its share re-read the same leading ones
+        every tick, and because _gate skips an attempt whose fingerprint is unchanged while
+        it still holds its place, the ones behind them were never reconciled at all - so a
+        later revision could sit unresolved and its anchor never bind.
+        """
+        total = self.reconciler.open_attempt_count(parent)
+        if not total:
+            return []
+        want = min(share, total)
+        start = self._cursor(f"reconcile:{parent}", total)
+        taken = list(self.reconciler.open_attempts(
+            limit=want, parents=[parent], offset=start,
+        ))
+        if len(taken) < want:
+            # Wrapped past the end, so the remainder comes from the front. Without this a
+            # cursor near the end would return a short slice and waste the budget.
+            seen = {row["request_id"] for row in taken}
+            for row in self.reconciler.open_attempts(limit=want, parents=[parent]):
+                if len(taken) >= want:
+                    break
+                if row["request_id"] not in seen:
+                    taken.append(row)
+        self._advance_cursor(f"reconcile:{parent}", len(taken), total)
+        return taken
 
     @staticmethod
     def _reads_were_complete(outcome) -> bool:

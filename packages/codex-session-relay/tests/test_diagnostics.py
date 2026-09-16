@@ -91,6 +91,74 @@ class Phases(DeliveryTestCase):
         self.assertTrue(service.failures_for(event_id))
 
 
+class NoAttemptPhases(Phases):
+    """Some refusals happen before an attempt exists, and those had no cause to read."""
+
+    def test_missing_settings_are_named_rather_than_reported_as_awaiting_a_receipt(self):
+        """_settings_for refuses before anything is claimed, so there is no attempt record.
+
+        Every other cause reaches an operator through the attempt. This one refused first,
+        and status called it awaiting_receipt - which says the relay is waiting on the child
+        when the actionable problem is settings nobody recorded.
+        """
+        _relationship, event_id = self.queued_event(settings=None)
+
+        self.attempt(event_id)
+
+        item = self.phase_of(event_id)
+        self.assertEqual(self.delivery.get(event_id)["state"], "withheld_pre_send")
+        self.assertEqual(item["attempts"], 0, "nothing was claimed and nothing was sent")
+        self.assertNotEqual(item["phase"], "awaiting_receipt")
+        self.assertEqual(item["phase"], "withheld:settings_check")
+        self.assertIsNotNone(item["lastFailedOperation"])
+        self.assertEqual(item["lastFailedOperation"]["operation"], "settings_check")
+        self.assertIsNotNone(item["lastFailedOperation"]["next_retry_at"])
+
+
+class RevisionPhases(DeliveryTestCase):
+    """Contract v1 acknowledges the child-to-parent direction only."""
+
+    def test_a_dispatched_revision_is_not_waiting_for_an_acknowledgement(self):
+        """AckService refuses to acknowledge a revision, so awaiting_ack can never clear.
+
+        The child answers a revision request with its next completion receipt. Reporting an
+        obligation that nothing is allowed to meet left every dispatched revision looking
+        permanently stuck.
+        """
+        from codex_session_relay import identity
+
+        _relationship, event_id = self.queued_event(recipients=[PARENT, CHILD])
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turn = self.adapter.start_turn(PARENT, turn_id="ack-turn", status="inProgress")
+        self.ack.acknowledge(
+            event_id, ack_turn_id=turn.turn_id,
+            ack_proof=identity.ack_proof(event_id, turn.turn_id), accepted=True,
+            adapter=self.adapter,
+        )
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="verdict-1",
+            criteria=[{"id": "c-1", "verdict": "needs_changes", "note": "missing migration"}],
+        )
+        revision = self.store.one("SELECT * FROM deliveries WHERE kind = 'revision_request'")
+        self.delivery.attempt(revision["event_id"], self.adapter)
+
+        item = [d for d in self.delivery.snapshot()["deliveries"]
+                if d["eventId"] == revision["event_id"]][0]
+
+        self.assertEqual(item["state"], "dispatched")
+        self.assertEqual(item["phase"], "awaiting_child_receipt")
+        self.assertNotEqual(item["phase"], "awaiting_ack")
+
+    def test_a_dispatched_completion_still_awaits_its_acknowledgement(self):
+        """The branch must not swallow the direction that really is waiting on an ack."""
+        _relationship, event_id = self.queued_event()
+        self.attempt(event_id)
+        item = [d for d in self.delivery.snapshot()["deliveries"]
+                if d["eventId"] == event_id][0]
+        self.assertEqual(item["phase"], "awaiting_ack")
+
+
 class ObservationHealth(DaemonTestCase):
     def test_a_live_loop_with_nothing_polled_is_not_healthy(self):
         """A live pid was the whole problem in the reproduced incident."""
@@ -150,3 +218,50 @@ class ObservationHealth(DaemonTestCase):
             health["health"], "stalled",
             "an anchor nothing has read is not evidence of health",
         )
+
+    def test_a_finished_quiet_assignment_does_not_age_into_a_false_alarm(self):
+        """_worth_polling stops scheduling a terminal turn with nothing staged behind it.
+
+        Its last poll therefore can never advance again, so ageing it out marked every
+        fully observed assignment stalled once stale_after had elapsed - on every status
+        call, forever, with nothing wrong.
+        """
+        relationship = self.register()
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-1", status="inProgress")
+        self.daemon.tick(now=self.clock.now())
+        self.adapter.finish_turn(CHILD, "turn-dispatch-1")
+        self.daemon.tick(now=self.clock.now())
+
+        anchor_id = relationship["relationshipId"]
+        settled = self.delivery.observation_health(now=self.clock.now())
+        self.assertTrue(settled["anchors"][anchor_id]["settled"])
+
+        self.clock.advance(7200)
+        later = self.delivery.observation_health(now=self.clock.now())
+
+        self.assertGreater(later["anchors"][anchor_id]["ageSeconds"], 900)
+        self.assertEqual(
+            later["health"], "healthy",
+            "nothing is left to learn from this turn, so nothing is being missed",
+        )
+
+    def test_a_late_staged_receipt_reopens_the_same_anchor(self):
+        """Settled is a property of the work, not a latch. New staged work un-settles it."""
+        relationship = self.register()
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-1", status="inProgress")
+        self.daemon.tick(now=self.clock.now())
+        self.adapter.finish_turn(CHILD, "turn-dispatch-1")
+        self.daemon.tick(now=self.clock.now())
+
+        path = self.artifact("late.txt", "staged after the completion was observed")
+        self.accept(self.ready_payload(
+            relationship, [path], turn=TurnRef(CHILD, "turn-dispatch-1", "inProgress"),
+        ))
+        self.clock.advance(7200)
+
+        health = self.delivery.observation_health(now=self.clock.now())
+        anchor_id = relationship["relationshipId"]
+
+        self.assertFalse(health["anchors"][anchor_id]["settled"])
+        self.assertEqual(health["health"], "stalled",
+                         "there is staged work here and nothing has looked at it since")

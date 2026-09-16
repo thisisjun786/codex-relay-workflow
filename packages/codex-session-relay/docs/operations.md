@@ -126,8 +126,10 @@ transport call.
 | `awaiting_receipt` | the child has not produced a completion receipt yet |
 | `parent_busy` | the parent is mid-turn; it is never interrupted |
 | `settings_rejected` | the host would not confirm the authorized execution settings |
+| `withheld:<operation>` | refused before any transport call, naming the operation that refused |
 | `turn_accepted` | the transport started a turn |
 | `awaiting_ack` | delivered, acknowledgement outstanding |
+| `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
 | `channel_closed` | the push channel itself is unavailable; stored, not woken |
 | `superseded` | a newer generation or revision replaced this one |
 
@@ -137,7 +139,10 @@ difference where there is one, and the next retry time.
 Health is separate from liveness. A running process with a growing observation backlog is
 reported as stalled: staged event age, when each current anchor was last successfully
 polled, and the backlog per assignment are all exposed, and a live pid is never counted as
-working.
+working. An anchor whose turn is terminal with nothing staged behind it is reported as
+settled and excluded from freshness: the scheduler deliberately stops reading it, so its
+last poll cannot advance, and ageing it out would report every quiet assignment as stalled.
+New staged work on that turn makes it eligible again.
 
 Status: implemented. `status` reports the phase, the most recent failed operation with its
 error code and, for a settings rejection, the exact fields the host disagreed on, plus the

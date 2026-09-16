@@ -127,10 +127,7 @@ class DeliveryService:
             "SELECT attempts FROM delivery_intent WHERE event_id = ?", (event_id,),
         ).fetchone()
         attempts = (row["attempts"] if row else 0) + 1
-        delay = min(
-            self.policy.presend_max_seconds,
-            self.policy.presend_base_seconds * (2 ** max(0, attempts - 1)),
-        )
+        delay = self._backoff(attempts)
         db.execute(
             "INSERT INTO delivery_intent (event_id, relationship_id, kind, recipient_task_id,"
             " attempts, next_retry_at, last_error, noted_at) VALUES (?,?,?,?,?,?,?,?)"
@@ -139,6 +136,26 @@ class DeliveryService:
             (event_id, relationship_id, kind, recipient_task_id, attempts, now + delay,
              str(error), self.clock.iso()),
         )
+
+    def _backoff(self, attempts: int) -> float:
+        """Bounded before the exponent is evaluated, not after.
+
+        An intent that stays legitimately unqueueable - a relationship that stays paused -
+        has no cap on its attempt count. Computing base * 2 ** (attempts - 1) and then
+        clamping means the 1025th refusal builds an integer too large to convert to a float,
+        and the OverflowError escapes the refusal handler that was meant to absorb it. The
+        transaction rolls back with the intent still due, so every later tick fails the same
+        way. Once the ceiling is reached the exponent stops mattering, so stop there.
+        """
+        base, ceiling = self.policy.presend_base_seconds, self.policy.presend_max_seconds
+        if base <= 0:
+            return ceiling
+        steps = max(0, attempts - 1)
+        # Long past any realistic ceiling, and small enough that the product is still a
+        # number. Beyond this the exponent cannot change the answer anyway.
+        if steps > 64:
+            return ceiling
+        return min(ceiling, base * (2 ** steps))
 
     def pending_intents(self, *, now: float, limit: int = 4) -> list:
         """Events whose delivery was wanted, refused, and is due to be tried again."""
@@ -491,7 +508,8 @@ class DeliveryService:
         try:
             settings = self._settings_for(recipient)
         except DeliveryRefused as refusal:
-            self._withhold_settings(event_id, now, refusal, attempts=row["attempt_count"])
+            self._withhold_settings(event_id, now, refusal, attempts=row["attempt_count"],
+                                    row=row)
             return None
 
         known_turns = set(adapter.list_turn_ids(row["recipient_thread_id"], limit=25))
@@ -578,7 +596,8 @@ class DeliveryService:
         settings.require_usable()
         return settings
 
-    def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int) -> None:
+    def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,
+                           row=None) -> None:
         """Withheld before any transport call, naming what is missing.
 
         Not a permanent hold: settings that were never recorded can be recorded, and the next
@@ -600,6 +619,17 @@ class DeliveryService:
                  "detail": refusal.detail},
                 at=self.clock.iso(),
             )
+        # Outside the transaction above, and recorded because there is no attempt to read it
+        # from. Every other cause reaches an operator through the attempt record; this one
+        # refused before one existed, so status reported the generic awaiting_receipt and
+        # said nothing about the settings that are actually missing.
+        self.record_failure(
+            event_id, "settings_check",
+            detail=refusal.detail,
+            relationship_id=row["relationship_id"] if row is not None else None,
+            error_code=refusal.reason.value if refusal.reason else "settings_unavailable",
+            retry_safe=True, next_retry_at=when,
+        )
 
     def record_settings_violation(self, request_id: str, event_id: str, findings) -> dict:
         """Annotate a dispatch that already reached a turn. It stays a dispatch.
@@ -854,6 +884,14 @@ class DeliveryService:
         # yet - so the aggregate could report healthy while some current anchor was untouched.
         for row in self.store.all(
             "SELECT g.relationship_id, g.dispatch_turn_id, p.last_polled_at, p.last_error"
+            "     , r.child_task_id"
+            "     , (SELECT COUNT(*) FROM observations o"
+            "         WHERE o.thread_id = r.child_task_id"
+            "           AND o.turn_id = g.dispatch_turn_id) AS observed"
+            "     , (SELECT COUNT(*) FROM events e"
+            "         WHERE e.turn_thread_id = r.child_task_id"
+            "           AND e.turn_id = g.dispatch_turn_id"
+            "           AND e.stage = 'staged') AS staged_here"
             "  FROM relationships r"
             "  JOIN generations g ON g.relationship_id = r.relationship_id"
             "   AND g.execution_generation = r.execution_generation"
@@ -865,9 +903,15 @@ class DeliveryService:
             + (" AND r.relationship_id = ?" if relationship_id else ""),
             (relationship_id,) if relationship_id else (),
         ):
+            # The scheduler deliberately stops reading a turn once it is terminal and nothing
+            # is staged behind it, so its last poll can never advance again. Ageing that out
+            # marked every quiet, fully observed assignment stalled forever, which is the
+            # opposite of the signal this exists to give.
+            settled = bool(row["observed"]) and not row["staged_here"]
             anchors[row["relationship_id"]] = {
                 "turnId": row["dispatch_turn_id"], "lastPolledAt": row["last_polled_at"],
                 "ageSeconds": age(row["last_polled_at"]), "lastError": row["last_error"],
+                "settled": settled,
             }
         for row in self.store.all(
             "SELECT relationship_id, COUNT(*) AS n FROM events WHERE stage = 'staged'"
@@ -877,9 +921,11 @@ class DeliveryService:
         ):
             backlog[row["relationship_id"]] = row["n"]
         oldest = max([s["ageSeconds"] or 0.0 for s in staged], default=0.0)
-        never = [rid for rid, a in anchors.items() if a["lastPolledAt"] is None]
+        never = [rid for rid, a in anchors.items()
+                 if a["lastPolledAt"] is None and not a["settled"]]
         stale = [rid for rid, a in anchors.items()
-                 if a["ageSeconds"] is not None and a["ageSeconds"] > stale_after]
+                 if not a["settled"] and a["ageSeconds"] is not None
+                 and a["ageSeconds"] > stale_after]
         if never or stale:
             health, reason = "stalled", (
                 f"{len(never)} anchors never successfully polled,"
@@ -1030,6 +1076,7 @@ class DeliveryService:
             verdict = self.store.one(
                 "SELECT verdict FROM verdicts WHERE event_id = ?", (row["event_id"],)
             )
+            failure = self._last_failure(row["event_id"])
             items.append({
                 "eventId": row["event_id"],
                 "kind": row["kind"],
@@ -1044,8 +1091,8 @@ class DeliveryService:
                 "ackVerified": ack["verified"] if ack else None,
                 "verdict": verdict["verdict"] if verdict else None,
                 "attemptDetail": [dict(a) for a in attempts],
-                "phase": _phase(row, attempts, ack),
-                "lastFailedOperation": self._last_failure(row["event_id"]),
+                "phase": _phase(row, attempts, ack, failure),
+                "lastFailedOperation": failure,
                 "nextRetryAt": row["next_eligible_at"],
                 "supersededNote": self._supersession_note(row["event_id"]),
             })
@@ -1053,7 +1100,6 @@ class DeliveryService:
 
 
 def _message_status(row, record) -> str:
-    """How far the persisted bytes actually got."""
     """How far the persisted bytes actually got.
 
     Read from the attempt's own settled record rather than from the bytes existing, because a
@@ -1151,7 +1197,7 @@ def _manifest_paths(event_row):
 
 
 
-def _phase(row, attempts, ack) -> str:
+def _phase(row, attempts, ack, failure=None) -> str:
     """Which stage a delivery is actually at, without inventing certainty.
 
     withheld_pre_send used to mean five different things at once, and the cause is the only
@@ -1167,6 +1213,12 @@ def _phase(row, attempts, ack) -> str:
     if row["state"] == INBOX_ONLY or row["hold_reason"] == PUSH_CHANNEL_CLOSED:
         return "channel_closed"
     if row["state"] == DISPATCHED:
+        # Only the child-to-parent direction has an acknowledgement in contract v1. A
+        # revision request is answered by the child's next completion receipt, and
+        # AckService refuses to acknowledge one, so calling this awaiting_ack left every
+        # dispatched revision looking permanently stuck on an obligation nothing can meet.
+        if row["kind"] == REVISION:
+            return "awaiting_child_receipt"
         return "awaiting_ack"
     if row["state"] == DEFERRED_BUSY:
         return "parent_busy"
@@ -1191,6 +1243,12 @@ def _phase(row, attempts, ack) -> str:
             return "settings_rejected"
         if failed:
             return f"withheld:{failed}"
+        return "withheld_pre_send"
+    if row["state"] == WITHHELD_PRE_SEND:
+        # Refused before any attempt existed - missing or unusable authorized settings - so
+        # there is no attempt record to read the cause from. The persisted failure is.
+        if failure is not None:
+            return f"withheld:{failure['operation']}"
         return "withheld_pre_send"
     if row["hold_reason"]:
         return f"held:{row['hold_reason']}"

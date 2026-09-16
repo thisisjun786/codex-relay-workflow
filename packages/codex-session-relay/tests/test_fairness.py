@@ -140,6 +140,42 @@ class ReconciliationFairness(ParentFixture):
         self.assertEqual(len(self.reconciler.open_attempts()), 6)
         self.assertEqual(len(self.reconciler.open_attempts(limit=2)), 2)
 
+    def test_every_attempt_of_one_parent_is_reached_across_ticks(self):
+        """The parent order had a cursor; the attempts inside a parent did not.
+
+        _gate skips an attempt whose fingerprint has not changed, but the skipped attempt
+        still held its place in the prefix, so with more unresolved attempts than the share
+        the ones behind them were never reconciled at all - and an anchor waiting on one of
+        them would never bind.
+        """
+        self.unresolved("a", 9)
+        self.unresolved("b", 1)
+        self.unresolved("c", 1)
+
+        share = max(1, self.daemon.policy.max_reconciles_per_tick // 3)
+        reached = set()
+        for _tick in range(12):
+            for row in self.daemon._attempts_for("01parent-a", share):
+                reached.add(row["request_id"])
+
+        everything = {row["request_id"]
+                      for row in self.reconciler.open_attempts(parents=["01parent-a"])}
+        self.assertEqual(len(everything), 9)
+        self.assertEqual(
+            reached, everything,
+            "a fixed prefix leaves the attempts behind it permanently unreconciled",
+        )
+
+    def test_the_attempt_cursor_is_persisted_per_parent(self):
+        self.unresolved("a", 6)
+        self.daemon._attempts_for("01parent-a", 2)
+        stored = self.store.one(
+            "SELECT cursor FROM discovery_cursors WHERE listing = ?",
+            ("reconcile:01parent-a",),
+        )
+        self.assertIsNotNone(stored, "the rotation must survive a restart")
+        self.assertEqual(int(stored["cursor"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

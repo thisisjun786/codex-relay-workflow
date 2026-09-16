@@ -46,7 +46,7 @@ class Reconciler:
         "        OR (a.state = ? AND d.state IN (?, ?)))"
     )
 
-    def open_attempts(self, *, limit=None, parents=None) -> list:
+    def open_attempts(self, *, limit=None, parents=None, offset=0) -> list:
         """Everything a restart has to look at: in-flight sends and unresolved attempts.
 
         With no arguments this stays exhaustive, because recover_on_start has to see all of
@@ -54,6 +54,11 @@ class Reconciler:
         unchanged attempts cannot hide another parent's actionable one. Deliberately NOT
         filtered on active status: an unresolved send belonging to a cancelled assignment
         still needs its evidence settled.
+
+        offset is what keeps the bounded form from being a fixed prefix. Attempts whose
+        fingerprint has not changed are skipped by the caller's gate but still occupy their
+        place, so without it a parent with more unresolved attempts than its share would
+        re-read the same leading ones on every tick and never reach the rest.
         """
         sql = (
             "SELECT a.*, r.parent_task_id AS parent_task_id FROM attempts a"
@@ -69,7 +74,22 @@ class Reconciler:
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
+            if offset:
+                sql += " OFFSET ?"
+                params.append(offset)
         return self.store.all(sql, tuple(params))
+
+    def open_attempt_count(self, parent) -> int:
+        """How many unresolved attempts one parent has, so a cursor over them can wrap."""
+        row = self.store.one(
+            "SELECT COUNT(*) AS c FROM attempts a"
+            " JOIN deliveries d ON d.event_id = a.event_id"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            + self.UNRESOLVED +
+            " AND r.parent_task_id = ?",
+            (HELD_UNCERTAIN, HELD_UNCERTAIN, SENDING, parent),
+        )
+        return row["c"] if row else 0
 
     def open_parents(self) -> list:
         """Which parents have unresolved work, independent of how much each of them has."""
