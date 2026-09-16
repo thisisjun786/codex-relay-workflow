@@ -29,6 +29,10 @@ class RetryPolicy:
     poll_interval_seconds: float = 20.0
     max_sends_per_tick: int = 4
     max_reconciles_per_tick: int = 8
+    # Turn reads are the scarce thing in an observation pass, so they are capped directly
+    # rather than implied by a per-relationship slice that grows with the relationship count.
+    max_turn_reads_per_tick: int = 8
+    min_relationship_share: int = 2
     # Supervision cadence. A worker is bounded by segment_seconds; the supervisor replaces it,
     # which is what carries an assignment past any single process lifetime.
     segment_seconds: float = 3600.0

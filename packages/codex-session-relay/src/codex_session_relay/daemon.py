@@ -215,9 +215,27 @@ class RelayDaemon:
 
     def _observe(self, report, now) -> None:
         """Detect terminal turns and settle what they decide, without re-reporting old news."""
-        for relationship in self._active_relationships():
-            for turn_id in self._turns_to_poll(relationship):
-                thread = relationship["child"]["taskId"]
+        relationships = self._active_relationships()
+        if not relationships:
+            return
+        budget = self.policy.max_turn_reads_per_tick
+        # How many relationships this tick can serve properly. Serving ALL of them would mean
+        # promising every current anchor a read, which stops being possible the moment the
+        # relationship count passes the budget. Rotating which ones are served keeps the
+        # promise finite instead of impossible.
+        served = max(1, min(len(relationships),
+                            budget // max(1, self.policy.min_relationship_share)))
+        start = self._cursor("relationships", len(relationships))
+        order = [relationships[(start + offset) % len(relationships)]
+                 for offset in range(len(relationships))]
+        share = max(1, budget // served)
+        reads = 0
+        for relationship in order[:served]:
+            thread = relationship["child"]["taskId"]
+            for turn_id in self._turns_to_poll(relationship, share):
+                if reads >= budget:
+                    break
+                reads += 1
                 try:
                     turn = self.adapter.read_turn(thread, turn_id)
                 except Exception as error:
@@ -226,24 +244,104 @@ class RelayDaemon:
                 if turn is None or turn.status not in ("completed", "failed", "interrupted"):
                     continue
                 reference = TurnRef(thread, turn.turn_id, turn.status)
-                if self._already_observed(reference):
+                # Already observed is not already finished. A receipt written just after the
+                # completion was seen still has to be resolved, so the observation alone is
+                # no longer enough to skip the turn.
+                if self._already_observed(reference) and not self.intake.staged_events(
+                    thread_id=thread, turn_id=turn_id,
+                ):
                     continue
                 self._settle_turn(relationship, reference, report)
+        if reads:
+            self._advance_cursor("relationships", served, len(relationships))
 
-    def _turns_to_poll(self, relationship) -> list:
-        """The anchor, plus any turn carrying a staged claim.
+    def _turns_to_poll(self, relationship, share: int) -> list:
+        """The current anchor, plus a rotating slice of everything else worth reading.
 
-        Polling only the anchor would leave a claim staged on a later admitted turn unresolved
-        forever, which is exactly the multi-turn case a loop produces.
+        The old version collected every anchor oldest-first, sliced to the budget, and left
+        _observe to discard the already-observed ones AFTER the slice. Past eight generations
+        that slice was permanently the first eight, all of them already observed, and the
+        current generation was never selected again - which is how a live daemon inside its
+        time bound delivered nothing for JUN-100 generation 11.
+
+        So candidates are filtered BEFORE the budget, the current anchor is reserved, and the
+        rest rotate through a persistent cursor so a backlog larger than the share is covered
+        in a finite number of ticks rather than re-read from the same end every time.
         """
-        turns = []
+        rid = relationship["relationshipId"]
+        thread = relationship["child"]["taskId"]
+        current = None
+        history = []
         for generation in relationship["generations"]:
-            if generation["dispatchTurnId"]:
-                turns.append(generation["dispatchTurnId"])
-        for row in self.intake.staged_events(thread_id=relationship["child"]["taskId"]):
-            if row["turn_id"] not in turns:
-                turns.append(row["turn_id"])
-        return turns[: self.policy.max_reconciles_per_tick]
+            turn_id = generation["dispatchTurnId"]
+            if not turn_id:
+                continue
+            if generation["executionGeneration"] == relationship["executionGeneration"]:
+                current = turn_id
+            else:
+                history.append(turn_id)
+        staged = [row["turn_id"] for row in self.intake.staged_events(thread_id=thread)]
+        ring = [
+            turn_id for turn_id in dict.fromkeys(staged + history)
+            if turn_id != current and self._worth_polling(thread, turn_id)
+        ]
+        selected = []
+        if current and self._worth_polling(thread, current):
+            selected.append(current)
+        remaining = share - len(selected)
+        if remaining <= 0 and ring and self._alternate(rid):
+            # A share of one cannot give the anchor and the ring a read in the same tick, so
+            # it alternates between them. Advancing the ring cursor without reading its
+            # candidate would be skipping work, not scheduling it.
+            selected, remaining = [], 1
+        if remaining > 0 and ring:
+            taken = min(remaining, len(ring))
+            start = self._cursor(f"ring:{rid}", len(ring))
+            selected.extend(ring[(start + offset) % len(ring)] for offset in range(taken))
+            self._advance_cursor(f"ring:{rid}", taken, len(ring))
+        return selected
+
+    def _worth_polling(self, thread, turn_id) -> bool:
+        """Is there anything left to learn from this turn?"""
+        if self.intake.staged_events(thread_id=thread, turn_id=turn_id):
+            return True
+        return self.store.one(
+            "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?",
+            (thread, turn_id),
+        ) is None
+
+    def _cursor(self, listing: str, size: int) -> int:
+        if size <= 0:
+            return 0
+        row = self.store.one(
+            "SELECT cursor FROM discovery_cursors WHERE task_id = 'scheduler' AND listing = ?",
+            (listing,),
+        )
+        try:
+            return int(row["cursor"]) % size if row and row["cursor"] is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _advance_cursor(self, listing: str, by: int, size: int) -> None:
+        """Persisted, so a restart resumes the rotation instead of starting from one end."""
+        if size <= 0:
+            return
+        position = (self._cursor(listing, size) + max(1, by)) % size
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at)"
+                " VALUES ('scheduler',?,?,?)"
+                " ON CONFLICT(task_id, listing) DO UPDATE SET cursor = excluded.cursor,"
+                " updated_at = excluded.updated_at",
+                (listing, str(position), self.clock.iso()),
+            )
+
+    def _alternate(self, rid: str) -> bool:
+        """Toggle whose turn it is when the share is one."""
+        listing = f"alt:{rid}"
+        turn = self._cursor(listing, 2)
+        self._advance_cursor(listing, 1, 2)
+        return turn == 1
 
     def _already_observed(self, reference: TurnRef) -> bool:
         return self.store.one(
