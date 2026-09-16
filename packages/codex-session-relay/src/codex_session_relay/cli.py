@@ -92,7 +92,9 @@ class Services:
     @property
     def store(self):
         if self._store is None:
-            self._store = Store(self.selection.db_path)
+            # The socket travels with the store so a later invocation can find it by socket
+            # rather than by the hash of the spelling that happened to create it.
+            self._store = Store(self.selection.db_path, socket_path=self.socket_path)
         return self._store
 
     @property
@@ -766,6 +768,26 @@ def _contents(services, report) -> dict:
             "openAttempts": open_attempts, "detail": None}
 
 
+def _sibling_stores(services) -> dict:
+    """Other stores beside this one that never recorded which socket they serve.
+
+    A store is matched to a socket by provenance it records for itself. One created before
+    that existed can only be matched by its directory hash, so if this command is about to
+    create a fresh canonical database next to such a store, it may be hiding real data. That
+    is reported rather than resolved: adopting on a guess is how the wrong store gets served.
+    """
+    from .store import stores_without_provenance
+
+    root = services.selection.path.parent
+    if services.selection.source in ("flag", "env"):
+        # An explicit directory was chosen by a caller who already decided which participants
+        # share it, so its neighbours are not candidates for anything.
+        return {"checked": False, "reason": "the state directory was chosen explicitly",
+                "withoutProvenance": []}
+    without = stores_without_provenance(root, skip=services.selection.path.name)
+    return {"checked": True, "reason": None, "withoutProvenance": without}
+
+
 def cmd_doctor(services, args) -> dict:
     """What THIS process can actually do here, measured rather than assumed.
 
@@ -783,6 +805,7 @@ def cmd_doctor(services, args) -> dict:
     report["ledger"] = _ledger_location(services)
     report["actorReachability"] = _reachability(services, report)
     report["contents"] = _contents(services, report)
+    report["siblingStores"] = _sibling_stores(services)
 
     nonce = nonce_lookup(services.selection, args.expect_nonce) if args.expect_nonce else None
     report["nonce"] = nonce

@@ -494,9 +494,12 @@ def socket_scope(socket_path) -> str:
     # gave a relative path and a symlink alias for one socket two different default state
     # directories, so the second invocation opened a different store and was then refused
     # by the scope registry as a foreign owner instead of joining the service already there.
-    return hashlib.sha256(
-        str(Path(socket_path).expanduser().absolute().resolve()).encode()
-    ).hexdigest()[:16]
+    return hashlib.sha256(canonical_socket(socket_path).encode()).hexdigest()[:16]
+
+
+def canonical_socket(socket_path) -> str:
+    """One spelling for one socket, the same way ScopeRegistry.key resolves it."""
+    return str(Path(socket_path).expanduser().absolute().resolve())
 
 
 def legacy_socket_scope(socket_path) -> str:
@@ -557,6 +560,8 @@ def resolve_state_dir(explicit=None, socket_path=None) -> StateSelection:
         detail = f"default under {Path.home() / '.local' / 'state'}"
     scope = socket_scope(socket_path)
     chosen = (base / "codex-session-relay" / scope).absolute()
+    if (chosen / "relay.sqlite3").exists():
+        return StateSelection(chosen, source, detail, scope)
     # An existing store keeps its directory. Canonicalising the socket changed this hash, so
     # a relative or symlinked socket that had been running would otherwise point at a fresh
     # empty database while its assignments, generations and pending deliveries sat in the
@@ -567,7 +572,7 @@ def resolve_state_dir(explicit=None, socket_path=None) -> StateSelection:
     # created by any command that writes beside the store - a stop request is enough - and
     # testing for the directory let one such command hide a legacy store holding real
     # assignments behind an empty folder.
-    if legacy != scope and not (chosen / "relay.sqlite3").exists():
+    if legacy != scope:
         previous = (base / "codex-session-relay" / legacy).absolute()
         if (previous / "relay.sqlite3").exists():
             return StateSelection(
@@ -575,16 +580,91 @@ def resolve_state_dir(explicit=None, socket_path=None) -> StateSelection:
                 f"{detail}; kept the directory this socket was already using",
                 legacy,
             )
+    # The legacy hash only helps when THIS invocation used the old spelling. A first
+    # post-upgrade command that happens to use the absolute path has legacy == scope, so the
+    # comparison above never looks at the store the relative spelling created - and creating
+    # a canonical database here would hide it for good, because afterwards even the old
+    # spelling finds the new one. So before creating anything, ask the stores themselves.
+    # Only reached when no canonical database exists yet, which is the one moment it matters.
+    adopted = discover_store_for_socket(base / "codex-session-relay", socket_path, skip=scope)
+    if adopted is not None:
+        return StateSelection(
+            adopted, source,
+            f"{detail}; adopted the store already recorded for this socket",
+            adopted.name,
+        )
     return StateSelection(chosen, source, detail, scope)
 
 
+def store_socket(db_path) -> str | None:
+    """The canonical socket a store recorded for itself, or None if it never recorded one."""
+    try:
+        connection = sqlite3.connect(f"{Path(db_path).as_uri()}?mode=ro", uri=True, timeout=5)
+    except (OSError, sqlite3.Error, ValueError):
+        return None
+    try:
+        row = connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'socket_path'"
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        connection.close()
+    return row[0] if row else None
+
+
+def discover_store_for_socket(root, socket_path, *, skip=None):
+    """The directory holding the store this socket already has, under any spelling.
+
+    Provenance rather than arithmetic: a hash cannot be inverted, so a store created under a
+    spelling we cannot guess is only findable if it says which socket it belongs to. Stores
+    record that from now on; one created before it did says nothing and is reported by doctor
+    instead of being adopted on a guess.
+    """
+    if not socket_path:
+        return None
+    try:
+        candidates = sorted(p for p in Path(root).iterdir() if p.is_dir())
+    except OSError:
+        return None
+    wanted = canonical_socket(socket_path)
+    for directory in candidates:
+        if skip is not None and directory.name == skip:
+            continue
+        database = directory / "relay.sqlite3"
+        if not database.exists():
+            continue
+        if store_socket(database) == wanted:
+            return directory
+    return None
+
+
+def stores_without_provenance(root, *, skip=None) -> list:
+    """Store directories that never recorded which socket they serve.
+
+    They cannot be matched to a socket by anything but their directory hash, so a command
+    that creates a fresh canonical database beside one of them may be hiding real data.
+    Reported rather than adopted: adopting on a guess is how the wrong store gets served.
+    """
+    try:
+        candidates = sorted(p for p in Path(root).iterdir() if p.is_dir())
+    except OSError:
+        return []
+    found = []
+    for directory in candidates:
+        if skip is not None and directory.name == skip:
+            continue
+        database = directory / "relay.sqlite3"
+        if database.exists() and store_socket(database) is None:
+            found.append(str(directory))
+    return found
 def state_dir(socket_path: str | None = None) -> Path:
     """The directory the environment alone would choose. Kept for callers that have no flag."""
     return resolve_state_dir(None, socket_path).path
 
 
 class Store:
-    def __init__(self, path):
+    def __init__(self, path, socket_path=None):
         path = Path(path)
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
@@ -608,6 +688,14 @@ class Store:
         self.db.execute(
             "INSERT OR IGNORE INTO schema_meta VALUES ('store_created_at', ?)", (_now_iso(),)
         )
+        if socket_path:
+            # Provenance, so this store is findable by the socket it serves rather than only
+            # by the hash of whichever spelling created it. INSERT OR IGNORE: the first
+            # recording wins, so re-opening through a different spelling never rewrites it.
+            self.db.execute(
+                "INSERT OR IGNORE INTO schema_meta VALUES ('socket_path', ?)",
+                (canonical_socket(socket_path),),
+            )
         # Tests set this to prove a transition rolls back; nothing in production assigns it.
         self.fault_hook = None
 
