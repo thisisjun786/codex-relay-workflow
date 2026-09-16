@@ -442,6 +442,43 @@ class ForeignWorkers(ServiceTestCase):
             "a refused stop must not leave a request that halts another installation",
         )
 
+    def test_an_orphaned_foreign_worker_is_still_not_ours_to_signal(self):
+        """The record supervise() now leaves behind: pid cleared, worker identity kept.
+
+        Keeping the worker identity is what lets a stop reach an orphan, and the ownership
+        check returned none as soon as the supervisor pid was gone - so that orphan path
+        pointed straight at another installation's worker.
+        """
+        service = self.service("a")
+        child, worker_pid = self.holder(service)
+        service.write_record(dict(
+            service.record(), pid=None, installationId="someone-else",
+            workerPid=worker_pid,
+            workerStartTicks=service_module.start_ticks(worker_pid),
+        ))
+
+        refused = service.stop()
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertEqual(refused["worker"], "untouched")
+        self.assertIsNone(child.poll(), "a foreign orphan must not be signalled")
+        self.assertFalse(service.stop_request_path.exists())
+
+    def test_an_orphaned_worker_of_our_own_is_still_reachable(self):
+        """The guard must not refuse the case it was added to support."""
+        service = self.service("b")
+        child, worker_pid = self.holder(service)
+        service.write_record(dict(
+            service.record(), pid=None, workerPid=worker_pid,
+            workerStartTicks=service_module.start_ticks(worker_pid),
+        ))
+
+        stopped = service.stop()
+
+        child.wait(timeout=10)
+        self.assertEqual(stopped["worker"], "exited")
+
     def test_a_worker_with_no_recorded_start_time_is_unverifiable_not_killable(self):
         """The rule the supervisor already had. A reused worker pid is an unrelated process."""
         service = self.service("a")
@@ -561,6 +598,20 @@ class SupervisorCleanup(ServiceTestCase):
             self.assertLessEqual(delay, ceiling)
         self.assertEqual(policy.restart_delay_for(10 ** 6), ceiling)
         self.assertLess(policy.restart_delay_for(1), policy.restart_delay_for(4))
+
+    def test_the_bound_follows_the_policy_rather_than_a_fixed_step_count(self):
+        """A small base needs more doublings, and a constant bound truncated its backoff."""
+        # Deliberately extreme: this ratio needs about 70 doublings, so a fixed 64-step bound
+        # returns the ceiling while the policy's own backoff still has room.
+        fine = RetryPolicy(restart_base_seconds=1e-12, restart_backoff_max_seconds=1e9)
+        self.assertLess(
+            fine.restart_delay_for(65), fine.restart_backoff_max_seconds,
+            "this policy has not reached its own ceiling yet",
+        )
+        self.assertLess(fine.restart_delay_for(65), fine.restart_delay_for(80))
+        self.assertEqual(fine.restart_delay_for(10 ** 6), fine.restart_backoff_max_seconds)
+        for failures in (1, 65, 1025, 10 ** 6):
+            self.assertIsInstance(fine.restart_delay_for(failures), (int, float))
 
 
 class Intent(ServiceTestCase):
