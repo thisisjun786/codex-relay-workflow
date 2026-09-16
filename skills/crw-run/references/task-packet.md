@@ -37,8 +37,9 @@ pair, or an explicitly non-PR result. Follow [Independent implementation tasks](
 before dispatch. A packet's wording cannot turn an internal subagent into that
 task. Record the existing owner and creation/reuse authorization before sending.
 For non-PR work, remove inapplicable Git/worktree/PR/OPS delivery fields and steps
-below. Carry the actual source revision, result link or artifact digest and
-verification instead. Retain task identity, permissions and recovery information.
+below. Carry the input baseline and delivered output identity separately: stable
+link plus output revision/updated-at evidence, or durable file locator plus digest.
+Retain a verified snapshot when old linked revisions cannot be recovered. Retain task identity, permissions and recovery information.
 
 ```text
 Task: [one issue ID and bounded result]
@@ -171,6 +172,29 @@ Return:
   separately; `ready_for_review` there is not `isDraft=false` here.
 - Remaining defects, unverified behavior, and possible integration conflicts.
 Stop after this assigned result; do not auto-start another issue.
+```
+
+## Non-PR packet
+
+Use this reduced shape for research, design or verification without repository changes.
+Keep the shared authorization, task settings and recovery rules above; omit code-only
+fields and OPS publication clauses. Relay-specific fields apply only when used.
+
+```text
+Task: [one stable issue ID, bounded result, existing owner]
+Coordinator: [actual task/host IDs if delegated; project ID only if one exists]
+Scope: [accepted question/outcome, exclusions, dependencies and write authority]
+Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
+Workflow/settings: [effective workflow, model/effort and actual permission profile]
+Working location: [permitted cwd/artifact roots; no invented Git repository]
+Verification: [observable acceptance criteria and independent evidence needed]
+Return: [actual task ID, result link plus delivered revision/updated-at evidence,
+  or durable artifact locator plus digest; verified output snapshot if needed;
+  criterion evidence, unresolved limitations and next handoff]
+Recovery: [issue-linked record or private receipt, dispatch/turn IDs and actual owner]
+Relay, if used: [exact issue identity, scope reference, real coordinator/child IDs,
+  state directory and authorized recipients; current generation/receipt outcome]
+Stop after this issue; do not start another issue or create an empty PR.
 ```
 
 ## Coordination record

@@ -182,7 +182,9 @@ Read [Task packet](references/task-packet.md) when preparing prompts. Each packe
 must stand alone in a fresh context and name its prerequisites, scope, baseline,
 acceptance criteria, verification, and return artifacts. For non-PR work without
 repository changes, use the source document/data revision as the baseline and
-return the verified result with its stable link or artifact digest. Omit Git
+return both that input baseline and the verified output identity: a stable result
+link plus delivered revision/updated-at evidence, or a durable file locator plus
+its digest. Snapshot the verified output when the source cannot recover old revisions. Omit Git
 ancestry, worktree/branch/commit, push/PR/review/merge requirements and their OPS
 clauses when they do not apply; do not create a repository or empty PR. Keep task
 ownership, access, settings, criteria and recovery evidence. This non-PR path
@@ -294,7 +296,7 @@ Describe evidence separately:
 | Prompt dispatched | Accepted turn ID and matching user message |
 | Requested settings applied | Actual returned settings, not prompt text |
 | CXC Loop active | Child's active goal and current goalplan/FSM evidence |
-| Work delivered | Completed turn plus actual commit/diff and checks for code; verified result and source revision or artifact digest for non-PR work |
+| Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
@@ -307,8 +309,9 @@ Describe evidence separately:
 Do not assume a worktree/task returned by a backend appears in the app's project.
 Check the Desktop listing separately when the user needs that association.
 
-After non-PR delivery, verify the result against its source revision and acceptance
-criteria, with no commit or merge requirement. After code delivery, identify the
+After non-PR delivery, verify the delivered output revision/digest against its
+input baseline and acceptance criteria. A later edit at the same URL invalidates
+reused verification; it is not the same output. No commit or merge is required. After code delivery, identify the
 final commit or frozen hashed diff/file bundle, then
 check the prerequisite ancestry, scoped diff, acceptance criteria,
 meaningful negative cases, and relevant user-visible behavior. Reuse valid proof

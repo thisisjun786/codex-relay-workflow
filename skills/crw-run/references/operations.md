@@ -591,15 +591,22 @@ and something can be merged that this field never covered, so neither is read fr
 
 Because one service carries assignments belonging to several parents, several repositories and
 several Linear projects, each assignment binds a full identity and routing uses nothing outside it.
-The binding is the stable Linear workspace, project and issue identifiers; the host; the native
-parent and child task identifiers; the execution generation; the repository, worktree, branch and
-owner; the artifact roots; and the allowed recipients.
+The binding is the stable Linear workspace and issue identifiers, plus the project identifier
+when one exists; the host; the native coordinator and child task identifiers; the execution
+generation; the repository, worktree and branch for code work; the owner, artifact roots and
+allowed recipients. A standalone issue records no project, but delegated delivery still names
+its actual coordinator. Non-PR work retains its permitted artifact roots and result identity
+without inventing Git metadata.
 
 A displayed issue key is a label, not an identifier. It is unique inside one workspace and nowhere
 else, so two workspaces can both hold the same key, and a registration or a lookup carrying only
 that key can match the wrong assignment and refuse a legitimate second child as a duplicate. Every
-registration therefore carries the stable workspace and project identifiers alongside it, and any
-command that accepts a key is given enough identity to resolve it unambiguously.
+registration therefore uses a globally stable issue identity and records its workspace and,
+when present, project in the canonical scope reference. For a projectless issue, use a
+workspace-qualified issue document or issue record as that reference. The bundled relay keeps
+`--scope-ref` as descriptive context and routes on the exact `--issue` string and task IDs;
+it does not validate Linear membership. Any command accepting a display key needs enough
+identity to resolve it unambiguously before registration. See [relay registration](relay.md#register-the-assignment).
 
 ### OPS-7.2 Never route on a display name or a working directory
 
