@@ -129,6 +129,45 @@ Research or design with no repository change may explicitly have no code target;
 do not require a remote, branch or Git baseline for that non-PR result.
 Keep its source baseline and delivered output identity under the non-PR evidence rules.
 
+### Implementation Done
+
+For the current one-issue/one-PR model, an implementation issue is Done when its
+one current delivery PR is actually merged into the intended integration target. Read GitHub's current PR identity,
+repository, base branch, merged state and landing commit against the issue's
+accepted scope. A related/reference PR, superseded replacement, approval, green
+CI, merge-ready flag or closed-but-unmerged PR is not that evidence. Merging a
+prerequisite branch into another task branch is not integration into the intended
+target. Verify the landing rather than treating an accepted merge request as done.
+
+The PR must deliver the issue's accepted implementation scope; a partial merge
+cannot hide remaining required implementation. For an already-approved legacy
+multi-PR issue, preserve links, owners and history, inventory required deliveries
+and reconcile through `crw-plan` before new dispatch. Its completion uses all
+reconciled required PRs actually integrated into the intended target and their
+combined coverage of that issue's accepted criteria, not a demand that one PR
+cover everything. Assess a PR's contribution to each linked issue independently;
+a shared PR cannot complete another issue's remaining scope. Do not mark a legacy
+issue complete on its first partial merge or retroactively manufacture completed issues.
+
+Release, deployment, installation and live behavior are separate claims. New
+plans track those operational results separately from the implementation PR.
+For an existing issue whose accepted criteria already require installation or
+live verification, preserve those obligations until fulfilled or explicitly
+re-scoped within authorization; a merge alone does not erase them. Operational
+work that is genuinely outside the issue's criteria does not delay its Done.
+Any accepted non-PR work, including research, design, verification or operations,
+completes on its agreed observable result.
+Completion evidence does not supply merge, closure, release or deployment authority.
+
+Read the team's current GitHub status automation when reconciling it with this
+rule. Distinguish closing/delivery links from contributing/reference links and
+retain one current delivery PR when replacing a PR. A generic merge-to-Done rule
+may not establish the intended branch or entire scope; check GitHub evidence even
+when Linear already says Done. Record any conflict and correct the owned issue
+only within the assignment. Do not test by changing unrelated live issues, silently
+change workspace automation, or count a settings screenshot as event-delivery proof.
+Respect agreed stale-issue cancellation and archival settings; Canceled is not Done.
+
 ## Linear holds canonical documents
 
 Jun keeps product intent, specifications, plans, accepted decisions, and human-readable coordination records in Linear documents linked to the relevant project/issues. Use stable document IDs/URLs and available revision or updated-at evidence. Repositories remain authoritative for source, executable configuration, repository policy, and reproducible implementation evidence.
