@@ -1,6 +1,6 @@
 interface:
   display_name: "CRW Run"
   short_description: "Linear 이슈를 독립 하위 Codex 작업에 맡기고 CXC로 결과 검증"
-  default_prompt: "$crw-run 이 Linear 프로젝트의 준비된 첫 묶음을 실행해줘. 기존 담당 하위 Codex 작업을 재사용하고, 없으면 새 독립 하위 Codex 작업을 생성해 기본 또는 지정한 모델과 에포트로 맡겨줘. 이 작업은 관리·검증·통합을 맡고, 하위 작업의 CXC Loop 실행과 결과를 확인해줘."
+  default_prompt: "$crw-run 이 작업을 해당 Linear 프로젝트 하나의 고정 부모로 연결하고, 합의된 프로젝트 범위를 끝까지 CXC Loop로 진행해줘. 이슈마다 기존 담당 자식을 재사용하거나 없으면 독립 자식을 생성하고, 구현 이슈 하나당 PR 하나로 검증·머지한 뒤 다음 준비된 이슈를 이어가줘."
 policy:
   allow_implicit_invocation: true

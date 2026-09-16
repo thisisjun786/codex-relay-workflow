@@ -185,24 +185,30 @@ Preserved: the shared service and store, the other parent's in-flight assignment
 parents' separate authorized settings. The one thing that must never happen here is one parent's
 completion silently ending another parent's work.
 
-## S9 The parent delegates and goes idle
+## S9 The parent selects a verified waiting mode
 
-Observed: a parent has dispatched an independent implementation task and has nothing left to do
-until that task delivers. Later the delivery arrives while the parent is mid-turn, and a second
-assignment's parent has meanwhile been paused by the user.
+Observed: a coordinator without an active parent Loop has dispatched an independent task.
+Its registered assignment, running delivery service and parent-resume path are verified.
+Later the delivery arrives while the parent is mid-turn, and a second assignment's parent
+has meanwhile been paused by the user. Separately, an active project Loop has a running child
+but no verified automatic wake path, and its first bounded transport wait times out.
 
 Clauses: OPS-8.1, OPS-8.2, OPS-8.3, OPS-8.4.
 
-Action: the parent finishes its response and returns to idle rather than polling. When the child's
+Action: the event-driven coordinator finishes its response and returns to idle. When the child's
 turn ends normally, a host-capable observer promotes its staged receipt to a delivery and the
 service delivers it to that assignment's registered parent, which is what wakes the parent. If the
 parent is mid-turn the delivery waits and is retried rather than interrupting it. The paused
 parent's delivery also waits, and nothing resumes that task automatically, because resuming work a
 user deliberately stopped is the one thing a retry cannot undo.
 
-A native subagent is not this case and is not described as if it were: it completes inside its
-parent's own turn and needs no delivery at all. Where a host offers no automatic wake, the fallback
-is bounded observation with the transport's own wait, and a timeout leaves the work running.
+A native subagent completes inside its parent's own turn and is not this independent-task case.
+The active project Loop keeps its own goal and lifecycle and continues bounded transport waits
+using actual child identifiers. The timeout does not finish the project or justify a resend.
+After verifying and integrating the child's delivery, it dispatches the next ready issue within
+the agreed scope. A blocked issue holds its dependents, not independent ready work. Without a
+usable observation path it records the blocker and resume step instead of promising automatic
+progress. A service installation or staged receipt alone does not qualify for idle handoff.
 
 Preserved: the user's decision to pause, the running child when a wait times out, and the honest
 distinction between a staged receipt and a delivered one. Any claim about how many parents and

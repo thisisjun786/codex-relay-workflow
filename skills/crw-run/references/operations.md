@@ -649,12 +649,23 @@ than the host, so a lookup by issue happens before anything is created.
 
 ## OPS-8 Parent return, fairness and isolation
 
-### OPS-8.1 Delegate, answer, go idle
+### OPS-8.1 Parent continuation and waiting
 
-Having delegated, a parent finishes its response and returns to idle. It does not sit in a wait
-loop and does not re-enter periodically to ask whether the child is done, because polling spends
-model turns to learn nothing and the store already knows the answer. Completion, failure and a
-request for input are delivered to that assignment's registered parent when they happen.
+Select the waiting mode from the parent's requested workflow and observed host capability.
+An active parent CXC Loop follows its installed Loop lifecycle and waiting rules: keep the
+authorized run active, use bounded transport waits, inspect meaningful results and continue
+ready work. A child assignment or active child goal does not arm the parent's Loop. Do not
+end the parent turn expecting a Stop hook or a relay to restart it; neither is guaranteed by
+these instructions. If the host releases the turn, preserve recovery evidence and report the
+interruption without calling the run complete.
+
+A coordinator without an active parent Loop may return to idle for event-driven handoff only
+when the registered assignment, live delivery service and supported parent-resume path have
+been verified for its operating scope. A package installation, capability flag or staged receipt
+alone does not establish that path. Otherwise use bounded observation through the transport's
+own wait during the authorized run. A timeout leaves the work running: refresh observations and
+wait again rather than ending the run, resending the prompt or creating another child. If no
+usable wait or resume path exists, record the capability blocker and the exact manual resume step.
 
 Two mechanisms are distinct and are never described as one. A native subagent finishes inside its
 parent's own turn, and the parent observes that completion directly. An independent implementation
@@ -662,13 +673,14 @@ task cannot do that: its completion travels as a relay receipt, which is staged 
 process has no socket and becomes delivery only once a host-capable observer sees that turn end
 normally. A staged receipt is real recorded progress and is never reported as delivery.
 
-Because the two are different, the waiting rules written for a subagent do not transfer. A rule
-that says to wait on a subagent rather than poll it describes a call inside one turn, and reusing it
-as licence for a parent to re-enter and ask an independent task whether it is done inverts the whole
-arrangement. The parent goes idle and is resumed by a meaningful handoff.
-
-No host is assumed to support automatic wake. Where it is unavailable, bounded observation with the
-transport's own wait is the fallback, and a timeout leaves the work running rather than ending it.
+Use the independent task's actual task/host/turn IDs and cursors with native thread waits or
+the bridge's task/turn wait; subagent handles and subagent waits are not substitutes. Respect
+host wait bounds, prefer compact snapshots, and avoid repeated full transcript reads or rapid
+polling. Give meaningful progress updates under the host's communication rules, not repetitive
+unchanged status. Automatic relay handoff may wait while the parent is active; bounded observation
+can read the child's result, but does not prove that a relay receipt was delivered or acknowledged.
+Reconcile existing receipts through the relay when it holds the assignment; do not create a
+second delivery route. Respect pause/cancellation and resource limits in either waiting mode.
 
 ### OPS-8.2 Busy, paused, cancelled and archived parents
 
