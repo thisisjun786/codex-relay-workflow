@@ -169,7 +169,7 @@ class Precedence(unittest.TestCase):
         empty database while its assignments, generations and pending deliveries sat in the
         old directory, invisible.
         """
-        from codex_session_relay.store import legacy_socket_scope
+        from codex_session_relay.store import legacy_socket_scope, socket_scope
 
         here = os.getcwd()
         os.chdir(self.tmp)
@@ -189,6 +189,19 @@ class Precedence(unittest.TestCase):
             self.assertEqual(str(chosen.path), legacy,
                              "the store already in use keeps its directory")
             self.assertIn("already using", chosen.detail)
+
+            # An empty canonical DIRECTORY is not a canonical store. Any command that writes
+            # beside the database creates one - a stop request is enough - and testing for
+            # the directory let that hide the legacy store behind an empty folder.
+            os.makedirs(
+                os.path.join(self.home, ".local", "state", "codex-session-relay",
+                             socket_scope(relative)),
+                exist_ok=True,
+            )
+            self.assertEqual(
+                str(resolve_state_dir(None, relative).path), legacy,
+                "an empty canonical directory must not hide a real store",
+            )
         finally:
             os.chdir(here)
 

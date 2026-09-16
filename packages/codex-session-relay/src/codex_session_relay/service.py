@@ -701,6 +701,18 @@ class RelayService:
                 # process gets killed after its number is reused.
                 return {"ok": False, "reason": "ownership_unverifiable", "detail": detail,
                         "supervisor": "untouched", "worker": "untouched"}
+            if (owner == NONE and self.lock_is_held()
+                    and not (record or {}).get("workerPid")):
+                # Something holds the lock and has not published who it is: a supervisor
+                # between taking the lock and writing its record. Writing a stop request here
+                # is not harmless - it clears requests only BEFORE taking the lock, so it
+                # consumes this one and exits. A refusal that still stops the service.
+                # A record that names a WORKER is the other none: our own supervisor gone
+                # with its orphan holding the inherited lock, which is what stop must reach.
+                return {"ok": False, "reason": "ownership_unverifiable",
+                        "detail": "the daemon lock is held by a process that has not yet"
+                                  " recorded its identity",
+                        "supervisor": "untouched", "worker": "untouched"}
             # Only now. Writing the stop request before validating ownership left a refused
             # stop able to halt another installation's supervisor at its next boundary, which
             # is a refusal that still had an effect.
