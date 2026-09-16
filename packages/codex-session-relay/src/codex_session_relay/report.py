@@ -720,11 +720,17 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
             "       --outcome ready_for_review --turn-thread <your task id>"
             " --turn-id <your turn>",
             "       --artifact <path> [--continues-anchor <this generation dispatch turn>]",
+        ], rank=0, essential=True, keep=8),
+        # Its own section, with a floor that covers every line in it. Left at the end of the
+        # answer block, the submission identifier was the first thing shortening removed, and
+        # it is what tells a recipient which of several stored submissions produced the bytes
+        # it is holding.
+        _Section("relay record", [
             "",
             f"relay record: requestId {request}, eventId {event_id},"
             f" submission {report['submissionNo']}, contract {version_of(report)}",
             f"Full record: {show_command(event_id)}",
-        ], rank=0, essential=True, keep=9),
+        ], rank=0, essential=True, keep=3),
     ]
     if review:
         # REVIEW-OUTPUT-01 puts the machine-scannable judgment on the FINAL line, so a

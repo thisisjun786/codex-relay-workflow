@@ -799,6 +799,13 @@ class VerdictPosition(Directions):
             "otherwise a consumer stops finding the verdict in exactly the messages that "
             "had to drop something",
         )
+        # And the identity survives too, because it is what selects one submission out of
+        # read_all for a recipient holding only these bytes.
+        self.assertIn("submission 1", message)
+        self.assertIn("requestId del-y-a1", message)
+        tighter = report.render_revision(row, receipt, "del-y-a1", stored, budget=2000)
+        self.assertIn("submission 1", tighter)
+        self.assertEqual(tighter.splitlines()[-1], "VERDICT: GO-WITH-FIXES (blockers=2)")
 
     def test_a_correction_cannot_approve_and_demand_changes_at_once(self):
         _source, revision_event = self._revision()

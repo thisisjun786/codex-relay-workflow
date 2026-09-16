@@ -129,7 +129,7 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-111 | Every report field that lands on a line the composer cannot shorten is length-bounded at record time | `report._bounded`, `_bounded_optional` | implemented |
 | I-112 | A collection field that is not an ordered sequence is refused rather than iterated, so a mapping never becomes a list of its own keys and a string never becomes a list of characters | `report._sequence` | implemented |
 | I-113 | Recording a later submission preserves the earlier one, so a recipient holding an older elided message can still recover what it promised | `report.record` keyed on (event, submission); `report.read_all`; `cli.cmd_show` | implemented |
-| I-114 | Every delivered message states its report submission, so the frozen bytes identify which stored submission produced them | `report.render_completion`, `render_revision` | implemented |
+| I-114 | Every delivered message states its report submission and survives elision doing so, so the frozen bytes identify which stored submission produced them | `report.render_completion`, `render_revision`; the identity is its own section with a floor covering it | implemented |
 | I-115 | A report with no pull request still renders its base, head and criteria digest rather than dropping them unannounced | `report._commit_lines` | implemented |
 
 
