@@ -110,6 +110,10 @@ class DeliveryService:
             ),
         )
         self.store.journal("delivery_queued", event_id, {"kind": kind}, at=now)
+        # Every route by which an event becomes deliverable passes through here, including a
+        # receipt the host already reports as terminal, which never touches the settlement
+        # path. So this is where a newly deliverable event announces what it replaces.
+        self.annotate_predecessors_in(db, event_id)
 
     def record_intent_in(self, db, event_id, *, relationship_id, kind, recipient_task_id,
                          error, now) -> None:
@@ -151,9 +155,12 @@ class DeliveryService:
         if base <= 0:
             return ceiling
         steps = max(0, attempts - 1)
-        # Long past any realistic ceiling, and small enough that the product is still a
-        # number. Beyond this the exponent cannot change the answer anyway.
-        if steps > 64:
+        # Derived from this policy's own ratio, not a fixed step count: a small base needs
+        # more doublings to reach its ceiling, and a constant would send such a policy
+        # straight to the cap while its backoff still had room.
+        import math
+
+        if ceiling <= base or steps >= math.ceil(math.log2(ceiling / base)):
             return ceiling
         return min(ceiling, base * (2 ** steps))
 
@@ -896,6 +903,10 @@ class DeliveryService:
             "     , (SELECT COUNT(*) FROM events e"
             "         WHERE e.turn_thread_id = r.child_task_id"
             "           AND e.turn_id = g.dispatch_turn_id"
+            # Per assignment, like the observation beside it. A staged claim belonging to
+            # another assignment on a shared child turn is not this one's outstanding work,
+            # and counting it unsettled a settled assignment into a false stall.
+            "           AND e.relationship_id = r.relationship_id"
             "           AND e.stage = 'staged') AS staged_here"
             "  FROM relationships r"
             "  JOIN generations g ON g.relationship_id = r.relationship_id"
@@ -1129,6 +1140,7 @@ class DeliveryService:
                 "SELECT verdict FROM verdicts WHERE event_id = ?", (row["event_id"],)
             )
             failure = self._last_failure(row["event_id"])
+            superseded = self._supersession_note(row["event_id"])
             items.append({
                 "eventId": row["event_id"],
                 "kind": row["kind"],
@@ -1143,10 +1155,10 @@ class DeliveryService:
                 "ackVerified": ack["verified"] if ack else None,
                 "verdict": verdict["verdict"] if verdict else None,
                 "attemptDetail": [dict(a) for a in attempts],
-                "phase": _phase(row, attempts, ack, failure),
+                "phase": _phase(row, attempts, ack, failure, superseded),
                 "lastFailedOperation": failure,
                 "nextRetryAt": row["next_eligible_at"],
-                "supersededNote": self._supersession_note(row["event_id"]),
+                "supersededNote": superseded,
             })
         return {"deliveries": items}
 
@@ -1249,7 +1261,7 @@ def _manifest_paths(event_row):
 
 
 
-def _phase(row, attempts, ack, failure=None) -> str:
+def _phase(row, attempts, ack, failure=None, superseded=None) -> str:
     """Which stage a delivery is actually at, without inventing certainty.
 
     withheld_pre_send used to mean five different things at once, and the cause is the only
@@ -1262,6 +1274,11 @@ def _phase(row, attempts, ack, failure=None) -> str:
         return "acknowledged"
     if row["state"] == SUPERSEDED:
         return "superseded"
+    if superseded is not None:
+        # An outstanding send that a newer generation or revision has replaced. Its state is
+        # deliberately left alone so a lost response stays reconcilable, but reporting it as
+        # awaiting_ack or outcome_unknown describes an obligation nothing can now meet.
+        return f"superseded:{superseded['reason']}"
     if row["state"] == INBOX_ONLY or row["hold_reason"] == PUSH_CHANNEL_CLOSED:
         return "channel_closed"
     if row["state"] == DISPATCHED:
@@ -1285,13 +1302,20 @@ def _phase(row, attempts, ack, failure=None) -> str:
             record = {}
     failed = record.get("failedOperation")
     if row["state"] == HELD_UNCERTAIN:
-        # turn/start reached the host and its answer was lost; anything else never got that
-        # far. Calling both turn_accepted would hand an operator a confident wrong answer.
-        if failed == "turn/start" or record.get("turnId"):
+        # A turn id is the only affirmative evidence that a turn exists. A failed turn/start
+        # with no id means the call was REFUSED, not that its answer was lost, and reporting
+        # turn_accepted for it claimed a turn on no evidence at all.
+        if record.get("turnId"):
             return "turn_accepted"
         return "outcome_unknown"
     if row["state"] == WITHHELD_PRE_SEND and latest is not None:
-        if failed == "thread/resume":
+        # thread/resume fails for ordinary connectivity and internal reasons too, and the
+        # generic branch records the same operation for all of them. Naming those a settings
+        # rejection hands an operator a remediation that cannot work.
+        # The recorded failure is the discriminator: _settle writes settings_check only when
+        # the receipt actually carried field-level findings.
+        if failed == "thread/resume" and failure is not None \
+                and failure["operation"] == "settings_check":
             return "settings_rejected"
         if failed:
             return f"withheld:{failed}"

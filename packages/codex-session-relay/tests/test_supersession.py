@@ -102,6 +102,53 @@ class PreSendSupersession(DeliveryTestCase):
             "annotated, not rewritten: what was actually sent stays history",
         )
 
+    def test_an_annotated_send_is_not_reported_as_awaiting_anything(self):
+        """Its state is left alone so a lost response stays reconcilable.
+
+        That is the right call for reconciliation and the wrong one for an operator: status
+        went on reporting awaiting_ack for an obligation nothing can now meet.
+        """
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        self.attempt(event_id)
+        self.assertEqual(self.delivery.get(event_id)["state"], DISPATCHED)
+
+        self.advance_generation(relationship, 2)
+
+        item = [d for d in self.delivery.snapshot()["deliveries"]
+                if d["eventId"] == event_id][0]
+        self.assertNotEqual(item["phase"], "awaiting_ack")
+        self.assertEqual(item["phase"], f"superseded:{STALE_GENERATION}")
+        self.assertEqual(item["state"], DISPATCHED, "the history is untouched")
+
+    def test_a_terminal_receipt_annotates_its_predecessor_without_a_settlement(self):
+        """A receipt the host already reports terminal never touches the settlement path.
+
+        It goes straight through acceptance and enqueue, so an annotation hung only off
+        settlement missed it entirely.
+        """
+        relationship, older = self.queued_outcome("ready_for_review")
+        self.adapter.script("transport_unknown")
+        self.attempt(older)
+        self.assertEqual(self.delivery.get(older)["state"], "held_uncertain")
+
+        path = self.artifact("newer.txt", "the corrected deliverable")
+        successor = self.ready_payload(relationship, [path], attempt=2)
+        self.accept(successor)
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE revision_lineage SET supersedes_hash = ? WHERE event_id = ?",
+                (self.intake.get(older)["revisionHash"], successor["eventId"]),
+            )
+        self.assertEqual(self.intake.row(successor["eventId"])["stage"], "final")
+
+        self.delivery.enqueue(successor["eventId"])
+
+        note = self.store.one(
+            "SELECT * FROM delivery_supersession WHERE event_id = ?", (older,),
+        )
+        self.assertIsNotNone(note, "enqueue is the route every deliverable event takes")
+        self.assertEqual(note["reason"], SUPERSEDED_REVISION)
+
     def test_an_outstanding_predecessor_is_annotated_by_its_successor(self):
         """Same generation, no advance: attempt() returns early for a non-claimable state.
 

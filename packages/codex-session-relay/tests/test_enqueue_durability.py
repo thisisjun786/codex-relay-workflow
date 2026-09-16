@@ -170,6 +170,23 @@ class EnqueueDurability(DeliveryTestCase):
             "and it still backs off before the ceiling",
         )
 
+    def test_the_backoff_bound_follows_the_policy_rather_than_a_fixed_step_count(self):
+        """A small base needs more doublings, and a constant bound truncated its backoff."""
+        from codex_session_relay.policy import RetryPolicy
+
+        # Deliberately extreme: this ratio needs about 70 doublings, so a fixed 64-step bound
+        # returns the ceiling while the policy's own backoff still has room.
+        self.delivery.policy = RetryPolicy(
+            presend_base_seconds=1e-12, presend_max_seconds=1e9,
+        )
+        ceiling = self.delivery.policy.presend_max_seconds
+        self.assertLess(
+            self.delivery._backoff(66), ceiling,
+            "this policy has not reached its own ceiling yet",
+        )
+        self.assertLess(self.delivery._backoff(66), self.delivery._backoff(80))
+        self.assertEqual(self.delivery._backoff(10 ** 6), ceiling)
+
     def test_an_intent_refused_past_the_overflow_point_still_records_its_retry(self):
         """The end-to-end shape: the write must survive, not just the arithmetic."""
         relationship, event_id = self.staged_completion()

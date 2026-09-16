@@ -5,6 +5,9 @@ not confirm the authorized settings, a started turn, and an outstanding acknowle
 cause is the only part that suggests an action, and it was the part not recorded.
 """
 
+import json
+import unittest
+
 from codex_session_relay.models import TurnRef
 
 from .support import CHILD, PARENT, DeliveryTestCase
@@ -113,6 +116,66 @@ class NoAttemptPhases(Phases):
         self.assertIsNotNone(item["lastFailedOperation"])
         self.assertEqual(item["lastFailedOperation"]["operation"], "settings_check")
         self.assertIsNotNone(item["lastFailedOperation"]["next_retry_at"])
+
+
+class UncertainPhases(unittest.TestCase):
+    """Two phases claimed more than the record supports, read straight from _phase.
+
+    Driven directly rather than through a fixture: what is under test is the rule, and a
+    transport fixture that happens to classify a receipt one way or another would decide the
+    outcome instead of the rule doing it.
+    """
+
+    def phase(self, state, record, *, kind="completion_event", failure=None,
+              hold_reason=None):
+        from codex_session_relay.delivery import _phase
+
+        attempts = [{"internal_state": "settled", "operation_observation": None,
+                     "record": json.dumps(record)}]
+        row = {"state": state, "kind": kind, "hold_reason": hold_reason}
+        return _phase(row, attempts, None, failure)
+
+    def test_a_refused_turn_start_is_not_evidence_that_a_turn_exists(self):
+        """turn_accepted was reported from the operation name alone.
+
+        A failed turn/start with no turn id means the call was REFUSED, not that its answer
+        was lost, so claiming a turn exists points an operator at a turn nobody can find.
+        """
+        self.assertEqual(
+            self.phase("held_uncertain", {"failedOperation": "turn/start", "turnId": None}),
+            "outcome_unknown",
+        )
+
+    def test_a_started_turn_whose_answer_was_lost_is_still_turn_accepted(self):
+        """A turn id is affirmative evidence, and the branch must keep honouring it."""
+        self.assertEqual(
+            self.phase("held_uncertain",
+                       {"failedOperation": "turn/start", "turnId": "turn-9"}),
+            "turn_accepted",
+        )
+
+    def test_an_ordinary_resume_failure_is_not_called_a_settings_rejection(self):
+        """thread/resume fails for connectivity and internal reasons too.
+
+        Naming those settings_rejected hands an operator a remediation - re-record the
+        authorized settings - that cannot possibly work.
+        """
+        phase = self.phase(
+            "withheld_pre_send", {"failedOperation": "thread/resume"},
+            failure={"operation": "transport", "error_code": "internal"},
+        )
+        self.assertNotEqual(phase, "settings_rejected")
+        self.assertEqual(phase, "withheld:thread/resume")
+
+    def test_a_real_settings_rejection_still_says_so(self):
+        """_settle records settings_check only when the receipt carried field-level findings."""
+        self.assertEqual(
+            self.phase(
+                "withheld_pre_send", {"failedOperation": "thread/resume"},
+                failure={"operation": "settings_check", "error_code": "settings_not_preserved"},
+            ),
+            "settings_rejected",
+        )
 
 
 class RevisionPhases(DeliveryTestCase):
@@ -318,6 +381,74 @@ class ObservationHealth(DaemonTestCase):
             "this assignment has not observed its own turn yet",
         )
         self.assertEqual(health["health"], "stalled")
+
+    def test_another_assignments_staged_work_does_not_unsettle_this_one(self):
+        """staged_here counted by thread and turn, so a shared anchor contaminated both.
+
+        An assignment that has observed its turn and has nothing of its own outstanding was
+        pulled back to unsettled by a claim belonging to someone else, and from there it ages
+        into a stall with nothing wrong.
+        """
+        import os
+
+        from codex_session_relay.models import Endpoint
+        from codex_session_relay.registry import record_settings
+        from .support import HOST, task_settings
+
+        child, turn = "01child-shared", "turn-shared-1"
+        made = []
+        for name in ("a", "b"):
+            parent = f"01parent-{name}"
+            root = os.path.join(self.root, name)
+            os.makedirs(root, exist_ok=True)
+            made.append(self.registry.register(
+                parent=Endpoint(parent, HOST, cwd=f"/p/{name}"),
+                child=Endpoint(child, HOST, cwd=root),
+                issue_key=f"SHARED-{name}", artifact_roots=[root],
+                allowed_recipients=[parent],
+                dispatch_request_id=f"dispatch-{name}", dispatch_turn_id=turn,
+            ))
+            self.adapter.add_thread(parent)
+            record_settings(self.store, self.clock, parent, task_settings(f"/p/{name}"),
+                            source="creation_result")
+        self.adapter.add_thread(child)
+        self.adapter.start_turn(child, turn_id=turn, status="inProgress")
+        self.adapter.finish_turn(child, turn)
+        self.daemon.tick(now=self.clock.now())
+
+        observed = self.store.one(
+            "SELECT relationship_id FROM observations WHERE turn_id = ?", (turn,),
+        )["relationship_id"]
+        settled = next(r for r in made if r["relationshipId"] == observed)
+        other = next(r for r in made if r["relationshipId"] != observed)
+        self.assertTrue(
+            self.delivery.observation_health(
+                now=self.clock.now(),
+            )["anchors"][observed]["settled"],
+        )
+
+        # A claim belonging to the OTHER assignment, on the anchor turn they share.
+        path = os.path.join(self.root, "other.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("not this assignment's outstanding work")
+        self.store.db.execute(
+            "INSERT INTO events (event_id, relationship_id, execution_generation, attempt,"
+            " revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status,"
+            " receipt, stage, staged_at, first_seen_at, last_seen_at)"
+            " VALUES ('shared-staged',?,1,1,'x','ready_for_review','child',?,?,'inProgress',"
+            " '{}','staged',?,?,?)",
+            (other["relationshipId"], child, turn,
+             self.clock.iso(), self.clock.iso(), self.clock.iso()),
+        )
+        del path
+
+        health = self.delivery.observation_health(now=self.clock.now())
+
+        self.assertTrue(
+            health["anchors"][observed]["settled"],
+            "this assignment observed its turn and has nothing of its own left to resolve",
+        )
+        del settled
 
     def test_a_generation_whose_anchor_is_not_bound_yet_is_not_a_stall(self):
         """A needs_changes verdict opens a generation before its revision is dispatched.
