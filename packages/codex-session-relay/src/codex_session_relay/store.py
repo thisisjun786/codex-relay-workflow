@@ -240,6 +240,38 @@ CREATE TABLE IF NOT EXISTS verdict_context (
     recorded_at   TEXT NOT NULL
 );
 
+-- What a delivered message leads with: which pull request this is about, which commit it is
+-- about, what was checked, what is still open and what to do next. A table rather than fields
+-- on the receipt, because completion-receipt.json is frozen with additionalProperties false.
+-- Bound to the event, generation and revision it describes, so a later push cannot inherit an
+-- earlier report, and the repository is stored beside the number so the same pull request
+-- number on two projects stays two pull requests.
+CREATE TABLE IF NOT EXISTS work_reports (
+    event_id             TEXT PRIMARY KEY,
+    relationship_id      TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    revision_hash        TEXT NOT NULL,
+    submission_no        INTEGER NOT NULL DEFAULT 1,
+    repository           TEXT NOT NULL,
+    pr_number            INTEGER,
+    pr_url               TEXT,
+    pr_state             TEXT,
+    base_ref             TEXT,
+    base_sha             TEXT,
+    head_sha             TEXT,
+    criteria_digest      TEXT,
+    cxc_status           TEXT NOT NULL,
+    cxc_reason           TEXT NOT NULL,
+    contract_version     TEXT NOT NULL,
+    summary              TEXT NOT NULL,
+    evidence             TEXT,
+    unresolved           TEXT,
+    next_action          TEXT NOT NULL,
+    review               TEXT,
+    restore              TEXT,
+    recorded_at          TEXT NOT NULL
+);
+
 -- How an acknowledgement's own turn was established. host_read is an App Server read of the
 -- recipient's real turn list; unverified is recorded intent still awaiting that read. There is
 -- deliberately no tier derived from what the relay itself sent: a stored dispatch proves a send

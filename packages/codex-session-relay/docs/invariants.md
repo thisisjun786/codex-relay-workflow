@@ -101,6 +101,21 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-63 | Unchanged states stay quiet | a tick that changes nothing writes no journal rows | implemented |
 | I-64 | An unbounded daemon loop is not constructible | `run` requires a tick count, a deadline or a stop signal | implemented |
 
+## Work reports and the CXC report contract
+
+| # | Invariant | Enforced in | Status |
+|---|---|---|---|
+| I-90 | A CXC report status never chooses a relay outcome; it is checked against the one the receipt asserted | `cxc.check_status`, called from `report.record` | implemented |
+| I-91 | An unrecognised report status is refused by name, with the accepted set and the contract version | `cxc.check_status` | implemented |
+| I-92 | DONE, an open pull request, a review PASS and a green check are never a relay verdict | `cxc.NOT_VERIFICATION`, `cxc.refuse_promotion`; no path writes a verdict outside `ack.record_verdict` | implemented |
+| I-93 | A verdict line is rendered only for a message carrying a review, in the fixed PASS / GO-WITH-FIXES (blockers=N) / FAIL form | `cxc.verdict_line`, `cxc.assert_reviewed` | implemented |
+| I-94 | A report is bound to one event, generation and revision, and cannot answer for a later head | `report.assert_current` | implemented |
+| I-95 | A pull request number is never rendered or compared without its repository | `report.pr_ref`, `report.pr_key` | implemented |
+| I-96 | A report naming a pull request names the head commit it is about | `report.record` | implemented |
+| I-97 | A shortened message names what it dropped and where to read it; a budget too small to hold the required parts refuses | `report._compose` | implemented |
+| I-98 | An event with no work report renders the pre-contract message unchanged | `delivery._render_completion`, `delivery._render_revision` | implemented |
+| I-99 | A wait result never authorises a re-run, and a bare timeout is neither failure nor success | `cxc.classify_wait` | implemented |
+
 
 ## Recorded limits, so a row above is not read as more than it is
 
