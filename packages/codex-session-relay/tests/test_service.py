@@ -74,6 +74,10 @@ with SingleInstance(service.selection.path):
 """
 
 
+class _Captured(Exception):
+    """Stops a start before it launches anything."""
+
+
 class ServiceTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="relay-service-")
@@ -299,6 +303,82 @@ class Ownership(ServiceTestCase):
 
         self.assertTrue(stopped["ok"], stopped)
         child.wait(timeout=10)
+
+    def test_an_orphan_worker_with_no_boot_id_is_unverifiable_too(self):
+        """_stop_worker checks start ticks only, and a reboot resets those with the pids.
+
+        The live-supervisor path already refused this; the orphan branch did not, so an
+        unrelated process holding the old worker number would have been signalled.
+        """
+        service = self.service("a")
+        child, worker_pid = self.holder(service)
+        service.write_record(dict(
+            service.record(), pid=None, bootId=None, workerPid=worker_pid,
+            workerStartTicks=service_module.start_ticks(worker_pid),
+        ))
+
+        refused = service.stop()
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertIsNone(child.poll(), "an unidentifiable orphan must not be signalled")
+
+    def test_disable_is_refused_while_a_foreign_supervisor_is_shutting_down(self):
+        """The same cleanup window enable guards, in the command that writes the same file."""
+        service = self.service("a")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+        service.write_record(dict(
+            service.record(), pid=None, workerPid=None, installationId="someone-else",
+        ))
+        self.assertTrue(service.lock_is_held(), "the fixture needs the lock still held")
+
+        refused = service.disable(actor="intruder")
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertTrue(
+            service.intent.read()["enabled"],
+            "a foreign owner's service must not be left disabled by a refused command",
+        )
+        self.assertIsNone(child.poll())
+
+    def test_the_takeover_flag_reaches_the_process_that_claims_the_scope(self):
+        """It was set on the parent object and dropped at the process boundary.
+
+        The supervisor is the process that claims the scope, so a flag the parent keeps to
+        itself leaves the takeover silently doing nothing.
+        """
+        service = self.service("a")
+        service.enable(actor="test")
+
+        self.assertNotIn("--takeover-scope", self._launch_argv(service))
+
+        service.takeover = True
+
+        self.assertIn("--takeover-scope", self._launch_argv(service))
+
+    def _launch_argv(self, service):
+        """The argv default_launcher would build, without starting anything."""
+        import subprocess
+        from unittest import mock
+
+        captured = {}
+
+        class Fake:
+            pid = os.getpid()
+            returncode = None
+
+            def poll(self):
+                return None
+
+        def popen(argv, **_kwargs):
+            captured["argv"] = argv
+            return Fake()
+
+        with mock.patch.object(subprocess, "Popen", popen):
+            service.default_launcher(service, allow_isolated=True)
+        return captured["argv"]
 
     def test_a_stopped_registration_can_be_taken_over_deliberately(self):
         """Otherwise a replaced database blocks its socket forever.
