@@ -36,11 +36,15 @@ This packet targets a verified independent implementation task for one issue/PR
 pair, or an explicitly non-PR result. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
 before dispatch. A packet's wording cannot turn an internal subagent into that
 task. Record the existing owner and creation/reuse authorization before sending.
+For non-PR work, remove inapplicable Git/worktree/PR/OPS delivery fields and steps
+below. Carry the actual source revision, result link or artifact digest and
+verification instead. Retain task identity, permissions and recovery information.
 
 ```text
 Task: [one issue ID and bounded result]
 Parent: [one Linear project ID and verified coordinator task ID, or no project
-  for a standalone issue; initiative membership does not assign another project]
+  for a standalone issue; retain the real coordinator task ID if delegated.
+  Initiative membership does not assign another project]
 Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
   or existing PR URL; related issues are dependencies, not additional deliveries.
   For non-PR work, state the result and how it will be verified]
@@ -172,15 +176,19 @@ Stop after this assigned result; do not auto-start another issue.
 ## Coordination record
 
 Use the project's linked canonical Linear coordination document as part of the
-management assignment, following [Integrations](../../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
+management assignment. For a standalone issue, use its existing linked document
+or an owned section in that issue and private issue/task recovery receipts. A
+project binding is optional; the actual coordinator identity remains required
+when delegating or routing relay delivery. Follow [Integrations](../../crw-plan/references/integrations.md#completion-follow-up-in-an-existing-execution-workflow).
 For explicit read-only scope or unavailable access, return an unsynced update;
 retain private recovery receipts so an interrupted task can still be reconciled. Record only what is
 needed to resume:
 
-- Coordinator task ID and fixed project/backlog link.
+- Coordinator task ID and fixed project or standalone issue link.
 - Each implementation issue's one current PR, repository, and integration target;
   retain superseded PR links as history. Record non-PR results separately.
-- Each task's scope, dependency edges, overlap decisions, and full baseline SHA.
+- Each task's scope, dependency edges, overlap decisions, and code baseline SHA
+  or non-PR source revision.
 - Where a relay holds the assignment: relationship id, current generation, current
   revision, assignment state, and the synchronisation jobs still owed.
 - Actual worktree/branch ownership and how local-only prerequisites are preserved.

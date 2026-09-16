@@ -148,7 +148,7 @@ create a project or call `crw-focus` to satisfy this baseline. If a transport
 requires a project binding, use a permitted projectless execution path or report
 that capability gap; never invent a project ID for a receipt.
 
-Compare local and remote commit ancestry. Preserve local-only commits and dirty
+For repository-changing work, compare local and remote commit ancestry. Preserve local-only commits and dirty
 work. Record a full baseline commit for each task and decide how any prerequisite
 changes will reach it. Do not push shared baseline commits through every task.
 
@@ -167,7 +167,9 @@ document as part of the management assignment, without a separate recording requ
 For a standalone issue, use its existing linked coordination document or a compact
 owned section in the issue within the authorized recording scope. Keep private
 recovery receipts keyed by the issue and actual task IDs; no project record or
-parent binding is required. Preserve unrelated issue content on each update.
+project-level parent binding is required. If delegation or a relay is used, retain
+the real coordinator task ID and routing identity; projectless does not mean
+coordinatorless. Preserve unrelated issue content on each update.
 For explicit read-only scope or unavailable access, return the unsynced update and
 retain the task's private recovery receipt. Keep raw launch
 receipts and sensitive evidence in an appropriate private location; local
@@ -178,9 +180,15 @@ Do not store project state or credentials inside this installed skill.
 
 Read [Task packet](references/task-packet.md) when preparing prompts. Each packet
 must stand alone in a fresh context and name its prerequisites, scope, baseline,
-acceptance criteria, verification, and return artifacts.
+acceptance criteria, verification, and return artifacts. For non-PR work without
+repository changes, use the source document/data revision as the baseline and
+return the verified result with its stable link or artifact digest. Omit Git
+ancestry, worktree/branch/commit, push/PR/review/merge requirements and their OPS
+clauses when they do not apply; do not create a repository or empty PR. Keep task
+ownership, access, settings, criteria and recovery evidence. This non-PR path
+applies throughout dispatch, observation and completion below.
 
-Every packet carries the current delivery contract, and where the template's older
+For repository-changing work, every packet carries the current delivery contract, and where the template's older
 delivery menu disagrees the contract wins. Name in the packet that the child owns its
 commits, push, the pull request and the review on that same pull request through to
 the applicable gates, and that the coordinator performs the merge while release and
@@ -203,7 +211,8 @@ creation field, verify the actual title by task ID, and correct it on the same
 managed task when supported. The packet's title alone is not app-state evidence.
 
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
-when no new branch or worktree is needed. Reuse a checkout whose ownership is
+when no new branch or worktree is needed. Non-PR work uses its permitted working
+directory and artifact access without Git metadata. For code work, reuse a checkout whose ownership is
 verified for the responsible child; a coordinator may prepare it before handoff.
 Otherwise follow the project/user placement convention. Record the actual path,
 branch, and owner; do not create a second checkout just to prove task separation.
@@ -285,7 +294,7 @@ Describe evidence separately:
 | Prompt dispatched | Accepted turn ID and matching user message |
 | Requested settings applied | Actual returned settings, not prompt text |
 | CXC Loop active | Child's active goal and current goalplan/FSM evidence |
-| Work delivered | Completed turn plus actual commit/diff and check artifacts |
+| Work delivered | Completed turn plus actual commit/diff and checks for code; verified result and source revision or artifact digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
@@ -298,7 +307,9 @@ Describe evidence separately:
 Do not assume a worktree/task returned by a backend appears in the app's project.
 Check the Desktop listing separately when the user needs that association.
 
-After delivery, identify the final commit or frozen hashed diff/file bundle, then
+After non-PR delivery, verify the result against its source revision and acceptance
+criteria, with no commit or merge requirement. After code delivery, identify the
+final commit or frozen hashed diff/file bundle, then
 check the prerequisite ancestry, scoped diff, acceptance criteria,
 meaningful negative cases, and relevant user-visible behavior. Reuse valid proof
 for the same revision and criteria; run missing checks or checks invalidated by
