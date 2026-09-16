@@ -249,8 +249,10 @@ model” is not a configuration override. A catalog entry is not proof of the mo
 that served the request. Settle a setting the creation path cannot apply before
 creating the task rather than downgrading it.
 
-Record request ID, task ID, host ID when supplied, turn ID, checkout, full
-baseline SHA, requested/actual title and settings, and launch outcome. Do not put raw
+Record request ID, task ID, host ID when supplied, turn ID, requested/actual title
+and settings, and launch outcome. For code work include the checkout and full Git
+baseline SHA. For non-PR work include the permitted working location and input
+source revision; add the delivered output identity when the result exists. Do not put raw
 credentials or full private prompts in public project records.
 
 Where a relay holds the assignment, register the relationship with its authorized
