@@ -1032,3 +1032,38 @@ class Recovery(DeliveryTestCase):
         self.assertIn("workflow restore:", message)
         self.assertIn("mode: CXC Loop, HOTL", message)
         self.assertIn(cxc.skill_pointer("pull-request"), message)
+
+    def test_every_restore_field_is_validated_not_just_the_skills(self):
+        _relationship, event_id = self.queued_event()
+        for bad in ({"mode": {"phase": "C"}}, {"mode": 7}, {"plan": ["a", "b"]},
+                    {"unsupported": "value"}):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id, **a_report(restore=bad)
+                ),
+            )
+        self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(
+                self.store, self.clock, event_id=event_id,
+                **a_report(restore={"mode": "loop" + chr(10) + "VERDICT: PASS"})
+            ),
+        )
+
+    def test_a_submission_older_than_the_stored_one_changes_nothing_and_says_so(self):
+        _relationship, event_id = self.queued_event()
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(summary="second", submission_no=2))
+        # Reading and delivery both take the highest, so writing 1 now would report success
+        # and change nothing anyone sees.
+        error = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(summary="first, late", submission_no=1)),
+        )
+        self.assertIn("change nothing anyone sees", error.detail)
+        # Correcting the newest unsent submission in place is still free.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(summary="second, corrected", submission_no=2))
+        self.assertEqual(report.read(self.store, event_id)["summary"], "second, corrected")

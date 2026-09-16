@@ -387,7 +387,24 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
             delivered = max(delivered, 1)
         else:
             delivered = max(delivered, row["submission_no"])
+    stored = db.execute(
+        "SELECT MAX(submission_no) AS highest FROM work_reports WHERE event_id = ?",
+        (event_id,),
+    ).fetchone()
+    highest = (stored["highest"] if stored else None) or 0
     if delivered == 0:
+        # Nothing frozen yet, so the newest stored submission can still be corrected in
+        # place. Going BACKWARDS is the case worth refusing: read and delivery both select
+        # the highest submission, so writing an older number returns success and then has no
+        # effect on anything anyone will see.
+        if submission_no < highest:
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"submission {highest} of this report already exists, and both reading and "
+                f"delivery take the highest, so recording {submission_no} would report "
+                f"success and change nothing anyone sees. Correct submission {highest}, or "
+                f"record {highest + 1}",
+            )
         return
     if submission_no > delivered:
         return
@@ -444,6 +461,9 @@ def _state_of(row):
         return None
 
 
+RESTORE_FIELDS = ("mode", "scope", "phase", "phaseObservedAt", "plan", "evidence", "remaining")
+
+
 def _check_restore(restore):
     """A skill pointer nobody owns is another render-time failure inside the claim.
 
@@ -488,7 +508,29 @@ def _check_restore(restore):
             f"{sorted(cxc.SKILL_POINTERS)}. Naming an owner nobody has would fail at render "
             "time, inside the delivery claim, instead of here",
         )
-    return restore
+    checked = {"skills": names} if names else {}
+    for key, value in restore.items():
+        if key == "skills":
+            continue
+        if key not in RESTORE_FIELDS:
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"{key!r} is not a restore field this build renders; supported fields are "
+                f"{list(RESTORE_FIELDS)} plus skills. An unrendered field is one the "
+                "recipient never sees and is never told was dropped",
+            )
+        if value is None or value == "":
+            continue
+        if not isinstance(value, str):
+            # A mapping here reached the message as a Python repr, and an arbitrary object
+            # failed later inside json.dumps as a host exception rather than a refusal.
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"restore {key} is a single line of text, not {type(value).__name__}",
+            )
+        checked[key] = _bounded(_single_line(value.strip(), f"restore {key}"),
+                                f"restore {key}", LABEL_MAX)
+    return checked
 
 
 def _check_review(review):

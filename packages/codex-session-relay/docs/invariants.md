@@ -138,6 +138,8 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-120 | An inbox-only attempt counts as having reached the recipient, because its frozen message is the durable inbox item | `report._may_have_reached` | implemented |
 | I-121 | A single-line report field containing a line break is refused, so nothing can splice an extra line into the message protocol | `report._single_line` | implemented |
 | I-122 | Pull-request fields are refused when no pull request is named, rather than stored and never rendered | `report.record` | implemented |
+| I-123 | Every restore field is a supported, bounded, single-line string; an unsupported or unrenderable one is refused | `report._check_restore` | implemented |
+| I-124 | A submission lower than the highest stored one is refused, because reading and delivery both take the highest and the write would change nothing | `report._assert_resubmission` | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is
