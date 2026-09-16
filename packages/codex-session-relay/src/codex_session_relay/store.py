@@ -441,7 +441,13 @@ def _now_iso() -> str:
 def socket_scope(socket_path) -> str:
     if not socket_path:
         return "default"
-    return hashlib.sha256(str(Path(socket_path).expanduser()).encode()).hexdigest()[:16]
+    # Canonicalised the same way ScopeRegistry.key does. Hashing the spelling as supplied
+    # gave a relative path and a symlink alias for one socket two different default state
+    # directories, so the second invocation opened a different store and was then refused
+    # by the scope registry as a foreign owner instead of joining the service already there.
+    return hashlib.sha256(
+        str(Path(socket_path).expanduser().absolute().resolve()).encode()
+    ).hexdigest()[:16]
 
 
 @dataclass(frozen=True)
@@ -701,6 +707,30 @@ def probe(selection: StateSelection) -> dict:
 
     access["detail"] = "; ".join(notes) or None
     return {"stateSelection": selection.to_record(), "store": store, "access": access}
+
+
+def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
+    """Answer a question about the store without creating or migrating one.
+
+    Store.__init__ opens the file O_RDWR, switches on WAL and runs the whole schema script,
+    so any command that reaches for it to READ leaves a fully formed relay database behind.
+    For diagnosis that is a side effect the command promised not to have: pointing it at an
+    empty, legacy or unrelated file would silently adopt it. Every error becomes a field.
+    """
+    db_path = selection.db_path
+    try:
+        connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
+    except (OSError, sqlite3.Error, ValueError) as error:
+        return {"readable": False, "rows": [],
+                "detail": f"{type(error).__name__}: {error}"}
+    try:
+        connection.row_factory = sqlite3.Row
+        rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
+    except sqlite3.Error as error:
+        connection.close()
+        return {"readable": True, "rows": [], "detail": f"{type(error).__name__}: {error}"}
+    connection.close()
+    return {"readable": True, "rows": rows, "detail": None}
 
 
 def nonce_lookup(selection: StateSelection, nonce: str) -> dict:

@@ -729,15 +729,29 @@ def _ledger_location(services) -> dict:
 
 def _contents(services, report) -> dict:
     """Counts, but only when the store can actually be opened for them."""
+    from .store import read_only_rows
+
     if not report["access"]["dbReadable"]:
         return {"available": False, "relationships": None, "openAttempts": None,
                 "detail": "the database is not readable from this process"}
-    try:
-        relationships = services.store.one("SELECT COUNT(*) AS c FROM relationships")["c"]
-        open_attempts = len(services.reconciler.open_attempts())
-    except Exception as error:  # noqa: BLE001 - doctor reports, it does not fail
+    # Read through the probe's own read-only connection. services.store would construct a
+    # Store, and Store.__init__ opens O_RDWR, switches on WAL and runs the whole schema
+    # script - so asking doctor to COUNT rows in an empty, legacy or unrelated readable
+    # relay.sqlite3 quietly turned it into a relay database. Diagnosis writes nothing.
+    counted = read_only_rows(
+        services.selection,
+        "SELECT (SELECT COUNT(*) FROM relationships) AS relationships,"
+        "       (SELECT COUNT(*) FROM attempts a"
+        "          JOIN deliveries d ON d.event_id = a.event_id"
+        "         WHERE a.internal_state = 'in_flight'"
+        "            OR (a.state = 'held_uncertain'"
+        "                AND d.state IN ('held_uncertain','sending'))) AS open_attempts",
+    )
+    if not counted["readable"] or counted["detail"] or not counted["rows"]:
         return {"available": False, "relationships": None, "openAttempts": None,
-                "detail": f"{type(error).__name__}: {error}"}
+                "detail": counted["detail"] or "the store could not be read"}
+    relationships = counted["rows"][0]["relationships"]
+    open_attempts = counted["rows"][0]["open_attempts"]
     return {"available": True, "relationships": relationships,
             "openAttempts": open_attempts, "detail": None}
 

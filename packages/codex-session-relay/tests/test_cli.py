@@ -275,6 +275,30 @@ class Diagnosis(unittest.TestCase):
         # The old doctor built a Store first, which created the directory it was asked about.
         self.assertFalse(os.path.exists(absent))
 
+    def test_doctor_does_not_turn_an_unrelated_file_into_a_relay_database(self):
+        """The directory existing was not the whole side effect; counting rows was too.
+
+        A readable relay.sqlite3 sent the contents block through a real Store, and
+        Store.__init__ opens O_RDWR, switches on WAL and runs the entire schema script. An
+        empty, legacy or unrelated file was quietly adopted by the command that promised to
+        do nothing but look.
+        """
+        state = os.path.join(self.tmp, "borrowed")
+        os.makedirs(state)
+        target = os.path.join(state, "relay.sqlite3")
+        open(target, "w").close()
+
+        report = self.cli("doctor", state=state)
+
+        self.assertEqual(os.path.getsize(target), 0, "doctor wrote a schema into it")
+        self.assertEqual(
+            sorted(os.listdir(state)), ["relay.sqlite3"], "no WAL or shm sidecar either",
+        )
+        self.assertTrue(report["access"]["dbExists"])
+        self.assertFalse(report["contents"]["available"],
+                         "and it says so rather than inventing counts")
+        self.assertIsNotNone(report["contents"]["detail"])
+
     def test_doctor_names_the_rule_that_chose_the_directory(self):
         chosen = os.path.join(self.tmp, "chosen")
         by_env = self.cli("doctor", env={"CODEX_SESSION_RELAY_STATE": chosen})
