@@ -119,7 +119,11 @@ class ScopeRegistry:
     _handle: object = field(default=None, repr=False)
 
     def key(self, socket_path) -> str:
-        canonical = str(Path(socket_path).expanduser().absolute())
+        # Resolved, not merely absolute. A socket reachable through a symlink or a relative
+        # alias is the SAME operating scope, and hashing the supplied spelling would give the
+        # two launches different keys - so both would take a lock and both would serve one
+        # App Server, which is the exact thing this registry exists to prevent.
+        canonical = str(Path(socket_path).expanduser().absolute().resolve())
         digest = hashlib.sha256(canonical.encode()).hexdigest()[:16]
         if self.authority == PRODUCTION:
             return digest

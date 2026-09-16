@@ -260,6 +260,18 @@ class ScopeAuthority(ServiceTestCase):
             installation_id(os.path.join(self.tmp, "b")),
         )
 
+    def test_two_names_for_one_socket_are_one_operating_scope(self):
+        """A symlinked socket is the same App Server, so it must be the same lock."""
+        real = os.path.join(self.tmp, "real.sock")
+        open(real, "w", encoding="utf-8").close()
+        alias = os.path.join(self.tmp, "alias.sock")
+        os.symlink(real, alias)
+        registry = ScopeRegistry(Path(self.scopes), ISOLATED)
+        self.assertEqual(
+            registry.key(real), registry.key(alias),
+            "two spellings of one socket must not give two owners",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
