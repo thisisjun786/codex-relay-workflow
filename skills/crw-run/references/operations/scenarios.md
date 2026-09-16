@@ -8,7 +8,7 @@ one of them.
 
 ## S1 New installation on a host that has nothing
 
-Observed: no relay console script, no MCP registration, no state directory, and the six skills not
+Observed: no relay console script, no MCP registration, no state directory, and the seven current skills (including `crw-define`) not
 yet linked.
 
 Clauses: OPS-2.3 for the skill links, OPS-1.1 and OPS-1.3 for the combination, OPS-2.4 for the
