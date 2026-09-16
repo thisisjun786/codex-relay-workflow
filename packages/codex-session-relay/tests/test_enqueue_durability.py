@@ -72,6 +72,9 @@ class EnqueueDurability(DeliveryTestCase):
         # The refusal is over. Nothing about the turn has changed, so a loop that only
         # reconsiders unobserved turns will never look at this event again.
         self.delivery.enqueue_in = original
+        # Past the refusal's backoff. A retry that fired immediately would hammer a refusal
+        # that is usually still true a moment later.
+        self.clock.advance(3600)
         self.daemon().tick(now=self.clock.now())
 
         queued = self.delivery.find(event_id)
@@ -99,8 +102,12 @@ class EnqueueDurability(DeliveryTestCase):
             "a transient failure rolls the observation back so the next tick retries cleanly",
         )
 
-    def test_a_final_event_with_no_delivery_row_is_recovered_on_its_own(self):
-        """Covers rows already stranded before this existed, not only new ones."""
+    def test_an_event_nobody_asked_to_send_is_not_resurrected(self):
+        """Absence of a delivery row is not evidence that delivery was wanted and failed.
+
+        An event emitted with --no-enqueue looks exactly like one whose queuing was refused,
+        so recovery reads the recorded intent rather than guessing from what is missing.
+        """
         _relationship, event_id = self.staged_completion()
         self.intake.resolve_staged(TurnRef(CHILD, "turn-dispatch-1", "completed"))
         self.assertEqual(self.intake.row(event_id)["stage"], "final")
@@ -108,5 +115,37 @@ class EnqueueDurability(DeliveryTestCase):
 
         report = self.daemon().tick(now=self.clock.now())
 
-        self.assertIsNotNone(self.delivery.find(event_id))
-        self.assertGreaterEqual(report.requeued, 1)
+        self.assertIsNone(
+            self.delivery.find(event_id),
+            "recovery must not send something nobody asked it to send",
+        )
+        self.assertEqual(report.requeued, 0)
+
+    def test_a_refused_event_records_an_intent_that_recovery_reads(self):
+        _relationship, event_id = self.staged_completion()
+        self.refuse_enqueue_once()
+        self.daemon().tick(now=self.clock.now())
+        intent = self.store.one(
+            "SELECT * FROM delivery_intent WHERE event_id = ?", (event_id,),
+        )
+        self.assertIsNotNone(intent, "the refusal recorded that delivery was wanted")
+        self.assertEqual(intent["attempts"], 1)
+        self.assertGreater(intent["next_retry_at"], self.clock.now())
+
+    def test_a_permanently_refused_intent_backs_off_instead_of_holding_its_slot(self):
+        """Otherwise four unqueueable events keep every recovery slot forever."""
+        relationship, event_id = self.staged_completion()
+        self.refuse_enqueue_once()
+        self.daemon().tick(now=self.clock.now())
+        first = self.store.one(
+            "SELECT * FROM delivery_intent WHERE event_id = ?", (event_id,),
+        )
+        # The relationship now excludes its own parent, so every retry is refused for good.
+        self.registry.set_status(relationship["relationshipId"], "paused", actor="test")
+        self.clock.advance(3600)
+        self.daemon().tick(now=self.clock.now())
+        second = self.store.one(
+            "SELECT * FROM delivery_intent WHERE event_id = ?", (event_id,),
+        )
+        self.assertGreater(second["attempts"], first["attempts"])
+        self.assertGreater(second["next_retry_at"], first["next_retry_at"])

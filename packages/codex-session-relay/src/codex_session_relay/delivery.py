@@ -110,22 +110,49 @@ class DeliveryService:
         )
         self.store.journal("delivery_queued", event_id, {"kind": kind}, at=now)
 
-    def unqueued_final_events(self, *, limit: int = 10) -> list:
-        """Final events with no delivery row at all, under a relationship that can receive one.
+    def record_intent_in(self, db, event_id, *, relationship_id, kind, recipient_task_id,
+                         error, now) -> None:
+        """Remember that delivery was wanted here and refused for a reason that may not last.
 
-        Derived from state rather than kept in a queue of its own, so an event stranded before
-        this recovery existed is picked up too, not only one stranded afterwards. A suppressed
-        event is excluded: it was decided against, not lost.
+        Written in the SAME transaction as the observation that produced the event, so the two
+        facts cannot disagree. Deriving this instead - final event, no delivery row - would
+        also match an event emitted with --no-enqueue and one stranded by an old generation,
+        neither of which anyone asked to send.
+
+        Each refusal backs the retry off, so a permanently unqueueable event cannot hold a
+        recovery slot against events that would succeed.
         """
-        return self.store.all(
-            "SELECT e.event_id, e.relationship_id FROM events e"
-            "  JOIN relationships r ON r.relationship_id = e.relationship_id"
-            "  LEFT JOIN deliveries d ON d.event_id = e.event_id"
-            " WHERE e.stage = 'final' AND e.suppressed_reason IS NULL AND d.event_id IS NULL"
-            "   AND r.status = 'active' AND r.superseded_by IS NULL"
-            " ORDER BY e.first_seen_at LIMIT ?",
-            (limit,),
+        row = db.execute(
+            "SELECT attempts FROM delivery_intent WHERE event_id = ?", (event_id,),
+        ).fetchone()
+        attempts = (row["attempts"] if row else 0) + 1
+        delay = min(
+            self.policy.presend_max_seconds,
+            self.policy.presend_base_seconds * (2 ** max(0, attempts - 1)),
         )
+        db.execute(
+            "INSERT INTO delivery_intent (event_id, relationship_id, kind, recipient_task_id,"
+            " attempts, next_retry_at, last_error, noted_at) VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(event_id) DO UPDATE SET attempts = excluded.attempts,"
+            " next_retry_at = excluded.next_retry_at, last_error = excluded.last_error",
+            (event_id, relationship_id, kind, recipient_task_id, attempts, now + delay,
+             str(error), self.clock.iso()),
+        )
+
+    def pending_intents(self, *, now: float, limit: int = 4) -> list:
+        """Events whose delivery was wanted, refused, and is due to be tried again."""
+        return self.store.all(
+            "SELECT i.* FROM delivery_intent i"
+            "  LEFT JOIN deliveries d ON d.event_id = i.event_id"
+            " WHERE d.event_id IS NULL"
+            "   AND (i.next_retry_at IS NULL OR i.next_retry_at <= ?)"
+            " ORDER BY i.next_retry_at LIMIT ?",
+            (now, limit),
+        )
+
+    def clear_intent(self, event_id: str) -> None:
+        with self.store.transaction() as db:
+            db.execute("DELETE FROM delivery_intent WHERE event_id = ?", (event_id,))
 
     def _render_for(self, row, record, request) -> str:
         """Deterministic, directional, and carrying no turn id belonging to the recipient.

@@ -88,10 +88,11 @@ class AnchorBinding(DeliveryTestCase):
             RefusalReason.UNBOUND_GENERATION, self.child_receipt_for_generation_two,
         )
 
-    def test_the_deliver_path_binds_the_anchor_it_created(self):
+    def test_the_recovery_binds_a_dispatched_revision(self):
+        """The helper itself. Route integration is proved by the tick test above, which
+        calls nothing but tick."""
         revision = self.revision_pending()
         self.clock.advance(3600)
-        # Exactly what the deliver command does, and nothing more. No test-side binding.
         record = self.delivery.attempt(revision, self.adapter, now=self.clock.now())
         self.assertEqual(record["deliveryState"], "dispatched")
 

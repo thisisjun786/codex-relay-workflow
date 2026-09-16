@@ -419,6 +419,20 @@ CREATE TABLE IF NOT EXISTS store_challenge (
     written_at TEXT NOT NULL
 );
 
+-- Delivery was WANTED for this event and refused for a reason that may not last. Absence of
+-- a delivery row cannot carry that meaning: an event emitted with --no-enqueue and an event
+-- stranded by an old generation look identical to one whose queuing was refused.
+CREATE TABLE IF NOT EXISTS delivery_intent (
+    event_id          TEXT PRIMARY KEY,
+    relationship_id   TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    recipient_task_id TEXT NOT NULL,
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    next_retry_at     REAL,
+    last_error        TEXT,
+    noted_at          TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS deliveries_state ON deliveries (state, next_eligible_at);
 CREATE INDEX IF NOT EXISTS attempts_open ON attempts (internal_state);
 CREATE INDEX IF NOT EXISTS events_relationship ON events (relationship_id, execution_generation);

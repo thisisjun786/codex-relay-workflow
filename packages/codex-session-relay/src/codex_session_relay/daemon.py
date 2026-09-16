@@ -16,10 +16,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .delivery import COMPLETION
-from .errors import DeliveryRefused, RelayError, ScopeError
+from .errors import DeliveryRefused, RegistrationError, RelayError, ScopeError
 from .models import TurnRef
 from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
+from .scope import assert_assignment_delivery
 from .transport import DISPATCHED, HELD_UNCERTAIN
 
 
@@ -112,6 +113,7 @@ class RelayDaemon:
         self.policy = policy or RetryPolicy()
         self.clock = clock or delivery.clock
         self.log = log or (lambda _message: None)
+        self._last_refusal = None
 
     # ------------------------------------------------------------------ tick
 
@@ -120,7 +122,7 @@ class RelayDaemon:
         report = TickReport()
         self._bind_anchors(report)
         self._observe(report, now)
-        self._requeue_missing(report)
+        self._requeue_missing(report, now)
         self._reconcile(report, now)
         self._verify_acks(report, now)
         self._deliver(report, now)
@@ -140,7 +142,7 @@ class RelayDaemon:
         except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
             report.notes.append(f"anchor recovery failed: {error}")
 
-    def _requeue_missing(self, report) -> None:
+    def _requeue_missing(self, report, now) -> None:
         """Queue a final event that has no delivery row.
 
         A refusal at enqueue time can be perfectly legitimate - a relationship paused between
@@ -149,18 +151,29 @@ class RelayDaemon:
         because the turn it came from will never look new again.
         """
         try:
-            candidates = self.delivery.unqueued_final_events(
-                limit=self.policy.max_sends_per_tick,
+            candidates = self.delivery.pending_intents(
+                now=now, limit=self.policy.max_sends_per_tick,
             )
         except Exception as error:  # noqa: BLE001
             report.notes.append(f"requeue scan failed: {error}")
             return
         for row in candidates:
+            event_id = row["event_id"]
             try:
-                self.delivery.enqueue(row["event_id"])
-            except Exception as error:  # noqa: BLE001 - still refused; try again next tick
-                report.notes.append(f"requeue refused for {row['event_id']}: {error}")
+                self.delivery.enqueue(
+                    event_id, kind=row["kind"], recipient_task_id=row["recipient_task_id"],
+                )
+            except Exception as error:  # noqa: BLE001 - still refused; back this one off so
+                # it cannot hold a recovery slot against events that would succeed.
+                report.notes.append(f"requeue refused for {event_id}: {error}")
+                with self.store.transaction() as db:
+                    self.delivery.record_intent_in(
+                        db, event_id, relationship_id=row["relationship_id"],
+                        kind=row["kind"], recipient_task_id=row["recipient_task_id"],
+                        error=error, now=now,
+                    )
                 continue
+            self.delivery.clear_intent(event_id)
             report.requeued += 1
 
     def _verify_acks(self, report, now) -> None:
@@ -373,8 +386,9 @@ class RelayDaemon:
             return
         try:
             self._commit_settlement(relationship, reference, outcome, synthesized, queue=True)
-        except (DeliveryRefused, ScopeError) as refusal:
+        except (DeliveryRefused, ScopeError, RegistrationError) as refusal:
             report.notes.append(f"enqueue refused for {reference.turn_id}: {refusal}")
+            self._last_refusal = refusal
             self._commit_settlement(
                 relationship, reference, outcome, synthesized, queue=False,
             )
@@ -415,8 +429,6 @@ class RelayDaemon:
                 db, reference, outcome, relationship_id=relationship["relationshipId"],
                 event=synthesized,
             )
-            if not queue:
-                return
             queueable = list(resolved["finalized"])
             if synthesized:
                 queueable.append(synthesized)
@@ -425,14 +437,31 @@ class RelayDaemon:
                 # be polling. Staged claims are selected by thread and turn, and two
                 # assignments can share a child, so assuming the polled relationship would
                 # queue B's event to A's parent.
-                owner = self.intake.row(event_id)
-                record = self.registry.require_active(owner["relationship_id"])
+                owner = self.intake.row(event_id)["relationship_id"]
+                if not queue:
+                    # Delivery WAS wanted here. Recording that is what lets recovery retry
+                    # this event and only this event, instead of guessing from the absence
+                    # of a delivery row.
+                    self.delivery.record_intent_in(
+                        db, event_id, relationship_id=owner, kind=COMPLETION,
+                        recipient_task_id=self.registry.get(owner)["parent"]["taskId"],
+                        error=self._last_refusal, now=self.clock.now(),
+                    )
+                    continue
+                # enqueue_in does not validate and enqueue does, so the authorization the old
+                # path got for free has to be asked for here, inside the same transaction.
+                record = self.registry.require_active(owner)
+                recipient = record["parent"]["taskId"]
+                assert_assignment_delivery(
+                    record, kind=COMPLETION, recipient_task_id=recipient,
+                    event_relationship_id=owner,
+                )
                 # Storing a receipt is not telling anyone. A parent waiting for a verdict has
                 # to learn that the child failed, so a synthesized observation is queued like
                 # any other event.
                 self.delivery.enqueue_in(
-                    db, event_id, relationship_id=owner["relationship_id"],
-                    kind=COMPLETION, recipient_task_id=record["parent"]["taskId"],
+                    db, event_id, relationship_id=owner, kind=COMPLETION,
+                    recipient_task_id=recipient,
                 )
 
     # ------------------------------------------------------------- reconcile

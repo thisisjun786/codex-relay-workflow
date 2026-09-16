@@ -426,6 +426,9 @@ def cmd_deliver(services, args) -> dict:
     out = []
     for row in services.delivery.eligible(now=services.clock.now(), limit=args.limit):
         out.append(services.delivery.attempt(row["event_id"], services.adapter))
+    # The bulk path dispatches revisions too, so it binds for exactly the same reason the
+    # single-event path does.
+    services.ack.bind_pending_anchors()
     return {"attempts": out}
 
 
