@@ -453,6 +453,28 @@ class Ownership(ServiceTestCase):
         self.assertIn("reused", refused["detail"])
         self.assertIsNone(child.poll())
 
+    def test_stop_writes_no_request_for_a_lock_held_by_an_unidentified_process(self):
+        """A supervisor between taking the lock and writing its record has no identity yet.
+
+        The stop request is not harmless there: a supervisor clears pending requests only
+        BEFORE taking the lock, so a request written after that is consumed by the very
+        service the caller was told it had not stopped.
+        """
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        service.record_path.unlink()
+        self.assertTrue(service.lock_is_held())
+
+        refused = service.stop()
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertFalse(
+            service.stop_request_path.exists(),
+            "a refused stop must not leave a request the service will act on",
+        )
+        self.assertIsNone(child.poll())
+
     def test_stop_refuses_when_the_process_cannot_be_aimed_at(self):
         service = self.service("a")
         child, pid = self.holder(service)

@@ -514,7 +514,11 @@ def resolve_state_dir(explicit=None, socket_path=None) -> StateSelection:
     # old one, invisible. The new name is used for anything new; the old one wins only when
     # it actually holds a store and the new one does not.
     legacy = legacy_socket_scope(socket_path)
-    if legacy != scope and not chosen.exists():
+    # Whether the canonical DATABASE exists, not whether its directory does. A directory is
+    # created by any command that writes beside the store - a stop request is enough - and
+    # testing for the directory let one such command hide a legacy store holding real
+    # assignments behind an empty folder.
+    if legacy != scope and not (chosen / "relay.sqlite3").exists():
         previous = (base / "codex-session-relay" / legacy).absolute()
         if (previous / "relay.sqlite3").exists():
             return StateSelection(
