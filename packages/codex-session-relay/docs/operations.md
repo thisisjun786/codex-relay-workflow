@@ -190,8 +190,22 @@ An observation is also no longer treated as the end of a turn. A receipt written
 the completion was seen still has to be resolved, so a turn is skipped only when it has been
 observed and has no unresolved staged claim.
 
-Status: implemented. Per-parent send fairness, the delivery phase taxonomy and pre-send
-supersession are still planned.
+Status: implemented.
+
+**Every parent gets a turn.** Selection asks which parents have anything to send before it
+asks how much each of them has, then takes a bounded share from each, dealt one at a time.
+A single oldest-first window let one parent's backlog take every slot. Reconciliation is
+selected the same way. A parent whose send errors or defers is skipped for the rest of that
+tick only; it reserves no capacity and creates no hold.
+
+This is scheduler fairness, not transport concurrency. The adapter serialises on one worker,
+so a stalled call still blocks the one behind it.
+
+**A stale event is stopped before the send.** A generation that has moved on invalidates
+every outcome of the previous one, whether or not the new generation has produced a revision
+yet, and the claim statement itself refuses one. An outstanding send is annotated rather than
+rewritten, so reconciliation can still settle it, and an already delivered copy keeps its
+history without being read as verification of the current head.
 
 ## What a restart preserves
 
