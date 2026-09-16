@@ -100,6 +100,11 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-62 | No notification flood | a per-recipient minimum interval and hourly cap | implemented |
 | I-63 | Unchanged states stay quiet | a tick that changes nothing writes no journal rows | implemented |
 | I-64 | An unbounded daemon loop is not constructible | `run` requires a tick count, a deadline or a stop signal | implemented |
+| I-65 | A supervisor is bounded by the owner's intent, not by a timer | it re-reads `service.json` and the stop request between segments; `RelayDaemon.run` is unchanged, so every worker it launches is still bounded by I-64 | implemented |
+| I-66 | The current generation cannot be starved by history | candidates are filtered before the per-tick budget, the current anchor is reserved, and the remainder rotates through a persisted cursor | implemented |
+| I-67 | One parent's backlog cannot consume another parent's opportunity | selection asks which parents are eligible before asking how many rows each has, then deals a bounded share one at a time | implemented |
+| I-68 | A delivery whose generation has moved on cannot be claimed | the claim statement refuses it, so the decision cannot be overtaken between checking and acting | implemented |
+| I-69 | An outstanding send is never rewritten as terminal | suppression annotates it instead, because reconciliation refuses to promote a terminal superseded aggregate and a lost response would become unresolvable | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is
@@ -111,4 +116,6 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | Inode ownership is not proven | a hardlink or bind mount can expose the same bytes under another authorized path, which the contract permits because it authorizes paths |
 | The JSON date-time format is unvalidated | the available validator has no working format checker, so timestamp format is unverified rather than implied |
 | Terminal turns are polled, not subscribed | the transport cannot subscribe, so automatic invocation is a bounded poll that then dispatches |
+| Scheduler fairness is not transport concurrency | the adapter serialises on one worker, so a stalled call still blocks the one behind it; what is guaranteed is that a struggling parent stops being handed the rest of the budget |
+| A live process is not a working one | health is computed from staged age, anchor poll freshness and backlog; liveness is reported separately and never counted |
 | Archive state can be unknown | an inconclusive listing withholds rather than guessing, and a later observation releases it |
