@@ -611,6 +611,40 @@ class Ownership(ServiceTestCase):
         self.assertIsNone(service.record()["pid"])
         self.assertFalse(service.lock_is_held())
 
+    def test_two_anonymous_launches_are_still_distinguishable(self):
+        """A direct 'service run' carries no launch id, so comparing that field alone made
+        two different launches compare equal - and handed the replacement straight back."""
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        ours = dict(service.record(), launchId=None)
+        service.write_record(ours)
+        replacement = subprocess.Popen(
+            [sys.executable, "-c", IDLE_CHILD],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.children.append(replacement)
+        original = service._terminate
+
+        def publish_anonymous_replacement(handle, **kwargs):
+            outcome = original(handle, **kwargs)
+            service.write_record(dict(
+                ours, launchId=None, pid=os.getpid(), startedAt="2099-01-01T00:00:00Z",
+                workerPid=replacement.pid,
+                workerStartTicks=service_module.start_ticks(replacement.pid),
+            ))
+            return outcome
+
+        with mock.patch.object(service, "_terminate", publish_anonymous_replacement):
+            outcome = service.stop()
+
+        child.wait(timeout=10)
+        self.assertIsNone(replacement.poll(), "the replacement's worker is not ours")
+        self.assertFalse(
+            outcome["ok"],
+            "a stop that left a replacement running has not stopped the service",
+        )
+        self.assertEqual(outcome["reason"], "replaced_by_new_launch")
+
     def test_stop_does_not_reach_into_a_replacement_launch(self):
         """Re-reading after the supervisor exits can pick up a NEW launch's record.
 
