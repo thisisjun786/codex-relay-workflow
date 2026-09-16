@@ -122,6 +122,8 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-104 | An omission notice is placed before the final verdict, so an elided correction still ends on its judgment | `report._compose` | implemented |
 | I-105 | A revision request cannot carry a PASS verdict | `report.record` | implemented |
 | I-106 | A report-backed message keeps the receipt manifestRef the pre-contract message carried | `report._manifest_lines` | implemented |
+| I-107 | The command an omission notice names returns the whole report, so every elided field stays recoverable | `cli.cmd_show` | implemented |
+| I-108 | A restore section naming a skill owner nobody has is refused at record time | `report._check_restore` | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is

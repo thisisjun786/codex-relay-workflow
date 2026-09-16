@@ -664,3 +664,53 @@ class VerdictPosition(Directions):
             ),
         )
         self.assertIn("ruled needs_changes", error.detail)
+
+
+class Recovery(DeliveryTestCase):
+    """The omission notice promises a command; that command has to deliver."""
+
+    def test_the_command_the_omission_notice_names_returns_the_whole_report(self):
+        from codex_session_relay import cli
+
+        _relationship, event_id = self.queued_event()
+        unresolved = [f"finding {n}: something that still needs doing" for n in range(30)]
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(unresolved=unresolved))
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        receipt = self.intake.get(event_id)
+        tight = report.render_completion(row, receipt, "del-r-a1", stored, budget=1400)
+        self.assertIn("omitted:", tight)
+        self.assertIn(report.show_command(event_id), tight)
+
+        services = type("S", (), {"store": self.store, "delivery": self.delivery,
+                                  "intake": self.intake})()
+        args = type("A", (), {"event": event_id, "message": False})()
+        payload = cli.cmd_show(services, args)
+        self.assertIsNotNone(payload["workReport"], "show must carry the report")
+        # Every field the message was able to drop is recoverable there.
+        self.assertEqual(payload["workReport"]["unresolved"], unresolved)
+        self.assertEqual(payload["workReport"]["evidence"], stored["evidence"])
+        self.assertEqual(payload["workReport"]["nextAction"], stored["nextAction"])
+
+    def test_a_skill_pointer_nobody_owns_is_refused_where_it_can_be_fixed(self):
+        _relationship, event_id = self.queued_event()
+        error = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(
+                self.store, self.clock, event_id=event_id,
+                **a_report(restore={"mode": "CXC Loop", "skills": ["loop", "telepathy"]})
+            ),
+        )
+        self.assertIn("telepathy", error.detail)
+        # A known set renders the owners rather than telling the reader to reload everything.
+        report.record(
+            self.store, self.clock, event_id=event_id,
+            **a_report(restore={"mode": "CXC Loop, HOTL", "phase": "C",
+                                "plan": "devlog/_plan/260916_jun131",
+                                "skills": ["loop", "pull-request"]})
+        )
+        message = self.delivery.render_message(event_id)
+        self.assertIn("workflow restore:", message)
+        self.assertIn("mode: CXC Loop, HOTL", message)
+        self.assertIn(cxc.skill_pointer("pull-request"), message)

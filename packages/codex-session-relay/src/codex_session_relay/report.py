@@ -119,6 +119,7 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     review = _check_review(review)
     evidence = _check_evidence(evidence)
     unresolved = _check_unresolved(unresolved)
+    restore = _check_restore(restore)
     _check_resubmission(store, event_id, submission_no)
     row = {
         "eventId": event_id,
@@ -267,6 +268,27 @@ def _check_resubmission(store, event_id, submission_no) -> None:
             f"changing what it calls itself; record this as submission "
             f"{existing['submission_no'] + 1} or higher",
         )
+
+
+def _check_restore(restore):
+    """A skill pointer nobody owns is another render-time failure inside the claim.
+
+    _restore_lines resolves each named activity through cxc.skill_pointer, which refuses an
+    unknown name on purpose, so an unvalidated name recorded here would surface as a failed
+    render and a rolled-back delivery rather than as a typo somebody could fix.
+    """
+    restore = dict(restore or {})
+    unknown = [
+        name for name in restore.get("skills") or [] if name not in cxc.SKILL_POINTERS
+    ]
+    if unknown:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"no recorded skill owner for {unknown}; known activities are "
+            f"{sorted(cxc.SKILL_POINTERS)}. Naming an owner nobody has would fail at render "
+            "time, inside the delivery claim, instead of here",
+        )
+    return restore
 
 
 def _check_review(review):
