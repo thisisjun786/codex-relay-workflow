@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-focus`, `crw-next`, `crw-plan`, `crw-run`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-focus`, `crw-next`, `crw-plan`, `crw-run`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Resolve the project target
 
@@ -79,6 +79,25 @@ through `crw-plan` before new dispatch. Preserve active work, IDs, and history;
 do not silently split, close, or reassign live issues. Editing these instructions
 does not migrate existing work or alter the relay's runtime contracts.
 
+### Parent and child scope
+
+One parent Codex task orchestrates one Linear project: issue dependencies,
+sequencing, parallel children, delivery verification and project integration.
+One child Codex task orchestrates one Linear issue: implementation, tests, its
+PR and review fixes, with internal helpers as needed. A ready batch means
+several separate children, not several issues assigned to one child. Internal
+helpers do not acquire project or issue ownership by receiving a subtask.
+
+Bind the parent by stable project ID and each child by its issue ID. An initiative
+spanning projects is a planning scope, not a combined execution-parent binding.
+Preserve other project coordinators and route cross-project prerequisites by
+relation; do not absorb their issues. Standalone issues may remain projectless
+and run in an issue-scoped task without inventing a project or a project parent.
+An explicit current-task implementation request keeps that mode and issue scope;
+it is not evidence that an independent child was created. Reuse the responsible
+child for the same issue’s follow-ups, not for a new issue. Explicit project-focus
+switches preserve old bindings and active ownership before establishing the new one.
+
 ## Linear holds canonical documents
 
 Jun keeps product intent, specifications, plans, accepted decisions, and human-readable coordination records in Linear documents linked to the relevant project/issues. Use stable document IDs/URLs and available revision or updated-at evidence. Repositories remain authoritative for source, executable configuration, repository policy, and reproducible implementation evidence.
@@ -103,7 +122,7 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 The effective Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-next` selects the next action, `crw-plan` defines work, `crw-run` coordinates execution, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` coordinates execution, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 ### Completion follow-up in an existing execution workflow
 

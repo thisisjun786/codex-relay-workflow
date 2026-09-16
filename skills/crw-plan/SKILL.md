@@ -1,13 +1,13 @@
 ---
 name: crw-plan
-description: "Build or reconcile a complete Linear plan from initiatives through projects, milestones, and one-PR implementation issues in one planning operation. Use for product planning, roadmap setup, and scoped plan updates; use crw-run for dispatch and crw-check for implementation drift. Formerly linear-plan."
+description: "Decompose an agreed goal into Linear projects, useful milestones, and one-PR implementation issues in one planning operation. Use crw-define for initiative definition and intent exploration. Use for product planning, roadmap setup, and scoped plan updates; use crw-run for dispatch and crw-check for implementation drift. Formerly linear-plan."
 ---
 
 # CRW Plan
 
 Build a usable product plan from what exists and what the user wants next. Linear holds the canonical product, planning, and decision documents; repositories hold implementation and reproducible evidence.
 
-A request to create or update a full Linear plan covers the requested goal through executable issues in one operation: initiative → projects → useful milestones → issues and dependencies. Reuse existing levels and create missing items within that request without requiring a separate invocation at each level. A scoped project/issue update stays scoped; do not invent an initiative or extra projects just to fill the hierarchy. Consultation, plan-only, draft-only, and read-only requests do not authorize Linear writes; invoking this skill implicitly does not supply write intent.
+Use an agreed initiative definition as input, then cover its requested scope through executable issues in one operation: projects → useful milestones → issues and dependencies. If the goal itself needs definition, use [crw-define](../crw-define/SKILL.md); a request for both definition and planning chains the two without another invocation. An existing project or standalone issue can supply the agreed goal without an initiative. Reuse existing levels and create missing items within that request without requiring a separate invocation at each level. A scoped project/issue update stays scoped; do not invent an initiative or extra projects just to fill the hierarchy. Consultation, plan-only, draft-only, and read-only requests do not authorize Linear writes; invoking this skill implicitly does not supply write intent.
 
 ## Connect the workflow
 
@@ -29,7 +29,7 @@ Identify the goal, product classification, and finishable outcome separately usi
 
 ## Shape the plan
 
-- **Initiative:** a goal with an observable completion condition, to which projects contribute. It is not a permanent product container.
+- **Initiative input:** the agreed goal, finish condition, scope and open decisions from `crw-define` or an existing accepted definition. Preserve its identity and link contributing projects; return material goal changes to definition within the request’s scope.
 - **Project:** a finishable outcome created when the user requests a project. Name the result naturally; do not require a product prefix. A product name can appear when it helps explain the result.
 - **Milestone:** an observable result or coherent delivery boundary. Follow explicit user grouping, such as one milestone per character or module.
 - **Issue:** one implementation PR, with scope, acceptance criteria, canonical document links, dependencies, and meaningful verification. Apply the shared [issue-to-PR rule](references/integrations.md#issue-to-pr-mapping), including its non-PR work exception.
@@ -37,6 +37,8 @@ Identify the goal, product classification, and finishable outcome separately usi
 Use the smallest structure within the requested scope. An authorized full-plan write includes the projects needed for that agreed outcome; issue count, repository count, or estimated size alone does not authorize extra projects. Planning or updating issues can reuse a project or keep standalone issues without creating missing upper levels. A project may have no initiative or contribute to several; reuse its ID instead of duplicating the project or its issues. Do not invent dates, owners, status transitions, or a team per product. Record unknowns plainly.
 
 Apply product-family and related-repository labels under the shared operating model. Reuse existing labels and keep descriptions short. Additional label schemes need discussion with the user; leave views and default screens to the user unless requested.
+
+Carry the definition’s accepted direction and unresolved decisions into the plan. Develop project-specific design detail when needed; Strategy/Scope/Structure/Skeleton/Surface are document lenses, never required initiative/project/milestone/issue levels.
 
 Split by deliverable and shared contract, not file count. Derive order from dependency edges and overlapping edit surfaces. A schema/API contract may precede several apparently independent issues. Avoid dependency cycles and distinguish speculative backlog ideas from approved requirements.
 

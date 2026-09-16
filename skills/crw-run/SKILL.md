@@ -6,7 +6,9 @@ description: "Coordinate one Linear issue or a ready batch through independent c
 # CRW Run
 
 Use the selected Linear project as the planning source and keep this Codex task
-as its coordinator. Each implementation task owns its
+as its coordinator: one parent per project, one child per issue. Follow the shared
+[parent and child scope](../crw-plan/references/integrations.md#parent-and-child-scope),
+including standalone issues and explicit current-task work. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
@@ -65,7 +67,7 @@ implementation worker.
 Read the coordination record and inspect the existing responsible task and any
 current writer before creating or assigning work. Verify its actual task/host
 ID, issue scope, current turn, checkout ownership, and execution settings. Reuse
-that task for compatible follow-up work under the existing assignment. A busy
+that task for compatible follow-up work on the same issue under the existing assignment. A busy
 task, an uncertain send, or an inaccessible record is not evidence that no writer
 exists; reconcile before retrying or considering a replacement.
 

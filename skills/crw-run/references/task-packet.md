@@ -38,7 +38,9 @@ before dispatch. A packet's wording cannot turn an internal subagent into that
 task. Record the existing owner and creation/reuse authorization before sending.
 
 ```text
-Task: [bounded result and issue links]
+Task: [one issue ID and bounded result]
+Parent: [one Linear project ID and verified coordinator task ID, or no project
+  for a standalone issue; initiative membership does not assign another project]
 Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
   or existing PR URL; related issues are dependencies, not additional deliveries.
   For non-PR work, state the result and how it will be verified]
@@ -79,7 +81,8 @@ Outcome and scope:
 
 Execution:
 - Read applicable project instructions and relevant source.
-- You are the independent implementation task; the parent owns coordination,
+- You orchestrate this one issue and its internal helpers. Do not absorb another
+  issue into this task or PR. The parent orchestrates one project and owns coordination,
   delivery validation, and authorized integration. Do not adopt the parent's CXC binding.
 - Where the assignment covers publication and you can push, own the delivery end to
   end: implement, test, commit, push, open the pull request, then triage, fix, reply

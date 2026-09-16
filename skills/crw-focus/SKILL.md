@@ -6,7 +6,9 @@ description: "Designate, restore, or switch the current Codex task as a Linear p
 # CRW Focus
 
 Make this Codex task the continuing management point for one Linear project.
-Preserve that target across follow-up requests and context recovery.
+Preserve that target across follow-up requests and context recovery. This parent
+orchestrates one project; its independent children each orchestrate one issue
+under the shared [parent and child scope](../crw-plan/references/integrations.md#parent-and-child-scope).
 
 Read [Integrations](../crw-plan/references/integrations.md) for shared target
 resolution, document authority, access, and inherited authorization.
@@ -92,6 +94,7 @@ Load the existing owner for the requested operation:
 | Request | Owner |
 |---|---|
 | Where to start or what to do next | [crw-next](../crw-next/SKILL.md) |
+| Define initiative intent or goal | [crw-define](../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../crw-plan/SKILL.md) |
 | Run work, coordinate progress, or follow up on delivery | [crw-run](../crw-run/SKILL.md) |
 | Compare delivery with accepted requirements | [crw-check](../crw-check/SKILL.md) |
