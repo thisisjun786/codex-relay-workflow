@@ -701,6 +701,7 @@ def discover_store_for_socket(root, socket_path, *, skip=None):
     except OSError:
         return None
     wanted = canonical_socket(socket_path)
+    matches = []
     for directory in candidates:
         if skip is not None and directory.name == skip:
             continue
@@ -708,8 +709,32 @@ def discover_store_for_socket(root, socket_path, *, skip=None):
         if not database.exists():
             continue
         if store_socket(database) == wanted:
-            return directory
+            matches.append(directory)
+    if len(matches) == 1:
+        return matches[0]
+    # Zero is the ordinary case. More than one means a copied store or separate explicit-state
+    # runs left two databases claiming the same socket, and picking whichever sorts first
+    # would silently operate on one set of assignments today and the other after a rename.
+    # Adopting nothing sends the caller to a fresh canonical store, which is wrong but VISIBLE:
+    # doctor reports the candidates and --state resolves it.
     return None
+
+
+def stores_claiming_socket(root, socket_path, *, skip=None) -> list:
+    """Every store recording this socket. More than one is an ambiguity, not a choice."""
+    if not socket_path:
+        return []
+    try:
+        candidates = sorted(p for p in Path(root).iterdir() if p.is_dir())
+    except OSError:
+        return []
+    wanted = canonical_socket(socket_path)
+    return [
+        str(directory) for directory in candidates
+        if (skip is None or directory.name != skip)
+        and (directory / "relay.sqlite3").exists()
+        and store_socket(directory / "relay.sqlite3") == wanted
+    ]
 
 
 def stores_without_provenance(root, *, skip=None) -> list:
