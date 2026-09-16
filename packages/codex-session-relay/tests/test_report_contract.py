@@ -604,3 +604,63 @@ class Bounds(DeliveryTestCase):
         report.record(self.store, self.clock, event_id=event_id,
                       **a_report(summary="openly revised", submission_no=2))
         self.assertIn("submission: 2", self.delivery.preview_message(event_id))
+
+    def test_a_report_backed_message_still_carries_the_frozen_manifest_pointer(self):
+        _relationship, event_id = self.queued_event()
+        receipt = dict(self.intake.get(event_id))
+        receipt["manifestRef"] = "/var/lib/relay/frozen/abc123"
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        message = report.render_completion(row, receipt, "del-m-a1", stored)
+        self.assertIn(
+            "manifestRef: /var/lib/relay/frozen/abc123", message,
+            "the pre-contract message carried it, so adding a report must not take it away",
+        )
+
+
+class VerdictPosition(Directions):
+    def _revision_report(self, **overrides):
+        _source, revision_event = self._revision()
+        receipt = self.intake.get(revision_event)
+        row = self.delivery.get(revision_event)
+        fields = dict(
+            cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete",
+            review={"kind": cxc.GO_WITH_FIXES, "blockers": 2, "findings": [
+                {"id": "c-1", "verdict": "needs_changes", "note": "",
+                 "anchor": "migrations/004.sql"}]},
+        )
+        fields.update(overrides)
+        stored = report.record(
+            self.store, self.clock, event_id=revision_event, **a_report(**fields)
+        )
+        return row, receipt, stored
+
+    def test_an_elided_correction_still_ends_on_its_verdict(self):
+        row, receipt, stored = self._revision_report(
+            evidence=[{"check": f"a long check name number {n} that takes up room",
+                       "exitCode": 0} for n in range(30)],
+        )
+        message = report.render_revision(row, receipt, "del-y-a1", stored, budget=2400)
+        self.assertIn("omitted:", message, "something had to go")
+        self.assertEqual(
+            message.splitlines()[-1], "VERDICT: GO-WITH-FIXES (blockers=2)",
+            "the omission notice goes before the verdict, not after it",
+        )
+        self.assertLess(
+            message.index("omitted:"), message.index("VERDICT:"),
+            "otherwise a consumer stops finding the verdict in exactly the messages that "
+            "had to drop something",
+        )
+
+    def test_a_correction_cannot_approve_and_demand_changes_at_once(self):
+        _source, revision_event = self._revision()
+        error = self.assertRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            lambda: report.record(
+                self.store, self.clock, event_id=revision_event,
+                **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
+                           review={"kind": cxc.PASS, "findings": []})
+            ),
+        )
+        self.assertIn("ruled needs_changes", error.detail)

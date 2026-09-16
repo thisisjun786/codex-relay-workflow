@@ -89,6 +89,17 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
         cxc.check_known(cxc_status)
     else:
         cxc.check_status(cxc_status, outcome)
+    if outcome == REVISION_OUTCOME and (review or {}).get("kind") == cxc.PASS:
+        # A revision event exists because the parent ruled needs_changes. A PASS verdict on
+        # it would tell the child its work was approved in the same message that demands
+        # changes, and the review half of a report is caller-supplied even now that identity
+        # is not.
+        raise ReceiptRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            "a revision request cannot carry a PASS verdict: this event exists because the "
+            "parent ruled needs_changes, and the message would approve and demand changes "
+            "at the same time",
+        )
     repository = _bounded(_required(repository, "repository"), "repository", 200)
     summary = _bounded(_required(summary, "summary"), "summary", SUMMARY_MAX)
     next_action = _bounded(_required(next_action, "next_action"), "next_action", ACTION_MAX)
@@ -373,12 +384,15 @@ class _Section:
     whole; when they have to shrink they keep their heading and say how much is missing.
     """
 
-    def __init__(self, name, lines, rank, *, essential=False, keep=0):
+    def __init__(self, name, lines, rank, *, essential=False, keep=0, last=False):
         self.name = name
         self.lines = [line for line in lines if line is not None]
         self.rank = rank
         self.essential = essential
         self.keep = keep
+        # A section that must stay at the end of the message even when something was
+        # elided. The omission notice goes BEFORE it, not after.
+        self.last = last
 
 
 def _compose(sections, event_id, *, budget) -> str:
@@ -391,11 +405,19 @@ def _compose(sections, event_id, *, budget) -> str:
     """
     blocks = [list(section.lines) for section in sections]
     removed = []
+    tail = next((i for i, section in enumerate(sections) if section.last), None)
 
     def rendered(extra_note=True):
-        body = [line for block in blocks for line in block]
+        body = [
+            line for index, block in enumerate(blocks) if index != tail for line in block
+        ]
         if removed and extra_note:
             body += ["", _omission_line(removed, event_id)]
+        if tail is not None:
+            # Appending the notice after this would make "omitted: ..." the final line, and
+            # a consumer following the final-line verdict contract would stop finding the
+            # verdict in exactly the messages that had to drop something.
+            body += blocks[tail]
         return NEWLINE.join(body)
 
     order = sorted(range(len(sections)), key=lambda i: -sections[i].rank)
@@ -561,7 +583,7 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
         cxc.assert_reviewed(True)
         sections.append(_Section(
             "verdict", ["", cxc.verdict_line(review["kind"], review.get("blockers"))],
-            rank=0, essential=True, keep=2,
+            rank=0, essential=True, keep=2, last=True,
         ))
     return _compose(sections, event_id, budget=budget)
 
@@ -719,9 +741,19 @@ def _restore_lines(report):
 
 
 def _manifest_lines(receipt, event_id):
+    """Including manifestRef, which the pre-contract message always carried.
+
+    It is the stable location a receipt points at when the live artifact paths may move, so
+    dropping it would leave the recipient verifying against files that had relocated. Adding
+    a work report must not quietly take it away.
+    """
+    reference = receipt.get("manifestRef")
     manifest = receipt.get("manifest")
     if not manifest:
-        return ["", "deliverables: none (execution-only outcome)"]
+        lines = ["", "deliverables: none (execution-only outcome)"]
+        if reference:
+            lines.append(f"manifestRef: {reference}")
+        return lines
     lines = ["", f"deliverables: {len(manifest)}"]
     for entry in manifest:
         size = entry.get("bytes")
@@ -729,6 +761,8 @@ def _manifest_lines(receipt, event_id):
             f"  {entry['path']}  sha256={entry['sha256']}"
             + (f"  bytes={size}" if size is not None else "")
         )
+    if reference:
+        lines.append(f"manifestRef: {reference}")
     return lines
 
 

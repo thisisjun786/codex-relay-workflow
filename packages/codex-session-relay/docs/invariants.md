@@ -119,6 +119,9 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-101 | A correction names the criteria the recorded verdict names; a review only adds notes and anchors, and anything it raises alone is labelled | `report._finding_lines` | implemented |
 | I-102 | A shape or length that could only fail at render time is refused at record time, because rendering runs inside the delivery claim | `report._check_evidence`, `_check_unresolved`, `_bounded` | implemented |
 | I-103 | A report already delivered cannot be replaced in place; a changed report is a new submission and says so | `report._check_resubmission` | implemented |
+| I-104 | An omission notice is placed before the final verdict, so an elided correction still ends on its judgment | `report._compose` | implemented |
+| I-105 | A revision request cannot carry a PASS verdict | `report.record` | implemented |
+| I-106 | A report-backed message keeps the receipt manifestRef the pre-contract message carried | `report._manifest_lines` | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is
