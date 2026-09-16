@@ -151,6 +151,15 @@ class TaskSettings:
                 f"{self.data['sandbox'].get('type')!r} has no"
                 " ThreadResumeParams.sandbox mode, so it cannot be restored on a resume",
             )
+        if normalise_policy(self.data["sandbox"]) is None:
+            # A supported type is not enough. A stored policy we cannot read in full would
+            # normalise to None, and so would an equally malformed response, and None == None
+            # would then read as agreement and send under a sandbox nothing ever verified.
+            raise DeliveryRefused(
+                RefusalReason.UNSUPPORTED_SANDBOX_TYPE,
+                "the recorded sandbox policy cannot be read in full, so no response could"
+                " confirm it",
+            )
 
     def sandbox_mode(self):
         policy = self.data.get("sandbox") or {}
@@ -244,6 +253,12 @@ class TaskSettings:
                               "expected": expected, "returned": None})
                 continue
             returned = normalise_policy(raw) if field == "sandbox" else raw
+            if field == "sandbox" and (returned is None or expected is None):
+                # Never let two unreadable policies agree by both becoming None.
+                found.append({"code": SETTINGS_NOT_PRESERVED, "field": field,
+                              "expected": expected if expected is not None else self.data["sandbox"],
+                              "returned": raw})
+                continue
             if field == "runtimeWorkspaceRoots":
                 returned = list(returned)
             if expected != returned:

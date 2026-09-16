@@ -241,3 +241,42 @@ class SettingsRegistration(DeliveryTestCase):
         record_settings(self.store, self.clock, "01other", task_settings("/a"), source="test")
         record_settings(self.store, self.clock, "01other", task_settings("/b"), source="test")
         self.assertEqual(load_settings(self.store, "01other").data["cwd"], "/b")
+
+
+class AnUnreadablePolicyNeverAgreesWithItself(DeliveryTestCase):
+    """Two unreadable policies both normalise to None, and None == None is not agreement.
+
+    A supported `type` is not enough to make a record usable: a malformed stored policy and an
+    equally malformed response would have compared equal and sent under a sandbox that nothing
+    ever verified.
+    """
+
+    MALFORMED = {"type": "workspaceWrite", "writableRoots": None}
+
+    def test_an_unreadable_record_is_refused_before_any_send(self):
+        broken = task_settings("/parent", sandbox=dict(self.MALFORMED))
+        _relationship, event_id = self.queued_event(settings=broken)
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+        entry = self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? ORDER BY rowid DESC LIMIT 1",
+            ("delivery_withheld",),
+        )[0]
+        self.assertIn(RefusalReason.UNSUPPORTED_SANDBOX_TYPE.value, entry["detail"])
+
+    def test_the_comparison_refuses_even_if_such_a_record_reached_it(self):
+        record = task_settings("/parent", sandbox=dict(self.MALFORMED))
+        settings = TaskSettings(record)
+        # Everything else agrees, so only the sandbox can be the finding.
+        findings = settings.mismatches({
+            "approvalPolicy": "never",
+            "sandbox": dict(self.MALFORMED),
+            "cwd": record["cwd"],
+            "runtimeWorkspaceRoots": list(record["runtimeWorkspaceRoots"]),
+            "model": record["model"],
+            "reasoningEffort": record["reasoningEffort"],
+            "thread": {"environments": [dict(e) for e in record["environments"]]},
+        })
+        self.assertTrue(findings, "two unreadable policies must not agree")
+        self.assertEqual(findings[0]["field"], "sandbox")
+        self.assertEqual(findings[0]["code"], "settings_not_preserved")
