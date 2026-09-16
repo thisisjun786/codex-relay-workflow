@@ -1102,11 +1102,16 @@ class DeliveryService:
             # routing a request through it left one answered by a failed, interrupted or
             # blocked reply reported as awaiting_child_receipt forever, even though the
             # completion it asked for had already arrived.
+            # Any final event of that generation, not only a child-authored one. A revision
+            # turn can fail or be interrupted without the child ever writing a receipt, and
+            # the relay then records the outcome itself through daemon_observation - which is
+            # exactly the answer the request was waiting for, and is what the parent receives.
+            # Requiring producer = 'child' left the request current after that had happened.
             answered = db.execute(
                 "SELECT 1 FROM events"
-                " WHERE relationship_id = ? AND execution_generation = ? AND producer = 'child'"
-                "   AND stage = 'final' AND suppressed_reason IS NULL",
-                (event["relationship_id"], event["execution_generation"]),
+                " WHERE relationship_id = ? AND execution_generation = ?"
+                "   AND stage = 'final' AND suppressed_reason IS NULL AND event_id != ?",
+                (event["relationship_id"], event["execution_generation"], event_id),
             ).fetchone()
             return SUPERSEDED_REVISION if answered is not None else None
         # The head rule is one REVISION replacing another, and head_revision only ever

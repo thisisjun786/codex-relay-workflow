@@ -267,6 +267,39 @@ class AnchorBinding(DeliveryTestCase):
             "the request outlived the completion receipt it asked for",
         )
 
+    def test_a_revision_request_answered_only_by_the_daemon_is_still_retired(self):
+        """A revision turn can fail without the child ever writing a receipt.
+
+        The relay records that outcome itself through daemon_observation, and that IS the
+        answer the request was waiting for - it is what the parent receives. Requiring a
+        child-authored reply left the request reported as awaiting_child_receipt after the
+        failure had already been delivered.
+        """
+        revision = self.revision_pending()
+        self.clock.advance(3600)
+        self.delivery.attempt(revision, self.adapter, now=self.clock.now())
+        self.ack.bind_pending_anchors()
+        from codex_session_relay.models import TurnRef
+
+        anchor = self.generation_two()["dispatchTurnId"]
+        self.adapter.start_turn(CHILD, turn_id=anchor, status="failed")
+        self.intake.daemon_observation(self._rid, TurnRef(CHILD, anchor, "failed"))
+        self.assertIsNotNone(
+            self.store.one(
+                "SELECT 1 FROM events WHERE producer = ? AND execution_generation = 2",
+                ("daemon_observation",),
+            ),
+            "the fixture did not produce the daemon-authored outcome this test is about",
+        )
+
+        with self.store.transaction() as db:
+            reason = self.delivery._supersession_reason(db, revision)
+
+        self.assertEqual(
+            reason, "superseded_revision",
+            "the request outlived the failure the parent was already told about",
+        )
+
     def test_binding_is_idempotent_and_never_rebinds_a_bound_anchor(self):
 
         revision = self.revision_pending()
