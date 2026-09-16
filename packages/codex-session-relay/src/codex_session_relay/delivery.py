@@ -356,7 +356,9 @@ class DeliveryService:
         assert_assignment_delivery(
             relationship, kind=row["kind"], recipient_task_id=recipient,
             recipient_thread_id=row["recipient_thread_id"],
-            event_relationship_id=row["relationship_id"],
+            # From the EVENT, not the delivery row. Comparing the delivery row against itself
+            # is a tautology and would pass a row pointed at another assignment.
+            event_relationship_id=(self.intake.row(event_id) or {})["relationship_id"],
             manifest_paths=_manifest_paths(self.intake.row(event_id)),
         )
         if self._rate_limited(recipient, now):

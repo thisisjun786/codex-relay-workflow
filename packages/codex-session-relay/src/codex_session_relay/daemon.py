@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .delivery import COMPLETION
-from .errors import DeliveryRefused, ScopeError
+from .errors import DeliveryRefused, RelayError, ScopeError
 from .models import TurnRef
 from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
@@ -252,8 +252,10 @@ class RelayDaemon:
                 ):
                     continue
                 self._settle_turn(relationship, reference, report)
-        if reads:
-            self._advance_cursor("relationships", served, len(relationships))
+        # Advanced whether or not anything was read. Advancing only on a read would let a
+        # window of relationships with nothing to do pin the cursor, and every relationship
+        # behind them would wait forever - the same starvation one level up.
+        self._advance_cursor("relationships", served, len(relationships))
 
     def _turns_to_poll(self, relationship, share: int) -> list:
         """The current anchor, plus a rotating slice of everything else worth reading.
@@ -363,7 +365,12 @@ class RelayDaemon:
         whole transaction rolls back and the next tick re-observes cleanly.
         """
         outcome = classify_observation(reference.turn_status, None)
-        synthesized = self._synthesize(relationship, reference, report)
+        synthesized, failed = self._synthesize(relationship, reference, report)
+        if failed:
+            # Recording the observation now would bury the failure: the turn would never look
+            # new again, the staged claim would be suppressed, and nothing would be left for
+            # recovery to find. Leave the turn untouched and try again next tick.
+            return
         try:
             self._commit_settlement(relationship, reference, outcome, synthesized, queue=True)
         except (DeliveryRefused, ScopeError) as refusal:
@@ -384,17 +391,22 @@ class RelayDaemon:
         which is why storing it separately does not lose it.
         """
         if reference.turn_status not in ("failed", "interrupted"):
-            return None
+            return None, False
         # A staged claim on this turn is no reason to skip: a failed or interrupted ending
         # SUPPRESSES that claim rather than finalizing it, so without a synthesized receipt
         # the parent is left waiting on a verdict that can never arrive.
         try:
             return self.intake.daemon_observation(
                 relationship["relationshipId"], reference,
-            )["eventId"]
-        except Exception as error:  # noqa: BLE001
-            report.notes.append(f"daemon observation refused: {error}")
-            return None
+            )["eventId"], False
+        except RelayError as refusal:
+            # A refusal is a decision - this daemon may not assert anything about that turn -
+            # so settlement proceeds and records what it did observe.
+            report.notes.append(f"daemon observation refused: {refusal}")
+            return None, False
+        except Exception as error:  # noqa: BLE001 - transient: nothing is known yet
+            report.notes.append(f"daemon observation failed: {error}")
+            return None, True
 
     def _commit_settlement(self, relationship, reference, outcome, synthesized, *, queue):
         with self.store.transaction() as db:
@@ -409,12 +421,18 @@ class RelayDaemon:
             if synthesized:
                 queueable.append(synthesized)
             for event_id in queueable:
+                # Ownership comes from the EVENT, never from the relationship we happened to
+                # be polling. Staged claims are selected by thread and turn, and two
+                # assignments can share a child, so assuming the polled relationship would
+                # queue B's event to A's parent.
+                owner = self.intake.row(event_id)
+                record = self.registry.require_active(owner["relationship_id"])
                 # Storing a receipt is not telling anyone. A parent waiting for a verdict has
                 # to learn that the child failed, so a synthesized observation is queued like
                 # any other event.
                 self.delivery.enqueue_in(
-                    db, event_id, relationship_id=relationship["relationshipId"],
-                    kind=COMPLETION, recipient_task_id=relationship["parent"]["taskId"],
+                    db, event_id, relationship_id=owner["relationship_id"],
+                    kind=COMPLETION, recipient_task_id=record["parent"]["taskId"],
                 )
 
     # ------------------------------------------------------------- reconcile
