@@ -659,6 +659,19 @@ end the parent turn expecting a Stop hook or a relay to restart it; neither is g
 these instructions. If the host releases the turn, preserve recovery evidence and report the
 interruption without calling the run complete.
 
+Before creating or registering a child for an active parent Loop, check existing issue
+ownership and whether the installed relay can deliver, acknowledge and settle a receipt while
+that parent remains active. The current relay defers busy recipients, refuses acknowledgement
+before delivery, and refuses verdicts without verified acknowledgement. Transport observation
+does not satisfy those gates. For a new, unassigned issue without a supported active-parent
+receipt path, use ordinary non-relay dispatch, transport waits and direct verification from
+the outset, and record that mode. Do not register a relay assignment for that run. If the issue
+is already registered, preserve its owner, artifacts and pending events; report the incompatible
+delivery mode as a blocker and record the relationship/event IDs and required supported handoff
+for recovery. Do not loop on waits expecting that blocker to clear, fake an acknowledgement,
+reroute the registered work, reset CXC state or create a replacement writer. Continue unrelated
+ready work only within its verified ownership and authorized scope.
+
 A coordinator without an active parent Loop may return to idle for event-driven handoff only
 when the registered assignment, live delivery service and supported parent-resume path have
 been verified for its operating scope. A package installation, capability flag or staged receipt
@@ -668,8 +681,8 @@ wait again rather than ending the run, resending the prompt or creating another 
 usable wait or resume path exists, record the capability blocker and the exact manual resume step.
 
 Two mechanisms are distinct and are never described as one. A native subagent finishes inside its
-parent's own turn, and the parent observes that completion directly. An independent implementation
-task cannot do that: its completion travels as a relay receipt, which is staged when the emitting
+parent's own turn, and the parent observes that completion directly. When an independent task is
+relay-managed, its completion travels as a relay receipt, which is staged when the emitting
 process has no socket and becomes delivery only once a host-capable observer sees that turn end
 normally. A staged receipt is real recorded progress and is never reported as delivery.
 

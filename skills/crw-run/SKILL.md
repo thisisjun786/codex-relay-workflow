@@ -78,9 +78,11 @@ dependents; continue independent authorized work. Keep each implementation issue
 with its own child and delivery PR, and serialize integrations into a shared
 target. Non-PR work completes on its verified result.
 
-Choose the observation mode in
+Choose and record the observation mode before creating or registering children, using
 [OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting)
-before yielding. An active parent Loop uses bounded transport waits and continues
+to check active-parent receipt compatibility. Refresh existing assignments first;
+do not switch a registered issue to another delivery path. An active parent Loop
+uses bounded transport waits and continues
 after timeouts; it does not rely on a hook or an unverified relay to wake it after
 ending its turn. Report meaningful progress while respecting host communication
 limits. A quiet worker, elapsed wait or empty ready queue is not completion while

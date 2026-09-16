@@ -191,7 +191,8 @@ Observed: a coordinator without an active parent Loop has dispatched an independ
 Its registered assignment, running delivery service and parent-resume path are verified.
 Later the delivery arrives while the parent is mid-turn, and a second assignment's parent
 has meanwhile been paused by the user. Separately, an active project Loop has a running child
-but no verified automatic wake path, and its first bounded transport wait times out.
+using recorded non-relay dispatch, and its first bounded transport wait times out. Another
+issue is already relay-registered to an active parent on a relay that defers busy recipients.
 
 Clauses: OPS-8.1, OPS-8.2, OPS-8.3, OPS-8.4.
 
@@ -209,6 +210,12 @@ After verifying and integrating the child's delivery, it dispatches the next rea
 the agreed scope. A blocked issue holds its dependents, not independent ready work. Without a
 usable observation path it records the blocker and resume step instead of promising automatic
 progress. A service installation or staged receipt alone does not qualify for idle handoff.
+
+The already registered issue has a delivery-mode blocker: reading its child's result does not
+deliver or acknowledge its pending event. Preserve its relationship, owner and artifact, record
+the required supported handoff for recovery, and do not bypass its relay verdict or keep waiting
+as if time alone could resolve it. For new unassigned issues, inspect ownership before choosing
+non-relay dispatch so they never acquire that incompatible registration.
 
 Preserved: the user's decision to pause, the running child when a wait times out, and the honest
 distinction between a staged receipt and a delivered one. Any claim about how many parents and
