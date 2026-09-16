@@ -178,7 +178,9 @@ Stop after this assigned result; do not auto-start another issue.
 
 Use this reduced shape for research, design or verification without repository changes.
 Keep the shared authorization, task settings and recovery rules above; omit code-only
-fields and OPS publication clauses. Relay-specific fields apply only when used.
+fields and OPS publication clauses. Relay-specific fields apply only when used. When using the relay, freeze the result
+and its verification evidence in a file under an authorized artifact root and emit
+that file; link-only completion has no manifest and is not a valid ready receipt.
 
 ```text
 Task: [one stable issue ID, bounded result, existing owner]
@@ -193,7 +195,8 @@ Return: [actual task ID, result link plus delivered revision/updated-at evidence
   criterion evidence, unresolved limitations and next handoff]
 Recovery: [issue-linked record or private receipt, dispatch/turn IDs and actual owner]
 Relay, if used: [exact issue identity, scope reference, real coordinator/child IDs,
-  state directory and authorized recipients; current generation/receipt outcome]
+  state directory and authorized recipients; frozen result/evidence artifact path
+  and digest under an authorized root; current generation/receipt outcome]
 Stop after this issue; do not start another issue or create an empty PR.
 ```
 

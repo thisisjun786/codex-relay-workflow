@@ -415,6 +415,21 @@ migration deliberately rather than as a side effect of an install.
 
 ### OPS-5.1 Placement
 
+The checkout, branch, Git ownership and commit/PR capability rules in OPS-5 apply
+to repository-changing implementation. Non-PR research, design and verification
+use a permitted task working directory and durable private evidence root under
+the applicable user/project placement convention. Record its creator, editing owner,
+retention owner and cleanup authority; Git metadata ownership is inapplicable.
+Do not create a repository, branch or PR to satisfy this contract. Grant the access
+needed for the actual sources and result; explicit narrower scope and existing
+permission limits still win, with returned settings verified under OPS-5.5.
+
+A non-PR assignment using the relay must freeze its delivered result and evidence
+in at least one file under an authorized artifact root. Emit that artifact so the
+ready receipt has a nonempty manifest; a document URL alone cannot be relayed.
+For a mutable linked result, include its stable ID/link, delivered revision or
+updated-at evidence and verified output snapshot. Keep the input baseline separate.
+
 An implementation task works in `/home/jun/code-worktrees/<original-project>/<task>`, where the
 project segment comes from the original repository's project name rather than the directory name of
 whatever checkout is currently open, and the task segment is short kebab-case. The branch is

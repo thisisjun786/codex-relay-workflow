@@ -162,6 +162,11 @@ against no criteria. `criteria-show --relationship <rel>` returns the set and it
       --outcome ready_for_review --turn-thread <own task id> --turn-id <own turn> \
       --artifact /abs/path [--supersedes-revision <hash>]
 
+For non-PR work, `--artifact` is still required. Freeze the result and verification
+evidence under an authorized artifact root, including any source and delivered
+document identities. A linked document alone has no manifest and cannot produce
+a `ready_for_review` receipt. Keep the snapshot private when its source is private.
+
 Without `--socket` the receipt is STAGED: recorded and visible, deliverable only once an
 independent observation sees that turn end normally. Staged is real progress; it is not delivery
 and a report must not call it one.
