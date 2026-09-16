@@ -398,6 +398,8 @@ class RelayService:
         self.socket_path = socket_path
         self.store_id = store_id
         self.launch_id = None
+        # Set only by an explicit --takeover, and only ever read by ScopeRegistry.claim.
+        self.takeover = False
         if scope is None:
             root, authority = resolve_scope_root()
             scope = ScopeRegistry(root, authority)
@@ -435,6 +437,7 @@ class RelayService:
             "pid": pid, "startTicks": start_ticks(pid), "bootId": boot_id(),
             "workerPid": worker_pid, "token": token,
             "launchId": self.launch_id,
+            "takeover": self.takeover or None,
             # Written by supervise once on_start has returned. Absent means "not serving yet".
             "readyAt": None,
             "storeId": self.store_id, "installationId": self.installation_id,
@@ -477,10 +480,13 @@ class RelayService:
             # the record is foreign on their own, and answering unverifiable would discard a
             # definite answer in favour of an uncertain one.
             return FOREIGN, handle, "; ".join(mismatches)
-        if record.get("bootId") is None:
-            # A reboot resets both the pid space and the start-tick counter, so without a
-            # recorded boot the two together prove nothing: an unrelated process can hold the
-            # old number with a matching tick count and would be classified as ours.
+        if record.get("bootId") is None and boot_id() is not None:
+            # A reboot resets both the pid space and the start-tick counter, so a record with
+            # no boot written on a host that HAS one cannot be ruled out as pre-reboot: an
+            # unrelated process can hold the old number with a matching tick count.
+            # Conditional on the host, because where no boot id is available at all every
+            # record lacks one, and refusing them all would leave a service unstoppable by
+            # its own owner - trading a narrow risk for a certain failure.
             return UNVERIFIABLE, handle, (
                 "no boot id is recorded, so a pid from before a reboot cannot be ruled out"
             )
@@ -544,16 +550,21 @@ class RelayService:
         # shared by everything pointed at this state directory. An owner who has just
         # disabled a service whose supervisor is still exiting must not have that reversed
         # by another installation, which would leave it eligible to restart.
-        owner, handle, detail = self.ownership()
+        record = self.record()
+        owner, handle, detail = self.ownership(record)
         if handle is not None:
             handle.close()
-        if owner in (FOREIGN, UNVERIFIABLE) and self.lock_is_held():
+        # Read from the record as well as from the classification. A supervisor on its way out
+        # clears its pids before releasing the lock, and ownership answers none once both are
+        # absent - which is exactly the interval in which a foreign shutdown could be reversed.
+        markers = self._foreign_markers(record) if record else []
+        if self.lock_is_held() and (owner in (FOREIGN, UNVERIFIABLE) or markers):
             # Only while something is actually RUNNING here. A stopped registration belonging
             # to someone else is not a reason to refuse an owner configuring their own
             # installation, and refusing then would make a state directory unusable forever.
             return {"ok": False,
-                    "reason": "not_ours" if owner == FOREIGN else "ownership_unverifiable",
-                    "detail": detail, "intent": self.intent.read(),
+                    "reason": "ownership_unverifiable" if owner == UNVERIFIABLE else "not_ours",
+                    "detail": detail or "; ".join(markers), "intent": self.intent.read(),
                     "note": "intent is shared with the owner of this state directory and was"
                             " left unchanged"}
         return {"ok": True, "reason": None,
@@ -775,7 +786,7 @@ class RelayService:
 
     def start(self, *, allow_isolated: bool = False, launcher=None, actor: str = "cli",
               max_ticks=None, deadline=None, segment_seconds=None, max_segments=None,
-              timeout: float = 20.0, poll: float = 0.05) -> dict:
+              timeout: float = 20.0, poll: float = 0.05, takeover: bool = False) -> dict:
         """Preconditions here; ownership in the child.
 
         The daemon lock and the scope claim are taken by the process that will HOLD them, not
@@ -795,6 +806,12 @@ class RelayService:
         live = [conflict for conflict in self.conflicts() if conflict["live"]]
         if live:
             return {"ok": False, "reason": "scope_owned_by_other_store", "conflicts": live}
+        # A registration naming a store that no longer exists - a database deleted, lost or
+        # deliberately replaced - would otherwise block this socket forever, with recovery
+        # only through finding and removing a registry file by hand. Taking it over is
+        # explicit, and only ever from a registration nothing is running behind: the live
+        # check above has already refused if anything holds the scope.
+        self.takeover = bool(takeover)
 
         launch = uuid.uuid4().hex
         self.launch_id = launch

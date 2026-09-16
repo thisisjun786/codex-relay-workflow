@@ -832,6 +832,10 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
 
     deadline = services.clock.now() + args.deadline if args.deadline else None
     allow_isolated = getattr(args, "allow_isolated_scope", False)
+    # Before the claim, for the same reason _supervise does it: the probe that built this
+    # service answers from a file that may not exist yet, and a scope registration recorded
+    # with a null store id can later be overwritten by a different store.
+    service.store_id = services.store.identity
     adopted = _adopt_supervised(service, args)
     try:
         with owned_service(
@@ -924,7 +928,10 @@ def cmd_service(services, args) -> dict:
     if action == "status":
         return service.status()
     if action == "enable":
-        return service.enable(actor=args.actor or "cli")
+        # Through the same refusal path as every other mutating service command: returning
+        # the payload directly exits zero, and automation would read a refused enable that
+        # deliberately changed nothing as a success.
+        return _refuse_unless_ok(service.enable(actor=args.actor or "cli"))
     if action == "disable":
         return _refuse_unless_ok(service.disable(actor=args.actor or "cli"))
     if action == "stop":
@@ -935,7 +942,7 @@ def cmd_service(services, args) -> dict:
         return _refuse_unless_ok(call(
             allow_isolated=args.allow_isolated_scope, deadline=args.deadline,
             segment_seconds=args.segment_seconds, max_segments=args.max_segments,
-            actor=args.actor or "cli",
+            actor=args.actor or "cli", takeover=getattr(args, "takeover_scope", False),
         ))
     if action == "run":
         _require_adapter(services)
@@ -1307,6 +1314,13 @@ def build_parser() -> argparse.ArgumentParser:
         hosted.add_argument("--max-segments", type=int)
         hosted.add_argument("--deadline", type=float)
         hosted.add_argument("--launch-id")
+        # For a registration whose store no longer exists - deleted, lost or deliberately
+        # replaced. Refused while anything is live on the scope, so this can only ever
+        # replace a registration nothing is running behind.
+        hosted.add_argument(
+            "--takeover-scope", action="store_true",
+            help="replace a stopped registration that names a store this one is not",
+        )
     service.set_defaults(handler=cmd_service)
 
     doctor = subparsers.add_parser("doctor")
