@@ -29,7 +29,8 @@ from .reconcile import Reconciler
 from .registry import Registry, contract_record as relationship_record, record_settings
 from .settings import REQUIRED as REQUIRED_SETTINGS
 from .store import (
-    Store, compare_store, nonce_lookup, probe, resolve_state_dir, state_dir,
+    Store, canonical_socket, compare_store, nonce_lookup, probe, resolve_state_dir,
+    state_dir, store_socket,
 )
 from .sync import SyncOutbox, render_progress_summary
 
@@ -1430,6 +1431,30 @@ def _refuse_ambiguous_state(services, args) -> None:
     explicit directory, and raising from a property would turn a diagnostic into a crash.
     """
     selection = services.selection
+    # A store records the socket it serves, and the first recording wins so nothing rewrites
+    # it silently. But an explicit --state or CODEX_SESSION_RELAY_STATE reused with a
+    # DIFFERENT App Server is a real disagreement: the service would claim and serve the new
+    # socket while the database goes on attributing itself to the old one, so assignments from
+    # one App Server can be exposed through another and later discovery still matches the
+    # store to the socket it no longer serves. Explicit selections reach this even though they
+    # carry no discovery, because choosing a directory is not choosing what is already in it.
+    if services.socket_path and selection.db_path.exists():
+        recorded = store_socket(selection.db_path)
+        wanted = canonical_socket(services.socket_path)
+        if recorded is not None and recorded != wanted and (
+            getattr(args, "handler", None) not in (cmd_doctor, cmd_ack_proof)
+        ):
+            raise PayloadExit({
+                "error": "refused",
+                "reason": "state_directory_serves_another_socket",
+                "detail": (
+                    "this store records a different App Server socket; serving the requested"
+                    " one from it would expose one installation's assignments through another"
+                ),
+                "recordedSocket": recorded,
+                "requestedSocket": wanted,
+                "stateDirectory": str(selection.path),
+            }, EXIT_REFUSED)
     if not (selection.ambiguous or selection.unidentified):
         return
     if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof):

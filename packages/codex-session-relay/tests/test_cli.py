@@ -549,6 +549,35 @@ class ContestedSocket(CliBase):
         self.assertTrue(report["siblingStores"]["ambiguous"])
         self.assertEqual(len(report["siblingStores"]["claimingThisSocket"]), 2)
 
+    def test_a_state_directory_recording_another_socket_is_refused(self):
+        """An explicit directory reused with a different App Server.
+
+        Choosing a directory is not choosing what is already in it: the service would claim
+        and serve the new socket while the database went on attributing itself to the old
+        one, so one installation's assignments could be exposed through another and later
+        discovery would still match the store to the socket it no longer serves.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "reused-state")
+        first = os.path.join(self.tmp, "first.sock")
+        second = os.path.join(self.tmp, "second.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=first).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", state,
+             "--socket", second, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+        self.assertEqual(refused["recordedSocket"], first)
+
     def test_a_store_recording_no_socket_also_refuses_before_creating_one(self):
         """A store older than provenance cannot be matched to a socket by anything but its
         directory hash, which cannot be inverted. Reporting it through doctor was not enough,
