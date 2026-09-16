@@ -392,22 +392,21 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
         (event_id,),
     ).fetchone()
     highest = (stored["highest"] if stored else None) or 0
-    if delivered == 0:
-        # Nothing frozen yet, so the newest stored submission can still be corrected in
-        # place. Going BACKWARDS is the case worth refusing: read and delivery both select
-        # the highest submission, so writing an older number returns success and then has no
-        # effect on anything anyone will see.
-        if submission_no < highest:
-            raise ReceiptRefused(
-                RefusalReason.MALFORMED_RECEIPT,
-                f"submission {highest} of this report already exists, and both reading and "
-                f"delivery take the highest, so recording {submission_no} would report "
-                f"success and change nothing anyone sees. Correct submission {highest}, or "
-                f"record {highest + 1}",
-            )
+    # Two independent floors, and both apply whatever the other one says. A submission at or
+    # below the delivered one would rewrite bytes somebody already has. A submission below
+    # the highest stored one would be accepted and then never selected, because reading and
+    # delivery both take the highest, so the caller would be told a write landed that nobody
+    # will ever see. Checking only one of them left the band between them open.
+    if submission_no >= highest and submission_no > delivered:
         return
-    if submission_no > delivered:
-        return
+    if submission_no < highest:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"submission {highest} of this report already exists, and both reading and "
+            f"delivery take the highest, so recording {submission_no} would report success "
+            f"and change nothing anyone sees. Correct submission {highest}, or record "
+            f"{max(highest, delivered) + 1}",
+        )
     if legacy and delivered == 1:
         detail = (
             "a pre-contract message has already been delivered for this event, so a first "
@@ -418,7 +417,8 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
         detail = (
             f"submission {delivered} of this report has already been frozen into a delivered "
             f"attempt, so replacing it in place would change what a retry says without "
-            f"changing what it calls itself; record this as submission {delivered + 1} or "
+            f"changing what it calls itself; record this as submission "
+            f"{max(highest, delivered) + 1} or "
             "higher. A submission that has never been sent can still be corrected in place"
         )
     raise ReceiptRefused(RefusalReason.MALFORMED_RECEIPT, detail)
@@ -519,16 +519,21 @@ def _check_restore(restore):
                 f"{list(RESTORE_FIELDS)} plus skills. An unrendered field is one the "
                 "recipient never sees and is never told was dropped",
             )
-        if value is None or value == "":
-            continue
         if not isinstance(value, str):
             # A mapping here reached the message as a Python repr, and an arbitrary object
             # failed later inside json.dumps as a host exception rather than a refusal.
+            if value is None:
+                continue
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
                 f"restore {key} is a single line of text, not {type(value).__name__}",
             )
-        checked[key] = _bounded(_single_line(value.strip(), f"restore {key}"),
+        value = value.strip()
+        if not value:
+            # Dropped rather than stored empty. A key with nothing behind it left the render
+            # emitting a workflow-restore heading with no fields under it.
+            continue
+        checked[key] = _bounded(_single_line(value, f"restore {key}"),
                                 f"restore {key}", LABEL_MAX)
     return checked
 

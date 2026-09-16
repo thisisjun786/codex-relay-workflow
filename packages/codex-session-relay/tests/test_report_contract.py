@@ -1067,3 +1067,27 @@ class Recovery(DeliveryTestCase):
         report.record(self.store, self.clock, event_id=event_id,
                       **a_report(summary="second, corrected", submission_no=2))
         self.assertEqual(report.read(self.store, event_id)["summary"], "second, corrected")
+
+    def test_a_submission_between_the_delivered_and_the_highest_is_refused_too(self):
+        _relationship, event_id = self.queued_event()
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        self.attempt(event_id)
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(summary="third", submission_no=3))
+        # 2 clears the delivered floor and sits under the stored one, so it would be
+        # accepted and then never selected. Checking one floor left that band open.
+        error = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(summary="second, invisible", submission_no=2)),
+        )
+        self.assertIn("change nothing anyone sees", error.detail)
+        self.assertIn("record 4", error.detail)
+
+    def test_a_blank_restore_value_does_not_leave_an_empty_heading(self):
+        _relationship, event_id = self.queued_event()
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(restore={"mode": "   ", "scope": None}))
+        message = self.delivery.render_message(event_id)
+        self.assertNotIn("workflow restore:", message)
+        self.assertEqual(report.read(self.store, event_id)["restore"], {})

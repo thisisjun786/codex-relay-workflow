@@ -139,7 +139,7 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-121 | A single-line report field containing a line break is refused, so nothing can splice an extra line into the message protocol | `report._single_line` | implemented |
 | I-122 | Pull-request fields are refused when no pull request is named, rather than stored and never rendered | `report.record` | implemented |
 | I-123 | Every restore field is a supported, bounded, single-line string; an unsupported or unrenderable one is refused | `report._check_restore` | implemented |
-| I-124 | A submission lower than the highest stored one is refused, because reading and delivery both take the highest and the write would change nothing | `report._assert_resubmission` | implemented |
+| I-124 | A submission must clear both floors, the delivered one and the highest stored one, so no write is accepted that nobody would ever see | `report._assert_resubmission` | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is
