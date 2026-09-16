@@ -200,8 +200,10 @@ candidates and unknowns explicitly; this format does not authorize creating them
 Put detailed implementation, long examples and supporting research in the relevant
 project/issue or existing references. Preserve accepted choices and their reasons.
 
-When planning makes the project links concrete, update the relevant body passages
-instead of appending every issue or repeating operating rules. Keep each project's
+When an initiative or full-plan update is authorized and project links become
+concrete, update the relevant body passages instead of appending every issue or
+repeating operating rules. A project/issue-only write does not authorize a parent
+initiative write; return any needed body adjustment as a proposal. Keep each project's
 contribution to the initiative and its handoff to other projects understandable.
 Use linked detail when explicitly requested or needed, without replacing the body
 or maintaining a second copy of its definition. Respect a requested output format;
