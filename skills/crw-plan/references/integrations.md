@@ -41,22 +41,31 @@ Keep goals, product classification, and repository identity separate:
   workspace values; a common project without one owning product may leave it
   empty and describe its shared scope. Do not split the project automatically
   or treat that empty classification as an error.
-- Related repositories use multiple independent project labels, outside a
-  group. Use `저장소 · repo`, adding the owner when short names collide; keep
-  the description to the exact repository URL. Verify label identity, parent
-  group, and resulting assignments. These labels classify related code; they
-  do not assign all those repositories to every issue or select a checkout.
-  Non-code work may have no repository label.
+- Repository classification belongs on issues, not projects. Use one actual
+  edit-target label per implementation issue in the `저장소` issue-label group.
+  Name the value after the repository, adding the owner when names collide;
+  keep its description to the exact repository URL. Verify label identity,
+  group membership, and the resulting assignment. Keep the explicit owner/repo
+  or URL in the issue body too. Reference-only and legacy repositories belong
+  in context links, not additional execution labels. Non-code work and unresolved
+  targets may leave the group empty; resolve a code target before execution.
 - Reuse agreed labels. Discuss any additional label scheme when a need arises
   instead of creating it automatically. Preserve unrelated labels; do not copy
   all project labels to issues. Keep descriptions brief. Views, filters, and
   default screens belong to the user and are configured only when requested.
 
 For example, a requested “Complete installation and first launch” project can
-have one product family and independent core, desktop, and installer repository
-labels. An installer fix within it still names only its actual code targets.
-A shared planning project can have neither product family nor repository labels.
+have one product family while its core, desktop, and installer issues each carry
+their own edit-target repository label. A shared planning project can omit a
+product family, and a non-code planning issue can omit a repository label.
 Neither example requires an initiative or a product prefix in the project name.
+
+Do not migrate existing labels merely by loading this model. When migration is
+authorized, classify each issue from its accepted scope and delivery evidence,
+not by copying its former project's repository labels. Preserve historical
+multi-repository exceptions without forcing a false single target; reconcile
+them before new execution. Remove only the superseded repository project labels,
+preserving product labels, context links, unrelated fields and history.
 
 ### Issue-to-PR mapping
 
@@ -100,11 +109,11 @@ switches preserve old bindings and active ownership before establishing the new 
 
 ### Resolve the implementation repository
 
-Project repository labels are discovery context, never an instruction to modify
-all related repositories. Resolve one implementation issue's explicit GitHub
-owner/repo or URL against its accepted scope, current delivery PR and existing
-assignment. Identify reference-only repositories separately. If the issue's
-explicit target conflicts with its PR or ownership record, reconcile the conflict
+Resolve the issue repository label and its explicit GitHub owner/repo or URL
+against its accepted scope, current delivery PR and existing assignment.
+Project context links and any remaining legacy project labels do not assign
+repositories to its issues. Identify reference-only repositories separately.
+If the issue's label or explicit target conflicts with its PR or ownership record, reconcile the conflict
 before writes; a label, folder name or convenient checkout does not break the tie.
 Ask only when the current evidence cannot settle a material target choice.
 
