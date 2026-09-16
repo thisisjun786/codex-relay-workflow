@@ -376,7 +376,17 @@ class ServiceIntent:
     def write(self, *, enabled: bool, actor: str) -> dict:
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         payload = {"enabled": bool(enabled), "changedAt": _now(), "changedBy": actor}
-        self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # Replaced atomically, for the same reason the daemon record is. read() treats an
+        # unreadable document as not configured and therefore disabled, and the supervisor
+        # re-reads intent at every worker boundary - so a reader landing in the truncated
+        # middle of this write would stop a service its owner had left enabled.
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}")
+        try:
+            temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(temporary, self.path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise
         return dict(payload, configured=True)
 
 
@@ -575,6 +585,10 @@ class RelayService:
         )
         if not answer["readable"]:
             return {"available": False, "detail": answer["detail"], "projects": []}
+        if answer["detail"]:
+            # The file opened and the query did not. An inventory we could not read is not an
+            # empty inventory, and reporting available with no projects says it is.
+            return {"available": False, "detail": answer["detail"], "projects": []}
         grouped = {}
         for row in answer["rows"]:
             key = project_key({"parent": {"cwd": row["parent_cwd"],
@@ -756,7 +770,26 @@ class RelayService:
                 return {"ok": False, "reason": "child_exited",
                         "exitCode": child.returncode, "log": self._log_tail()}
             time.sleep(poll)
-        return {"ok": False, "reason": "did_not_report", "log": self._log_tail()}
+        # A launch that never reported is not a launch that can be left alone. It may still
+        # be initialising and would come up AFTER the caller was told it failed, holding the
+        # locks against the retry the caller is about to make.
+        return {"ok": False, "reason": "did_not_report", "log": self._log_tail(),
+                "child": self._abandon(child, timeout=timeout)}
+
+    def _abandon(self, child, *, timeout: float) -> str:
+        """Stop a child this call started and could not confirm, and reap it."""
+        if getattr(child, "poll", lambda: None)() is not None:
+            return "exited"
+        for step in (getattr(child, "terminate", None), getattr(child, "kill", None)):
+            if step is None:
+                continue
+            try:
+                step()
+                child.wait(timeout=max(1.0, timeout / 2))
+                return "terminated"
+            except Exception:  # noqa: BLE001 - a child we cannot reach is reported, not raised
+                continue
+        return "still_running"
 
     def _log_tail(self, lines: int = 20) -> str:
         try:
@@ -878,6 +911,7 @@ class RelayService:
         self.clear_stop_request()
         token = uuid.uuid4().hex
         segments, failures, degraded = [], 0, None
+        outstanding = None
         with SingleInstance(self.selection.path, shared=True) as lock:
             scope_fd = None
             if self.socket_path:
@@ -920,7 +954,9 @@ class RelayService:
                         allow_isolated=allow_isolated,
                     )
                     self._note(workerPid=child.pid, workerStartTicks=start_ticks(child.pid))
+                    outstanding = child
                     code = child.wait()
+                    outstanding = None
                     self._note(workerPid=None, workerStartTicks=None, lastExit=code,
                                restarts=len(segments) + 1)
                     segments.append(code)
@@ -932,6 +968,11 @@ class RelayService:
                     if self.stop_requested() or not self.intent.read()["enabled"]:
                         break
                     wait = policy.restart_delay_for(failures)
+                    if deadline is not None:
+                        # Clamped the same way a worker segment is. An unclamped delay - up to
+                        # five minutes after repeated failures - outlives the supervisor's own
+                        # bound, so a short deadline took minutes to return.
+                        wait = max(0.0, min(wait, deadline - (time.monotonic() - started)))
                     self._note(nextRestartAt=time.time() + wait)
                     sleeper(wait)
             finally:
@@ -942,7 +983,15 @@ class RelayService:
                     # state directory claim this socket beside the orphan.
                     self.scope.release(self.socket_path, shared=True)
                 current = self.record() or {}
-                self.write_record(dict(current, pid=None, workerPid=None, stoppedAt=_now()))
+                cleared = dict(current, pid=None, stoppedAt=_now())
+                if outstanding is None:
+                    cleared["workerPid"] = None
+                    cleared["workerStartTicks"] = None
+                # Otherwise the worker was never waited on - an exception between spawn and
+                # wait - and it still holds the inherited locks. Erasing its pid and start
+                # time would leave a stop with nothing to aim at, so the orphan would keep
+                # delivering for the rest of its segment while status reported not_running.
+                self.write_record(cleared)
         return {"ok": True, "reason": None, "segments": segments,
                 "consecutiveFailures": failures, "degraded": degraded}
 

@@ -806,7 +806,10 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
             "SELECT written_by, written_at FROM store_challenge WHERE nonce = ?", (nonce,)
         ).fetchone()
     except sqlite3.Error as error:
-        return {"nonce": nonce, "found": False, "readable": True,
+        # NOT readable. A locked, malformed or momentarily unavailable database answers no
+        # question, and calling it readable turns "we could not look" into "it is not there",
+        # which compare_store then grades as a definite store mismatch.
+        return {"nonce": nonce, "found": False, "readable": False,
                 "detail": f"{type(error).__name__}: {error}"}
     finally:
         connection.close()
