@@ -30,9 +30,11 @@ relay mutations and retention cleanup it performs; otherwise reuse still-applica
 evidence or report the path as unverified.
 
 **Existing task-owned worktree:** `create_thread` accepts an existing absolute
-cwd, title, model, sandbox, optional prompt, and stable request_id. It creates no
-worktree. Reuse the coordinator-prepared checkout. In the inspected schema it has
-no reasoning_effort argument; omission uses the App Server configuration.
+cwd, title, model, reasoning_effort, sandbox, expected_sandbox_policy,
+runtime_workspace_roots, optional prompt, and stable request_id. It creates no
+worktree. Reuse the coordinator-prepared checkout. Omitting a setting uses the App
+Server configuration and checks nothing; supply the ones the assignment depends on,
+because an omitted setting is reported but never verified.
 
 **New retained worktree:** `create_worktree_thread` accepts a source checkout,
 full immutable commit, absent absolute destination with an existing parent,
@@ -108,8 +110,19 @@ and the exact record shape are in [codex-session-relay](relay.md).
 Create with the full work prompt so the assignment is dispatched once. Use
 `send_message_to_thread` for a later correction or recovery, never to resend the
 same assignment: it is a separate intentional mutation with its own request_id, it
-resumes without overrides, and it refuses active tasks. Verify the returned
-settings on each mutation and reconcile a mismatch on the same task.
+refuses active tasks, and it takes an optional `expected_settings` carrying the
+authorized cwd, sandbox, expected_sandbox_policy, model, reasoning_effort and
+runtime_workspace_roots. Supply it: the resume then carries those settings and is
+read as an observation, and a difference or a setting the host does not report
+withholds the message instead of dispatching it. Omitting it keeps the old
+behaviour, where nothing is checked and the receipt says `not_requested`. An
+unrecognised key is refused rather than ignored. Verify the returned settings on
+each mutation and reconcile a mismatch on the same task.
+
+The `settings` receipt describes what the host reported at creation or at the
+resume, not a guarantee about the dispatched turn: no host-side exclusivity is
+held, so it says `observed_at_creation` or `observed_at_resume` rather than
+verified.
 
 ### Observed empty-task failure
 

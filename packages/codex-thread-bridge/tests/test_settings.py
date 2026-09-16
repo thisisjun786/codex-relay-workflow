@@ -400,8 +400,37 @@ async def test_the_annotation_records_what_the_thread_reported_after_dispatch(
     )
     note = result["settingsAfterDispatch"]
     assert note["concurrentChange"] is False
-    assert note["covers"] == ["model", "reasoningEffort", "cwd"]
+    assert note["covers"] == ["cwd", "model", "reasoningEffort"]
+    assert note["unobserved"] == []
     assert "neither sandbox nor approvalPolicy" in note["limit"]
+
+
+async def test_a_field_missing_after_dispatch_is_unobserved_not_unchanged(
+    bridge, fake_server, tmp_path
+):
+    """The diagnostic must not make the mistake the rest of this contract exists to prevent.
+
+    A field that was observed before dispatch and is absent afterwards was not compared at all.
+    Dropping it silently would leave it listed as covered while concurrentChange said false.
+    """
+    fake, _ = fake_server
+    created = await bridge.create_thread(
+        "vanish", str(tmp_path), prompt="hello", model="anthropic/claude-opus-5"
+    )
+    assert created["settingsAfterDispatch"]["unobserved"] == []
+
+    fake.threads[created["threadId"]]["model"] = None
+    second = await bridge.create_thread(
+        "vanish-2", str(tmp_path), prompt="hello", model="anthropic/claude-opus-5"
+    )
+    fake.threads[second["threadId"]]["model"] = None
+    note = await bridge._annotate_dispatch(
+        dict(second, settingsAfterDispatch=None),
+        SettingsContract(model="anthropic/claude-opus-5"),
+    )
+    after = note["settingsAfterDispatch"]
+    assert "model" in after["unobserved"], "an absent field is not an unchanged one"
+    assert "model" not in after["covers"]
 
 
 async def test_a_failing_annotation_cannot_downgrade_an_accepted_turn(

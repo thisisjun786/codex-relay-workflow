@@ -105,6 +105,14 @@ class FakeServer:
                 result = {"thread": dict(thread), **self.settings_view(params)}
                 result.update(self.override_creation)
                 thread["settings"] = self.settings_view(params)
+                # The real Thread object carries these three; measured on codex-cli 0.154.0,
+                # thread/read returns model, reasoningEffort, cwd, environments and projectId,
+                # and nothing about sandbox or approvalPolicy.
+                thread["model"] = thread["settings"]["model"]
+                thread["reasoningEffort"] = thread["settings"]["reasoningEffort"]
+                result["thread"] = {
+                    key: value for key, value in thread.items() if key != "settings"
+                }
                 for field in self.unreported:
                     result.pop(field, None)
             elif method == "thread/name/set":

@@ -407,7 +407,18 @@ def annotation(before: dict, thread: dict):
     policy, so concurrentChange False means only that those three were unchanged. The caller
     records this beside an already accepted receipt; it can never change that receipt's status.
     """
-    after = {field: thread.get(field) for field in ANNOTATED if thread.get(field) is not None}
+    after, unobserved = {}, []
+    for field in ANNOTATED:
+        value = thread.get(field)
+        if value is None:
+            # A field that was observed before dispatch and is absent now was NOT compared.
+            # Dropping it silently would let it sit in covers while concurrentChange said false,
+            # which is the same "silence reads as proof" mistake this whole contract exists to
+            # avoid, committed by its own diagnostic.
+            if field in before:
+                unobserved.append(field)
+            continue
+        after[field] = value
     changed = {
         field: {"observed": before.get(field), "afterDispatch": value}
         for field, value in after.items()
@@ -417,7 +428,9 @@ def annotation(before: dict, thread: dict):
         "fields": after,
         "concurrentChange": bool(changed),
         "changed": changed,
-        "covers": list(ANNOTATED),
+        "covers": sorted(field for field in after if field in before),
+        "unobserved": unobserved,
         "limit": "thread/read reports neither sandbox nor approvalPolicy, so no change here "
-        "means only that the covered fields were unchanged.",
+        "means only that the fields in covers were compared and unchanged. Anything in "
+        "unobserved was not compared at all.",
     }

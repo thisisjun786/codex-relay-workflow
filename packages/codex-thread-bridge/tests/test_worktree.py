@@ -496,7 +496,8 @@ async def test_a_dispatched_worktree_task_is_annotated_like_the_other_paths(
     assert result["settings"]["verification"] == "observed_at_creation"
     note = result["settingsAfterDispatch"]
     assert note["concurrentChange"] is False
-    assert note["covers"] == ["model", "reasoningEffort", "cwd"]
+    assert note["covers"] == ["cwd", "model", "reasoningEffort"]
+    assert note["unobserved"] == []
 
 
 async def test_a_retained_receipt_survives_validation_this_version_added(
