@@ -336,3 +336,5 @@ These are recorded because behaviour depends on them.
 
 - `docs/protocol-v1.md` — the wire and record protocol, derived from the frozen contract.
 - `docs/invariants.md` — every invariant and the code that enforces it.
+- `docs/operations.md` — where the state lives, who owns the daemon, and how to read a
+  stuck delivery. Each section says whether the behaviour is implemented or planned.
