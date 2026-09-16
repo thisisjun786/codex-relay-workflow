@@ -241,6 +241,32 @@ class AnchorBinding(DeliveryTestCase):
             "the relay's own revision request outlived the reply it asked for",
         )
 
+    def test_a_revision_request_answered_by_a_failure_is_still_retired(self):
+        """head_revision considers only ready_for_review receipts.
+
+        Routing a relay-owned request through it left one answered by a failed, interrupted
+        or blocked reply reported as awaiting_child_receipt forever - the child had supplied
+        exactly the completion receipt that was asked for, and the ask stayed current.
+        """
+        revision = self.revision_pending()
+        self.clock.advance(3600)
+        self.delivery.attempt(revision, self.adapter, now=self.clock.now())
+        self.ack.bind_pending_anchors()
+        relationship = self.registry.get(self._rid)
+        turn = self.assigned_turn(
+            thread=CHILD, turn=self.generation_two()["dispatchTurnId"],
+        )
+        payload = self.execution_payload(relationship, "failed", generation=2, turn=turn)
+        self.accept(payload)
+
+        with self.store.transaction() as db:
+            reason = self.delivery._supersession_reason(db, revision)
+
+        self.assertEqual(
+            reason, "superseded_revision",
+            "the request outlived the completion receipt it asked for",
+        )
+
     def test_binding_is_idempotent_and_never_rebinds_a_bound_anchor(self):
 
         revision = self.revision_pending()

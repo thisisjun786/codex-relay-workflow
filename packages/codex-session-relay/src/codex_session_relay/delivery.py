@@ -1096,6 +1096,19 @@ class DeliveryService:
             return None
         if event["execution_generation"] < relationship["execution_generation"]:
             return STALE_GENERATION
+        if event["outcome"] == REVISION:
+            # Relay-owned, and answered by whatever the child sends back for this generation -
+            # reviewable or not. head_revision considers only ready_for_review receipts, so
+            # routing a request through it left one answered by a failed, interrupted or
+            # blocked reply reported as awaiting_child_receipt forever, even though the
+            # completion it asked for had already arrived.
+            answered = db.execute(
+                "SELECT 1 FROM events"
+                " WHERE relationship_id = ? AND execution_generation = ? AND producer = 'child'"
+                "   AND stage = 'final' AND suppressed_reason IS NULL",
+                (event["relationship_id"], event["execution_generation"]),
+            ).fetchone()
+            return SUPERSEDED_REVISION if answered is not None else None
         # The head rule is one REVISION replacing another, and head_revision only ever
         # considers reviewable events. A child's EXECUTION-ONLY outcome is not competing for
         # that head: it is a different kind of fact about the same generation, and a later
