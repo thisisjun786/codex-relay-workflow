@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Coordinate one Linear issue or a ready batch through independent child Codex tasks: reuse the responsible task or create one within user authorization and host rules, then verify delivery using CXC. Use for execution, progress coordination, or delivery review; use crw-plan for roadmap authoring and crw-check for intent drift. Formerly linear-run."
+description: "Run a Linear project, milestone, ready batch, or single issue through independent child Codex tasks: reuse the responsible task or create one within user authorization and host rules, then verify delivery using CXC and continue within the agreed scope. Use for execution, progress coordination, or delivery review; use crw-plan for roadmap authoring and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
