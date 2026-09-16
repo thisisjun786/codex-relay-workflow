@@ -29,6 +29,22 @@ needs a refreshed briefing. Route roadmap authoring to
 
 ## Determine the requested operation
 
+When the user submits `$crw-run <Linear project link>` as the execution request,
+with no narrower operation, treat it as the full project-run request: designate
+this task as the fixed parent through `crw-focus`, run the agreed project scope
+with CXC Loop, reuse each issue's responsible child or create an independent
+child when needed, verify its delivery, perform authorized integration, and
+continue with ready work. This submitted shorthand requests those actions; no
+expanded prompt or creation keyword is needed. Resolve ownership and agreed
+scope first; the link does not approve undefined work or replace another parent.
+
+Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
+no-merge, or current-task limits override the default. An issue or milestone
+target stays within that scope; it is not a request to run its whole project.
+A quoted example, a question about usage, automatic skill selection, or an
+unsubmitted UI prompt does not activate this shorthand. Host and tool restrictions
+still govern each action, including task creation and goal activation.
+
 - **Plan/prompts:** inspect project state and prepare task packets; do not launch.
 - **Dispatch a named batch:** reuse prior authorization and settings, refresh its
   prerequisites, then launch only that batch.
@@ -46,8 +62,8 @@ task; take an unchosen model, effort, or workflow from
 [Default independent execution](../crw-plan/references/integrations.md#default-independent-execution).
 Do not copy a model choice from a previous project into a new one.
 
-Resolve task-creation authority as described below; a skill invocation alone
-does not override the host's explicit-creation requirement. Apply the shared [delivery and integration default](../crw-plan/references/integrations.md#default-dev-integration)
+Resolve task-creation authority from the submitted operation above and the
+conversation below; never override host requirements. Apply the shared [delivery and integration default](../crw-plan/references/integrations.md#default-dev-integration)
 and inherit existing authorization for coordination records and recovery. Release
 publication, deployment, issue closure, and unrelated messages need scope covering
 those actions. When the user designates this as the fixed management task,
@@ -71,7 +87,8 @@ Newly discovered work must fit that scope; an overnight run is not authority to
 adopt every future issue or another project's backlog. Preserve explicit batch,
 no-goal, no-merge, pause and resource limits.
 
-Repeat within that scope: refresh ownership and prerequisites, dispatch ready
+Repeat within that scope: refresh ownership and prerequisites, actively look
+for independent ready issues using the [parallel scheduling rules](#establish-the-project-baseline), dispatch ready
 issue packets, observe their actual results, verify and integrate permitted
 deliveries, then release the next ready work. A blocked issue holds only its
 dependents; continue independent authorized work. Keep each implementation issue
@@ -153,13 +170,15 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
+| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Apply the project-run default above, including fixed-parent designation, Loop and child creation/reuse; no expanded prompt is required, and host restrictions still apply |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
 | Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings from the coordination/recovery record; refresh ownership and prerequisites, then continue its next ready batch without repeating approval |
 | Standalone short invocation such as `$crw-run 다음 작업 진행해줘`, with genuinely no creation intent in the conversation or prior authorization for this scope | Prepare the issue packet and inspect ownership; if a new task is needed and the host requires an explicit creation request, obtain only that missing request |
 
-The skill's name, an unsubmitted UI default prompt, a quoted example, or task
-designation alone is not an explicit user request to create a task. Permission
+Merely mentioning the skill's name, an unsubmitted UI default prompt, a quoted
+example, or task designation without execution is not a child-creation request.
+The submitted project-run shorthand above is an execution request. Permission
 for an unrelated earlier task does not authorize this scope. Discover a
 permitted tool; a different transport does not waive the host's creation rule.
 If authority or capability is missing, finish the executable packet and baseline
@@ -195,10 +214,23 @@ For repository-changing work, compare local and remote commit ancestry. Preserve
 work. Record a full baseline commit for each task and decide how any prerequisite
 changes will reach it. Do not push shared baseline commits through every task.
 
-Derive batches from both dependency edges and overlapping edit surfaces.
-Independent issue statuses do not prove independent code changes. Serialize
-shared schema, persistence, contract, or central UI changes when separation would
-cost more than it saves. A small project may have only two useful parallel tasks.
+At initial dispatch and after a completion, blocker, or integration, scan the
+remaining agreed scope for useful parallel work rather than selecting only the
+next issue. Check verified prerequisites, overlapping edit surfaces, existing
+writers, shared runtime resources, and available execution capacity. Dispatch
+the largest useful set of independent ready issues within explicit concurrency,
+budget, and host limits. A shared repository alone is not a reason to serialize;
+separate owned checkouts can carry independent changes.
+
+Do not wait for an entire batch to finish before filling available capacity with
+newly ready independent work. Independent issue statuses alone do not establish
+independence: serialize shared schema, persistence, contract, or central UI changes
+when separation would cost more than it saves. Keep integration into a shared
+target serial and recheck each candidate against the updated base. Record a
+concrete dependency, conflict, ownership, or capacity reason for deferring an
+otherwise ready issue. Do not invent extra issues or duplicate writers just to
+increase concurrency; reconcile an oversized issue through `crw-plan` when a
+useful split fits the authorized scope.
 Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
 one implementation issue per PR, with one issue/PR pair per implementation
 packet. A batch retains those separate pairs. If one issue needs several PRs,

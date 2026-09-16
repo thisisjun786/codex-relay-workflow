@@ -182,14 +182,21 @@ $crw-focus [Linear project] 이 작업을 이 프로젝트의 고정 진행 관�
 $crw-next [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
 $crw-define [idea or initiative] 목표·완료 기준·범위를 정의해 Linear에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
-$crw-run [Linear project] 이 작업을 해당 프로젝트 하나의 고정 부모로 연결하고, 합의된 프로젝트 범위를 끝까지 CXC Loop로 진행해줘. 이슈마다 기존 담당 자식을 재사용하거나 없으면 독립 자식을 생성하고, 구현 이슈 하나당 PR 하나로 검증·머지한 뒤 다음 준비된 이슈를 이어가줘.
+$crw-run [Linear project link]
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
 ```
 
 These are invocation examples, not requests to execute while reading this file.
 
-A submitted project Loop request gives the parent its own coordination goal;
+A submitted `$crw-run <Linear project link>` execution request defaults to
+fixed-parent designation and a CXC Loop over the agreed project scope, including
+child reuse/creation, verification and authorized integration. No expanded prompt
+is needed; [operation selection](skills/crw-run/SKILL.md#determine-the-requested-operation)
+owns the meaning and its narrower-request and host-rule limits.
+The parent actively finds independent ready work and fills available capacity
+without waiting for an entire batch; shared-target merges remain serial.
+The project Loop gives the parent its own coordination goal;
 each child keeps its issue goal. Before dispatch, choose a compatible observation
 and delivery mode under [parent continuation](skills/crw-run/SKILL.md#keep-a-project-run-moving).
 Explicit first-batch-only requests still stop at that batch's delivery boundary.
@@ -219,9 +226,9 @@ settings, including successor batches and resumes after compaction.
 
 If the conversation and prior authorization genuinely contain no creation intent
 for this scope, prepare the packet and ask only for the missing request when a
-new task is needed and the host requires it. Skill selection, unsubmitted UI text,
-quoted examples, and permission for an unrelated task do not supply that intent.
-A default prompt expressing creation/reuse intent counts when actually submitted.
+new task is needed and the host requires it. Automatic skill selection, unsubmitted
+UI text, quoted examples, and permission for an unrelated task do not supply that
+intent. The submitted project-run shorthand above does express that intent.
 Host restrictions and explicit current-task, read-only, or no-create limits still
 apply. See [Independent implementation tasks](skills/crw-run/SKILL.md#independent-implementation-tasks).
 
