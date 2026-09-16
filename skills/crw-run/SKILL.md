@@ -141,6 +141,13 @@ milestone percentage, issue status, merged PR, and deployed behavior can disagre
 record the discrepancy rather than silently treating them as equivalent.
 Missing connector access is a concrete limitation, not permission to invent issue details.
 
+For a standalone issue, read that issue, its linked canonical documents and
+blocking relations directly; project and milestone reads are inapplicable. Keep
+its issue-scoped ownership and the existing management binding unchanged. Do not
+create a project or call `crw-focus` to satisfy this baseline. If a transport
+requires a project binding, use a permitted projectless execution path or report
+that capability gap; never invent a project ID for a receipt.
+
 Compare local and remote commit ancestry. Preserve local-only commits and dirty
 work. Record a full baseline commit for each task and decide how any prerequisite
 changes will reach it. Do not push shared baseline commits through every task.
@@ -157,6 +164,10 @@ or a proposed PR would deliver several issues, reconcile the plan through
 
 Keep the human-readable coordination record in the project's linked Linear
 document as part of the management assignment, without a separate recording request.
+For a standalone issue, use its existing linked coordination document or a compact
+owned section in the issue within the authorized recording scope. Keep private
+recovery receipts keyed by the issue and actual task IDs; no project record or
+parent binding is required. Preserve unrelated issue content on each update.
 For explicit read-only scope or unavailable access, return the unsynced update and
 retain the task's private recovery receipt. Keep raw launch
 receipts and sensitive evidence in an appropriate private location; local
