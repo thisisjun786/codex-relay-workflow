@@ -887,7 +887,12 @@ class DeliveryService:
             "     , r.child_task_id"
             "     , (SELECT COUNT(*) FROM observations o"
             "         WHERE o.thread_id = r.child_task_id"
-            "           AND o.turn_id = g.dispatch_turn_id) AS observed"
+            "           AND o.turn_id = g.dispatch_turn_id"
+            # Per assignment, like the scheduler's own check. Two assignments can share a
+            # child turn, and asking globally let one assignment's observation mark the
+            # other settled - excluding an assignment whose own settlement was still
+            # outstanding from the very freshness check that would have shown it.
+            "           AND o.relationship_id = r.relationship_id) AS observed"
             "     , (SELECT COUNT(*) FROM events e"
             "         WHERE e.turn_thread_id = r.child_task_id"
             "           AND e.turn_id = g.dispatch_turn_id"
@@ -1033,6 +1038,38 @@ class DeliveryService:
             " VALUES (?,?,?,0) ON CONFLICT(event_id) DO NOTHING",
             (event_id, reason, self.clock.iso()),
         )
+
+    def annotate_predecessors_in(self, db, event_id: str) -> None:
+        """Mark outstanding deliveries this newly final event replaces within its generation.
+
+        The pre-send check cannot reach them: attempt() returns early for a non-claimable
+        state, so a revision that was already sending, held_uncertain or dispatched when its
+        successor arrived left no supersession row at all. Reconciliation could then promote
+        it to dispatched and status would present it as the current delivery.
+
+        Annotation only. Rewriting an outstanding send would make a lost response
+        permanently unresolvable, which is worse than the confusion it fixes.
+        """
+        event = db.execute(
+            "SELECT relationship_id, execution_generation FROM events WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return
+        others = db.execute(
+            "SELECT d.event_id FROM deliveries d"
+            "  JOIN events e ON e.event_id = d.event_id"
+            " WHERE e.relationship_id = ? AND e.execution_generation = ?"
+            "   AND d.event_id != ?"
+            "   AND d.state IN ('sending','held_uncertain','dispatched')",
+            (event["relationship_id"], event["execution_generation"], event_id),
+        ).fetchall()
+        for row in others:
+            # Asked per candidate rather than assumed: the successor may not in fact replace
+            # it, and _supersession_reason is the one place that rule lives.
+            reason = self._supersession_reason(db, row["event_id"])
+            if reason:
+                self._annotate_supersession_in(db, row["event_id"], reason)
 
     # -------------------------------------------------------- observability
 

@@ -79,6 +79,79 @@ class PreSendSupersession(DeliveryTestCase):
         rows = self.store.all("SELECT event_id FROM delivery_supersession")
         self.assertEqual([r["event_id"] for r in rows], [event_id],
                          "only the older generation's outstanding send is annotated")
+
+    def test_a_dispatched_delivery_is_annotated_when_the_generation_advances(self):
+        """Its acknowledgement will be refused as stale_generation, so awaiting_ack lies.
+
+        Excluding dispatched left status reporting an obligation that can no longer be met,
+        with no supersession note to say why.
+        """
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        self.attempt(event_id)
+        self.assertEqual(self.delivery.get(event_id)["state"], DISPATCHED)
+
+        self.advance_generation(relationship, 2)
+
+        note = self.store.one(
+            "SELECT * FROM delivery_supersession WHERE event_id = ?", (event_id,),
+        )
+        self.assertIsNotNone(note)
+        self.assertEqual(note["reason"], STALE_GENERATION)
+        self.assertEqual(
+            self.delivery.get(event_id)["state"], DISPATCHED,
+            "annotated, not rewritten: what was actually sent stays history",
+        )
+
+    def test_an_outstanding_predecessor_is_annotated_by_its_successor(self):
+        """Same generation, no advance: attempt() returns early for a non-claimable state.
+
+        An older revision that was already in flight when its successor became final left no
+        supersession row at all, so reconciliation could promote it to dispatched and status
+        would present it as the current delivery.
+        """
+        relationship, older = self.queued_outcome("ready_for_review")
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-1", status="inProgress")
+        self.adapter.script("transport_unknown")
+        self.attempt(older)
+        self.assertEqual(self.delivery.get(older)["state"], "held_uncertain")
+
+        path = self.artifact("newer.txt", "the corrected deliverable")
+        successor = self.ready_payload(
+            relationship, [path], attempt=2,
+            turn=TurnRef(CHILD, "turn-dispatch-1", "inProgress"),
+        )
+        self.accept(successor)
+        # Declared, as a revision that replaces another does when it is emitted. Without the
+        # link the generation has two unsuperseded revisions and no head at all, which is a
+        # different problem and one this PR does not decide.
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE revision_lineage SET supersedes_hash = ? WHERE event_id = ?",
+                (self.intake.get(older)["revisionHash"], successor["eventId"]),
+            )
+        self.adapter.finish_turn(CHILD, "turn-dispatch-1")
+        self.daemon_tick()
+
+        note = self.store.one(
+            "SELECT * FROM delivery_supersession WHERE event_id = ?", (older,),
+        )
+        self.assertIsNotNone(
+            note, "the successor became final; the older in-flight send is not current",
+        )
+        self.assertEqual(note["reason"], SUPERSEDED_REVISION)
+        self.assertEqual(
+            self.delivery.get(older)["state"], "held_uncertain",
+            "annotated, never rewritten: a lost response still has to be reconcilable",
+        )
+
+    def daemon_tick(self):
+        from codex_session_relay.daemon import RelayDaemon
+
+        daemon = RelayDaemon(
+            self.store, self.registry, self.intake, self.delivery, self.ack,
+            self.reconciler, self.adapter, clock=self.clock,
+        )
+        return daemon.tick(now=self.clock.now())
     def test_a_new_generation_with_no_revision_still_suppresses_the_old_outcome(self):
         """The exact reproduction: g3 opened, g3 empty, and a g2 event went out anyway."""
         relationship, event_id = self.queued_outcome("ready_for_review")

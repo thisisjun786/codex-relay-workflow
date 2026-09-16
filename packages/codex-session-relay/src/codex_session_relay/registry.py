@@ -260,7 +260,11 @@ class Registry:
             " SELECT d.event_id, 'stale_generation', ?, 0 FROM deliveries d"
             "  JOIN events e ON e.event_id = d.event_id"
             " WHERE d.relationship_id = ? AND e.execution_generation < ?"
-            "   AND d.state IN ('sending','held_uncertain')"
+            # dispatched belongs here too: its acknowledgement will be refused as
+            # stale_generation, so leaving it unannotated meant status showed awaiting_ack
+            # for an obligation that can no longer be met. Annotating does not rewrite the
+            # delivery, so the history of what was actually sent is untouched.
+            "   AND d.state IN ('sending','held_uncertain','dispatched')"
             " ON CONFLICT(event_id) DO NOTHING",
             (now, rid, number),
         )

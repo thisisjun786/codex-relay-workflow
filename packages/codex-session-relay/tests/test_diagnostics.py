@@ -266,6 +266,59 @@ class ObservationHealth(DaemonTestCase):
         self.assertEqual(health["health"], "stalled",
                          "there is staged work here and nothing has looked at it since")
 
+    def test_one_assignments_observation_does_not_settle_another_on_the_same_turn(self):
+        """The observed subquery asked only by thread and turn.
+
+        Two assignments can share a child anchor, so one assignment's observation marked the
+        other settled - excluding an assignment whose own settlement was still outstanding
+        from the very freshness check that would have surfaced it.
+        """
+        import os
+
+        from codex_session_relay.models import Endpoint
+        from codex_session_relay.registry import record_settings
+        from .support import HOST, task_settings
+
+        child, turn = "01child-shared", "turn-shared-1"
+        made = []
+        for name in ("a", "b"):
+            parent = f"01parent-{name}"
+            root = os.path.join(self.root, name)
+            os.makedirs(root, exist_ok=True)
+            made.append(self.registry.register(
+                parent=Endpoint(parent, HOST, cwd=f"/p/{name}"),
+                child=Endpoint(child, HOST, cwd=root),
+                issue_key=f"SHARED-{name}", artifact_roots=[root],
+                allowed_recipients=[parent],
+                dispatch_request_id=f"dispatch-{name}", dispatch_turn_id=turn,
+            ))
+            self.adapter.add_thread(parent)
+            record_settings(self.store, self.clock, parent, task_settings(f"/p/{name}"),
+                            source="creation_result")
+        self.adapter.add_thread(child)
+        self.adapter.start_turn(child, turn_id=turn, status="inProgress")
+        self.adapter.finish_turn(child, turn)
+
+        # One tick serves a bounded number of assignments, so exactly one is settled here.
+        self.daemon.tick(now=self.clock.now())
+        settled = {
+            row["relationship_id"]
+            for row in self.store.all("SELECT relationship_id FROM observations")
+        }
+        self.assertEqual(len(settled), 1, "the fixture needs exactly one settled so far")
+        outstanding = next(
+            r["relationshipId"] for r in made if r["relationshipId"] not in settled
+        )
+        self.clock.advance(7200)
+
+        health = self.delivery.observation_health(now=self.clock.now())
+
+        self.assertFalse(
+            health["anchors"][outstanding]["settled"],
+            "this assignment has not observed its own turn yet",
+        )
+        self.assertEqual(health["health"], "stalled")
+
     def test_a_generation_whose_anchor_is_not_bound_yet_is_not_a_stall(self):
         """A needs_changes verdict opens a generation before its revision is dispatched.
 

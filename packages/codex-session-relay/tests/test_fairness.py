@@ -114,6 +114,25 @@ class DeliveryFairness(ParentFixture):
 
 
 class ReconciliationFairness(ParentFixture):
+    def dealt_over(self, ticks):
+        """Which attempts _reconcile actually handed to the gate, across several ticks."""
+        from codex_session_relay.daemon import TickReport
+
+        seen = set()
+        original = self.daemon._gate
+
+        def spy(attempt):
+            seen.add(attempt["request_id"])
+            return original(attempt)
+
+        self.daemon._gate = spy
+        try:
+            for _tick in range(ticks):
+                self.daemon._reconcile(TickReport(), self.clock.now())
+        finally:
+            self.daemon._gate = original
+        return seen
+
     def unresolved(self, name, count):
         """Attempts whose response was lost, which is what reconciliation has to settle."""
         _relationship, ids = self.assignment(name, events=count)
@@ -152,29 +171,77 @@ class ReconciliationFairness(ParentFixture):
         self.unresolved("b", 1)
         self.unresolved("c", 1)
 
-        share = max(1, self.daemon.policy.max_reconciles_per_tick // 3)
-        reached = set()
-        for _tick in range(12):
-            for row in self.daemon._attempts_for("01parent-a", share):
-                reached.add(row["request_id"])
+        reached = self.dealt_over(12)
 
         everything = {row["request_id"]
                       for row in self.reconciler.open_attempts(parents=["01parent-a"])}
         self.assertEqual(len(everything), 9)
         self.assertEqual(
-            reached, everything,
+            reached & everything, everything,
             "a fixed prefix leaves the attempts behind it permanently unreconciled",
         )
 
     def test_the_attempt_cursor_is_persisted_per_parent(self):
-        self.unresolved("a", 6)
-        self.daemon._attempts_for("01parent-a", 2)
+        budget = self.daemon.policy.max_reconciles_per_tick
+        self.unresolved("a", budget + 2)
+        self.dealt_over(1)
         stored = self.store.one(
             "SELECT cursor FROM discovery_cursors WHERE listing = ?",
             ("reconcile:01parent-a",),
         )
         self.assertIsNotNone(stored, "the rotation must survive a restart")
-        self.assertEqual(int(stored["cursor"]), 2)
+        self.assertEqual(
+            int(stored["cursor"]), budget,
+            "exactly as far as the attempts this tick actually dealt",
+        )
+
+    def test_a_cursor_moves_only_past_attempts_that_were_actually_dealt(self):
+        """Advancing at selection time skipped attempts the budget then dropped.
+
+        With more parents than budget the parent rotation and the attempt cursors moved
+        together, so the same attempts could be stepped over on every tick - permanently.
+        """
+        # MORE parents than the budget, which is the shape that exposes it: every parent is
+        # selected and had its cursor advanced, but only the first budgeted queues are dealt.
+        budget = self.daemon.policy.max_reconciles_per_tick
+        for index in range(budget + 4):
+            self.unresolved(f"p{index}", 3)
+
+        reached = self.dealt_over(80)
+
+        everything = {row["request_id"] for row in self.reconciler.open_attempts()}
+        self.assertEqual(len(everything), (budget + 4) * 3)
+        self.assertEqual(
+            reached & everything, everything,
+            "every unresolved attempt must be reached in a finite number of ticks",
+        )
+
+    def test_a_parent_that_was_dealt_nothing_keeps_its_place(self):
+        """The precise defect: a cursor advanced for work the budget then dropped.
+
+        With more parents than the budget, every parent is selected and only the first
+        budgeted queues are dealt. Advancing inside the selection moved the cursors of the
+        parents that got nothing, so their leading attempts were stepped over unread.
+        """
+        from codex_session_relay.daemon import TickReport
+
+        budget = self.daemon.policy.max_reconciles_per_tick
+        for index in range(budget + 4):
+            self.unresolved(f"p{index}", 3)
+
+        self.daemon._reconcile(TickReport(), self.clock.now())
+
+        dealt_parents = {
+            row["listing"].split(":", 1)[1]
+            for row in self.store.all(
+                "SELECT listing, cursor FROM discovery_cursors WHERE listing LIKE 'reconcile:%'"
+            )
+            if int(row["cursor"]) > 0
+        }
+        self.assertLessEqual(
+            len(dealt_parents), budget,
+            "a cursor moved for a parent this tick never reconciled",
+        )
 
 
 class SharedChildTurns(DaemonTestCase):

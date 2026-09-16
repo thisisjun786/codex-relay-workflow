@@ -491,6 +491,10 @@ class RelayDaemon:
                 # assignments can share a child, so assuming the polled relationship would
                 # queue B's event to A's parent.
                 owner = self.intake.row(event_id)["relationship_id"]
+                # This event has just become final, so anything of its generation that was
+                # already in flight is no longer what the generation stands on. Done in the
+                # same transaction that finalized it, so the two facts cannot disagree.
+                self.delivery.annotate_predecessors_in(db, event_id)
                 if not queue:
                     # Delivery WAS wanted here. Recording that is what lets recovery retry
                     # this event and only this event, instead of guessing from the absence
@@ -540,6 +544,18 @@ class RelayDaemon:
                     break
                 if queue:
                     dealt.append(queue.pop(0))
+        # Advanced by what was actually DEALT, never by what was merely selected. Advancing
+        # inside the selection moved a parent's cursor past attempts this tick then dropped
+        # on the budget, and with more parents than budget the parent rotation and the
+        # attempt cursors stepped over the same attempts together - permanently, which is
+        # the starvation the per-parent cursor was added to remove.
+        for parent in order:
+            taken = sum(1 for row in dealt if row["parent_task_id"] == parent)
+            if taken:
+                self._advance_cursor(
+                    f"reconcile:{parent}", taken,
+                    self.reconciler.open_attempt_count(parent),
+                )
         for attempt in dealt:
             request_id = attempt["request_id"]
             decision, fingerprint = self._gate(attempt)
@@ -585,7 +601,6 @@ class RelayDaemon:
                     break
                 if row["request_id"] not in seen:
                     taken.append(row)
-        self._advance_cursor(f"reconcile:{parent}", len(taken), total)
         return taken
 
     @staticmethod
