@@ -28,12 +28,16 @@ Continue independent work while a question is pending where the host permits it.
 
 ## Define the goal
 
+Write the definition in the initiative page body using the shared
+[initiative body standard](../crw-plan/references/integrations.md#initiative-body-standard).
 Keep a compact definition with:
 
 - The original idea, problem or opportunity, and why it matters.
 - The desired change and who benefits.
 - Observable success evidence and the condition for finishing the initiative.
 - Included scope, explicit exclusions, accepted direction and reasons.
+- Intended use and, when known, contributing projects' roles, outputs, completion
+  criteria and connections. Mark candidates as proposals, not created projects.
 - Considered perspectives, deferred choices and unresolved questions that affect planning.
 
 Do not invent dates, owners, numerical targets, validated demand, or user answers.
@@ -44,8 +48,9 @@ A narrow project or standalone issue does not require a new initiative.
 
 ## Carry design forward
 
-When design documentation is requested, keep one linked canonical document using
-Strategy → Scope → Structure → Skeleton → Surface as lenses, not as Linear levels.
+Use Strategy → Scope → Structure → Skeleton → Surface as design lenses, not as
+Linear levels or mandatory headings. Keep the initiative definition in its body;
+linked documents carry requested or necessary supporting detail, not a duplicate.
 The initiative definition usually supplies Strategy and high-level Scope. Let
 project planning develop project-specific Structure, Skeleton and Surface when
 they become knowable; CLI/API work need not invent screens. Mark unsupported
@@ -60,7 +65,8 @@ real question quality or product demand. Real-use evaluation remains separate.
 
 Advice, exploration and draft-only requests produce a proposal without Linear
 writes. A request to define/create/update the initiative in Linear covers that
-initiative and its canonical definition document, not automatic projects or issues.
+initiative's body, not automatic projects, issues or a separate definition document.
+Create supporting documents only when the requested scope covers that detail.
 Respect an already accepted broader write request without asking at every level.
 Read current state before writing, preserve unrelated content and history, and
 read back IDs, content and links. Reconcile uncertain writes before retrying.

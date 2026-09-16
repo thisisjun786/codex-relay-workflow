@@ -179,11 +179,35 @@ Respect agreed stale-issue cancellation and archival settings; Canceled is not D
 
 ## Linear holds canonical documents
 
-Jun keeps product intent, specifications, plans, accepted decisions, and human-readable coordination records in Linear documents linked to the relevant project/issues. Use stable document IDs/URLs and available revision or updated-at evidence. Repositories remain authoritative for source, executable configuration, repository policy, and reproducible implementation evidence.
+Jun keeps product intent, specifications, plans, accepted decisions, and human-readable coordination records in Linear. The initiative page body owns its goal definition and connection to contributing projects; linked project/issue documents hold supporting detail. Use stable item/document IDs and URLs with available revision or updated-at evidence. Repositories remain authoritative for source, executable configuration, repository policy, and reproducible implementation evidence.
 
 An issue status, assistant proposal, or newer local draft does not silently supersede an accepted document. The user's latest explicit correction can supersede it; preserve that decision source and mark the canonical document stale until updated within authorization. Report conflicts with repository contracts rather than silently rewriting either source.
 
 Local artifacts are drafts, snapshots, or private raw evidence with a link back to Linear, not a competing permanent document source. Preserve unique content and history. Do not bulk migrate/delete repository documents merely to establish this convention. If an audit is read-only, return a proposed Linear update; do not write it automatically.
+
+### Initiative body standard
+
+Write the initiative's definition in its page body, not a separate design document
+by default. Jun's agreed Korean baseline is about 2,100 characters of Markdown,
+including spaces and links. Match that reading density rather than an exact quota:
+do not pad a simple goal or remove essential decisions to hit the count. This is
+not a length limit for project documents, issue criteria, or skill source files.
+
+Keep the goal and necessary context, intended use, scope and finish condition,
+contributing projects' roles, outputs and completion criteria when known, their
+connections, validation approach, and material open decisions visible. Mark project
+candidates and unknowns explicitly; this format does not authorize creating them.
+Put detailed implementation, long examples and supporting research in the relevant
+project/issue or existing references. Preserve accepted choices and their reasons.
+
+When an initiative or full-plan update is authorized and project links become
+concrete, update the relevant body passages instead of appending every issue or
+repeating operating rules. A project/issue-only write does not authorize a parent
+initiative write; return any needed body adjustment as a proposal. Keep each project's
+contribution to the initiative and its handoff to other projects understandable.
+Use linked detail when explicitly requested or needed, without replacing the body
+or maintaining a second copy of its definition. Respect a requested output format;
+preserve existing documents and history, and migrate only within authorization.
 
 ## Use the available Linear capability
 
