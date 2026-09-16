@@ -254,6 +254,18 @@ class Identity(unittest.TestCase):
             compare_store({"storeId": None}, expect_store="whatever")["sameStore"], "unproven",
         )
 
+    def test_an_unreadable_nonce_is_unproven_rather_than_a_mismatch(self):
+        """Not being able to look is not the same as looking and finding nothing."""
+        unreadable = {"nonce": "abc", "found": False, "readable": False,
+                      "detail": "OperationalError: unable to open database file"}
+        graded = compare_store({"storeId": "x"}, nonce=unreadable)
+        self.assertEqual(graded["sameStore"], "unproven")
+        self.assertIn("could not be read", graded["detail"])
+        absent = {"nonce": "abc", "found": False, "readable": True, "detail": None}
+        self.assertEqual(
+            compare_store({"storeId": "x"}, nonce=absent)["sameStore"], "mismatch",
+        )
+
 
 class Probe(unittest.TestCase):
     def setUp(self):

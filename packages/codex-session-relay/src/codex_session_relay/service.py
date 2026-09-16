@@ -162,6 +162,16 @@ class ScopeRegistry:
         pid in the record is not permission to take it.
         """
         self.prepare()
+        # A stopped registration naming a DIFFERENT store is still that store's registration.
+        # Taking the free lock and overwriting the record would erase the only evidence that
+        # two stores have served this socket, which is the duplicate this registry exists to
+        # surface. Replacing it has to be deliberate.
+        existing = self.read(socket_path)
+        if (existing and record.get("storeId") and existing.get("storeId")
+                and existing["storeId"] != record["storeId"]
+                and not record.get("takeover")):
+            return {"ok": False, "reason": "scope_registered_to_other_store",
+                    "held_by": existing, "scopeKey": self.key(socket_path)}
         path = self.root / f"{self.key(socket_path)}.lock"
         handle = open(path, "a+")
         try:
@@ -377,6 +387,7 @@ class RelayService:
         self.selection = selection
         self.socket_path = socket_path
         self.store_id = store_id
+        self.launch_id = None
         if scope is None:
             root, authority = resolve_scope_root()
             scope = ScopeRegistry(root, authority)
@@ -403,6 +414,7 @@ class RelayService:
         return {
             "pid": pid, "startTicks": start_ticks(pid), "bootId": boot_id(),
             "workerPid": worker_pid, "token": token,
+            "launchId": self.launch_id,
             "storeId": self.store_id, "installationId": self.installation_id,
             "stateDir": str(self.selection.path), "socketPath": self.socket_path,
             "scopeAuthority": self.scope.authority, "scopeRoot": str(self.scope.root),
@@ -423,19 +435,24 @@ class RelayService:
         mismatches = []
         if record.get("bootId") not in (None, boot_id()):
             mismatches.append("recorded before a different boot")
+        if record.get("installationId") != self.installation_id:
+            mismatches.append("another installation owns it")
+        if self.store_id is not None and record.get("storeId") not in (None, self.store_id):
+            mismatches.append("it is using a different store")
         ticks = start_ticks(record["pid"])
+        if mismatches:
+            # Decided BEFORE the start-time question. Installation, store and boot each prove
+            # the record is foreign on their own, and answering unverifiable would discard a
+            # definite answer in favour of an uncertain one.
+            return FOREIGN, handle, "; ".join(mismatches)
         if record.get("startTicks") is None or ticks is None:
-            # Without a start time a pid is just a number, and whatever holds it now would
-            # pass. Unverifiable is the honest answer, and stop refuses on it.
+            # Nothing proves it foreign, and without a start time a pid is just a number that
+            # anything could be holding now. Unverifiable is the honest answer; stop refuses.
             return UNVERIFIABLE, handle, (
                 "no start time is available for this pid, so identity cannot be established"
             )
         if ticks != record["startTicks"]:
             mismatches.append("the pid was reused by a different process")
-        if record.get("installationId") != self.installation_id:
-            mismatches.append("another installation owns it")
-        if self.store_id is not None and record.get("storeId") not in (None, self.store_id):
-            mismatches.append("it is using a different store")
         if mismatches:
             return FOREIGN, handle, "; ".join(mismatches)
         return OURS, handle, None
@@ -643,7 +660,8 @@ class RelayService:
         if live:
             return {"ok": False, "reason": "scope_owned_by_other_store", "conflicts": live}
 
-        before = (self.record() or {}).get("pid")
+        launch = uuid.uuid4().hex
+        self.launch_id = launch
         child = (launcher or self.default_launcher)(
             self, allow_isolated=allow_isolated, max_ticks=max_ticks, deadline=deadline,
             segment_seconds=segment_seconds, max_segments=max_segments,
@@ -651,7 +669,10 @@ class RelayService:
         deadline_at = time.monotonic() + timeout
         while time.monotonic() < deadline_at:
             record = self.record() or {}
-            if record.get("pid") and record.get("pid") != before and self.lock_is_held():
+            # Matched on the launch id, not on the pid changing. After a crash the OS can
+            # hand the replacement the very pid the stale record already names, and waiting
+            # for a different number would time out on a service that is running fine.
+            if record.get("launchId") == launch and self.lock_is_held():
                 return {"ok": True, "reason": None, "pid": record["pid"],
                         "scopeAuthority": self.scope.authority,
                         "scopeRoot": str(self.scope.root), "status": self.status()}
@@ -693,6 +714,11 @@ class RelayService:
             # The ALREADY RESOLVED absolute root, so a relative override cannot resolve
             # differently in the child, and the child cannot land in another registry.
             environment[SCOPE_ENV] = str(self.scope.root)
+        # The transport ledger resolves from the environment, not from --state, so a managed
+        # launch forwarding only the flag would inherit the store/ledger split.
+        environment["CODEX_SESSION_RELAY_STATE"] = str(self.selection.path)
+        if self.launch_id:
+            argv += ["--launch-id", self.launch_id]
         self.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
         with open(self.selection.path / DAEMON_LOG, "a", encoding="utf-8") as log:
             return subprocess.Popen(
@@ -738,6 +764,7 @@ class RelayService:
         environment = dict(os.environ)
         if self.scope.authority == ISOLATED:
             environment[SCOPE_ENV] = str(self.scope.root)
+        environment["CODEX_SESSION_RELAY_STATE"] = str(self.selection.path)
         pass_fds = tuple(fd for fd in (lock_fd, scope_fd) if fd is not None)
         with open(self.selection.path / DAEMON_LOG, "a", encoding="utf-8") as log:
             return subprocess.Popen(
@@ -829,7 +856,11 @@ class RelayService:
                     sleeper(wait)
             finally:
                 if self.socket_path:
-                    self.scope.release(self.socket_path)
+                    # shared=True: this descriptor is the one every worker inherited, and
+                    # LOCK_UN through it would release the scope for all of them. After an
+                    # exception a worker may still be alive, and unlocking would let another
+                    # state directory claim this socket beside the orphan.
+                    self.scope.release(self.socket_path, shared=True)
                 current = self.record() or {}
                 self.write_record(dict(current, pid=None, workerPid=None, stoppedAt=_now()))
         return {"ok": True, "reason": None, "segments": segments,
