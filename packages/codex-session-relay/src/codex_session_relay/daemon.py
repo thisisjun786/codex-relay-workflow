@@ -43,28 +43,53 @@ class TickReport:
 
 
 class SingleInstance:
-    """One daemon per state directory. A second one exits rather than racing the first."""
+    """One daemon per state directory. A second one exits rather than racing the first.
 
-    def __init__(self, directory):
+    A supervised worker ADOPTS the descriptor its supervisor already holds rather than taking a
+    second lock. flock belongs to the open file description, so the supervisor and its worker
+    share one and the lock stays held while either of them lives - which is what stops a
+    replacement from starting beside an orphaned worker.
+
+    That sharing is also why a shared holder releases by CLOSING and never by LOCK_UN:
+    unlocking through any duplicate descriptor releases it for every holder at once.
+    """
+
+    def __init__(self, directory, *, shared: bool = False, adopt_fd=None):
         self.path = Path(directory) / "daemon.lock"
+        self.shared = bool(shared or adopt_fd is not None)
+        self.adopted = adopt_fd is not None
+        self._adopt_fd = adopt_fd
         self._handle = None
 
     def __enter__(self):
+        if self._adopt_fd is not None:
+            # Already locked by the supervisor through this same description. Re-acquiring
+            # would be a second lock on a file we already hold.
+            self._handle = os.fdopen(self._adopt_fd, "r+", closefd=True)
+            return self
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self._handle = open(self.path, "w")
+        self._handle = open(self.path, "a+")
         try:
             fcntl.flock(self._handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
             self._handle.close()
             self._handle = None
             raise RuntimeError(f"another relay daemon already holds {self.path}") from error
+        self._handle.seek(0)
+        self._handle.truncate()
         self._handle.write(str(os.getpid()))
         self._handle.flush()
+        if self.shared:
+            os.set_inheritable(self._handle.fileno(), True)
         return self
+
+    def fileno(self):
+        return self._handle.fileno() if self._handle is not None else None
 
     def __exit__(self, *_exc):
         if self._handle is not None:
-            fcntl.flock(self._handle, fcntl.LOCK_UN)
+            if not self.shared:
+                fcntl.flock(self._handle, fcntl.LOCK_UN)
             self._handle.close()
             self._handle = None
 

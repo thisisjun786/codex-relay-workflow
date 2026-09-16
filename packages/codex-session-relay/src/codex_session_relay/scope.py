@@ -108,6 +108,56 @@ def check_recipient(task_id: str, allowed) -> None:
         )
 
 
+def assert_assignment_delivery(relationship, *, kind, recipient_task_id,
+                               recipient_thread_id=None, event_relationship_id=None,
+                               manifest_paths=()):
+    """A delivery belongs to ONE assignment, and goes to that assignment's own endpoint.
+
+    Membership in allowed_recipients is not sufficient by itself. Two assignments on one host
+    may legitimately authorize the same recipient, so a completion belonging to assignment A
+    addressed to assignment B's parent passes a membership check and is still a cross
+    delivery. The DIRECTION is what ties a message to its own assignment: a completion travels
+    to this relationship's parent, a revision to this relationship's child, and nothing else
+    is an authorized destination.
+    """
+    rid = relationship["relationshipId"]
+    if event_relationship_id is not None and event_relationship_id != rid:
+        raise ScopeError(
+            RefusalReason.RECIPIENT_NOT_AUTHORIZED,
+            f"event belongs to relationship {event_relationship_id!r}, not {rid!r}",
+        )
+    # Named explicitly rather than defaulted. An unrecognised kind falling through to the
+    # parent branch was admitted as a completion, so the parent received a verification
+    # request the acknowledgement path then refuses - a delivery nobody can answer.
+    if kind == "revision_request":
+        expected = relationship["child"]["taskId"]
+    elif kind == "completion_event":
+        expected = relationship["parent"]["taskId"]
+    else:
+        raise ScopeError(
+            RefusalReason.RECIPIENT_NOT_AUTHORIZED,
+            f"{kind!r} is not a delivery direction this contract defines, so there is no"
+            " authorized recipient for it",
+        )
+    if recipient_task_id != expected:
+        direction = "child" if kind == "revision_request" else "parent"
+        raise ScopeError(
+            RefusalReason.RECIPIENT_NOT_AUTHORIZED,
+            f"a {kind} for {rid!r} goes to its own {direction} {expected!r}, not to "
+            f"{recipient_task_id!r}",
+        )
+    if recipient_thread_id is not None and recipient_thread_id != recipient_task_id:
+        raise ScopeError(
+            RefusalReason.RECIPIENT_NOT_AUTHORIZED,
+            f"the native thread {recipient_thread_id!r} is not the recipient task "
+            f"{recipient_task_id!r}",
+        )
+    check_recipient(recipient_task_id, relationship["authorizedScope"]["allowedRecipients"])
+    roots = relationship["authorizedScope"]["artifactRoots"]
+    for path in manifest_paths:
+        assert_within(path, roots)
+
+
 @dataclass(frozen=True)
 class PathBinding:
     declared: str

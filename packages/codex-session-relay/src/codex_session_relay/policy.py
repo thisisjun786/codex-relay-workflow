@@ -29,6 +29,35 @@ class RetryPolicy:
     poll_interval_seconds: float = 20.0
     max_sends_per_tick: int = 4
     max_reconciles_per_tick: int = 8
+    # Supervision cadence. A worker is bounded by segment_seconds; the supervisor replaces it,
+    # which is what carries an assignment past any single process lifetime.
+    segment_seconds: float = 3600.0
+    restart_interval_seconds: float = 2.0
+    restart_base_seconds: float = 2.0
+    restart_backoff_max_seconds: float = 300.0
+    repeat_failure_threshold: int = 3
+
+    def restart_delay_for(self, consecutive_failures: int) -> float:
+        """A clean segment waits the plain interval; repeated failure backs off and caps."""
+        import math
+
+        if consecutive_failures <= 0:
+            return self.restart_interval_seconds
+        base, ceiling = self.restart_base_seconds, self.restart_backoff_max_seconds
+        # Bounded before the exponent is evaluated, because a supervisor whose worker fails on
+        # every segment keeps counting and base * 2 ** (n - 1) eventually builds an integer too
+        # large to convert to a float - so the supervisor would die of its own backoff instead
+        # of retrying at the cap. The bound is DERIVED from this policy rather than fixed: a
+        # small base needs more doublings to reach its ceiling, and a constant would have sent
+        # a customized supervisor straight to the cap while its own backoff still had room.
+        if base <= 0 or ceiling <= base:
+            return ceiling
+        if consecutive_failures - 1 >= math.ceil(math.log2(ceiling / base)):
+            return ceiling
+        return min(
+            self.restart_backoff_max_seconds,
+            self.restart_base_seconds * (2 ** (consecutive_failures - 1)),
+        )
 
     def delay_for(self, attempt_no: int, reason: str) -> float:
         """Capped exponential backoff, so repeated failure slows down instead of hammering."""

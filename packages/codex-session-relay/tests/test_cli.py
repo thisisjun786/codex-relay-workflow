@@ -1,9 +1,12 @@
 """The command surface, driven end to end with no host and no socket."""
 
+import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 from .support import CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, RelayTestCase
@@ -177,6 +180,49 @@ class TerminalProof(CliBase):
         self.assertEqual(self.run_cli("status")["deliveries"], [])
 
 
+class ServiceExitCodes(CliBase):
+    """A refusal that exits zero is read by automation as a success."""
+
+    def test_a_refused_enable_does_not_exit_zero(self):
+        self.run_cli("service", "enable")
+        state = os.path.join(self.tmp, "daemon.json")
+        with open(state, "w", encoding="utf-8") as handle:
+            json.dump({"pid": os.getpid(), "installationId": "someone-else",
+                       "storeId": "another-store", "bootId": None,
+                       "startTicks": None, "workerPid": None}, handle)
+        # No lock is held here, so this must still succeed: a stopped foreign registration
+        # is not a reason to make a state directory unconfigurable.
+        self.assertTrue(self.run_cli("service", "enable")["ok"])
+
+    def test_a_refused_enable_is_a_refusal_the_shell_can_see(self):
+        """Returning the payload directly exits zero, and automation reads that as done."""
+        from unittest import mock
+
+        from codex_session_relay import cli
+
+        class Refusing:
+            def enable(self, *, actor):
+                return {"ok": False, "reason": "not_ours", "intent": {"enabled": False}}
+
+        args = argparse.Namespace(service_command="enable", actor=None)
+        with mock.patch.object(cli, "_service_for", lambda _services: Refusing()):
+            with self.assertRaises(cli.PayloadExit) as caught:
+                cli.cmd_service(object(), args)
+        self.assertEqual(caught.exception.code, cli.EXIT_REFUSED)
+        self.assertEqual(caught.exception.payload["reason"], "not_ours")
+
+    def test_a_refused_disable_does_not_exit_zero(self):
+        self.run_cli("service", "enable")
+        state = os.path.join(self.tmp, "daemon.json")
+        with open(state, "w", encoding="utf-8") as handle:
+            json.dump({"pid": os.getpid(), "installationId": "someone-else",
+                       "storeId": "another-store", "bootId": "irrelevant",
+                       "startTicks": 1, "workerPid": None}, handle)
+        refused = self.run_cli("service", "disable", expect=2)
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["reason"], "not_ours")
+
+
 class SettingsCommands(CliBase):
     """The registration interface JUN-92 populates from Run's creation result."""
 
@@ -233,3 +279,276 @@ class SettingsCommands(CliBase):
         )
         self.assertEqual(refused["reason"], "settings_incomplete")
         self.assertIn("environments", refused["detail"])
+
+
+class Diagnosis(unittest.TestCase):
+    """doctor has to answer ON the host it is describing, including a broken one."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="relay-doctor-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(self.home)
+
+    def cli(self, *args, state=None, socket=None, expect=0, env=None):
+        environment = dict(
+            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=self.home,
+        )
+        environment.pop("CODEX_SESSION_RELAY_STATE", None)
+        environment.pop("XDG_STATE_HOME", None)
+        environment.update(env or {})
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli",
+             *(["--state", state] if state else []),
+             *(["--socket", socket] if socket else []), *args],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(
+            completed.returncode, expect,
+            f"exit {completed.returncode}: {completed.stdout}{completed.stderr}",
+        )
+        return json.loads(completed.stdout)
+
+    def test_doctor_answers_for_a_state_directory_that_does_not_exist_yet(self):
+        absent = os.path.join(self.tmp, "absent")
+        report = self.cli("doctor", state=absent)
+        self.assertEqual(report["stateSelection"]["source"], "flag")
+        self.assertFalse(report["access"]["directoryExists"])
+        self.assertFalse(report["contents"]["available"])
+        # The old doctor built a Store first, which created the directory it was asked about.
+        self.assertFalse(os.path.exists(absent))
+
+    def test_doctor_does_not_turn_an_unrelated_file_into_a_relay_database(self):
+        """The directory existing was not the whole side effect; counting rows was too.
+
+        A readable relay.sqlite3 sent the contents block through a real Store, and
+        Store.__init__ opens O_RDWR, switches on WAL and runs the entire schema script. An
+        empty, legacy or unrelated file was quietly adopted by the command that promised to
+        do nothing but look.
+        """
+        state = os.path.join(self.tmp, "borrowed")
+        os.makedirs(state)
+        target = os.path.join(state, "relay.sqlite3")
+        open(target, "w").close()
+
+        report = self.cli("doctor", state=state)
+
+        self.assertEqual(os.path.getsize(target), 0, "doctor wrote a schema into it")
+        self.assertEqual(
+            sorted(os.listdir(state)), ["relay.sqlite3"], "no WAL or shm sidecar either",
+        )
+        self.assertTrue(report["access"]["dbExists"])
+        self.assertFalse(report["contents"]["available"],
+                         "and it says so rather than inventing counts")
+        self.assertIsNotNone(report["contents"]["detail"])
+
+    def test_doctor_names_the_rule_that_chose_the_directory(self):
+        chosen = os.path.join(self.tmp, "chosen")
+        by_env = self.cli("doctor", env={"CODEX_SESSION_RELAY_STATE": chosen})
+        self.assertEqual(by_env["stateSelection"]["source"], "env")
+        self.assertEqual(by_env["stateSelection"]["path"], chosen)
+        by_flag = self.cli("doctor", state=chosen, env={
+            "CODEX_SESSION_RELAY_STATE": os.path.join(self.tmp, "ignored"),
+        })
+        self.assertEqual(by_flag["stateSelection"]["source"], "flag")
+        self.assertEqual(by_flag["stateSelection"]["path"], chosen)
+
+    def test_a_different_store_is_refused_rather_than_reported_healthy(self):
+        a, b = os.path.join(self.tmp, "a"), os.path.join(self.tmp, "b")
+        mine = self.cli("store-identity", state=a)["store"]
+        theirs = self.cli("store-identity", state=b)["store"]
+        self.assertNotEqual(mine["storeId"], theirs["storeId"])
+        refused = self.cli(
+            "doctor", "--expect-store", mine["storeId"], state=b, expect=2,
+        )
+        self.assertEqual(refused["sameStore"], "mismatch")
+        # The whole diagnosis survives the refusal; it is not replaced by an error envelope.
+        self.assertIn("stateSelection", refused)
+        self.assertIn("access", refused)
+
+    def test_a_nonce_proves_one_store_and_disproves_a_copy(self):
+        a, b = os.path.join(self.tmp, "a"), os.path.join(self.tmp, "b")
+        mine = self.cli("store-identity", state=a)["store"]
+        os.makedirs(b, exist_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            source = os.path.join(a, f"relay.sqlite3{suffix}")
+            if os.path.exists(source):
+                shutil.copy(source, os.path.join(b, f"relay.sqlite3{suffix}"))
+        nonce = self.cli("store-challenge", "--write", "--actor", "parent", state=a)["nonce"]
+        proven = self.cli(
+            "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=a,
+        )
+        self.assertEqual(proven["sameStore"], "proven")
+        copied = self.cli(
+            "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=b,
+            expect=2,
+        )
+        self.assertEqual(copied["sameStore"], "mismatch")
+        # Identifier alone cannot separate them, which is why it is graded unproven.
+        weak = self.cli("doctor", "--expect-store", mine["storeId"], state=b, expect=2)
+        self.assertEqual(weak["sameStore"], "unproven")
+
+    def test_doctor_reports_that_state_and_the_transport_ledger_have_split(self):
+        state = os.path.join(self.tmp, "state")
+        socket = os.path.join(self.tmp, "app.sock")
+        split = self.cli("doctor", state=state, socket=socket)
+        self.assertTrue(split["ledger"]["configured"])
+        # --state moved the store; the adapter resolves its ledger from the environment.
+        self.assertTrue(split["ledger"]["split"])
+        together = self.cli(
+            "doctor", state=state, socket=socket,
+            env={"CODEX_SESSION_RELAY_STATE": state},
+        )
+        self.assertFalse(together["ledger"]["split"])
+
+
+class LazyServices(unittest.TestCase):
+    """Building dependencies on demand must not drop the wiring __init__ used to do."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="relay-lazy-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def services(self):
+        from codex_session_relay.cli import Services
+
+        built = Services(argparse.Namespace(state=self.tmp, socket=None))
+        self.addCleanup(built.close)
+        return built
+
+    def test_the_first_ack_is_already_wired_to_the_outbox(self):
+        built = self.services()
+        # Touching ack FIRST is the regression: record_verdict skips its outbox obligation
+        # when sync is absent, so an unwired ack would lose it silently.
+        self.assertIsNotNone(built.ack.sync)
+        self.assertIs(built.ack.sync, built.sync)
+
+    def test_every_dependency_shares_one_store_and_is_built_once(self):
+        built = self.services()
+        self.assertIs(built.registry.store, built.store)
+        self.assertIs(built.delivery.store, built.store)
+        self.assertIs(built.ack.store, built.store)
+        self.assertIs(built.registry, built.registry)
+        self.assertIs(built.delivery, built.delivery)
+
+    def test_closing_without_ever_using_the_store_creates_nothing(self):
+        from codex_session_relay.cli import Services
+
+        empty = os.path.join(self.tmp, "untouched")
+        built = Services(argparse.Namespace(state=empty, socket=None))
+        built.close()
+        self.assertFalse(os.path.exists(empty))
+
+
+class ContestedSocket(CliBase):
+    """Two stores recording one socket must not quietly become three.
+
+    These runs deliberately pass no --state: the whole question is what the environment alone
+    resolves to, and an explicit directory answers it before discovery ever runs.
+    """
+
+    def contested(self, name):
+        """A home holding two stores that both record one socket."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, name)
+        root = os.path.join(home, ".local", "state", "codex-session-relay")
+        socket = os.path.join(self.tmp, f"{name}.sock")
+        for directory in ("aaaa444444444444", "bbbb444444444444"):
+            os.makedirs(os.path.join(root, directory))
+            Store(Path(root) / directory / "relay.sqlite3", socket_path=socket).close()
+        return home, root, socket
+
+    def run_in_home(self, home, *args, expect=0):
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home)
+        for name in ("CODEX_SESSION_RELAY_STATE", "XDG_STATE_HOME"):
+            environment.pop(name, None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", *args],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(
+            completed.returncode, expect,
+            f"exit {completed.returncode}: {completed.stdout}{completed.stderr}",
+        )
+        return json.loads(completed.stdout)
+
+    def test_an_ordinary_command_refuses_rather_than_creating_a_third_store(self):
+        home, root, socket = self.contested("contested-status")
+
+        refused = self.run_in_home(home, "--socket", socket, "status", expect=2)
+
+        self.assertEqual(refused["reason"], "ambiguous_state_directory")
+        self.assertEqual(len(refused["candidates"]), 2)
+        self.assertFalse(
+            os.path.exists(refused["wouldHaveCreated"]),
+            "the refusal must not leave behind the store it refused to choose",
+        )
+        self.assertEqual(sorted(os.listdir(root)), ["aaaa444444444444", "bbbb444444444444"])
+
+    def test_doctor_still_describes_a_contested_socket(self):
+        home, _root, socket = self.contested("contested-doctor")
+
+        report = self.run_in_home(home, "--socket", socket, "doctor")
+
+        self.assertTrue(report["siblingStores"]["ambiguous"])
+        self.assertEqual(len(report["siblingStores"]["claimingThisSocket"]), 2)
+
+    def test_a_state_directory_recording_another_socket_is_refused(self):
+        """An explicit directory reused with a different App Server.
+
+        Choosing a directory is not choosing what is already in it: the service would claim
+        and serve the new socket while the database went on attributing itself to the old
+        one, so one installation's assignments could be exposed through another and later
+        discovery would still match the store to the socket it no longer serves.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "reused-state")
+        first = os.path.join(self.tmp, "first.sock")
+        second = os.path.join(self.tmp, "second.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=first).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", state,
+             "--socket", second, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+        self.assertEqual(refused["recordedSocket"], first)
+
+    def test_a_store_recording_no_socket_also_refuses_before_creating_one(self):
+        """A store older than provenance cannot be matched to a socket by anything but its
+        directory hash, which cannot be inverted. Reporting it through doctor was not enough,
+        because an ordinary command does not run doctor and creates the store anyway."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "unlabelled-home")
+        root = os.path.join(home, ".local", "state", "codex-session-relay")
+        os.makedirs(os.path.join(root, "0123456789abcdef"))
+        Store(Path(root) / "0123456789abcdef" / "relay.sqlite3").close()
+        socket = os.path.join(self.tmp, "unlabelled.sock")
+
+        refused = self.run_in_home(home, "--socket", socket, "status", expect=2)
+
+        self.assertEqual(refused["reason"], "unidentified_state_directory")
+        self.assertFalse(os.path.exists(refused["wouldHaveCreated"]))
+        self.assertEqual(os.listdir(root), ["0123456789abcdef"], "no store was created")
+
+    def test_an_explicit_state_directory_resolves_the_contest(self):
+        home, root, socket = self.contested("contested-explicit")
+        chosen = os.path.join(root, "aaaa444444444444")
+
+        answer = self.run_in_home(home, "--state", chosen, "--socket", socket, "status")
+
+        self.assertEqual(answer["deliveries"], [])

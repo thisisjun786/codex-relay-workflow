@@ -56,12 +56,18 @@ activate a service on another host or establish that an earlier test process is 
 
 Runtime state lives outside any repository, in
 `$XDG_STATE_HOME/codex-session-relay/<endpoint-hash>/` (mode 0700), holding `relay.sqlite3`,
-`daemon.lock`, `daemon.pid` and `daemon.log`. `CODEX_SESSION_RELAY_STATE` overrides the directory.
+`daemon.lock`, `daemon.pid` and `daemon.log`. Precedence, highest first: `--state`,
+`CODEX_SESSION_RELAY_STATE`, `XDG_STATE_HOME`, then `~/.local/state`.
 
 **Every process must point at the same state directory.** The child emitting, the parent
 acknowledging and the daemon delivering share one store; a mismatched `--state` means they simply do
 not see each other. The endpoint hash is derived from the socket path, so passing the same
 `--socket` is enough.
+
+`doctor` reports which rule won, the database it resolved to and the access this process really
+has. To prove two participants share one store rather than two copies of one, write a nonce with
+`store-challenge --write` and check it from the other side with `doctor --expect-nonce`; an
+identifier alone is copied along with the file. See [docs/operations.md](docs/operations.md).
 
 ## Authorized execution settings
 
@@ -336,3 +342,5 @@ These are recorded because behaviour depends on them.
 
 - `docs/protocol-v1.md` — the wire and record protocol, derived from the frozen contract.
 - `docs/invariants.md` — every invariant and the code that enforces it.
+- `docs/operations.md` — where the state lives, who owns the daemon, and how to read a
+  stuck delivery. Each section says whether the behaviour is implemented or planned.

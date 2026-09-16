@@ -14,7 +14,7 @@ from .errors import DeliveryRefused, RefusalReason
 from .identity import request_id as derive_request_id
 from .lifecycle import UNKNOWN as LIFECYCLE_UNKNOWN, hold_reason_for, observe, record as record_lifecycle
 from .policy import RetryPolicy
-from .scope import check_recipient
+from .scope import assert_assignment_delivery, check_recipient
 from .transport import (
     DEFERRED_BUSY,
     DISPATCHED,
@@ -79,8 +79,14 @@ class DeliveryService:
                 relationship["child"]["taskId"] if kind == REVISION
                 else relationship["parent"]["taskId"]
             )
-        # Refused before any transport call, and re-checked inside attempt().
-        check_recipient(recipient_task_id, relationship["authorizedScope"]["allowedRecipients"])
+        # Refused before any transport call, and re-checked inside attempt(). Checked BEFORE
+        # the idempotent early return, so re-enqueueing cannot smuggle a cross delivery past
+        # a row that already exists.
+        assert_assignment_delivery(
+            relationship, kind=kind, recipient_task_id=recipient_task_id,
+            event_relationship_id=event["relationship_id"],
+            manifest_paths=_manifest_paths(event),
+        )
         existing = self.find(event_id)
         if existing is not None:
             return dict(existing)
@@ -353,7 +359,12 @@ class DeliveryService:
             return None
         if row["next_eligible_at"] is not None and row["next_eligible_at"] > now:
             return None
-        check_recipient(recipient, relationship["authorizedScope"]["allowedRecipients"])
+        assert_assignment_delivery(
+            relationship, kind=row["kind"], recipient_task_id=recipient,
+            recipient_thread_id=row["recipient_thread_id"],
+            event_relationship_id=row["relationship_id"],
+            manifest_paths=_manifest_paths(self.intake.row(event_id)),
+        )
         if self._rate_limited(recipient, now):
             self._reschedule(
                 event_id, row["state"], now + self.policy.min_send_interval_seconds,
@@ -751,3 +762,19 @@ def _status_for_record(observation) -> str:
 
 class _NotClaimable(Exception):
     pass
+
+
+def _manifest_paths(event_row):
+    """The declared paths a receipt carries, or none. The manifest lives inside the receipt
+    JSON rather than in a column of its own."""
+    if event_row is None:
+        return ()
+    try:
+        receipt = json.loads(event_row["receipt"])
+    except (TypeError, ValueError, IndexError, KeyError):
+        return ()
+    entries = receipt.get("manifest") or ()
+    return tuple(
+        entry["path"] for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    )

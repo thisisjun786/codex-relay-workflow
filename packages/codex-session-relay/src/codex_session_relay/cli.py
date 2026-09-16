@@ -28,19 +28,26 @@ from .receipts import ReceiptIntake, contract_record
 from .reconcile import Reconciler
 from .registry import Registry, contract_record as relationship_record, record_settings
 from .settings import REQUIRED as REQUIRED_SETTINGS
-from .store import Store, state_dir
+from .store import (
+    Store, canonical_socket, compare_store, nonce_lookup, probe, resolve_state_dir,
+    state_dir, store_socket,
+)
 from .sync import SyncOutbox, render_progress_summary
 
 EXIT_OK, EXIT_REFUSED, EXIT_HOST, EXIT_USAGE = 0, 2, 3, 4
 
 # Which commands need to reach the App Server, and which do not. Reported by doctor, because a
 # caller should learn this from one command instead of from a failure halfway through.
-HOST_REQUIRED_COMMANDS = ("daemon", "deliver", "reconcile", "recover", "verify-acks")
+HOST_REQUIRED_COMMANDS = (
+    "daemon", "deliver", "reconcile", "recover", "service run", "service start",
+    "service restart", "verify-acks",
+)
 OFFLINE_COMMANDS = (
     "ack", "ack-proof", "admit-turn", "assignment-show", "claim", "criteria-register",
     "criteria-show", "doctor", "emit", "generation-bind", "generation-open", "register",
     "relationship-resume", "relationship-status", "revision-head", "settings-record",
-    "settings-show", "show", "status", "verdict",
+    "settings-show", "show", "status", "store-challenge", "store-identity", "verdict",
+    "service status", "service enable", "service disable", "service stop",
 )
 
 
@@ -55,30 +62,108 @@ class _LazyAdapter:
 
 
 class Services:
+    """Everything a command might need, built only when the command actually needs it.
+
+    Nothing is constructed here on purpose. doctor exists to describe a host where the store
+    cannot be opened, and a Store built during construction opens the file O_RDWR, switches on
+    WAL and runs the schema script - so it would raise before doctor could report why. Each
+    dependency is cached after first use, so laziness never means two stores in one process.
+    """
+
     def __init__(self, args):
-        directory = Path(args.state) if args.state else state_dir(args.socket)
-        self.store = Store(directory / "relay.sqlite3")
+        self.selection = resolve_state_dir(getattr(args, "state", None), args.socket)
         self.clock = SystemClock()
         self.socket_path = args.socket
         self.adapter_requested = bool(args.socket)
+        self._store = None
         self._adapter = None
-        self.criteria = CriteriaService(self.store, self.clock)
-        self.registry = Registry(self.store, self.clock)
-        self.intake = ReceiptIntake(
-            self.store, self.registry, self.clock,
-            admission=AnchorOrExplicit(_LazyAdapter(self) if self.adapter_requested else None),
-        )
-        self.delivery = DeliveryService(self.store, self.registry, self.intake, self.clock)
-        self.ack = AckService(
-            self.store, self.registry, self.intake, self.delivery, self.clock,
-            criteria=self.criteria,
-        )
-        self.reconciler = Reconciler(self.store, self.registry, self.delivery, self.clock)
-        self.sync = SyncOutbox(self.store, self.clock)
-        self.ack.sync = self.sync
-        self.assignments = AssignmentView(
-            self.store, self.registry, self.clock, criteria=self.criteria
-        )
+        self._criteria = None
+        self._registry = None
+        self._intake = None
+        self._delivery = None
+        self._ack = None
+        self._reconciler = None
+        self._sync = None
+        self._assignments = None
+
+    @property
+    def state_directory(self):
+        return self.selection.path
+
+    @property
+    def store(self):
+        if self._store is None:
+            # The socket travels with the store so a later invocation can find it by socket
+            # rather than by the hash of the spelling that happened to create it.
+            self._store = Store(self.selection.db_path, socket_path=self.socket_path)
+        return self._store
+
+    @property
+    def criteria(self):
+        if self._criteria is None:
+            self._criteria = CriteriaService(self.store, self.clock)
+        return self._criteria
+
+    @property
+    def registry(self):
+        if self._registry is None:
+            self._registry = Registry(self.store, self.clock)
+        return self._registry
+
+    @property
+    def intake(self):
+        if self._intake is None:
+            self._intake = ReceiptIntake(
+                self.store, self.registry, self.clock,
+                admission=AnchorOrExplicit(
+                    _LazyAdapter(self) if self.adapter_requested else None
+                ),
+            )
+        return self._intake
+
+    @property
+    def delivery(self):
+        if self._delivery is None:
+            self._delivery = DeliveryService(
+                self.store, self.registry, self.intake, self.clock
+            )
+        return self._delivery
+
+    @property
+    def ack(self):
+        if self._ack is None:
+            service = AckService(
+                self.store, self.registry, self.intake, self.delivery, self.clock,
+                criteria=self.criteria,
+            )
+            # Wired BEFORE the service is published. record_verdict skips its outbox
+            # obligation when sync is absent, so an ack handed out unwired would drop the
+            # obligation silently rather than fail.
+            service.sync = self.sync
+            self._ack = service
+        return self._ack
+
+    @property
+    def reconciler(self):
+        if self._reconciler is None:
+            self._reconciler = Reconciler(
+                self.store, self.registry, self.delivery, self.clock
+            )
+        return self._reconciler
+
+    @property
+    def sync(self):
+        if self._sync is None:
+            self._sync = SyncOutbox(self.store, self.clock)
+        return self._sync
+
+    @property
+    def assignments(self):
+        if self._assignments is None:
+            self._assignments = AssignmentView(
+                self.store, self.registry, self.clock, criteria=self.criteria
+            )
+        return self._assignments
 
     @property
     def adapter(self):
@@ -107,7 +192,11 @@ class Services:
             except Exception:
                 pass
             self._adapter = None
-        self.store.close()
+        # Only a store that was actually built is closed. Reading the property here would
+        # construct one during teardown, on the very host where constructing it fails.
+        if self._store is not None:
+            self._store.close()
+            self._store = None
 
 
 def _require_adapter(services):
@@ -118,6 +207,20 @@ def _require_adapter(services):
 class SystemExit2(Exception):
     def __init__(self, message, code):
         super().__init__(message)
+        self.code = code
+
+
+class PayloadExit(Exception):
+    """A completed answer that is still a refusal.
+
+    doctor has to print its whole diagnosis AND exit non-zero when it cannot prove two
+    participants share a store. A plain refusal would throw the diagnosis away, and a plain
+    return would let exit 0 be read as yes.
+    """
+
+    def __init__(self, payload, code):
+        super().__init__(payload.get("detail", "refused"))
+        self.payload = payload
         self.code = code
 
 
@@ -591,40 +694,349 @@ def _scheduler_wait(clock, deadline, sleeper=None):
 
 def cmd_daemon(services, args) -> dict:
     _require_adapter(services)
-    from .daemon import RelayDaemon, SingleInstance
-
-    directory = Path(args.state) if args.state else state_dir(args.socket)
-    daemon = RelayDaemon(
-        services.store, services.registry, services.intake, services.delivery, services.ack,
-        services.reconciler, services.adapter, clock=services.clock,
-    )
-    deadline = services.clock.now() + args.deadline if args.deadline else None
-    with SingleInstance(directory):
-        reports = daemon.run(
-            max_ticks=args.max_ticks, deadline=deadline,
-            sleep=_scheduler_wait(services.clock, deadline),
-        )
-    return {"ticks": [report.as_dict() for report in reports]}
+    # A bounded daemon run is an explicit operator action, so it does NOT require the managed
+    # service's enable intent - but it does take the same scope claim, or two standalone runs
+    # with different state directories could serve one App Server and never see each other.
+    return _run_bounded(services, _service_for(services), args, require_intent=False)
 
 
-def cmd_doctor(services, args) -> dict:
-    import os
+def cmd_store_identity(services, args) -> dict:
+    """One line each participant can emit, for a comparison to consume."""
+    return {"stateSelection": services.selection.to_record(), "store": services.store.locate()}
 
+
+def cmd_store_challenge(services, args) -> dict:
+    """Write a nonce here, or look for one another participant wrote.
+
+    This is the only evidence that survives a copied database: the identifier inside a copy is
+    identical, but a value written AFTER the copy exists in exactly one of the two files.
+    """
+    if args.write:
+        return services.store.write_challenge(actor=args.actor or "cli")
+    if not args.read:
+        raise SystemExit2("store-challenge needs --write or --read <nonce>", EXIT_USAGE)
+    return services.store.read_challenge(args.read)
+
+
+def _ledger_location(services) -> dict:
+    """Where the transport ledger will actually live, which --state does not move.
+
+    bridge_adapter._build resolves it with state_dir(socket_path), reading the environment
+    only, so a run that overrides --state alone splits the relay store from the ledger that
+    carries send idempotency. Mirrors codex_thread_bridge.ledger.open_endpoint_ledger, which
+    cannot be called here because opening it is a side effect.
+    """
+    import hashlib
+
+    if not services.socket_path:
+        return {"configured": False, "directory": None, "path": None, "split": False}
+    directory = Path(state_dir(services.socket_path)).expanduser()
+    canonical = Path(services.socket_path).expanduser().absolute().resolve()
+    endpoint = hashlib.sha256(str(canonical).encode()).hexdigest()[:16]
+    split = directory.resolve() != services.selection.path.resolve()
     return {
-        "stateDirectory": str(services.store.path.parent),
-        "procAvailable": os.path.isdir("/proc/self/fd"),
-        "adapter": "bridge" if services.adapter_requested else "none (read-only, no --socket)",
-        "relationships": services.store.one(
-            "SELECT COUNT(*) AS c FROM relationships"
-        )["c"],
-        "openAttempts": len(Reconciler(
-            services.store, services.registry, services.delivery, services.clock
-        ).open_attempts()),
-        "actorReachability": _reachability(services),
+        "configured": True, "directory": str(directory),
+        "path": str(directory / f"operations-{endpoint}.sqlite3"), "split": split,
     }
 
 
-def _reachability(services) -> dict:
+def _contents(services, report) -> dict:
+    """Counts, but only when the store can actually be opened for them."""
+    from .store import read_only_rows
+
+    if not report["access"]["dbReadable"]:
+        return {"available": False, "relationships": None, "openAttempts": None,
+                "detail": "the database is not readable from this process"}
+    # Read through the probe's own read-only connection. services.store would construct a
+    # Store, and Store.__init__ opens O_RDWR, switches on WAL and runs the whole schema
+    # script - so asking doctor to COUNT rows in an empty, legacy or unrelated readable
+    # relay.sqlite3 quietly turned it into a relay database. Diagnosis writes nothing.
+    counted = read_only_rows(
+        services.selection,
+        "SELECT (SELECT COUNT(*) FROM relationships) AS relationships,"
+        "       (SELECT COUNT(*) FROM attempts a"
+        "          JOIN deliveries d ON d.event_id = a.event_id"
+        "         WHERE a.internal_state = 'in_flight'"
+        "            OR (a.state = 'held_uncertain'"
+        "                AND d.state IN ('held_uncertain','sending'))) AS open_attempts",
+    )
+    if not counted["readable"] or counted["detail"] or not counted["rows"]:
+        return {"available": False, "relationships": None, "openAttempts": None,
+                "detail": counted["detail"] or "the store could not be read"}
+    relationships = counted["rows"][0]["relationships"]
+    open_attempts = counted["rows"][0]["open_attempts"]
+    return {"available": True, "relationships": relationships,
+            "openAttempts": open_attempts, "detail": None}
+
+
+def _sibling_stores(services) -> dict:
+    """Other stores beside this one that never recorded which socket they serve.
+
+    A store is matched to a socket by provenance it records for itself. One created before
+    that existed can only be matched by its directory hash, so if this command is about to
+    create a fresh canonical database next to such a store, it may be hiding real data. That
+    is reported rather than resolved: adopting on a guess is how the wrong store gets served.
+    """
+    from .store import stores_without_provenance
+
+    root = services.selection.path.parent
+    if services.selection.source in ("flag", "env"):
+        # An explicit directory was chosen by a caller who already decided which participants
+        # share it, so its neighbours are not candidates for anything.
+        return {"checked": False, "reason": "the state directory was chosen explicitly",
+                "withoutProvenance": []}
+    without = stores_without_provenance(root, skip=services.selection.path.name)
+    from .store import stores_claiming_socket
+
+    # More than one store recording this socket is an ambiguity discovery refuses to resolve,
+    # so it has to be visible here or a caller just gets a surprisingly empty database.
+    claiming = stores_claiming_socket(
+        root, services.socket_path, skip=services.selection.path.name,
+    )
+    return {"checked": True, "reason": None, "withoutProvenance": without,
+            "claimingThisSocket": claiming,
+            "ambiguous": len(claiming) > 1}
+
+
+def cmd_doctor(services, args) -> dict:
+    """What THIS process can actually do here, measured rather than assumed.
+
+    Constructs no Store: probe() answers from stat, a read-only connection and a rolled-back
+    write transaction, so a missing, unreadable or read-only state directory is an answer
+    instead of the failure that would otherwise replace it.
+    """
+    import os
+
+    report = probe(services.selection)
+    report["procAvailable"] = os.path.isdir("/proc/self/fd")
+    report["adapter"] = (
+        "bridge" if services.adapter_requested else "none (read-only, no --socket)"
+    )
+    report["ledger"] = _ledger_location(services)
+    report["actorReachability"] = _reachability(services, report)
+    report["contents"] = _contents(services, report)
+    report["siblingStores"] = _sibling_stores(services)
+
+    nonce = nonce_lookup(services.selection, args.expect_nonce) if args.expect_nonce else None
+    report["nonce"] = nonce
+    comparison = compare_store(
+        report["store"], expect_store=args.expect_store, expect_inode=args.expect_inode,
+        nonce=nonce,
+    )
+    asked = any((args.expect_store, args.expect_inode, args.expect_nonce))
+    report.update(comparison)
+    if asked and comparison["sameStore"] != "proven":
+        # A caller that asked whether this is the same store and got no proof must not read
+        # exit 0 as yes. Unproven is refused for the same reason a mismatch is: the criterion
+        # is that a different database is never reported as healthy.
+        raise PayloadExit(report, EXIT_REFUSED)
+    return report
+
+
+def _service_for(services):
+    """Built from the probe, so status stays an offline command that constructs no Store."""
+    from .service import RelayService
+
+    return RelayService(
+        services.selection, socket_path=services.socket_path,
+        store_id=probe(services.selection)["store"]["storeId"],
+    )
+
+
+def _refuse_unless_ok(payload: dict) -> dict:
+    if payload.get("ok"):
+        return payload
+    raise PayloadExit(payload, EXIT_REFUSED)
+
+
+def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
+    """Hold ownership for exactly as long as this process serves, then let it go.
+
+    The daemon is constructed INSIDE the claim so a run that loses the race never opens a
+    transport connection it is about to abandon.
+    """
+    from .daemon import RelayDaemon
+    from .service import ServiceRefused, owned_service
+
+    deadline = services.clock.now() + args.deadline if args.deadline else None
+    allow_isolated = getattr(args, "allow_isolated_scope", False)
+    # Before the claim, for the same reason _supervise does it: the probe that built this
+    # service answers from a file that may not exist yet, and a scope registration recorded
+    # with a null store id can later be overwritten by a different store.
+    service.store_id = services.store.identity
+    adopted = _adopt_supervised(service, args)
+    try:
+        with owned_service(
+            service, allow_isolated=allow_isolated, require_intent=require_intent,
+            adopt_lock_fd=adopted.get("lockFd"), adopt_scope_fd=adopted.get("scopeFd"),
+        ) as record:
+            daemon = RelayDaemon(
+                services.store, services.registry, services.intake, services.delivery,
+                services.ack, services.reconciler, services.adapter, clock=services.clock,
+            )
+            reports = daemon.run(
+                max_ticks=args.max_ticks, deadline=deadline,
+                sleep=_scheduler_wait(services.clock, deadline),
+            )
+    except ServiceRefused as refusal:
+        raise PayloadExit(
+            {"ok": False, "reason": refusal.reason, "detail": refusal.detail}, EXIT_REFUSED,
+        ) from refusal
+    return {"ok": True, "reason": None, "pid": record["pid"],
+            "ticks": [report.as_dict() for report in reports]}
+
+
+def _adopt_supervised(service, args) -> dict:
+    """Validate a supervised invocation, or refuse it. Never fall back to an unlocked run.
+
+    An fstat match proves the descriptor points at the right FILE, not that it shares the
+    supervisor's open file description - an independently opened descriptor for the same path
+    passes it. The token recorded in daemon.json and the recorded-parent check are what
+    actually establish that this process was launched by that supervisor.
+    """
+    from .service import DAEMON_LOCK, arm_parent_death_signal
+
+    import os
+
+    token = getattr(args, "supervised_token", None)
+    lock_fd = getattr(args, "supervised_lock_fd", None)
+    scope_fd = getattr(args, "supervised_scope_fd", None)
+    supplied = [value for value in (token, lock_fd, scope_fd) if value is not None]
+    if not supplied:
+        return {}
+
+    def refuse(reason, detail):
+        raise PayloadExit(
+            {"ok": False, "reason": reason, "detail": detail}, EXIT_REFUSED,
+        )
+
+    if token is None or lock_fd is None or scope_fd is None:
+        refuse("supervised_invocation_incomplete",
+               "a supervised worker needs the token and both descriptors together")
+    record = service.record() or {}
+    if not record.get("token") or record["token"] != token:
+        refuse("supervised_token_mismatch", "the token does not match this state directory")
+    if record.get("stateDir") not in (None, str(service.selection.path)):
+        refuse("supervised_state_mismatch", "the record names a different state directory")
+    if record.get("socketPath") not in (None, service.socket_path):
+        refuse("supervised_socket_mismatch", "the record names a different operating scope")
+    # The supervisor recorded which store it registered the scope for. This worker opened
+    # whatever relay.sqlite3 the path resolves to NOW, and a database deleted or atomically
+    # replaced between segments is a different one - so without this the worker would serve an
+    # empty or unrelated store while the supervisor and the scope registration still name the
+    # original, and every participant comparing identities would be told they agree.
+    if record.get("storeId") not in (None, service.store_id):
+        refuse("supervised_store_mismatch",
+               "the record names a different store than this worker opened")
+    try:
+        want = os.stat(service.selection.path / DAEMON_LOCK)
+        got = os.fstat(lock_fd)
+    except OSError as error:
+        refuse("supervised_fd_unreadable", f"{type(error).__name__}: {error}")
+    if (got.st_dev, got.st_ino) != (want.st_dev, want.st_ino):
+        refuse("supervised_fd_mismatch", "the inherited descriptor is not this daemon lock")
+    death = arm_parent_death_signal(record.get("pid") or -1)
+    if death["orphaned"]:
+        refuse("supervisor_already_gone",
+               f"parent is {death['parent']}, not the recorded supervisor {record.get('pid')}")
+    if not death["armed"]:
+        # Recorded rather than refused. The getppid check above closes the window that
+        # matters here - a supervisor that is ALREADY gone - and refusing outright would make
+        # the relay unusable on any host without prctl. What is lost is the later case: if
+        # the supervisor crashes mid-segment the kernel will not signal this worker, so it
+        # runs to the end of its bounded segment holding the inherited locks. Bounded, but
+        # real, and an operator can see it in the record instead of assuming it is armed.
+        # Appended to the log rather than written into daemon.json: the supervisor owns that
+        # record and rewrites it at every worker boundary, so a whole-document write from the
+        # worker would race it and could erase the workerPid a stop needs.
+        service.store_journal_note(
+            f"worker {os.getpid()} could not arm PR_SET_PDEATHSIG"
+            f" ({death.get('detail') or 'no detail'}); if the supervisor crashes this worker"
+            " runs to the end of its segment holding the inherited locks"
+        )
+    return {"lockFd": lock_fd, "scopeFd": scope_fd if scope_fd >= 0 else None,
+            "parentDeathSignal": "armed" if death["armed"] else "unarmed"}
+
+
+def cmd_service(services, args) -> dict:
+    service = _service_for(services)
+    action = args.service_command
+    if action == "status":
+        return service.status()
+    if action == "enable":
+        # Through the same refusal path as every other mutating service command: returning
+        # the payload directly exits zero, and automation would read a refused enable that
+        # deliberately changed nothing as a success.
+        return _refuse_unless_ok(service.enable(actor=args.actor or "cli"))
+    if action == "disable":
+        return _refuse_unless_ok(service.disable(actor=args.actor or "cli"))
+    if action == "stop":
+        return _refuse_unless_ok(service.stop(actor=args.actor or "cli"))
+    if action in ("start", "restart"):
+        _require_adapter(services)
+        call = service.start if action == "start" else service.restart
+        return _refuse_unless_ok(call(
+            allow_isolated=args.allow_isolated_scope, deadline=args.deadline,
+            segment_seconds=args.segment_seconds, max_segments=args.max_segments,
+            actor=args.actor or "cli", takeover=getattr(args, "takeover_scope", False),
+        ))
+    if action == "run":
+        _require_adapter(services)
+        return _supervise(services, service, args)
+    raise SystemExit2(f"unknown service action {action!r}", EXIT_USAGE)
+
+
+def _supervise(services, service, args) -> dict:
+    """The supervisor: it holds the locks and replaces bounded workers."""
+    from .service import ServiceRefused
+
+    service.launch_id = getattr(args, "launch_id", None)
+    # This process is the one that claims the scope, so the flag has to be honoured here and
+    # not only in the parent that decided to pass it.
+    service.takeover = getattr(args, "takeover_scope", False)
+    # The probe that built this service answers from a file that may not exist yet, so on a
+    # fresh state directory it reports no store id at all. Opening the store HERE is not the
+    # side effect doctor and status refuse: a supervisor is about to use it either way. It
+    # matters because the scope registration is written next, and ScopeRegistry's mismatch
+    # guard needs both ids to be present - a registration recorded with a null id could be
+    # overwritten later by a different store, losing the evidence two stores served one socket.
+    service.store_id = services.store.identity
+
+    def recover():
+        # Establish what happened to anything in flight BEFORE a worker can send. Recovery
+        # itself sends nothing; it only decides what the evidence supports.
+        services.reconciler.recover_on_start(services.adapter)
+        _release_expired_leases(services)
+
+    try:
+        return service.supervise(
+            allow_isolated=args.allow_isolated_scope, segment_seconds=args.segment_seconds,
+            max_segments=args.max_segments, deadline=args.deadline, on_start=recover,
+        )
+    except ServiceRefused as refusal:
+        raise PayloadExit(
+            {"ok": False, "reason": refusal.reason, "detail": refusal.detail}, EXIT_REFUSED,
+        ) from refusal
+
+
+def _release_expired_leases(services) -> None:
+    """An expired lease returns the attempt to reconciliation, never to the send queue.
+
+    A sending row whose lease ran out may already have reached the recipient, so putting it
+    back to queued would make it eligible to send again on no evidence at all. held_uncertain
+    is where the reconciler can judge it (I-78).
+    """
+    now = services.clock.now()
+    with services.store.transaction() as db:
+        db.execute(
+            "UPDATE deliveries SET state = 'held_uncertain', lease_owner = NULL,"
+            " lease_until = NULL, updated_at = ?"
+            " WHERE state = 'sending' AND lease_until IS NOT NULL AND lease_until <= ?",
+            (services.clock.iso(), now),
+        )
+
+
+def _reachability(services, report) -> dict:
     """What THIS process can actually do here, measured rather than assumed.
 
     A workspace-write task cannot write the default state directory and cannot connect to the
@@ -634,15 +1046,10 @@ def _reachability(services) -> dict:
     thread, which is why doctor can answer even where the bridge itself could not load.
     """
     import socket
-    import tempfile
 
-    directory = services.store.path.parent
-    writable, detail = True, None
-    try:
-        with tempfile.NamedTemporaryFile(dir=directory, prefix=".reach-"):
-            pass
-    except OSError as error:
-        writable, detail = False, f"{type(error).__name__}: {error}"
+    # Reuses the probe's measurement rather than repeating it, so one command cannot report
+    # two different answers about the same directory.
+    access = report["access"]
 
     connect = "not configured"
     if services.socket_path:
@@ -657,8 +1064,8 @@ def _reachability(services) -> dict:
             probe.close()
 
     return {
-        "stateDirectoryWritable": writable,
-        "stateDirectoryDetail": detail,
+        "stateDirectoryWritable": access["directoryWritable"],
+        "stateDirectoryDetail": access["detail"],
         "socketConfigured": bool(services.socket_path),
         "socketConnect": connect,
         "offlineCommands": list(OFFLINE_COMMANDS),
@@ -924,10 +1331,129 @@ def build_parser() -> argparse.ArgumentParser:
     daemon = subparsers.add_parser("daemon")
     daemon.add_argument("--max-ticks", type=int)
     daemon.add_argument("--deadline", type=float)
+    daemon.add_argument("--allow-isolated-scope", action="store_true")
+    daemon.add_argument("--supervised-token")
+    daemon.add_argument("--supervised-lock-fd", type=int)
+    daemon.add_argument("--supervised-scope-fd", type=int)
     daemon.set_defaults(handler=cmd_daemon)
 
-    subparsers.add_parser("doctor").set_defaults(handler=cmd_doctor)
+    service = subparsers.add_parser("service")
+    actions = service.add_subparsers(dest="service_command", required=True)
+    for name in ("status", "enable", "disable", "stop"):
+        offline = actions.add_parser(name)
+        offline.add_argument("--actor")
+    for name in ("start", "restart", "run"):
+        hosted = actions.add_parser(name)
+        hosted.add_argument("--actor")
+        hosted.add_argument("--allow-isolated-scope", action="store_true")
+        # The WORKER's bound. The supervisor replaces workers; it is not itself bounded by
+        # this, or the service would end after a single segment.
+        hosted.add_argument("--segment-seconds", type=float)
+        # The supervisor's own optional bounds, for a test or a deliberately finite run.
+        hosted.add_argument("--max-segments", type=int)
+        hosted.add_argument("--deadline", type=float)
+        hosted.add_argument("--launch-id")
+        # For a registration whose store no longer exists - deleted, lost or deliberately
+        # replaced. Refused while anything is live on the scope, so this can only ever
+        # replace a registration nothing is running behind.
+        hosted.add_argument(
+            "--takeover-scope", action="store_true",
+            help="replace a stopped registration that names a store this one is not",
+        )
+    service.set_defaults(handler=cmd_service)
+
+    doctor = subparsers.add_parser("doctor")
+    doctor.add_argument("--expect-store", help="the store id another participant reported")
+    doctor.add_argument("--expect-inode", help="the device:inode another participant reported")
+    doctor.add_argument("--expect-nonce", help="a nonce another participant wrote here")
+    doctor.set_defaults(handler=cmd_doctor)
+
+    subparsers.add_parser("store-identity").set_defaults(handler=cmd_store_identity)
+
+    challenge = subparsers.add_parser("store-challenge")
+    challenge.add_argument("--write", action="store_true")
+    challenge.add_argument("--read")
+    challenge.add_argument("--actor")
+    challenge.set_defaults(handler=cmd_store_challenge)
     return parser
+
+
+def _refuse_ambiguous_state(services, args) -> None:
+    """Two stores already record this socket, so opening one of them would be a guess.
+
+    Falling through to the canonical directory is not the neutral outcome it looks like. The
+    first command that writes there creates a THIRD empty database, and once that exists it
+    wins every later resolution and hides the assignments and pending deliveries in both of
+    the others. Refusing costs one command; the third store costs the state.
+
+    The same refusal covers a store that records NO socket. Its directory hash cannot be
+    inverted, so if it is this socket's - created from a spelling we cannot reconstruct - then
+    creating a canonical database beside it hides it just as permanently. That case fires only
+    when a store would be created; an existing canonical store has already settled it.
+
+    doctor and ack-proof are exempt for opposite reasons. doctor is how an operator finds out
+    which store to pass to --state, so refusing it would remove the only way out. ack-proof is
+    a derivation over its own two arguments that opens no store at all.
+
+    An explicit --state or environment override never arrives here: both return from
+    resolve_state_dir before any discovery runs, because a caller who named a directory has
+    already decided which participants share it.
+
+    This guard is on the command line rather than on Services.store. A library caller that
+    builds Services itself bypasses it; every in-process caller in this package passes an
+    explicit directory, and raising from a property would turn a diagnostic into a crash.
+    """
+    selection = services.selection
+    # A store records the socket it serves, and the first recording wins so nothing rewrites
+    # it silently. But an explicit --state or CODEX_SESSION_RELAY_STATE reused with a
+    # DIFFERENT App Server is a real disagreement: the service would claim and serve the new
+    # socket while the database goes on attributing itself to the old one, so assignments from
+    # one App Server can be exposed through another and later discovery still matches the
+    # store to the socket it no longer serves. Explicit selections reach this even though they
+    # carry no discovery, because choosing a directory is not choosing what is already in it.
+    if services.socket_path and selection.db_path.exists():
+        recorded = store_socket(selection.db_path)
+        wanted = canonical_socket(services.socket_path)
+        if recorded is not None and recorded != wanted and (
+            getattr(args, "handler", None) not in (cmd_doctor, cmd_ack_proof)
+        ):
+            raise PayloadExit({
+                "error": "refused",
+                "reason": "state_directory_serves_another_socket",
+                "detail": (
+                    "this store records a different App Server socket; serving the requested"
+                    " one from it would expose one installation's assignments through another"
+                ),
+                "recordedSocket": recorded,
+                "requestedSocket": wanted,
+                "stateDirectory": str(selection.path),
+            }, EXIT_REFUSED)
+    if not (selection.ambiguous or selection.unidentified):
+        return
+    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof):
+        return
+    contested = bool(selection.ambiguous)
+    raise PayloadExit({
+        "error": "refused",
+        "reason": ("ambiguous_state_directory" if contested
+                   else "unidentified_state_directory"),
+        "detail": (
+            "more than one store already records this socket, and creating a new one here"
+            " would hide them both"
+        ) if contested else (
+            "a store here records no socket, so it cannot be ruled out as this one's;"
+            " creating a new store beside it would hide it permanently"
+        ),
+        "socketPath": services.socket_path,
+        "candidates": list(selection.ambiguous or selection.unidentified),
+        "wouldHaveCreated": str(selection.db_path),
+        "recover": [
+            "doctor lists the candidates",
+            "--state <candidate> doctor identifies the store",
+            "--state <candidate> service status shows which assignments it carries",
+            "--state <the directory above> once, to adopt it deliberately",
+        ],
+    }, EXIT_REFUSED)
 
 
 def main(argv=None) -> int:
@@ -936,6 +1462,7 @@ def main(argv=None) -> int:
     services = None
     try:
         services = Services(args)
+        _refuse_ambiguous_state(services, args)
         payload = args.handler(services, args)
         print(json.dumps(payload, indent=2, default=str))
         return EXIT_OK
@@ -948,6 +1475,9 @@ def main(argv=None) -> int:
         return EXIT_REFUSED
     except SystemExit2 as error:
         print(json.dumps({"error": "usage", "detail": str(error)}, indent=2))
+        return error.code
+    except PayloadExit as error:
+        print(json.dumps(error.payload, indent=2, default=str))
         return error.code
     except Exception as error:
         print(json.dumps({

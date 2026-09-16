@@ -3,7 +3,14 @@
 import os
 import unittest
 
-from codex_session_relay.store import SCHEMA_VERSION, Store, state_dir
+import shutil
+import tempfile
+from pathlib import Path
+from unittest import mock
+
+from codex_session_relay.store import (
+    SCHEMA_VERSION, Store, compare_store, nonce_lookup, probe, resolve_state_dir, state_dir,
+)
 
 from .support import RelayTestCase
 
@@ -103,6 +110,453 @@ class StateDirectory(unittest.TestCase):
         second = state_dir("/run/two.sock")
         self.assertNotEqual(first, second)
         self.assertIn("codex-session-relay", str(first))
+
+
+class Precedence(unittest.TestCase):
+    """Four rules can choose the directory, and a participant has to be able to say which one."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="relay-precedence-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # Never read the real home or the real XDG state during a test.
+        self.home = os.path.join(self.tmp, "home")
+        os.makedirs(self.home)
+        patch = mock.patch.dict(os.environ, {"HOME": self.home}, clear=False)
+        patch.start()
+        self.addCleanup(patch.stop)
+        for name in ("CODEX_SESSION_RELAY_STATE", "XDG_STATE_HOME"):
+            os.environ.pop(name, None)
+
+    def test_each_rule_wins_in_order_and_says_so(self):
+        home = resolve_state_dir(None, "/run/x.sock")
+        self.assertEqual(home.source, "home")
+        self.assertTrue(str(home.path).startswith(self.home))
+
+        os.environ["XDG_STATE_HOME"] = os.path.join(self.tmp, "xdg")
+        xdg = resolve_state_dir(None, "/run/x.sock")
+        self.assertEqual(xdg.source, "xdg")
+        self.assertIn("XDG_STATE_HOME=", xdg.detail)
+        self.assertEqual(xdg.socket_scope, home.socket_scope)
+
+        os.environ["CODEX_SESSION_RELAY_STATE"] = os.path.join(self.tmp, "env")
+        env = resolve_state_dir(None, "/run/x.sock")
+        self.assertEqual(env.source, "env")
+        self.assertIn("CODEX_SESSION_RELAY_STATE=", env.detail)
+
+        flag = resolve_state_dir(os.path.join(self.tmp, "flag"), "/run/x.sock")
+        self.assertEqual(flag.source, "flag")
+        self.assertIn("--state ", flag.detail)
+        self.assertEqual(flag.db_path.name, "relay.sqlite3")
+
+    def test_a_relative_flag_resolves_to_the_same_store_as_its_absolute_form(self):
+        target = os.path.join(self.tmp, "rel")
+        os.makedirs(target)
+        Store(Path(target) / "relay.sqlite3").close()
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            relative = probe(resolve_state_dir("rel"))
+        finally:
+            os.chdir(here)
+        absolute = probe(resolve_state_dir(target))
+        self.assertEqual(relative["store"]["storeId"], absolute["store"]["storeId"])
+        self.assertEqual(relative["store"]["inode"], absolute["store"]["inode"])
+
+    def test_a_store_already_in_use_keeps_its_directory_after_the_hash_changed(self):
+        """Canonicalising the socket moved this hash, which is an upgrade hazard.
+
+        A relative or symlinked socket that had been running would otherwise open a fresh
+        empty database while its assignments, generations and pending deliveries sat in the
+        old directory, invisible.
+        """
+        from codex_session_relay.store import legacy_socket_scope, socket_scope
+
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            relative = os.path.join("run", "app-server.sock")
+            os.makedirs(os.path.join(self.tmp, "run"), exist_ok=True)
+            open(os.path.join(self.tmp, "run", "app-server.sock"), "w").close()
+            legacy = os.path.join(
+                self.home, ".local", "state", "codex-session-relay",
+                legacy_socket_scope(relative),
+            )
+            os.makedirs(legacy)
+            Store(Path(legacy) / "relay.sqlite3").close()
+
+            chosen = resolve_state_dir(None, relative)
+
+            self.assertEqual(str(chosen.path), legacy,
+                             "the store already in use keeps its directory")
+            self.assertIn("already using", chosen.detail)
+
+            # An empty canonical DIRECTORY is not a canonical store. Any command that writes
+            # beside the database creates one - a stop request is enough - and testing for
+            # the directory let that hide the legacy store behind an empty folder.
+            os.makedirs(
+                os.path.join(self.home, ".local", "state", "codex-session-relay",
+                             socket_scope(relative)),
+                exist_ok=True,
+            )
+            self.assertEqual(
+                str(resolve_state_dir(None, relative).path), legacy,
+                "an empty canonical directory must not hide a real store",
+            )
+        finally:
+            os.chdir(here)
+
+    def test_a_store_is_found_by_the_socket_it_recorded_not_by_its_hash(self):
+        """The legacy comparison only helps when THIS invocation uses the old spelling.
+
+        A first post-upgrade command that happens to use the absolute path has
+        legacy == scope, so the comparison never looks at the store the relative spelling
+        created - and creating a canonical database then hides it for good, because
+        afterwards even the old spelling finds the new one.
+        """
+        from codex_session_relay.store import legacy_socket_scope, socket_scope
+
+        os.makedirs(os.path.join(self.tmp, "run"), exist_ok=True)
+        absolute = os.path.join(self.tmp, "run", "app-server.sock")
+        open(absolute, "w").close()
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            relative = os.path.join("run", "app-server.sock")
+            # The store the pre-upgrade installation left behind, under the RELATIVE hash.
+            previous = os.path.join(
+                self.home, ".local", "state", "codex-session-relay",
+                legacy_socket_scope(relative),
+            )
+            os.makedirs(previous)
+            Store(Path(previous) / "relay.sqlite3", socket_path=relative).close()
+
+            # The first post-upgrade command uses the ABSOLUTE spelling, so the legacy
+            # comparison is a no-op: legacy == scope.
+            self.assertEqual(
+                legacy_socket_scope(absolute), socket_scope(absolute),
+                "the fixture needs the case the hash comparison cannot see",
+            )
+            chosen = resolve_state_dir(None, absolute)
+        finally:
+            os.chdir(here)
+
+        self.assertEqual(str(chosen.path), previous,
+                         "the store recorded for this socket must be adopted, not hidden")
+        self.assertIn("adopted", chosen.detail)
+
+    def test_two_stores_claiming_one_socket_are_not_silently_chosen_between(self):
+        """Picking whichever sorts first operates on one set of assignments today and the
+        other after a rename. Adopting nothing is wrong too, but it is visible."""
+        from codex_session_relay.store import (
+            discover_store_for_socket, stores_claiming_socket,
+        )
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        socket = "/run/contested.sock"
+        both = []
+        for name in ("aaaa000000000000", "bbbb000000000000"):
+            directory = os.path.join(root, name)
+            os.makedirs(directory)
+            Store(Path(directory) / "relay.sqlite3", socket_path=socket).close()
+            both.append(directory)
+
+        self.assertIsNone(
+            discover_store_for_socket(Path(root), socket),
+            "an ambiguity is not a choice to make silently",
+        )
+        self.assertEqual(sorted(stores_claiming_socket(Path(root), socket)), sorted(both))
+
+    def test_one_store_claiming_a_socket_is_still_adopted(self):
+        """The refusal must not swallow the case discovery exists for."""
+        from codex_session_relay.store import discover_store_for_socket
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        socket = "/run/sole.sock"
+        directory = os.path.join(root, "cccc000000000000")
+        os.makedirs(directory)
+        Store(Path(directory) / "relay.sqlite3", socket_path=socket).close()
+
+        self.assertEqual(
+            str(discover_store_for_socket(Path(root), socket)), directory,
+        )
+
+    def test_two_stores_claiming_one_socket_do_not_produce_a_third(self):
+        """Adopting neither is not the visible failure it was argued to be.
+
+        The caller lands on the canonical directory, the first write there creates a THIRD
+        empty database, and from that moment the canonical-exists branch wins every later
+        resolution - so both real stores are hidden for good. The selection has to carry the
+        conflict instead, which is what lets the command line refuse.
+        """
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        socket = "/run/contested-selection.sock"
+        both = []
+        for name in ("aaaa333333333333", "bbbb333333333333"):
+            directory = os.path.join(root, name)
+            os.makedirs(directory)
+            Store(Path(directory) / "relay.sqlite3", socket_path=socket).close()
+            both.append(directory)
+
+        chosen = resolve_state_dir(None, socket)
+
+        self.assertEqual(sorted(chosen.ambiguous), sorted(both))
+        self.assertEqual(sorted(chosen.to_record()["ambiguous"]), sorted(both))
+        self.assertNotIn(str(chosen.path), both, "neither is adopted on a guess")
+
+    def test_an_ordinary_selection_carries_no_ambiguity(self):
+        """The field is a conflict report, not a list of neighbours."""
+        self.assertEqual(resolve_state_dir(None, "/run/quiet.sock").ambiguous, ())
+        self.assertEqual(resolve_state_dir(os.path.join(self.tmp, "flag")).ambiguous, ())
+
+    def test_a_store_with_no_recorded_socket_is_never_adopted_on_a_guess(self):
+        """Provenance or nothing. Adopting an unlabelled store is how the wrong one is served."""
+        from codex_session_relay.store import socket_scope, stores_without_provenance
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        stranger = os.path.join(root, "0123456789abcdef")
+        os.makedirs(stranger)
+        Store(Path(stranger) / "relay.sqlite3").close()
+
+        chosen = resolve_state_dir(None, "/run/brand-new.sock")
+
+        self.assertEqual(chosen.socket_scope, socket_scope("/run/brand-new.sock"))
+        self.assertNotEqual(str(chosen.path), stranger)
+        # But it IS visible, so an operator is not left guessing why a store looks empty.
+        self.assertIn(stranger, stores_without_provenance(root, skip=chosen.path.name))
+
+    def test_a_store_recording_no_socket_blocks_creating_one_beside_it(self):
+        """Its directory hash cannot be inverted, so it cannot be ruled out as this socket's.
+
+        Creating a canonical database next to it hides it exactly the way a third store hides
+        two contested ones, and reporting it through doctor alone did not help: ordinary
+        commands do not run doctor.
+        """
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        stranger = os.path.join(root, "fedcba9876543210")
+        os.makedirs(stranger)
+        Store(Path(stranger) / "relay.sqlite3").close()
+
+        chosen = resolve_state_dir(None, "/run/first-after-upgrade.sock")
+
+        self.assertEqual(list(chosen.unidentified), [stranger])
+        self.assertEqual(chosen.ambiguous, ())
+        self.assertEqual(list(chosen.to_record()["unidentified"]), [stranger])
+
+    def test_an_existing_canonical_store_settles_the_question_already(self):
+        """The refusal is about CREATING one. A store that is already here has answered."""
+        from codex_session_relay.store import socket_scope
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        stranger = os.path.join(root, "fedcba9876543211")
+        os.makedirs(stranger)
+        Store(Path(stranger) / "relay.sqlite3").close()
+        socket = "/run/already-here.sock"
+        mine = os.path.join(root, socket_scope(socket))
+        os.makedirs(mine)
+        Store(Path(mine) / "relay.sqlite3", socket_path=socket).close()
+
+        chosen = resolve_state_dir(None, socket)
+
+        self.assertEqual(str(chosen.path), mine)
+        self.assertEqual(chosen.unidentified, ())
+
+    def test_a_fresh_socket_uses_the_canonical_directory(self):
+        """The fallback is for an existing store only; nothing new lands in the old name."""
+        from codex_session_relay.store import socket_scope
+
+        chosen = resolve_state_dir(None, "/run/brand-new.sock")
+
+        self.assertEqual(chosen.socket_scope, socket_scope("/run/brand-new.sock"))
+        self.assertTrue(str(chosen.path).endswith(socket_scope("/run/brand-new.sock")))
+
+    def test_two_spellings_of_one_socket_choose_the_same_default_store(self):
+        """The scope registry canonicalises the socket; this hash used to take it verbatim.
+
+        With no --state and no environment override, an alias for the socket produced a
+        different default state directory and therefore a different store. The registry then
+        refused the second invocation as a foreign owner rather than letting it join the
+        service already running on that socket.
+        """
+        real = os.path.join(self.tmp, "run", "app-server.sock")
+        os.makedirs(os.path.dirname(real))
+        open(real, "w").close()
+        alias_dir = os.path.join(self.tmp, "alias")
+        os.symlink(os.path.join(self.tmp, "run"), alias_dir)
+
+        canonical = resolve_state_dir(None, real)
+        through_symlink = resolve_state_dir(None, os.path.join(alias_dir, "app-server.sock"))
+
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            relative = resolve_state_dir(None, os.path.join("run", "app-server.sock"))
+        finally:
+            os.chdir(here)
+
+        self.assertEqual(through_symlink.socket_scope, canonical.socket_scope)
+        self.assertEqual(relative.socket_scope, canonical.socket_scope)
+        self.assertEqual(through_symlink.path, canonical.path)
+        self.assertEqual(relative.path, canonical.path)
+
+class Identity(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="relay-identity-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.a = os.path.join(self.tmp, "a")
+        os.makedirs(self.a)
+        self.store = Store(Path(self.a) / "relay.sqlite3")
+        self.addCleanup(self.store.close)
+
+    def copy_store(self, into):
+        """Copy the store the way a person copying a state directory would.
+
+        The sidecars matter: in WAL mode a recent write still lives in relay.sqlite3-wal, so
+        copying the main file alone produces a store that has lost it. That would make this
+        test pass for the wrong reason - an empty copy has no identifier to collide with.
+        """
+        os.makedirs(into, exist_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            source = os.path.join(self.a, f"relay.sqlite3{suffix}")
+            if os.path.exists(source):
+                shutil.copy(source, os.path.join(into, f"relay.sqlite3{suffix}"))
+        return into
+
+    def test_identity_is_minted_once_and_survives_reopening(self):
+        first = self.store.locate()
+        self.assertTrue(first["storeId"])
+        self.store.close()
+        again = Store(Path(self.a) / "relay.sqlite3")
+        self.addCleanup(again.close)
+        self.assertEqual(again.identity, first["storeId"])
+        self.assertEqual(again.meta("store_created_at"), first["createdAt"])
+
+    def test_a_copy_keeps_the_identifier_and_is_not_the_same_store(self):
+        """The case a stored uuid gets wrong: copying the file copies the identifier."""
+        mine = self.store.locate()
+        b = self.copy_store(os.path.join(self.tmp, "b"))
+        theirs = probe(resolve_state_dir(b))["store"]
+        self.assertEqual(theirs["storeId"], mine["storeId"])
+        self.assertNotEqual(theirs["inode"], mine["inode"])
+
+        # The identifier alone is satisfied by the copy, so it is never proof on its own.
+        self.assertEqual(
+            compare_store(theirs, expect_store=mine["storeId"])["sameStore"], "unproven",
+        )
+        self.assertEqual(
+            compare_store(
+                theirs, expect_store=mine["storeId"],
+                expect_inode=f"{mine['device']}:{mine['inode']}",
+            )["sameStore"],
+            "mismatch",
+        )
+
+    def test_a_nonce_written_after_the_copy_separates_them(self):
+        b = self.copy_store(os.path.join(self.tmp, "b"))
+        self.assertEqual(
+            probe(resolve_state_dir(b))["store"]["storeId"], self.store.identity,
+            "the copy must be a real copy, or the nonce result proves nothing",
+        )
+        # Written AFTER the copy on purpose: a nonce that already existed would have been
+        # copied too, and finding it would prove nothing.
+        written = self.store.write_challenge(actor="parent")
+        here = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+        there = nonce_lookup(resolve_state_dir(b), written["nonce"])
+        self.assertTrue(here["found"])
+        self.assertFalse(there["found"])
+        self.assertEqual(compare_store(self.store.locate(), nonce=here)["sameStore"], "proven")
+        self.assertEqual(
+            compare_store(probe(resolve_state_dir(b))["store"], nonce=there)["sameStore"],
+            "mismatch",
+        )
+
+    def test_a_nonce_query_that_fails_is_unreadable_rather_than_absent(self):
+        """Could not look is not is not there, and compare_store grades the difference.
+
+        A locked, malformed or momentarily unavailable database opens and then fails the
+        query. Calling that readable turned it into a definite store mismatch, so
+        doctor --expect-nonce would claim two participants use different stores on the
+        strength of a transient read failure.
+        """
+        broken = os.path.join(self.tmp, "broken")
+        os.makedirs(broken)
+        with open(os.path.join(broken, "relay.sqlite3"), "wb"):
+            pass
+
+        answer = nonce_lookup(resolve_state_dir(broken), "any-nonce")
+
+        self.assertFalse(answer["found"])
+        self.assertFalse(answer["readable"], "the query failed; nothing was learned")
+        self.assertIsNotNone(answer["detail"])
+        self.assertNotEqual(
+            compare_store(probe(resolve_state_dir(broken))["store"], nonce=answer)["sameStore"],
+            "mismatch",
+        )
+
+    def test_a_symlinked_directory_is_the_same_store(self):
+        alias = os.path.join(self.tmp, "alias")
+        os.symlink(self.a, alias)
+        mine = self.store.locate()
+        through_alias = probe(resolve_state_dir(alias))["store"]
+        self.assertNotEqual(through_alias["dbPath"], mine["dbPath"])
+        self.assertEqual(
+            compare_store(
+                through_alias, expect_store=mine["storeId"],
+                expect_inode=f"{mine['device']}:{mine['inode']}",
+            )["sameStore"],
+            "proven",
+        )
+
+    def test_a_store_with_no_identity_is_never_proven_equal(self):
+        """Absence must not become agreement; an old store predates the identity rows."""
+        self.assertEqual(
+            compare_store({"storeId": None}, expect_store="whatever")["sameStore"], "unproven",
+        )
+
+    def test_an_unreadable_nonce_is_unproven_rather_than_a_mismatch(self):
+        """Not being able to look is not the same as looking and finding nothing."""
+        unreadable = {"nonce": "abc", "found": False, "readable": False,
+                      "detail": "OperationalError: unable to open database file"}
+        graded = compare_store({"storeId": "x"}, nonce=unreadable)
+        self.assertEqual(graded["sameStore"], "unproven")
+        self.assertIn("could not be read", graded["detail"])
+        absent = {"nonce": "abc", "found": False, "readable": True, "detail": None}
+        self.assertEqual(
+            compare_store({"storeId": "x"}, nonce=absent)["sameStore"], "mismatch",
+        )
+
+
+class Probe(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="relay-probe-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_a_missing_state_directory_is_an_answer_and_is_not_created(self):
+        absent = os.path.join(self.tmp, "nothing-here")
+        report = probe(resolve_state_dir(absent))
+        self.assertFalse(report["access"]["directoryExists"])
+        self.assertFalse(report["store"]["exists"])
+        self.assertFalse(os.path.exists(absent), "probe must not create what it describes")
+
+    def test_reported_writability_matches_what_this_process_can_really_do(self):
+        """Asserted against a measured attempt, because a privileged runner ignores mode bits."""
+        locked = os.path.join(self.tmp, "locked")
+        os.makedirs(locked)
+        Store(Path(locked) / "relay.sqlite3").close()
+        os.chmod(locked, 0o500)
+        self.addCleanup(os.chmod, locked, 0o700)
+        try:
+            probe_file = os.path.join(locked, ".really-writable")
+            with open(probe_file, "w", encoding="utf-8"):
+                pass
+            os.unlink(probe_file)
+            really_writable = True
+        except OSError:
+            really_writable = False
+        report = probe(resolve_state_dir(locked))
+        self.assertEqual(report["access"]["directoryWritable"], really_writable)
+        self.assertTrue(report["access"]["dbReadable"])
+        if not really_writable:
+            self.assertIsNotNone(report["access"]["detail"])
 
 
 if __name__ == "__main__":
