@@ -37,9 +37,35 @@ service = RelayService(
     scope=ScopeRegistry(__import__("pathlib").Path({scopes!r}), "isolated"),
     store_id={store_id!r},
 )
+service.launch_id = {launch!r}
 with owned_service(service, allow_isolated=True, require_intent=False) as record:
     # The record file IS the handshake. A pipe would add buffering and lifetime questions
     # that have nothing to do with what this test is about.
+    while True:
+        time.sleep(0.05)
+"""
+
+# A child parked in the window supervision leaves behind on its way out: the launch is
+# recorded, the pid has been cleared, and the daemon lock is not released until the context
+# exits. The record is written once, already cleared, so the parent cannot observe a live
+# pid first and pass for the wrong reason.
+FINISHING = """
+import os, sys, time
+sys.path.insert(0, {src!r})
+from codex_session_relay.daemon import SingleInstance
+from codex_session_relay.service import RelayService, ScopeRegistry
+from codex_session_relay.store import resolve_state_dir
+service = RelayService(
+    resolve_state_dir({state!r}), socket_path={socket!r},
+    scope=ScopeRegistry(__import__("pathlib").Path({scopes!r}), "isolated"),
+    store_id={store_id!r},
+)
+service.launch_id = {launch!r}
+with SingleInstance(service.selection.path):
+    service.write_record(dict(
+        service.new_record(pid=os.getpid()),
+        pid=None, workerPid=None, stoppedAt="cleanup",
+    ))
     while True:
         time.sleep(0.05)
 """
@@ -73,12 +99,12 @@ class ServiceTestCase(unittest.TestCase):
             scope=ScopeRegistry(Path(scopes or self.scopes), ISOLATED), store_id=store_id,
         )
 
-    def holder(self, service):
+    def holder(self, service, *, launch=None):
         """Start a child that really holds the lock and the claim, and wait until it does."""
         program = HOLDER.format(
             src=os.path.join(REPO, "src"), state=str(service.selection.path),
             socket=service.socket_path, scopes=str(service.scope.root),
-            store_id=service.store_id,
+            store_id=service.store_id, launch=launch,
         )
         child = subprocess.Popen(
             [sys.executable, "-c", program], stdout=subprocess.DEVNULL,
@@ -223,6 +249,59 @@ class Ownership(ServiceTestCase):
         self.assertFalse(status["running"])
         self.assertEqual(status["ownership"], "none")
         self.assertFalse(service.lock_is_held())
+
+
+class LaunchReporting(ServiceTestCase):
+    """start reports what the child managed to do, and a finished launch did nothing."""
+
+    def finishing_launcher(self):
+        """A launcher whose child reaches supervision's cleanup window and stays there."""
+        def launcher(service, **_kw):
+            program = FINISHING.format(
+                src=os.path.join(REPO, "src"), state=str(service.selection.path),
+                socket=service.socket_path, scopes=str(service.scope.root),
+                store_id=service.store_id, launch=service.launch_id,
+            )
+            child = subprocess.Popen(
+                [sys.executable, "-c", program], stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE, text=True,
+            )
+            self.children.append(child)
+            return child
+        return launcher
+
+    def test_a_launch_that_already_finished_is_not_reported_as_running(self):
+        """A bound small enough to finish during startup - or an expired deadline.
+
+        The launch id still matches and the daemon lock is still held, so matching on
+        those two alone hands the caller success for a service that is on its way out.
+        """
+        service = self.service("a")
+        service.enable(actor="test")
+
+        outcome = service.start(
+            allow_isolated=True, launcher=self.finishing_launcher(), timeout=2.0,
+        )
+
+        self.assertFalse(outcome["ok"], f"a cleared pid is not a running service: {outcome}")
+        self.assertIsNone(outcome.get("pid"))
+        self.assertEqual(outcome["reason"], "did_not_report")
+
+    def test_a_live_launch_is_still_reported_as_running(self):
+        """The same path with a pid in the record, so the guard is not refusing everything."""
+        service = self.service("b")
+        service.enable(actor="test")
+        started = {}
+
+        def launcher(svc, **_kw):
+            child, pid = self.holder(svc, launch=svc.launch_id)
+            started["pid"] = pid
+            return child
+
+        outcome = service.start(allow_isolated=True, launcher=launcher, timeout=10.0)
+
+        self.assertTrue(outcome["ok"], outcome)
+        self.assertEqual(outcome["pid"], started["pid"])
 
 
 class Intent(ServiceTestCase):

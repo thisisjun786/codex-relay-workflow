@@ -672,7 +672,10 @@ class RelayService:
             # Matched on the launch id, not on the pid changing. After a crash the OS can
             # hand the replacement the very pid the stale record already names, and waiting
             # for a different number would time out on a service that is running fine.
-            if record.get("launchId") == launch and self.lock_is_held():
+            # The pid must still be there: supervision clears it on the way out while the
+            # daemon lock is not yet released, so a launch that already finished spends a
+            # moment matching the id and holding the lock with nothing left running.
+            if record.get("pid") and record.get("launchId") == launch and self.lock_is_held():
                 return {"ok": True, "reason": None, "pid": record["pid"],
                         "scopeAuthority": self.scope.authority,
                         "scopeRoot": str(self.scope.root), "status": self.status()}
