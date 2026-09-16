@@ -180,6 +180,59 @@ class TerminalProof(CliBase):
         self.assertEqual(self.run_cli("status")["deliveries"], [])
 
 
+class ScopedStatus(CliBase):
+    """A filtered status must filter every block it returns, health included.
+
+    Reporting one assignment's deliveries beside every assignment's observation backlog
+    reads as that assignment being behind, which is the opposite of what a filter is for.
+    """
+
+    def staged(self, name):
+        """A second assignment with its own parent, child and staged receipt."""
+        parent, child = f"01parent-{name}", f"01child-{name}"
+        root = os.path.join(self.root, name)
+        os.makedirs(root, exist_ok=True)
+        relationship = self.run_cli(
+            "register", "--parent-task", parent, "--parent-host", HOST,
+            "--child-task", child, "--child-host", HOST, "--issue", f"REL-{name}",
+            "--artifact-root", root, "--allowed-recipient", parent,
+            "--dispatch-request-id", f"dispatch-{name}", "--dispatch-turn-id", f"turn-{name}",
+        )
+        path = os.path.join(root, "out.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(f"{name} still going")
+        emitted = self.run_cli(
+            "emit", "--relationship", relationship["relationshipId"], "--generation", "1",
+            "--outcome", "ready_for_review", "--turn-thread", child,
+            "--turn-id", f"turn-{name}", "--turn-status", "completed", "--artifact", path,
+        )
+        self.assertEqual(emitted["stage"], "staged")
+        return relationship["relationshipId"], emitted["receipt"]["eventId"]
+
+    def test_a_scoped_status_reports_only_the_requested_assignment(self):
+        mine, my_event = self.staged("a")
+        theirs, their_event = self.staged("b")
+
+        health = self.run_cli("status", "--relationship", mine)["observation"]
+
+        self.assertEqual([s["eventId"] for s in health["stagedEvents"]], [my_event])
+        self.assertEqual(list(health["anchors"]), [mine])
+        self.assertEqual(list(health["backlog"]), [mine])
+        self.assertNotIn(theirs, health["backlog"])
+        self.assertNotIn(their_event, [s["eventId"] for s in health["stagedEvents"]])
+
+    def test_an_unscoped_status_still_reports_every_assignment(self):
+        mine, my_event = self.staged("a")
+        theirs, their_event = self.staged("b")
+
+        health = self.run_cli("status")["observation"]
+
+        self.assertEqual({s["eventId"] for s in health["stagedEvents"]},
+                         {my_event, their_event})
+        self.assertEqual(set(health["anchors"]), {mine, theirs})
+        self.assertEqual(set(health["backlog"]), {mine, theirs})
+
+
 class SettingsCommands(CliBase):
     """The registration interface JUN-92 populates from Run's creation result."""
 

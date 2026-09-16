@@ -818,7 +818,7 @@ class DeliveryService:
         )
         return dict(row) if row else None
 
-    def observation_health(self, *, now=None, stale_after=900.0) -> dict:
+    def observation_health(self, *, now=None, stale_after=900.0, relationship_id=None) -> dict:
         """Whether the loop is actually looking, which a live process does not answer.
 
         The JUN-100 and JUN-101 incident had a live pid, inside its time bound, polling
@@ -841,7 +841,10 @@ class DeliveryService:
              "ageSeconds": age(row["staged_at"] or row["first_seen_at"])}
             for row in self.store.all(
                 "SELECT event_id, turn_id, staged_at, first_seen_at FROM events"
-                " WHERE stage = 'staged' ORDER BY first_seen_at"
+                " WHERE stage = 'staged'"
+                + (" AND relationship_id = ?" if relationship_id else "")
+                + " ORDER BY first_seen_at",
+                (relationship_id,) if relationship_id else (),
             )
         ]
         anchors, backlog = {}, {}
@@ -859,6 +862,8 @@ class DeliveryService:
             "   AND p.execution_generation = g.execution_generation"
             "   AND p.turn_id = g.dispatch_turn_id"
             " WHERE r.status = 'active' AND r.superseded_by IS NULL"
+            + (" AND r.relationship_id = ?" if relationship_id else ""),
+            (relationship_id,) if relationship_id else (),
         ):
             anchors[row["relationship_id"]] = {
                 "turnId": row["dispatch_turn_id"], "lastPolledAt": row["last_polled_at"],
@@ -866,7 +871,9 @@ class DeliveryService:
             }
         for row in self.store.all(
             "SELECT relationship_id, COUNT(*) AS n FROM events WHERE stage = 'staged'"
-            " GROUP BY relationship_id"
+            + (" AND relationship_id = ?" if relationship_id else "")
+            + " GROUP BY relationship_id",
+            (relationship_id,) if relationship_id else (),
         ):
             backlog[row["relationship_id"]] = row["n"]
         oldest = max([s["ageSeconds"] or 0.0 for s in staged], default=0.0)

@@ -658,7 +658,11 @@ def cmd_show(services, args) -> dict:
 
 def cmd_status(services, args) -> dict:
     payload = services.delivery.snapshot(relationship_id=args.relationship)
-    payload["observation"] = services.delivery.observation_health()
+    # Scoped with the deliveries. A global health block beside a filtered list invites
+    # reading another assignment's backlog as this one's.
+    payload["observation"] = services.delivery.observation_health(
+        relationship_id=args.relationship,
+    )
     return payload
 
 
