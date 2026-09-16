@@ -160,6 +160,22 @@ class Ownership(ServiceTestCase):
             refused = service.stop()
         self.assertEqual(refused["reason"], "ownership_unverifiable")
         self.assertIsNone(child.poll(), "refusing is the point; never fall back to os.kill")
+        self.assertFalse(
+            service.stop_request_path.exists(),
+            "a refused stop must leave no request behind; it would halt someone else",
+        )
+
+    def test_a_record_without_a_start_time_is_unverifiable_not_ours(self):
+        """A pid with no start time is just a number, and anything holding it would pass."""
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        record = service.record()
+        service.write_record(dict(record, startTicks=None))
+        refused = service.stop()
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertIn("start time", refused["detail"])
+        self.assertIsNone(child.poll())
+        self.assertFalse(service.stop_request_path.exists())
 
     def test_stop_terminates_a_process_this_installation_owns(self):
         service = self.service("a")
