@@ -172,3 +172,36 @@ revision may define this type; this implementation does not silently become that
 |---|---|
 | Terminal turns are detected by bounded polling rather than a receive-only notification connection | the contract itself lists as unresolved whether a client receives turn completion for threads it neither started nor resumed, and the transport cannot subscribe. Polling establishes the behaviour with the supported read path; a notification listener ships as an optional early-wake hint that is never evidence |
 | There is no operator release: an attempt with no affirmative evidence stays held | the contract lists three affirmative evidences and does not contemplate an operator override, so none is implemented. An attempt holding none of them stays held and reports what it is missing, and there is no flag, audited or otherwise, that releases it. An earlier revision of this table described an implementation behind an `allow_operator_release` switch; that is not in the delivered core. `RefusalReason.OPERATOR_RELEASE_DISABLED` is retained in the taxonomy and is unreachable, because no code path raises it |
+
+## 8. Work reports
+
+A delivered message has to be something the recipient can act on. The identifiers above are
+how it answers, not how it decides, so the message leads with the result, the repository and
+pull request, the base and head commit, what was verified, what is still unresolved, and
+what to do next.
+
+None of that fits in a completion receipt. The five schemas are frozen with
+`additionalProperties: false`, so a work report is a relay-owned record, like the criteria
+set and the revision request, stored against the exact event, relationship, generation and
+revision it describes. The repository is stored beside the pull request number and the two
+are never rendered apart, so the same number on two projects stays two pull requests. A
+report about one head cannot answer for another: a later push is a new report, not an
+inherited one.
+
+An event with no work report renders exactly what it rendered before. A receipt from before
+this contract has no pull request to centre a report on, and inventing one would be the same
+guess this implementation refuses everywhere else. `report.version_of` names which of the
+two an event is on, and the report-backed body says so in its own `contract:` line.
+
+When a message has to be shortened, the shortening is announced. Required action, scope and
+unresolved items keep their headings and gain an explicit count of what is missing, every
+reduction adds one `omitted:` line naming what was dropped and the command that shows the
+whole record, and a budget too small to hold the required parts refuses rather than shipping
+a message that silently lost them. A message that quietly drops its unresolved items reads
+exactly like a message that had none.
+
+The CXC report vocabulary this maps onto is documented separately in
+[the CXC contract map](cxc-contract-map.md). Its one load-bearing rule: a `DONE` report, an
+opened pull request, a review `PASS` and a green required check are all evidence for a
+verdict and none of them is one. Only the parent, from inside its own turn, against
+registered criteria, writes `verified`.
