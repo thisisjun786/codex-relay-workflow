@@ -35,6 +35,16 @@ REVISION_OUTCOME = "revision_request"
 # is elided here, on purpose and in the open, rather than cut by whatever reads it later.
 BUDGET = 6000
 
+# Per-field byte ceilings, enforced when a report is RECORDED. The composer can drop an
+# optional section and shorten a list, but it cannot shorten a single required line without
+# losing the thing that line exists to say. An oversized summary therefore used to pass
+# record() and then fail every render, and because rendering happens inside the delivery
+# claim, every claim rolled back and the delivery never went out. Refusing here keeps the
+# failure where the caller can still fix it.
+SUMMARY_MAX = 1200
+ACTION_MAX = 1200
+REASON_MAX = 600
+
 
 def _size(text) -> int:
     return len(text.encode("utf-8"))
@@ -79,10 +89,10 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
         cxc.check_known(cxc_status)
     else:
         cxc.check_status(cxc_status, outcome)
-    repository = _required(repository, "repository")
-    summary = _required(summary, "summary")
-    next_action = _required(next_action, "next_action")
-    reason = _required(cxc_reason, "cxc_reason")
+    repository = _bounded(_required(repository, "repository"), "repository", 200)
+    summary = _bounded(_required(summary, "summary"), "summary", SUMMARY_MAX)
+    next_action = _bounded(_required(next_action, "next_action"), "next_action", ACTION_MAX)
+    reason = _bounded(_required(cxc_reason, "cxc_reason"), "cxc_reason", REASON_MAX)
     if pr_number is not None:
         if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number < 1:
             raise ReceiptRefused(
@@ -98,6 +108,7 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     review = _check_review(review)
     evidence = _check_evidence(evidence)
     unresolved = _check_unresolved(unresolved)
+    _check_resubmission(store, event_id, submission_no)
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
@@ -204,6 +215,47 @@ def _required(value, field):
             "thing this record exists to replace",
         )
     return text
+
+
+def _bounded(text, field, limit):
+    if _size(text) > limit:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"{field} is {_size(text)} bytes and the limit is {limit}; a required line cannot "
+            "be shortened at render time without losing what it exists to say, and a render "
+            "that fails inside the delivery claim is a delivery that never goes out. Put the "
+            "detail in the deliverables or the evidence and keep this line to the point",
+        )
+    return text
+
+
+def _check_resubmission(store, event_id, submission_no) -> None:
+    """Once a message has gone out, a changed report is a new submission and says so.
+
+    The bytes of every attempt stay frozen in attempt_messages, so history is never lost.
+    What this stops is the quieter thing: replacing a report in place after a delivery has
+    already been attempted, so a retry carries different instructions under the same event
+    and the same stated submission. The recipient would have no way to tell which one it was
+    answering. Correcting a report before anything is sent stays free.
+    """
+    existing = store.one(
+        "SELECT submission_no FROM work_reports WHERE event_id = ?", (event_id,)
+    )
+    if existing is None:
+        return
+    attempted = store.one(
+        "SELECT 1 FROM attempts WHERE event_id = ? LIMIT 1", (event_id,)
+    )
+    if attempted is None:
+        return
+    if int(submission_no) <= existing["submission_no"]:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"submission {existing['submission_no']} of this report has already been "
+            f"delivered, so replacing it in place would change what a retry says without "
+            f"changing what it calls itself; record this as submission "
+            f"{existing['submission_no'] + 1} or higher",
+        )
 
 
 def _check_review(review):
@@ -457,7 +509,8 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
 
     sections = [
         _Section("header", head, rank=0, essential=True, keep=2),
-        _Section("violated criteria", _finding_lines(review), rank=0, essential=True, keep=2),
+        _Section("violated criteria", _finding_lines(receipt, review), rank=0, essential=True,
+                 keep=2),
         _Section("SCOPE", _scope_lines(report, generation), rank=1, essential=True, keep=2),
         _Section("MUST DO", [
             "MUST DO:",
@@ -572,18 +625,48 @@ def _unresolved_lines(report):
     return lines
 
 
-def _finding_lines(review):
-    if not review or not review.get("findings"):
+def _finding_lines(receipt, review):
+    """The recorded verdict decides WHICH criteria; the review only enriches them.
+
+    A revision event already carries the parent findings in its own receipt, written by
+    record_verdict in the transaction that opened the new generation. Rendering only the work
+    report review meant a report with no review, or one naming a different set, replaced the
+    authoritative findings with nothing or with something else, and the child was corrected
+    against instructions the parent never gave. So the receipt leads, the review adds notes
+    and source anchors by id, and anything the review raises on its own is kept but labelled
+    as not part of the recorded verdict.
+    """
+    authoritative = [item for item in (receipt.get("criteria") or []) if item.get("id")]
+    enrichment = {}
+    for item in (review or {}).get("findings") or []:
+        enrichment[item["id"]] = item
+    if not authoritative and not enrichment:
         return ["", "violated criteria: no per-criterion findings were recorded"]
+
     lines = ["", "violated criteria:"]
-    for item in review["findings"]:
-        rendered = f"  {item['id']}: {item.get('verdict')}"
-        if item.get("note"):
-            rendered += f" - {item['note']}"
-        lines.append(rendered)
-        if item.get("anchor"):
-            lines.append(f"    anchor: {item['anchor']}")
+    seen = set()
+    for item in authoritative or list(enrichment.values()):
+        extra = enrichment.get(item["id"], {})
+        seen.add(item["id"])
+        lines += _one_finding(item, extra)
+    unrecorded = [item for key, item in enrichment.items() if key not in seen]
+    if authoritative and unrecorded:
+        lines.append("  also raised in review, not part of the recorded verdict:")
+        for item in unrecorded:
+            lines += _one_finding(item, {})
     return lines
+
+
+def _one_finding(item, extra):
+    note = item.get("note") or extra.get("note")
+    rendered = f"  {item['id']}: {item.get('verdict')}"
+    if note:
+        rendered += f" - {note}"
+    out = [rendered]
+    anchor = extra.get("anchor") or item.get("anchor")
+    if anchor:
+        out.append(f"    anchor: {anchor}")
+    return out
 
 
 def _scope_lines(report, generation):

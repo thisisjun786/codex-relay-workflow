@@ -529,3 +529,78 @@ class FinalLine(Directions):
         )
         self.assertEqual(stored["cxcStatus"], cxc.NEEDS_HUMAN)
         self.assertIn("NEEDS_HUMAN", str(report.read(self.store, revision_event)))
+
+    def test_the_recorded_verdict_decides_which_criteria_a_correction_names(self):
+        _source, revision_event = self._revision()
+        receipt = self.intake.get(revision_event)
+        row = self.delivery.get(revision_event)
+        # No review on the work report at all. The findings the parent actually recorded are
+        # in the revision receipt and must still be what the child is corrected against.
+        stored = report.record(
+            self.store, self.clock, event_id=revision_event,
+            **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete",
+                       review=None)
+        )
+        message = report.render_revision(row, receipt, "del-y-a1", stored)
+        self.assertIn("c-1", message)
+        self.assertIn("the migration script is missing from the manifest", message)
+        self.assertNotIn("no per-criterion findings were recorded", message)
+
+    def test_a_review_only_finding_is_kept_but_marked_as_outside_the_verdict(self):
+        _source, revision_event = self._revision()
+        receipt = self.intake.get(revision_event)
+        row = self.delivery.get(revision_event)
+        stored = report.record(
+            self.store, self.clock, event_id=revision_event,
+            **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete",
+                       review={"kind": cxc.GO_WITH_FIXES, "blockers": 1, "findings": [
+                           {"id": "c-1", "verdict": "needs_changes", "note": "",
+                            "anchor": "migrations/004.sql"},
+                           {"id": "c-9", "verdict": "needs_changes",
+                            "note": "a reviewer noticed this separately"}]})
+        )
+        message = report.render_revision(row, receipt, "del-y-a1", stored)
+        # The recorded criterion leads and picks up the review anchor.
+        self.assertIn("anchor: migrations/004.sql", message)
+        self.assertLess(message.index("c-1"), message.index("c-9"))
+        self.assertIn("also raised in review, not part of the recorded verdict", message)
+        self.assertIn("a reviewer noticed this separately", message)
+
+
+class Bounds(DeliveryTestCase):
+    def test_a_required_line_too_long_to_render_is_refused_when_it_is_recorded(self):
+        _relationship, event_id = self.queued_event()
+        for field in ("summary", "next_action"):
+            error = self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda field=field: report.record(
+                    self.store, self.clock, event_id=event_id,
+                    **a_report(**{field: "x" * 4000})
+                ),
+            )
+            self.assertIn("a delivery that never goes out", error.detail)
+        # Otherwise this passed record and then failed every render, and because rendering
+        # happens inside the claim, every claim rolled back unsent.
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        self.assertIsNotNone(self.attempt(event_id))
+
+    def test_a_report_already_delivered_cannot_be_replaced_in_place(self):
+        _relationship, event_id = self.queued_event()
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        # Before anything is sent, correcting a report is free.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(summary="corrected before sending"))
+        self.assertEqual(
+            report.read(self.store, event_id)["summary"], "corrected before sending"
+        )
+        self.attempt(event_id)
+        error = self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(summary="quietly different now")),
+        )
+        self.assertIn("record this as submission 2 or higher", error.detail)
+        # Saying so out loud is allowed, and the message carries the number.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(summary="openly revised", submission_no=2))
+        self.assertIn("submission: 2", self.delivery.preview_message(event_id))

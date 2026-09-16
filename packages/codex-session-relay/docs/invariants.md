@@ -115,6 +115,10 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-97 | A shortened message names what it dropped and where to read it; a budget too small to hold the required parts refuses | `report._compose` | implemented |
 | I-98 | An event with no work report renders the pre-contract message unchanged | `delivery._render_completion`, `delivery._render_revision` | implemented |
 | I-99 | A wait result never authorises a re-run, and a bare timeout is neither failure nor success | `cxc.classify_wait` | implemented |
+| I-100 | A report reads its relationship, generation, revision and outcome from the stored event; no caller supplies them | `report.record` | implemented |
+| I-101 | A correction names the criteria the recorded verdict names; a review only adds notes and anchors, and anything it raises alone is labelled | `report._finding_lines` | implemented |
+| I-102 | A shape or length that could only fail at render time is refused at record time, because rendering runs inside the delivery claim | `report._check_evidence`, `_check_unresolved`, `_bounded` | implemented |
+| I-103 | A report already delivered cannot be replaced in place; a changed report is a new submission and says so | `report._check_resubmission` | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is
