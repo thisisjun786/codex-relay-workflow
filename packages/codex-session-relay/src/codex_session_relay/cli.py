@@ -940,6 +940,14 @@ def _adopt_supervised(service, args) -> dict:
         refuse("supervised_state_mismatch", "the record names a different state directory")
     if record.get("socketPath") not in (None, service.socket_path):
         refuse("supervised_socket_mismatch", "the record names a different operating scope")
+    # The supervisor recorded which store it registered the scope for. This worker opened
+    # whatever relay.sqlite3 the path resolves to NOW, and a database deleted or atomically
+    # replaced between segments is a different one - so without this the worker would serve an
+    # empty or unrelated store while the supervisor and the scope registration still name the
+    # original, and every participant comparing identities would be told they agree.
+    if record.get("storeId") not in (None, service.store_id):
+        refuse("supervised_store_mismatch",
+               "the record names a different store than this worker opened")
     try:
         want = os.stat(service.selection.path / DAEMON_LOCK)
         got = os.fstat(lock_fd)

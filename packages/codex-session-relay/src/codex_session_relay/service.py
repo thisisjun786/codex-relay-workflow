@@ -187,7 +187,18 @@ class ScopeRegistry:
             os.set_inheritable(handle.fileno(), True)
         payload = dict(record, scopeKey=self.key(socket_path), scopeAuthority=self.authority,
                        socketPath=str(socket_path), registeredAt=_now())
-        self.record_path(socket_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        try:
+            self.record_path(socket_path).write_text(
+                json.dumps(payload, indent=2), encoding="utf-8",
+            )
+        except OSError:
+            # The lock is taken but the registration it stands for was never published. Left
+            # open, this handle goes on refusing every later start in this process on behalf
+            # of a registration that does not exist - and nothing releases it before the
+            # object is collected.
+            self._handle = None
+            handle.close()
+            raise
         return {"ok": True, "reason": None, "record": payload, "lockFd": handle.fileno()}
 
     def release(self, socket_path, *, shared: bool = False) -> None:
@@ -630,33 +641,42 @@ class RelayService:
         return {"ok": True, "reason": None}
 
     def enable(self, *, actor: str = "cli") -> dict:
-        # The same ownership question disable asks, for the same reason: service.json is
-        # shared by everything pointed at this state directory. An owner who has just
-        # disabled a service whose supervisor is still exiting must not have that reversed
-        # by another installation, which would leave it eligible to restart.
-        record = self.record()
-        owner, handle, detail = self.ownership(record)
-        if handle is not None:
-            handle.close()
-        # Read from the record as well as from the classification. A supervisor on its way out
-        # clears its pids before releasing the lock, and ownership answers none once both are
-        # absent - which is exactly the interval in which a foreign shutdown could be reversed.
-        markers = self._foreign_markers(record) if record else []
-        if self.lock_is_held() and not self._holder_is_ours(record, owner, markers):
-            # Only while something is actually RUNNING here. A stopped registration belonging
-            # to someone else is not a reason to refuse an owner configuring their own
-            # installation, and refusing then would make a state directory unusable forever.
-            return {"ok": False,
-                    "reason": ("not_ours" if (owner == FOREIGN or markers)
-                               else "ownership_unverifiable"),
-                    "detail": detail or "; ".join(markers) or (
-                        "the daemon lock is held but nothing here identifies its owner"
-                    ),
-                    "intent": self.intent.read(),
-                    "note": "intent is shared with the owner of this state directory and was"
-                            " left unchanged"}
-        return {"ok": True, "reason": None,
-                "intent": self.intent.write(enabled=True, actor=actor)}
+        # The same ownership question disable asks, and decided and written under the SAME
+        # lock for the same reason. service.json is shared by everything pointed at this
+        # state directory, and classifying then writing are two operations: a foreign
+        # supervisor can pass its own enabled-intent check and take the lock in between, and
+        # this call would then write enabled=true over a disable that happened during the
+        # handoff - leaving that supervisor running and eligible to restart. Holding the lock
+        # across both means no supervisor can start while we decide, and failing to take it
+        # is itself the answer that one is already there to be classified.
+        with self.daemon_lock_if_free() as held:
+            if held is None:
+                record = self.record()
+                owner, handle, detail = self.ownership(record)
+                if handle is not None:
+                    handle.close()
+                # Read from the record as well as from the classification. A supervisor on
+                # its way out clears its pids before releasing the lock, and ownership
+                # answers none once both are absent - exactly the interval in which a foreign
+                # shutdown could be reversed.
+                markers = self._foreign_markers(record) if record else []
+                if not self._holder_is_ours(record, owner, markers):
+                    return {"ok": False,
+                            "reason": ("not_ours" if (owner == FOREIGN or markers)
+                                       else "ownership_unverifiable"),
+                            "detail": detail or "; ".join(markers) or (
+                                "the daemon lock is held but nothing here identifies its"
+                                " owner"
+                            ),
+                            "intent": self.intent.read(),
+                            "note": "intent is shared with the owner of this state directory"
+                                    " and was left unchanged"}
+            # Either nothing is running here - a stopped registration belonging to someone
+            # else is not a reason to refuse an owner configuring their own installation, and
+            # refusing then would make a state directory unusable forever - or what is
+            # running is ours.
+            return {"ok": True, "reason": None,
+                    "intent": self.intent.write(enabled=True, actor=actor)}
 
     def disable(self, *, actor: str = "cli", timeout: float = 10.0) -> dict:
         # Ownership BEFORE the intent write. service.json is shared by everything pointed at
@@ -1025,6 +1045,19 @@ class RelayService:
             segment_seconds=segment_seconds, max_segments=max_segments,
         )
         deadline_at = time.monotonic() + timeout
+        try:
+            return self._await_launch(child, launch, deadline_at, timeout=timeout, poll=poll)
+        except BaseException:
+            # Anything that leaves this call without a confirmed result - an exception, a
+            # KeyboardInterrupt while recovery is still initialising - leaves a child the
+            # default launcher put in its own session, so no terminal signal reaches it. It
+            # would finish starting up, take both locks and begin serving a launch the caller
+            # was never told had succeeded.
+            self._abandon(child, timeout=timeout)
+            raise
+
+    def _await_launch(self, child, launch, deadline_at, *, timeout, poll):
+        """Wait for the child to publish a record this call can recognise as its own launch."""
         while time.monotonic() < deadline_at:
             record = self.record() or {}
             # Matched on the launch id, not on the pid changing. After a crash the OS can
