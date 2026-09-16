@@ -11,6 +11,7 @@ side effect.
 import json
 
 from .errors import DeliveryRefused, RefusalReason
+from .currency import STALE_GENERATION, SUPERSEDED as SUPERSEDED_REVISION, head_revision
 from .identity import request_id as derive_request_id
 from .lifecycle import UNKNOWN as LIFECYCLE_UNKNOWN, hold_reason_for, observe, record as record_lifecycle
 from .policy import RetryPolicy
@@ -356,6 +357,13 @@ class DeliveryService:
         reconciliation searches the recipient for the token the message actually carried.
         Allocation, token and bytes now commit together or not at all.
         """
+        # Decided and recorded BEFORE the claim, in its own committed transaction: a
+        # suppression written inside the claim would be rolled back by the refusal that
+        # follows it. The claim below then refuses a stale generation atomically anyway,
+        # so the gap between the two cannot let one through.
+        superseded = self._suppress_if_superseded(event_id)
+        if superseded:
+            raise _Superseded(superseded)
         with self.store.transaction() as db:
             cursor = db.execute(
                 "UPDATE deliveries"
@@ -369,7 +377,15 @@ class DeliveryService:
                 "                WHERE r.relationship_id = deliveries.relationship_id"
                 "                  AND r.status = 'active' AND r.superseded_by IS NULL)"
                 "   AND EXISTS (SELECT 1 FROM events e"
-                "                WHERE e.event_id = deliveries.event_id AND e.stage = 'final')",
+                "                WHERE e.event_id = deliveries.event_id AND e.stage = 'final')"
+                # A generation that has moved on cannot be claimed at all. Checked here
+                # rather than only before, because the generation can advance while the
+                # host reads are in flight.
+                "   AND NOT EXISTS (SELECT 1 FROM events ev"
+                "                    JOIN relationships rr"
+                "                      ON rr.relationship_id = ev.relationship_id"
+                "                   WHERE ev.event_id = deliveries.event_id"
+                "                     AND ev.execution_generation < rr.execution_generation)",
                 (
                     SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
                     event_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now,
@@ -478,6 +494,11 @@ class DeliveryService:
             )
         except _NotClaimable:
             return None
+        except _Superseded as superseded:
+            # No transport call at all: suppression writes state and journals and nothing
+            # else, so a stale event cannot wake the parent or open a generation.
+            return {"deliveryState": SUPERSEDED, "supersededReason": superseded.reason,
+                    "eventId": event_id, "sendAttempted": "no"}
 
         try:
             receipt = adapter.send_message(
@@ -700,17 +721,99 @@ class DeliveryService:
             )
 
     def mark_superseded(self, event_id: str, *, reason: str = SUPERSEDED_HOLD) -> None:
-        row = self.find(event_id)
-        if row is None or row["state"] in (DISPATCHED, "acknowledged"):
-            # A delivery the recipient may already be acting on is never withdrawn.
-            return
+        """Withdraw a delivery the recipient cannot already be acting on.
+
+        The guard is part of the UPDATE rather than a preflight read: a concurrent dispatch
+        between the check and the write would otherwise be overwritten.
+        """
         with self.store.transaction() as db:
-            db.execute(
+            cursor = db.execute(
                 "UPDATE deliveries SET state = ?, hold_reason = ?, updated_at = ?"
-                " WHERE event_id = ?",
-                (SUPERSEDED, reason, self.clock.iso(), event_id),
+                "  WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL",
+                (SUPERSEDED, reason, self.clock.iso(), event_id,
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND),
             )
-            self.store.journal("delivery_superseded", event_id, {"reason": reason}, at=self.clock.iso())
+            if cursor.rowcount == 1:
+                self.store.journal(
+                    "delivery_superseded", event_id, {"reason": reason}, at=self.clock.iso(),
+                )
+            else:
+                self._annotate_supersession_in(db, event_id, reason)
+
+    def _suppress_if_superseded(self, event_id: str):
+        """Record that this delivery is no longer current, and say so. Commits.
+
+        An outstanding send is annotated rather than rewritten: reconciliation refuses to
+        promote a terminal superseded aggregate, so rewriting one would make a lost
+        response permanently unresolvable.
+        """
+        with self.store.transaction() as db:
+            reason = self._supersession_reason(db, event_id)
+            if not reason:
+                return None
+            cursor = db.execute(
+                "UPDATE deliveries SET state = ?, hold_reason = ?, updated_at = ?"
+                "  WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL",
+                (SUPERSEDED, reason, self.clock.iso(), event_id,
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND),
+            )
+            if cursor.rowcount == 1:
+                self.store.journal(
+                    "delivery_superseded", event_id, {"reason": reason},
+                    at=self.clock.iso(),
+                )
+            else:
+                self._annotate_supersession_in(db, event_id, reason)
+            return reason
+
+    def _supersession_reason(self, db, event_id: str):
+        """Is this still the thing the assignment stands on? Read inside the caller's write.
+
+        Two rules, and the first is the one the 2026-09-16 reproduction needs: a generation
+        that has moved on invalidates every outcome of the previous one - ready, blocked,
+        failed, manifest or not - whether or not the new generation has produced a revision
+        yet. JUN-119 g2 events delivered after g3 opened and JUN-100 g5 delivered after g7
+        were all rejected downstream as stale_generation; suppressing before the send is the
+        fix, and a new generation having nothing in it yet is not a reason to send the old.
+        """
+        event = db.execute(
+            "SELECT relationship_id, execution_generation, outcome, event_id FROM events"
+            "  WHERE event_id = ?", (event_id,),
+        ).fetchone()
+        if event is None:
+            return None
+        relationship = db.execute(
+            "SELECT execution_generation FROM relationships WHERE relationship_id = ?",
+            (event["relationship_id"],),
+        ).fetchone()
+        if relationship is None:
+            return None
+        if event["execution_generation"] < relationship["execution_generation"]:
+            return STALE_GENERATION
+        head = head_revision(
+            db, event["relationship_id"], event["execution_generation"],
+        )
+        if not head["eventId"] or head["eventId"] == event_id:
+            # A null head means the generation has no reviewable revision at all, which is
+            # what an execution-only failure looks like in its OWN current generation. That
+            # is not evidence anything replaced it.
+            return None
+        successor = db.execute(
+            "SELECT stage FROM events WHERE event_id = ?", (head["eventId"],),
+        ).fetchone()
+        # A STAGED successor is a claim, not a replacement. If it later fails it is
+        # suppressed, and destroying this event's only delivery chance on the strength of it
+        # would be permanent.
+        if successor is None or successor["stage"] != "final":
+            return None
+        return SUPERSEDED_REVISION
+
+    def _annotate_supersession_in(self, db, event_id: str, reason: str) -> None:
+        db.execute(
+            "INSERT INTO delivery_supersession (event_id, reason, noted_at, applied)"
+            " VALUES (?,?,?,0) ON CONFLICT(event_id) DO NOTHING",
+            (event_id, reason, self.clock.iso()),
+        )
 
     # -------------------------------------------------------- observability
 
@@ -836,6 +939,14 @@ def _status_for_record(observation) -> str:
 
 class _NotClaimable(Exception):
     pass
+
+
+class _Superseded(Exception):
+    """This delivery is no longer current, decided inside the claim."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _manifest_paths(event_row):

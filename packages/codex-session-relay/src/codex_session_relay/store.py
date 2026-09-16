@@ -433,6 +433,16 @@ CREATE TABLE IF NOT EXISTS delivery_intent (
     noted_at          TEXT NOT NULL
 );
 
+-- This delivery is no longer what the assignment stands on. Kept separate from the delivery
+-- state on purpose: an outstanding send must keep its state so reconciliation can still
+-- settle it, and an already dispatched one must keep its history.
+CREATE TABLE IF NOT EXISTS delivery_supersession (
+    event_id TEXT PRIMARY KEY,
+    reason   TEXT NOT NULL,
+    noted_at TEXT NOT NULL,
+    applied  INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS deliveries_state ON deliveries (state, next_eligible_at);
 -- Per-parent selection reads one parent's oldest eligible rows at a time, which is a
 -- different access pattern from deliveries_state. Declaring it is not proof it is used:
