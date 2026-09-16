@@ -225,9 +225,10 @@ It routes each request to its existing operation
 owner. Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
 
-`crw-plan` completes a requested full plan from initiatives through projects,
+`crw-plan` completes a request to create or update a full Linear plan from initiatives through projects,
 useful milestones, and executable issues in one operation. It reuses existing
 items, creates missing ones within that request, and keeps narrow updates scoped.
+Consultation and draft-only planning do not write to Linear.
 Each implementation issue maps to one PR; work requiring several PRs is split
 into dependent issues. Non-PR research or design keeps a verified result instead.
 Initiatives represent goals; product family and related

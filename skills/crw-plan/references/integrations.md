@@ -31,9 +31,10 @@ Keep goals, product classification, and repository identity separate:
   or sum shared progress as separate output. Verify connector support and read
   back relations before claiming that a requested link exists.
 - Create a project when the user requests one, including an accepted proposal
-  or a full plan from goal through issues. A full-plan request covers the needed
-  hierarchy in its agreed scope; a narrow plan update, large backlog, or multiple
-  repositories alone does not authorize extra projects. Reuse existing IDs and meaningful scope. Name the
+  or a request to create/update a full Linear plan from goal through issues.
+  That write request covers the needed hierarchy in its agreed scope; a narrow plan update, large backlog, or multiple
+  repositories alone does not authorize extra projects. Consultation and
+  draft-only planning do not authorize Linear writes. Reuse existing IDs and meaningful scope. Name the
   result naturally without a fixed product prefix. Do not rename existing
   projects or migrate their relations merely by loading these instructions.
 - Product family is a single-choice project label group. Reuse the existing
