@@ -755,7 +755,12 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
         else:
             reasons.append((PROVEN, "same device and inode"))
     if nonce is not None:
-        if nonce.get("found"):
+        if nonce.get("readable") is False:
+            # Not being able to read is not the same as the nonce being absent. Calling it a
+            # mismatch would tell an operator two participants use different stores when the
+            # truth is that this one merely could not look.
+            reasons.append((UNPROVEN, f"the nonce could not be read here: {nonce.get('detail')}"))
+        elif nonce.get("found"):
             reasons.append((PROVEN, "a nonce written by another participant is readable here"))
         else:
             reasons.append((MISMATCH, "a nonce written by another participant is not here"))

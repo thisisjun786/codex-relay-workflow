@@ -132,6 +132,33 @@ class Ownership(ServiceTestCase):
         self.assertEqual([c["storeId"] for c in conflicts], [first.store_id])
         self.assertFalse(conflicts[0]["live"])
 
+    def test_a_stopped_registration_is_not_silently_overwritten(self):
+        """Overwriting it would erase the only evidence two stores served one socket."""
+        first = self.service("a")
+        child, _pid = self.holder(first)
+        child.terminate()
+        child.wait(timeout=10)
+        second = self.service("b")
+        refused = second.scope.claim(
+            second.socket_path, second.new_record(pid=os.getpid()),
+        )
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["reason"], "scope_registered_to_other_store")
+        self.assertEqual(refused["held_by"]["storeId"], first.store_id)
+
+    def test_a_definite_mismatch_beats_a_missing_start_time(self):
+        """Installation identity already proves foreign; unverifiable would discard that."""
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        record = service.record()
+        service.write_record(
+            dict(record, startTicks=None, installationId="someone-else"),
+        )
+        refused = service.stop()
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertIn("another installation", refused["detail"])
+        self.assertIsNone(child.poll())
+
     def test_stop_refuses_a_process_another_installation_owns(self):
         service = self.service("a")
         child, pid = self.holder(service)

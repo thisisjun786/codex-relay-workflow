@@ -902,6 +902,8 @@ def _supervise(services, service, args) -> dict:
     """The supervisor: it holds the locks and replaces bounded workers."""
     from .service import ServiceRefused
 
+    service.launch_id = getattr(args, "launch_id", None)
+
     def recover():
         # Establish what happened to anything in flight BEFORE a worker can send. Recovery
         # itself sends nothing; it only decides what the evidence supports.
@@ -1252,6 +1254,7 @@ def build_parser() -> argparse.ArgumentParser:
         # The supervisor's own optional bounds, for a test or a deliberately finite run.
         hosted.add_argument("--max-segments", type=int)
         hosted.add_argument("--deadline", type=float)
+        hosted.add_argument("--launch-id")
     service.set_defaults(handler=cmd_service)
 
     doctor = subparsers.add_parser("doctor")
