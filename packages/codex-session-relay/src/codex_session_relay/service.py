@@ -779,16 +779,29 @@ class RelayService:
         # on that would stop the new launch's worker and clear the new supervisor's pid using
         # the old one's outcome - reporting success while the replacement is still alive.
         fresh = self.record()
+        # Identity, not just the launch id. A direct 'service run' carries no launch id at
+        # all, so comparing that field alone made two anonymous launches look like one and
+        # handed the replacement's worker and record straight back to this stop. The
+        # supervisor's own pid and start time distinguish them whether or not a launch id
+        # was ever assigned.
         superseded_by_a_new_launch = (
             fresh is not None and record is not None
-            and fresh.get("launchId") != record.get("launchId")
+            and self._launch_identity(fresh) != self._launch_identity(record)
         )
         if fresh is not None and not superseded_by_a_new_launch:
             record = fresh
         worker = self._stop_worker(record, timeout=timeout, grace=grace)
+        if superseded_by_a_new_launch:
+            # A replacement is running. Whatever we did to the launch we started from, the
+            # SERVICE is not stopped, and reporting success from the old launch's outcome
+            # would tell a caller the relay is down while it is still delivering.
+            return {"ok": False, "reason": "replaced_by_new_launch",
+                    "detail": "a new launch acquired the daemon lock during this stop; it was"
+                              " left untouched and is still running",
+                    "supervisor": outcome, "worker": "untouched"}
         supervisor_done = outcome in ("exited", "gone")
         worker_done = worker in ("exited", "gone")
-        if record is not None and not superseded_by_a_new_launch:
+        if record is not None:
             # Identity is kept until termination is CONFIRMED. Clearing a pid we have not
             # seen exit would lose the only handle a later stop has to reach it.
             cleared = dict(record, stoppedBy=actor)
@@ -806,6 +819,17 @@ class RelayService:
         ok = supervisor_done and worker_done
         return {"ok": ok, "reason": None if ok else "did_not_exit",
                 "detail": None, "supervisor": outcome, "worker": worker}
+
+    @staticmethod
+    def _launch_identity(record):
+        """What distinguishes one supervisor's run from the next one's.
+
+        The launch id alone is not enough: a direct 'service run' never has one, so two
+        anonymous launches compare equal. The supervisor's pid and the moment it started
+        differ across a replacement whether or not a launch id was assigned.
+        """
+        record = record or {}
+        return (record.get("launchId"), record.get("pid"), record.get("startedAt"))
 
     def _settle_absent_owner(self, record, detail):
         """Decide 'nothing is running' while HOLDING the lock that would prove otherwise.
@@ -1129,7 +1153,13 @@ class RelayService:
                 # Only now is this service serving. Recovery runs before any worker can send,
                 # and a caller told "started" while it was still in flight would go on to use
                 # a service that might yet fail to initialise at all.
-                self._note(readyAt=_now())
+                #
+                # And not at all if the bound was spent getting ready: the loop below exits
+                # immediately in that case, so publishing readiness here would let a waiting
+                # start() report a service that is already on its way out.
+                expired = deadline is not None and time.monotonic() - started >= deadline
+                if not expired:
+                    self._note(readyAt=_now())
                 while True:
                     if max_segments is not None and len(segments) >= max_segments:
                         break
