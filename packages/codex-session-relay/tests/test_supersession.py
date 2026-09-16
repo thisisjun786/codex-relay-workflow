@@ -80,6 +80,51 @@ class PreSendSupersession(DeliveryTestCase):
         self.assertEqual([r["event_id"] for r in rows], [event_id],
                          "only the older generation's outstanding send is annotated")
 
+    def test_a_capped_delivery_is_annotated_when_the_generation_advances(self):
+        """Generation advance is the ONLY chance a capped delivery ever gets.
+
+        Once a busy or pre-send cap sets hold_reason, attempt() returns before the pre-send
+        supersession check, so nothing else can ever annotate it. Leaving the capped states
+        out of the annotation meant status reported a current-looking cap forever.
+        """
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE deliveries SET state = ?, hold_reason = ? WHERE event_id = ?",
+                (DEFERRED_BUSY, "busy_cap", event_id),
+            )
+
+        self.advance_generation(relationship, 2)
+
+        note = self.store.one(
+            "SELECT * FROM delivery_supersession WHERE event_id = ?", (event_id,),
+        )
+        self.assertIsNotNone(note, "a capped delivery has no other annotation opportunity")
+        self.assertEqual(note["reason"], STALE_GENERATION)
+        row = self.delivery.get(event_id)
+        self.assertEqual(row["state"], DEFERRED_BUSY, "the cap itself is history, untouched")
+        self.assertEqual(row["holdReason"] if "holdReason" in row.keys() else "busy_cap",
+                         "busy_cap")
+        item = [d for d in self.delivery.snapshot()["deliveries"]
+                if d["eventId"] == event_id][0]
+        self.assertEqual(item["phase"], f"superseded:{STALE_GENERATION}")
+
+    def test_a_capped_withheld_delivery_is_annotated_too(self):
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE deliveries SET state = ?, hold_reason = ? WHERE event_id = ?",
+                ("withheld_pre_send", "presend_cap", event_id),
+            )
+
+        self.advance_generation(relationship, 2)
+
+        note = self.store.one(
+            "SELECT * FROM delivery_supersession WHERE event_id = ?", (event_id,),
+        )
+        self.assertIsNotNone(note)
+        self.assertEqual(note["reason"], STALE_GENERATION)
+
     def test_a_dispatched_delivery_is_annotated_when_the_generation_advances(self):
         """Its acknowledgement will be refused as stale_generation, so awaiting_ack lies.
 

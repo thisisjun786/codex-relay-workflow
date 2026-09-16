@@ -348,6 +348,18 @@ class DeliveryService:
             (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, parent, limit, offset),
         )
 
+    def eligible_count(self, parent: str, *, now: float) -> int:
+        """How many eligible deliveries one parent has, so a cursor over them can wrap."""
+        row = self.store.one(
+            "SELECT COUNT(*) AS c FROM deliveries d"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            " JOIN events e ON e.event_id = d.event_id"
+            + self.ELIGIBLE_WHERE +
+            "   AND r.parent_task_id = ?",
+            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, parent),
+        )
+        return row["c"] if row else 0
+
     def eligible(self, *, now: float, limit: int = 10, per_parent_limit=None, cursor: int = 0,
                  offsets=None) -> list:
         """A fair slice: every eligible parent, then a bounded share each, dealt one at a time.
@@ -362,9 +374,9 @@ class DeliveryService:
         start = cursor % len(parents)
         order = parents[start:] + parents[:start]
         queues = {
-            parent: list(self.eligible_for_parent(
-                parent, now=now, limit=share, offset=(offsets or {}).get(parent, 0),
-            ))
+            parent: self._window_for(
+                parent, now=now, share=share, offset=(offsets or {}).get(parent, 0),
+            )
             for parent in order
         }
         selected = []
@@ -375,6 +387,23 @@ class DeliveryService:
                 if queues[parent]:
                     selected.append(queues[parent].pop(0))
         return selected
+
+    def _window_for(self, parent, *, now, share, offset):
+        """One parent's share, taken from a rotating position and wrapped at the end.
+
+        Without the wrap a cursor near the end of a parent's backlog returns a short window -
+        five rows at offset four yields one - so the rotation that exists to stop starvation
+        would quietly cost throughput every time it came round.
+        """
+        taken = list(self.eligible_for_parent(parent, now=now, limit=share, offset=offset))
+        if len(taken) < share and offset:
+            seen = {row["event_id"] for row in taken}
+            for row in self.eligible_for_parent(parent, now=now, limit=share, offset=0):
+                if len(taken) >= share:
+                    break
+                if row["event_id"] not in seen:
+                    taken.append(row)
+        return taken
 
     # ---------------------------------------------------------------- claim
 
@@ -970,9 +999,16 @@ class DeliveryService:
                 "settled": settled, "anchorPending": False,
             }
         for row in self.store.all(
-            "SELECT relationship_id, COUNT(*) AS n FROM events WHERE stage = 'staged'"
-            + (" AND relationship_id = ?" if relationship_id else "")
-            + " GROUP BY relationship_id",
+            # Joined through relationships with the same predicate stagedEvents uses. Reading
+            # events directly made the two fields disagree the moment an assignment was
+            # paused or cancelled: stagedEvents went empty while backlog still reported work
+            # the scheduler will never process.
+            "SELECT e.relationship_id AS relationship_id, COUNT(*) AS n FROM events e"
+            "  JOIN relationships r ON r.relationship_id = e.relationship_id"
+            " WHERE e.stage = 'staged'"
+            "   AND r.status = 'active' AND r.superseded_by IS NULL"
+            + (" AND e.relationship_id = ?" if relationship_id else "")
+            + " GROUP BY e.relationship_id",
             (relationship_id,) if relationship_id else (),
         ):
             backlog[row["relationship_id"]] = row["n"]

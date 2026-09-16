@@ -266,7 +266,10 @@ class RelayDaemon:
                 # no longer enough to skip the turn.
                 if self._already_observed(
                     reference, relationship["relationshipId"],
-                ) and not self.intake.staged_events(thread_id=thread, turn_id=turn_id):
+                ) and not self.intake.staged_events(
+                    thread_id=thread, turn_id=turn_id,
+                    relationship_id=relationship["relationshipId"],
+                ):
                     continue
                 self._settle_turn(relationship, reference, report)
         # Advanced whether or not anything was read. Advancing only on a read would let a
@@ -299,7 +302,13 @@ class RelayDaemon:
                 current = turn_id
             else:
                 history.append(turn_id)
-        staged = [row["turn_id"] for row in self.intake.staged_events(thread_id=thread)]
+        # Scoped to THIS assignment. A child thread can serve several, and collecting their
+        # staged turns together put a paused assignment's work into an active assignment's
+        # ring and let one assignment settle another's claim.
+        staged = [
+            row["turn_id"]
+            for row in self.intake.staged_events(thread_id=thread, relationship_id=rid)
+        ]
         ring = [
             turn_id for turn_id in dict.fromkeys(staged + history)
             if turn_id != current and self._worth_polling(thread, turn_id, rid)
@@ -352,7 +361,9 @@ class RelayDaemon:
         turn, and asking globally meant one assignment's observation made the turn look
         finished to the other, which then never settled it at all.
         """
-        if self.intake.staged_events(thread_id=thread, turn_id=turn_id):
+        if self.intake.staged_events(
+            thread_id=thread, turn_id=turn_id, relationship_id=relationship_id,
+        ):
             return True
         if relationship_id is not None:
             return self.store.one(
@@ -477,7 +488,11 @@ class RelayDaemon:
 
     def _commit_settlement(self, relationship, reference, outcome, synthesized, *, queue):
         with self.store.transaction() as db:
-            resolved = self.intake.resolve_staged_in(db, reference)
+            # This assignment's claims only. Settling every claim on a shared child's turn
+            # suppressed the other assignments' events without synthesizing their receipts.
+            resolved = self.intake.resolve_staged_in(
+                db, reference, relationship["relationshipId"],
+            )
             self.intake.record_observation_in(
                 db, reference, outcome, relationship_id=relationship["relationshipId"],
                 event=synthesized,
@@ -660,8 +675,17 @@ class RelayDaemon:
         if not parents:
             return
         cursor = self._cursor("delivery_parents", len(parents))
+        # Where each parent's own window STARTS. The parent rotation decides who goes first;
+        # without this the window inside a parent was always its oldest rows, so a delivery
+        # that raises before changing its own state - and therefore stays eligible and stays
+        # oldest - blocked every later delivery for that parent on every subsequent tick.
+        totals = {parent: self.delivery.eligible_count(parent, now=now) for parent in parents}
+        offsets = {
+            parent: self._cursor(f"deliver:{parent}", totals[parent])
+            for parent in parents if totals[parent]
+        }
         eligible = self.delivery.eligible(
-            now=now, limit=self.policy.max_sends_per_tick, cursor=cursor,
+            now=now, limit=self.policy.max_sends_per_tick, cursor=cursor, offsets=offsets,
         )
         # Moved on by ONE position after every window, whatever the outcomes were. Every
         # eligible parent is dealt from, so the rotation is not about who is included - it
@@ -670,6 +694,7 @@ class RelayDaemon:
         # hand that slot to the same parent forever.
         self._advance_cursor("delivery_parents", 1, len(parents))
         struggling = set()
+        attempted = {}
         for row in eligible:
             parent = row["parent_task_id"]
             if parent in struggling:
@@ -678,6 +703,7 @@ class RelayDaemon:
                 # normally; it simply cannot spend the whole budget failing.
                 report.skipped += 1
                 continue
+            attempted[parent] = attempted.get(parent, 0) + 1
             try:
                 record = self.delivery.attempt(row["event_id"], self.adapter, now=now)
             except Exception as error:
@@ -704,6 +730,15 @@ class RelayDaemon:
                     self.ack.bind_dispatched_revision(row["event_id"])
                 except Exception as error:
                     report.notes.append(f"anchor binding failed: {error}")
+
+        # Advanced by what was ATTEMPTED, never by what was selected. A row the budget
+        # dropped, or one skipped because its parent was already struggling, was never looked
+        # at - moving the cursor past it is how the reconcile path previously skipped work
+        # permanently. Wrapping on the count taken before the tick keeps the window inside a
+        # parent moving without ever stepping over an unread row.
+        for parent, taken in attempted.items():
+            if taken and totals.get(parent):
+                self._advance_cursor(f"deliver:{parent}", taken, totals[parent])
 
     # ----------------------------------------------------------------- state
 

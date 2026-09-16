@@ -264,7 +264,13 @@ class Registry:
             # stale_generation, so leaving it unannotated meant status showed awaiting_ack
             # for an obligation that can no longer be met. Annotating does not rewrite the
             # delivery, so the history of what was actually sent is untouched.
-            "   AND d.state IN ('sending','held_uncertain','dispatched')"
+            # deferred_busy and withheld_pre_send belong here for a stronger reason: once
+            # either has reached its attempt cap, hold_reason is set and attempt() returns
+            # before the pre-send supersession check, so generation advance is the ONLY
+            # occasion on which they can ever be annotated. Without them a capped delivery
+            # reports a current-looking cap forever.
+            "   AND d.state IN ('sending','held_uncertain','dispatched',"
+            "                  'deferred_busy','withheld_pre_send')"
             " ON CONFLICT(event_id) DO NOTHING",
             (now, rid, number),
         )

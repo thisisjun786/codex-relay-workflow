@@ -561,6 +561,33 @@ class ObservationHealth(DaemonTestCase):
                          "nothing is going to settle this one, so it is not a backlog")
         self.assertEqual(health["health"], "healthy")
 
+    def test_backlog_and_staged_events_agree_after_an_assignment_is_cancelled(self):
+        """stagedEvents filtered on the active relationship; backlog read events directly.
+
+        The two fields disagreed the moment an assignment was paused or cancelled: status
+        reported work the scheduler will never process.
+        """
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-1", status="inProgress")
+        path = self.artifact("out.txt", "still going")
+        self.accept(self.ready_payload(
+            relationship, [path], turn=TurnRef(CHILD, "turn-dispatch-1", "inProgress"),
+        ))
+        before = self.delivery.observation_health(now=self.clock.now())
+        self.assertEqual(len(before["stagedEvents"]), 1)
+        self.assertEqual(before["backlog"].get(rid), 1)
+
+        self.registry.set_status(rid, "cancelled", actor="test")
+
+        health = self.delivery.observation_health(now=self.clock.now())
+
+        self.assertEqual(health["stagedEvents"], [])
+        self.assertEqual(
+            health["backlog"], {},
+            "backlog must not report work stagedEvents has already excluded",
+        )
+
     def test_a_generation_whose_anchor_is_not_bound_yet_is_not_a_stall(self):
         """A needs_changes verdict opens a generation before its revision is dispatched.
 

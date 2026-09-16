@@ -8,7 +8,7 @@ and there a gate skip still consumed its place in the prefix.
 import os
 import unittest
 
-from codex_session_relay.models import Endpoint
+from codex_session_relay.models import Endpoint, TurnRef
 from codex_session_relay.transport import DEFERRED_BUSY, DISPATCHED
 
 from .support import HOST, DeliveryTestCase
@@ -244,6 +244,72 @@ class ReconciliationFairness(ParentFixture):
         )
 
 
+class DeliveryRotation(ParentFixture):
+    """A delivery that fails without changing its own state must not block its successors."""
+
+    def test_a_persistently_failing_delivery_does_not_block_the_rest(self):
+        """eligible_for_parent returned the same oldest prefix on every tick.
+
+        The failing row stays eligible and stays oldest, and the struggling set suppresses
+        every later row within the tick, so its successors were never attempted at all.
+        """
+        _relationship, ids = self.assignment("a", events=6)
+        first = ids[0]
+        original = self.delivery.attempt
+
+        def attempt(event_id, adapter, *, now=None):
+            if event_id == first:
+                raise RuntimeError("this one fails before it changes state")
+            return original(event_id, adapter, now=now)
+
+        seen = set()
+
+        def watched(event_id, adapter, *, now=None):
+            seen.add(event_id)
+            return attempt(event_id, adapter, now=now)
+
+        self.delivery.attempt = watched
+        try:
+            for _tick in range(20):
+                self.clock.advance(1)
+                self.daemon.tick(now=self.clock.now())
+        finally:
+            self.delivery.attempt = original
+
+        self.assertEqual(
+            seen & set(ids[1:]), set(ids[1:]),
+            "every delivery behind the failing one must be attempted in a finite number of ticks",
+        )
+
+    def test_the_delivery_cursor_moves_only_past_what_was_attempted(self):
+        """A row the budget dropped was never looked at; moving past it skips work."""
+        budget = self.daemon.policy.max_sends_per_tick
+        for index in range(budget + 3):
+            self.assignment(f"p{index}", events=2)
+
+        self.daemon.tick(now=self.clock.now())
+
+        moved = [
+            row["listing"] for row in self.store.all(
+                "SELECT listing, cursor FROM discovery_cursors WHERE listing LIKE 'deliver:%'")
+            if int(row["cursor"]) > 0
+        ]
+        self.assertLessEqual(
+            len(moved), budget,
+            "a cursor moved for a parent this tick never attempted",
+        )
+
+    def test_the_delivery_cursor_is_persisted(self):
+        """The rotation has to survive a restart, or it starts from the head every time."""
+        self.assignment("a", events=6)
+        self.daemon.tick(now=self.clock.now())
+        stored = self.store.one(
+            "SELECT cursor FROM discovery_cursors WHERE listing = ?", ("deliver:01parent-a",),
+        )
+        self.assertIsNotNone(stored)
+        self.assertGreater(int(stored["cursor"]), 0)
+
+
 class SharedChildTurns(DaemonTestCase):
     """Two assignments can legitimately be watching the same child turn."""
 
@@ -299,6 +365,111 @@ class SharedChildTurns(DaemonTestCase):
         )
         recipients = {thread for _r, thread, _m, _o in self.adapter.sends}
         self.assertEqual(recipients, {"01parent-a", "01parent-b"})
+
+    def test_a_staged_claim_on_a_shared_turn_is_settled_only_by_its_owner(self):
+        """_turns_to_poll collected staged turns by CHILD THREAD, not by assignment.
+
+        A staged claim owned by B could be selected by A, and resolve_staged_in selected by
+        (thread, turn) alone - so A suppressed B's claim while daemon_observation refused to
+        synthesize a receipt for A. B's parent waited on an outcome already thrown away.
+        """
+        import os
+
+        relationships, child, turn = self.two_parents_on_one_child()
+        # The owner is the assignment the relationship rotation reaches SECOND, so the
+        # non-owner polls this turn first. That ordering is the whole defect: whoever polls
+        # first used to settle it for everyone.
+        other, owner = relationships[0], relationships[1]
+        # A continuation turn that is NEITHER assignment's anchor, staged by the owner only.
+        self.adapter.start_turn(child, turn_id="turn-shared-2", status="inProgress")
+        root = os.path.join(self.root, "b")
+        os.makedirs(root, exist_ok=True)
+        path = os.path.join(root, "late.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("owned by exactly one assignment")
+        payload = self.ready_payload(
+            owner, [path], turn=TurnRef(child, "turn-shared-2", "inProgress"),
+        )
+        # A turn other than the anchor is admitted only with an explicit continuation, which
+        # is what makes this claim unambiguously ONE assignment's.
+        self.intake.accept_child_receipt(
+            payload, observation=TurnRef(child, "turn-shared-2", "inProgress"),
+            continuation={"anchorTurnId": turn, "actor": child,
+                          "reason": "continuation of this execution"},
+        )
+        event_id = payload["eventId"]
+
+        self.assertEqual(
+            [row["turn_id"] for row in self.intake.staged_events(
+                thread_id=child, relationship_id=other["relationshipId"])],
+            [],
+            "the fixture needs this claim to belong to exactly one assignment",
+        )
+        self.adapter.finish_turn(child, "turn-shared-2", status="failed")
+        for _tick in range(6):
+            self.clock.advance(1)
+            self.daemon.tick(now=self.clock.now())
+
+        # A failed turn SUPPRESSES the staged claim, so the outcome the owner's parent is
+        # waiting for can only come from a synthesized execution-only receipt. That is the
+        # part the global settlement destroyed: it suppressed the claim on behalf of the
+        # other assignment, whose daemon_observation refused to synthesize anything, and the
+        # turn then left the owner's ring with nothing recorded.
+        self.assertEqual(self.intake.row(event_id)["stage"], "suppressed")
+        outcomes = [
+            row for row in self.store.all(
+                "SELECT * FROM events WHERE relationship_id = ? AND turn_id = ?",
+                (owner["relationshipId"], "turn-shared-2"),
+            )
+            if row["outcome"] in ("failed", "interrupted")
+        ]
+        self.assertTrue(
+            outcomes,
+            "the owner must still produce a terminal outcome for the parent waiting on it",
+        )
+        self.assertEqual(outcomes[0]["stage"], "final")
+
+    def test_an_inactive_assignments_staged_turn_stays_out_of_an_active_ring(self):
+        """A paused assignment is absent from _active_relationships and must stay absent.
+
+        Collecting staged turns by thread put its work into an active assignment's ring, and
+        the globally scoped settlement then finalized it and created a delivery intent that
+        was retried for an assignment nothing should be processing.
+        """
+        import os
+
+        relationships, child, turn = self.two_parents_on_one_child()
+        paused, active = relationships[0], relationships[1]
+        self.adapter.start_turn(child, turn_id="turn-shared-3", status="inProgress")
+        root = os.path.join(self.root, "a")
+        os.makedirs(root, exist_ok=True)
+        path = os.path.join(root, "paused.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("belongs to the assignment that is about to pause")
+        payload = self.ready_payload(
+            paused, [path], turn=TurnRef(child, "turn-shared-3", "inProgress"),
+        )
+        self.intake.accept_child_receipt(
+            payload, observation=TurnRef(child, "turn-shared-3", "inProgress"),
+            continuation={"anchorTurnId": turn, "actor": child,
+                          "reason": "continuation of this execution"},
+        )
+        self.registry.set_status(paused["relationshipId"], "paused", actor="test")
+        self.adapter.finish_turn(child, "turn-shared-3", status="completed")
+
+        for _tick in range(6):
+            self.clock.advance(1)
+            self.daemon.tick(now=self.clock.now())
+
+        self.assertEqual(
+            self.intake.row(payload["eventId"])["stage"], "staged",
+            "a paused assignment's claim must not be settled through an active one",
+        )
+        self.assertIsNone(
+            self.delivery.find(payload["eventId"]),
+            "and nothing may be queued on its behalf",
+        )
+        del active
 
     def test_one_assignment_is_still_settled_only_once(self):
         """Per-assignment must not become per-tick: the same turn is not re-observed."""

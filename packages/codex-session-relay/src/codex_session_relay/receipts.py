@@ -536,7 +536,7 @@ class ReceiptIntake:
 
     # ------------------------------------------------------------- staging
 
-    def staged_events(self, *, thread_id=None, turn_id=None):
+    def staged_events(self, *, thread_id=None, turn_id=None, relationship_id=None):
         sql = "SELECT * FROM events WHERE stage = ?"
         params = [STAGED]
         if thread_id is not None:
@@ -545,6 +545,12 @@ class ReceiptIntake:
         if turn_id is not None:
             sql += " AND turn_id = ?"
             params.append(turn_id)
+        if relationship_id is not None:
+            # A child thread can serve several assignments, so a staged claim on one of its
+            # turns belongs to exactly one of them. Asking by thread alone hands another
+            # assignment's work to whoever polls first.
+            sql += " AND relationship_id = ?"
+            params.append(relationship_id)
         return self.store.all(sql + " ORDER BY first_seen_at", tuple(params))
 
     def resolve_staged(self, turn: TurnRef) -> dict:
@@ -564,18 +570,26 @@ class ReceiptIntake:
         with self.store.transaction() as db:
             return self.resolve_staged_in(db, turn)
 
-    def resolve_staged_in(self, db, turn: TurnRef) -> dict:
+    def resolve_staged_in(self, db, turn: TurnRef, relationship_id=None) -> dict:
         """The same settlement inside a caller's transaction.
 
         Exists so that finalizing a claim, recording the observation that finalized it, and
         queuing what it produced can be ONE commit. Split across three, a failure in the third
         leaves a final event nobody will ever look at again.
+
+        Scoped to one assignment when the caller names it. A turn belonging to a shared child
+        can carry claims from several assignments, and settling all of them on behalf of
+        whichever one happened to poll first suppressed the others without ever synthesizing
+        their receipts - so their parents waited on an outcome that had already been thrown
+        away. Each assignment settles its own.
         """
         if turn.turn_status not in TERMINAL:
             return {"finalized": [], "suppressed": [], "pending": True}
         finalized, suppressed = [], []
         now = self.clock.iso()
-        rows = self.staged_events(thread_id=turn.thread_id, turn_id=turn.turn_id)
+        rows = self.staged_events(
+            thread_id=turn.thread_id, turn_id=turn.turn_id, relationship_id=relationship_id,
+        )
         if not rows:
             return {"finalized": [], "suppressed": [], "pending": False}
         if True:
