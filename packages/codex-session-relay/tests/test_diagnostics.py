@@ -21,9 +21,21 @@ class Phases(DeliveryTestCase):
                 return item
         raise AssertionError("no such delivery")
 
-    def test_a_queued_delivery_is_awaiting_its_receipt(self):
+    def test_a_queued_delivery_is_waiting_on_the_send_not_the_receipt(self):
+        """A delivery row only exists because the receipt was collected and accepted.
+
+        awaiting_receipt pointed an operator at the child for a delay that is entirely this
+        relay's: what is outstanding is reaching the recipient.
+        """
         _relationship, event_id = self.queued_event()
-        self.assertEqual(self.phase_of(event_id)["phase"], "awaiting_receipt")
+        self.assertEqual(self.phase_of(event_id)["phase"], "awaiting_send")
+
+    def test_a_delivery_whose_send_is_in_flight_says_so(self):
+        """The claim committed and the process stopped; there IS an attempt to reconcile."""
+        from codex_session_relay.delivery import _phase
+
+        row = {"state": "sending", "kind": "completion_event", "hold_reason": None}
+        self.assertEqual(_phase(row, [], None), "in_flight")
 
     def test_a_busy_parent_is_named_as_such_with_its_next_retry(self):
         _relationship, event_id = self.queued_event()
@@ -328,6 +340,34 @@ class ObservationHealth(DaemonTestCase):
         self.assertFalse(health["anchors"][anchor_id]["settled"])
         self.assertEqual(health["health"], "stalled",
                          "there is staged work here and nothing has looked at it since")
+
+    def test_an_upgraded_store_does_not_forget_what_it_had_already_settled(self):
+        """assignment_settlements is new, and the scheduler asks it instead of observations.
+
+        Leaving it empty on upgrade makes every historical turn look unsettled, so a current
+        turn that can no longer be read strands a previously settled assignment forever.
+        """
+        from codex_session_relay.store import Store
+
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-1", status="inProgress")
+        self.adapter.finish_turn(CHILD, "turn-dispatch-1")
+        self.daemon.tick(now=self.clock.now())
+        self.assertTrue(self.store.all("SELECT * FROM assignment_settlements"))
+
+        # Exactly the state an upgrade starts from: observations populated, the new table not.
+        with self.store.transaction() as db:
+            db.execute("DELETE FROM assignment_settlements")
+        path = self.store.path
+        self.store.close()
+
+        reopened = Store(path)
+        self.addCleanup(reopened.close)
+
+        rows = reopened.all("SELECT * FROM assignment_settlements")
+        self.assertEqual([row["relationship_id"] for row in rows], [rid])
+        self.assertEqual(rows[0]["turn_id"], "turn-dispatch-1")
 
     def test_each_assignment_settles_a_shared_turn_for_itself(self):
         """observations is keyed by the turn alone, so it can only name who settled it first.

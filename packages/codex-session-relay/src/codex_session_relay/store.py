@@ -628,6 +628,18 @@ class Store:
         self.db.execute(
             "INSERT OR IGNORE INTO schema_meta VALUES ('store_created_at', ?)", (_now_iso(),)
         )
+        # An existing store already holds terminal observations, and the scheduler and the
+        # health block ask assignment_settlements instead. Leaving it empty on upgrade would
+        # make every historical turn look unsettled, so a current turn that can no longer be
+        # read would leave a previously settled assignment stalled forever and spending
+        # polling budget. Backfilled from the rows that name their relationship; rows written
+        # before that column existed name nobody and cannot be attributed to one.
+        self.db.execute(
+            "INSERT OR IGNORE INTO assignment_settlements (relationship_id, thread_id,"
+            " turn_id, terminal_status, settled_at)"
+            " SELECT relationship_id, thread_id, turn_id, terminal_status, observed_at"
+            "   FROM observations WHERE relationship_id IS NOT NULL"
+        )
         # Tests set this to prove a transition rolls back; nothing in production assigns it.
         self.fault_hook = None
 

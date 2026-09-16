@@ -124,6 +124,8 @@ transport call.
 | Phase | Meaning |
 |---|---|
 | `awaiting_receipt` | the child has not produced a completion receipt yet |
+| `awaiting_send` | the receipt is collected and accepted; this relay has not reached the recipient yet |
+| `in_flight` | a send was claimed and its outcome is not yet settled |
 | `parent_busy` | the parent is mid-turn; it is never interrupted |
 | `settings_rejected` | the host would not confirm the authorized execution settings |
 | `withheld:<operation>` | refused before any transport call, naming the operation that refused |
@@ -132,6 +134,7 @@ transport call.
 | `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
 | `channel_closed` | the push channel itself is unavailable; stored, not woken |
 | `superseded` | a newer generation or revision replaced this one |
+| `superseded:<reason>` | an outstanding send a newer generation or revision replaced; its state is left alone so a lost response stays reconcilable |
 
 Each carries the most recent failed operation, its concrete error, the exact settings
 difference where there is one, and the next retry time.

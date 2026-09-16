@@ -1331,4 +1331,13 @@ def _phase(row, attempts, ack, failure=None, superseded=None) -> str:
     if row["hold_reason"]:
         return f"held:{row['hold_reason']}"
     del operation
+    if row["state"] == SENDING:
+        # The claim committed and the process stopped, or is stopping. There IS an attempt,
+        # and it may already need reconciliation, so awaiting_receipt would point at the
+        # child when the open question is about a send this relay made.
+        return "in_flight"
+    if row["state"] == QUEUED:
+        # A delivery row exists, so the receipt was already collected and accepted. What is
+        # outstanding is this relay reaching the recipient, not the child producing anything.
+        return "awaiting_send"
     return "awaiting_receipt"
