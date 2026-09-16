@@ -600,6 +600,10 @@ class StateSelection:
     # selection because the decision not to create a store here has to reach whoever holds
     # the path they would otherwise have created one at.
     ambiguous: tuple = ()
+    # Stores that record NO socket at all, when this selection is about to create a new one
+    # beside them. They predate provenance, their directory hash cannot be inverted, and one
+    # of them may be this socket's - so creating here may be hiding real assignments.
+    unidentified: tuple = ()
 
     @property
     def db_path(self) -> Path:
@@ -610,6 +614,7 @@ class StateSelection:
             "path": str(self.path), "dbPath": str(self.db_path), "source": self.source,
             "detail": self.detail, "socketScope": self.socket_scope,
             "precedence": list(PRECEDENCE), "ambiguous": list(self.ambiguous),
+            "unidentified": list(self.unidentified),
         }
 
 
@@ -683,6 +688,20 @@ def resolve_state_dir(explicit=None, socket_path=None) -> StateSelection:
             chosen, source,
             f"{detail}; {len(claims)} stores already record this socket",
             scope, tuple(claims),
+        )
+    # Nothing claims this socket, so a store is about to be created here. A store that
+    # predates provenance records no socket at all and its directory hash cannot be inverted,
+    # so if one of them IS this socket's - created from a spelling we cannot reconstruct -
+    # creating a canonical database now hides it permanently, exactly the way a third store
+    # would. Reporting them through doctor alone was not enough, because ordinary commands do
+    # not run doctor. Only when we would CREATE: an existing canonical store has already
+    # answered the question and returned above.
+    unidentified = stores_without_provenance(base / "codex-session-relay", skip=scope)
+    if unidentified:
+        return StateSelection(
+            chosen, source,
+            f"{detail}; {len(unidentified)} stores here record no socket",
+            scope, (), tuple(unidentified),
         )
     return StateSelection(chosen, source, detail, scope)
 

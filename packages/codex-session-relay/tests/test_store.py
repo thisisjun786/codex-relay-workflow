@@ -324,6 +324,42 @@ class Precedence(unittest.TestCase):
         # But it IS visible, so an operator is not left guessing why a store looks empty.
         self.assertIn(stranger, stores_without_provenance(root, skip=chosen.path.name))
 
+    def test_a_store_recording_no_socket_blocks_creating_one_beside_it(self):
+        """Its directory hash cannot be inverted, so it cannot be ruled out as this socket's.
+
+        Creating a canonical database next to it hides it exactly the way a third store hides
+        two contested ones, and reporting it through doctor alone did not help: ordinary
+        commands do not run doctor.
+        """
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        stranger = os.path.join(root, "fedcba9876543210")
+        os.makedirs(stranger)
+        Store(Path(stranger) / "relay.sqlite3").close()
+
+        chosen = resolve_state_dir(None, "/run/first-after-upgrade.sock")
+
+        self.assertEqual(list(chosen.unidentified), [stranger])
+        self.assertEqual(chosen.ambiguous, ())
+        self.assertEqual(list(chosen.to_record()["unidentified"]), [stranger])
+
+    def test_an_existing_canonical_store_settles_the_question_already(self):
+        """The refusal is about CREATING one. A store that is already here has answered."""
+        from codex_session_relay.store import socket_scope
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        stranger = os.path.join(root, "fedcba9876543211")
+        os.makedirs(stranger)
+        Store(Path(stranger) / "relay.sqlite3").close()
+        socket = "/run/already-here.sock"
+        mine = os.path.join(root, socket_scope(socket))
+        os.makedirs(mine)
+        Store(Path(mine) / "relay.sqlite3", socket_path=socket).close()
+
+        chosen = resolve_state_dir(None, socket)
+
+        self.assertEqual(str(chosen.path), mine)
+        self.assertEqual(chosen.unidentified, ())
+
     def test_a_fresh_socket_uses_the_canonical_directory(self):
         """The fallback is for an existing store only; nothing new lands in the old name."""
         from codex_session_relay.store import socket_scope
