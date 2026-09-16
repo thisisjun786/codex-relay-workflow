@@ -625,18 +625,19 @@ class RelayService:
         unreadable directory or an exhausted descriptor table indistinguishable from a running
         supervisor, and callers act on that answer - stop reports a replacement, disable
         refuses an owner. An operational failure is not a statement about who owns this
-        directory, so it is raised and reported as itself.
+        directory, so it is raised and reported as itself. Which means opening the file has to
+        sit OUTSIDE the contention handler: open() raises EACCES too, for a lock file that has
+        become unreadable, and reading that as contention is the same mistake one level down.
         """
         path = self.selection.path / DAEMON_LOCK
-        handle = None
+        self.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        handle = open(path, "a+")
         try:
-            self.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
-            handle = open(path, "a+")
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
-            if handle is not None:
-                handle.close()
+            handle.close()
             handle = None
+            # Only flock's contention errnos. Anything else from flock is operational too.
             if error.errno not in (errno.EACCES, errno.EAGAIN):
                 raise
         try:
