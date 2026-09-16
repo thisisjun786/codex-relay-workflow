@@ -263,3 +263,182 @@ class ScopeAuthority(ServiceTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeWorker:
+    """Stands in for a bounded worker process, so cadence is tested without real time."""
+
+    def __init__(self, code=0, pid=None):
+        self.returncode = code
+        self.pid = pid or os.getpid()
+
+    def wait(self):
+        return self.returncode
+
+
+class Supervision(ServiceTestCase):
+    def supervised(self, service, *, codes, **kwargs):
+        """Run the supervisor over a scripted sequence of worker exits."""
+        launches, slept = [], []
+        queue = list(codes)
+
+        def spawn(**call):
+            launches.append(call)
+            return FakeWorker(queue.pop(0) if queue else 0)
+
+        outcome = service.supervise(
+            allow_isolated=True, spawn=spawn, sleeper=slept.append,
+            max_segments=len(codes), **kwargs,
+        )
+        return outcome, launches, slept
+
+    def test_a_worker_that_exits_is_replaced_on_the_same_store(self):
+        service = self.service("a")
+        service.enable(actor="test")
+        before = service.store_id
+        outcome, launches, _slept = self.supervised(service, codes=[0, 0, 0])
+        self.assertEqual(outcome["segments"], [0, 0, 0])
+        self.assertEqual(len(launches), 3, "each bounded worker is replaced by a new one")
+        # One lock, one claim, one store across every replacement.
+        self.assertEqual(service.store_id, before)
+        self.assertEqual(service.record()["restarts"], 3)
+        self.assertFalse(service.lock_is_held(), "the supervisor released on the way out")
+
+    def test_every_worker_inherits_the_descriptors_the_supervisor_holds(self):
+        service = self.service("a")
+        service.enable(actor="test")
+        _outcome, launches, _slept = self.supervised(service, codes=[0, 0])
+        self.assertEqual(len({call["lock_fd"] for call in launches}), 1)
+        self.assertEqual(len({call["scope_fd"] for call in launches}), 1)
+        self.assertEqual(len({call["token"] for call in launches}), 1)
+        self.assertIsNotNone(launches[0]["lock_fd"])
+        self.assertIsNotNone(launches[0]["scope_fd"])
+
+    def test_repeated_failure_backs_off_and_is_reported(self):
+        service = self.service("a")
+        service.enable(actor="test")
+        outcome, _launches, slept = self.supervised(service, codes=[1, 1, 1])
+        self.assertEqual(outcome["consecutiveFailures"], 3)
+        self.assertIsNotNone(outcome["degraded"], "repeated failure is reported, not hidden")
+        self.assertIn("3 consecutive worker failures", outcome["degraded"])
+        # Capped exponential, not a fixed interval and not a tight loop.
+        self.assertEqual(slept[:2], [2.0, 4.0])
+        log = (service.selection.path / "daemon.log").read_text(encoding="utf-8")
+        self.assertIn("service_degraded", log)
+
+    def test_a_clean_segment_resets_the_failure_count(self):
+        service = self.service("a")
+        service.enable(actor="test")
+        outcome, _launches, slept = self.supervised(service, codes=[1, 1, 0])
+        self.assertEqual(outcome["consecutiveFailures"], 0)
+        self.assertEqual(slept[:3], [2.0, 4.0, 2.0])
+
+    def test_disabling_the_service_ends_supervision_at_the_boundary(self):
+        service = self.service("a")
+        service.enable(actor="test")
+        launches = []
+
+        def spawn(**call):
+            launches.append(call)
+            service.intent.write(enabled=False, actor="owner")
+            return FakeWorker(0)
+
+        outcome = service.supervise(
+            allow_isolated=True, spawn=spawn, sleeper=lambda _s: None, max_segments=5,
+        )
+        self.assertEqual(len(launches), 1, "no replacement after the owner disabled it")
+        self.assertEqual(outcome["segments"], [0])
+        self.assertFalse(service.intent.read()["enabled"])
+
+    def test_a_stop_request_ends_supervision_without_a_replacement(self):
+        service = self.service("a")
+        service.enable(actor="test")
+        launches = []
+
+        def spawn(**call):
+            launches.append(call)
+            service.request_stop()
+            return FakeWorker(0)
+
+        service.supervise(
+            allow_isolated=True, spawn=spawn, sleeper=lambda _s: None, max_segments=5,
+        )
+        self.assertEqual(len(launches), 1)
+
+    def test_supervising_a_disabled_service_is_refused(self):
+        service = self.service("a")
+        with self.assertRaises(ServiceRefused) as caught:
+            service.supervise(allow_isolated=True, spawn=lambda **_k: FakeWorker(0))
+        self.assertEqual(caught.exception.reason, "service_disabled")
+
+
+class SupervisedWorker(ServiceTestCase):
+    """A worker adopts what its supervisor holds, or it is refused outright."""
+
+    def adopt(self, service, **overrides):
+        from codex_session_relay.cli import _adopt_supervised
+
+        class Args:
+            pass
+
+        args = Args()
+        args.supervised_token = overrides.get("token", "tok")
+        args.supervised_lock_fd = overrides.get("lock_fd", 0)
+        args.supervised_scope_fd = overrides.get("scope_fd", -1)
+        return _adopt_supervised(service, args)
+
+    def prepared(self, **record):
+        service = self.service("a")
+        service.selection.path.mkdir(parents=True, exist_ok=True)
+        (service.selection.path / "daemon.lock").write_text("", encoding="utf-8")
+        base = service.new_record(pid=os.getppid(), token="tok")
+        service.write_record(dict(base, **record))
+        return service
+
+    def test_an_unsupervised_run_is_untouched(self):
+        from codex_session_relay.cli import _adopt_supervised
+
+        class Args:
+            supervised_token = None
+            supervised_lock_fd = None
+            supervised_scope_fd = None
+
+        self.assertEqual(_adopt_supervised(self.service("a"), Args()), {})
+
+    def test_a_partial_supervised_invocation_is_refused(self):
+        from codex_session_relay.cli import PayloadExit
+
+        service = self.prepared()
+        with self.assertRaises(PayloadExit) as caught:
+            self.adopt(service, scope_fd=None)
+        self.assertEqual(caught.exception.payload["reason"], "supervised_invocation_incomplete")
+
+    def test_a_wrong_token_is_refused(self):
+        from codex_session_relay.cli import PayloadExit
+
+        service = self.prepared()
+        with self.assertRaises(PayloadExit) as caught:
+            self.adopt(service, token="not-the-token")
+        self.assertEqual(caught.exception.payload["reason"], "supervised_token_mismatch")
+
+    def test_a_descriptor_for_another_file_is_refused(self):
+        from codex_session_relay.cli import PayloadExit
+
+        service = self.prepared()
+        stranger = os.open(os.path.join(self.tmp, "not-a-lock"), os.O_CREAT | os.O_RDWR, 0o600)
+        self.addCleanup(os.close, stranger)
+        with self.assertRaises(PayloadExit) as caught:
+            self.adopt(service, lock_fd=stranger)
+        self.assertEqual(caught.exception.payload["reason"], "supervised_fd_mismatch")
+
+    def test_a_worker_whose_supervisor_is_already_gone_refuses_to_serve(self):
+        from codex_session_relay.cli import PayloadExit
+
+        # The record names a supervisor that is not this process's parent, which is exactly
+        # what an orphan looks like when PDEATHSIG arrived too late to help.
+        service = self.prepared(pid=999999)
+        lock = os.open(service.selection.path / "daemon.lock", os.O_RDWR)
+        self.addCleanup(os.close, lock)
+        with self.assertRaises(PayloadExit) as caught:
+            self.adopt(service, lock_fd=lock)
+        self.assertEqual(caught.exception.payload["reason"], "supervisor_already_gone")

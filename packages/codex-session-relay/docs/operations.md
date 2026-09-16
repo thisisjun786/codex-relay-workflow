@@ -73,9 +73,10 @@ An update tool should read `service status`, act on `stop` or `restart`, and rel
 guarantee: **a service that was disabled is never enabled as a side effect**. Intent lives in
 `service.json` and absence means never configured, which is not enabled.
 
-Status: the commands above are implemented. `service run` currently serves ONE bounded
-segment and exits; supervision across successive worker processes, which is what carries an
-assignment past a single process lifetime, is still planned in PR-A.
+Status: implemented. `service run` is the supervisor: it holds the locks once and replaces
+bounded workers, so an assignment continues on the same store and generation past any single
+process lifetime. A clean segment waits the restart interval; repeated failure backs off
+exponentially to a cap and is reported as `degraded` rather than retried silently.
 
 ### Ownership
 
@@ -94,9 +95,11 @@ Termination is bound to a process handle rather than a pid, and identity include
 id, the installation and the store, so a reused pid is never signalled by mistake. Where a
 stable handle is unavailable, ownership reports `unverifiable` and stop refuses.
 
-Status: implemented, except that the inherited-descriptor arrangement only matters once the
-supervisor launches workers, which is still planned. Today the single service process holds
-both locks itself.
+Status: implemented. The supervisor acquires both locks, marks them inheritable and passes
+them to each worker, which adopts them rather than taking a second lock. A worker is
+authenticated by a token recorded in `daemon.json` plus a device/inode check on each
+descriptor, arms `PR_SET_PDEATHSIG` in its own bootstrap and immediately re-checks its
+parent, and refuses to serve if the supervisor has already gone.
 
 ## One service, several projects
 
@@ -111,8 +114,8 @@ Cancelling, pausing or archiving one assignment removes it from the loop. It doe
 the shared service: only the supervisor's own bound, an explicit stop, or disabled intent
 does that.
 
-Status: the per-assignment refusal is partly implemented (I-13, I-74); the direction check,
-project grouping and shared-service guarantees are planned in PR-A.
+Status: implemented. The direction check runs at both `enqueue` and `attempt`, before any
+transport call.
 
 ## Reading a stuck delivery
 
@@ -147,5 +150,6 @@ doing anything else, and reconciliation establishes what happened without sendin
 attempt whose response was lost stays uncertain until evidence resolves it, and is never
 resent on the strength of elapsed time.
 
-Status: the durable state and reconciliation exist; supervised restart and lease recovery
-are planned in PR-A.
+Status: implemented. The supervisor runs recovery before its first worker, and an expired
+lease returns its delivery to `held_uncertain` for the reconciler to judge, never to the
+send queue, because a queued row would be eligible to send again on no evidence.

@@ -483,6 +483,22 @@ def contract_record(record: dict) -> dict:
     return clean
 
 
+def project_key(record: dict) -> str:
+    """Which project an assignment belongs to, for grouping a shared service's work.
+
+    Grouping information, never authorization: the cross-delivery refusal is decided from the
+    relationship's own endpoints, not from this. A parent with no recorded cwd falls back to
+    its host, so every assignment lands under some key.
+    """
+    parent = record.get("parent") or {}
+    cwd = parent.get("cwd")
+    if cwd:
+        import posixpath
+
+        return posixpath.normpath(cwd)
+    return f"host:{parent.get('hostId')}"
+
+
 def record_settings(store, clock, task_id: str, settings: dict, *, source: str) -> dict:
     """Record the execution settings a task was actually created with.
 

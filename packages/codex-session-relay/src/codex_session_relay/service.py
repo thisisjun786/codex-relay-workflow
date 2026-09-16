@@ -22,6 +22,7 @@ import os
 import pwd
 import signal
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,7 @@ DAEMON_LOCK = "daemon.lock"
 DAEMON_RECORD = "daemon.json"
 SERVICE_INTENT = "service.json"
 DAEMON_LOG = "daemon.log"
+STOP_REQUEST = "stop.request"
 
 OURS, FOREIGN, UNVERIFIABLE, NONE = "ours", "foreign", "unverifiable", "none"
 
@@ -148,7 +150,7 @@ class ScopeRegistry:
         except (OSError, ValueError):
             return None
 
-    def claim(self, socket_path, record: dict):
+    def claim(self, socket_path, record: dict, *, shared: bool = False):
         """Take the scope lock and write the record, or report who already holds it.
 
         Liveness is the LOCK, never a recorded pid. A supervisor that dies leaving a worker
@@ -167,6 +169,8 @@ class ScopeRegistry:
             return {"ok": False, "reason": "scope_owned_by_other_store",
                     "held_by": self.read(socket_path), "scopeKey": self.key(socket_path)}
         self._handle = handle
+        if shared:
+            os.set_inheritable(handle.fileno(), True)
         payload = dict(record, scopeKey=self.key(socket_path), scopeAuthority=self.authority,
                        socketPath=str(socket_path), registeredAt=_now())
         self.record_path(socket_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -245,6 +249,34 @@ def installation_id(state_dir) -> str:
     package = Path(__file__).resolve().parent
     material = f"{package}\0{Path(state_dir).expanduser().absolute().resolve()}"
     return hashlib.sha256(material.encode()).hexdigest()[:16]
+
+
+PR_SET_PDEATHSIG = 1
+
+
+def arm_parent_death_signal(expected_parent: int) -> dict:
+    """Ask the kernel to signal this process when its parent dies, then check it is not late.
+
+    PR_SET_PDEATHSIG is not delivered retrospectively, so a parent that died before the child
+    armed it leaves an orphan. The getppid check immediately afterwards is what closes that
+    window, and it can only be done here, in the child.
+
+    Armed in the child's own bootstrap rather than through preexec_fn, which is unsafe once
+    the supervisor has started the adapter's transport thread.
+    """
+    armed, detail = False, None
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        armed = libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0) == 0
+        if not armed:
+            detail = f"prctl failed: errno {ctypes.get_errno()}"
+    except (OSError, AttributeError, ValueError) as error:
+        detail = f"{type(error).__name__}: {error}"
+    actual = os.getppid()
+    orphaned = actual != expected_parent
+    return {"armed": armed, "detail": detail, "parent": actual, "orphaned": orphaned}
 
 
 class ProcessHandle:
@@ -484,11 +516,11 @@ class RelayService:
     def stop(self, *, actor: str = "cli", timeout: float = 10.0, grace: float = 0.1) -> dict:
         """Signal only a process this installation owns, through a handle to that process."""
         record = self.record()
+        # Recorded before any signal, so a supervisor that is about to die knows this was a
+        # graceful stop and does not launch a replacement on its way out.
+        self.request_stop()
         owner, handle, detail = self.ownership(record)
         try:
-            if owner == NONE:
-                return {"ok": False, "reason": "not_running", "detail": detail,
-                        "supervisor": "gone", "worker": "gone"}
             if owner == FOREIGN:
                 return {"ok": False, "reason": "not_ours", "detail": detail,
                         "supervisor": "untouched", "worker": "untouched"}
@@ -497,15 +529,32 @@ class RelayService:
                 # process gets killed after its number is reused.
                 return {"ok": False, "reason": "ownership_unverifiable", "detail": detail,
                         "supervisor": "untouched", "worker": "untouched"}
-            outcome = self._terminate(handle, timeout=timeout, grace=grace)
+            # NONE still falls through to the worker: a supervisor can die leaving its worker
+            # alive, and that orphan is exactly what a stop has to reach.
+            outcome = ("gone" if owner == NONE
+                       else self._terminate(handle, timeout=timeout, grace=grace))
         finally:
             if handle is not None:
                 handle.close()
         worker = self._stop_worker(record, timeout=timeout, grace=grace)
-        if outcome == "exited" and record is not None:
-            self.write_record(dict(record, pid=None, workerPid=None,
-                                   stoppedAt=_now(), stoppedBy=actor))
-        ok = outcome == "exited" and worker in ("exited", "gone")
+        supervisor_done = outcome in ("exited", "gone")
+        worker_done = worker in ("exited", "gone")
+        if record is not None:
+            # Identity is kept until termination is CONFIRMED. Clearing a pid we have not
+            # seen exit would lose the only handle a later stop has to reach it.
+            cleared = dict(record, stoppedBy=actor)
+            if supervisor_done:
+                cleared["pid"] = None
+            if worker_done:
+                cleared["workerPid"] = None
+                cleared["workerStartTicks"] = None
+            if supervisor_done and worker_done:
+                cleared["stoppedAt"] = _now()
+            self.write_record(cleared)
+        if owner == NONE and worker == "gone":
+            return {"ok": False, "reason": "not_running", "detail": detail,
+                    "supervisor": "gone", "worker": "gone"}
+        ok = supervisor_done and worker_done
         return {"ok": ok, "reason": None if ok else "did_not_exit",
                 "detail": None, "supervisor": outcome, "worker": worker}
 
@@ -561,7 +610,8 @@ class RelayService:
                 "start": started}
 
     def start(self, *, allow_isolated: bool = False, launcher=None, actor: str = "cli",
-              max_ticks=None, deadline=None, timeout: float = 20.0, poll: float = 0.05) -> dict:
+              max_ticks=None, deadline=None, segment_seconds=None, max_segments=None,
+              timeout: float = 20.0, poll: float = 0.05) -> dict:
         """Preconditions here; ownership in the child.
 
         The daemon lock and the scope claim are taken by the process that will HOLD them, not
@@ -585,6 +635,7 @@ class RelayService:
         before = (self.record() or {}).get("pid")
         child = (launcher or self.default_launcher)(
             self, allow_isolated=allow_isolated, max_ticks=max_ticks, deadline=deadline,
+            segment_seconds=segment_seconds, max_segments=max_segments,
         )
         deadline_at = time.monotonic() + timeout
         while time.monotonic() < deadline_at:
@@ -608,7 +659,8 @@ class RelayService:
         except OSError:
             return ""
 
-    def default_launcher(self, service, *, allow_isolated, max_ticks, deadline):
+    def default_launcher(self, service, *, allow_isolated, max_ticks=None, deadline=None,
+                         segment_seconds=None, max_segments=None):
         import subprocess
         import sys
 
@@ -619,8 +671,10 @@ class RelayService:
         argv += ["service", "run"]
         if allow_isolated:
             argv.append("--allow-isolated-scope")
-        if max_ticks is not None:
-            argv += ["--max-ticks", str(max_ticks)]
+        if segment_seconds is not None:
+            argv += ["--segment-seconds", str(segment_seconds)]
+        if max_segments is not None:
+            argv += ["--max-segments", str(max_segments)]
         if deadline is not None:
             argv += ["--deadline", str(deadline)]
         environment = dict(os.environ)
@@ -635,10 +689,152 @@ class RelayService:
                 start_new_session=True, env=environment,
             )
 
+    # ------------------------------------------------------------- supervision
+
+    @property
+    def stop_request_path(self) -> Path:
+        return self.selection.path / STOP_REQUEST
+
+    def request_stop(self) -> None:
+        """Recorded BEFORE any signal, so a graceful stop is never read as a crash."""
+        self.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.stop_request_path.write_text(_now(), encoding="utf-8")
+
+    def clear_stop_request(self) -> None:
+        try:
+            self.stop_request_path.unlink()
+        except OSError:
+            pass
+
+    def stop_requested(self) -> bool:
+        return self.stop_request_path.exists()
+
+    def spawn_worker(self, *, lock_fd, scope_fd, token, segment_seconds, allow_isolated):
+        """One bounded worker, sharing the descriptors this supervisor already holds."""
+        import subprocess
+        import sys
+
+        argv = [sys.executable, "-m", "codex_session_relay.cli",
+                "--state", str(self.selection.path)]
+        if self.socket_path:
+            argv += ["--socket", str(self.socket_path)]
+        argv += ["daemon", "--deadline", str(segment_seconds),
+                 "--supervised-token", token,
+                 "--supervised-lock-fd", str(lock_fd),
+                 "--supervised-scope-fd", str(scope_fd if scope_fd is not None else -1)]
+        if allow_isolated:
+            argv.append("--allow-isolated-scope")
+        environment = dict(os.environ)
+        if self.scope.authority == ISOLATED:
+            environment[SCOPE_ENV] = str(self.scope.root)
+        pass_fds = tuple(fd for fd in (lock_fd, scope_fd) if fd is not None)
+        with open(self.selection.path / DAEMON_LOG, "a", encoding="utf-8") as log:
+            return subprocess.Popen(
+                argv, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                pass_fds=pass_fds, env=environment,
+            )
+
+    def supervise(self, *, allow_isolated=False, segment_seconds=None, max_segments=None,
+                  deadline=None, spawn=None, policy=None, sleeper=None, on_start=None) -> dict:
+        """Replace bounded workers for as long as the owner wants this service running.
+
+        RelayDaemon.run stays bounded by construction; continuation is a supervisor OVER
+        successive bounded workers, not a longer loop inside one. The locks are acquired once
+        here and inherited by every worker, so the store, the generations and the scope claim
+        are untouched across a worker boundary - which is what carries an assignment past any
+        single process lifetime without asking the parent model anything.
+        """
+        from .daemon import SingleInstance
+        from .policy import RetryPolicy
+
+        policy = policy or RetryPolicy()
+        sleeper = sleeper or time.sleep
+        spawn = spawn or self.spawn_worker
+        segment_seconds = segment_seconds or policy.segment_seconds
+
+        gate = self.authority_check(allow_isolated=allow_isolated)
+        if not gate["ok"]:
+            raise ServiceRefused(gate["reason"], gate["detail"])
+        if not self.intent.read()["enabled"]:
+            raise ServiceRefused(
+                "service_disabled",
+                "this service is not enabled; supervising it would ignore the owner's intent",
+            )
+
+        self.clear_stop_request()
+        token = uuid.uuid4().hex
+        segments, failures, degraded = [], 0, None
+        with SingleInstance(self.selection.path, shared=True) as lock:
+            scope_fd = None
+            if self.socket_path:
+                claim = self.scope.claim(
+                    self.socket_path, self.new_record(pid=os.getpid(), token=token),
+                    shared=True,
+                )
+                if not claim["ok"]:
+                    raise ServiceRefused(claim["reason"], json.dumps(claim.get("held_by")))
+                scope_fd = claim["lockFd"]
+            self.write_record(self.new_record(pid=os.getpid(), token=token))
+            try:
+                if on_start is not None:
+                    on_start()
+                started = time.monotonic()
+                while True:
+                    if max_segments is not None and len(segments) >= max_segments:
+                        break
+                    if deadline is not None and time.monotonic() - started >= deadline:
+                        break
+                    if self.stop_requested():
+                        break
+                    # Re-read every cycle: an owner who disables the service while a worker
+                    # was running gets no replacement, and the supervisor never writes intent.
+                    if not self.intent.read()["enabled"]:
+                        break
+                    child = spawn(
+                        lock_fd=lock.fileno(), scope_fd=scope_fd, token=token,
+                        segment_seconds=segment_seconds, allow_isolated=allow_isolated,
+                    )
+                    self._note(workerPid=child.pid, workerStartTicks=start_ticks(child.pid))
+                    code = child.wait()
+                    self._note(workerPid=None, workerStartTicks=None, lastExit=code,
+                               restarts=len(segments) + 1)
+                    segments.append(code)
+                    failures = failures + 1 if code != 0 else 0
+                    if failures >= policy.repeat_failure_threshold:
+                        degraded = (f"{failures} consecutive worker failures, last exit {code}")
+                        self.store_journal_note(degraded)
+                    self._note(consecutiveFailures=failures, degraded=degraded)
+                    if self.stop_requested() or not self.intent.read()["enabled"]:
+                        break
+                    wait = policy.restart_delay_for(failures)
+                    self._note(nextRestartAt=time.time() + wait)
+                    sleeper(wait)
+            finally:
+                if self.socket_path:
+                    self.scope.release(self.socket_path)
+                current = self.record() or {}
+                self.write_record(dict(current, pid=None, workerPid=None, stoppedAt=_now()))
+        return {"ok": True, "reason": None, "segments": segments,
+                "consecutiveFailures": failures, "degraded": degraded}
+
+    def _note(self, **fields) -> None:
+        record = self.record()
+        if record is not None:
+            self.write_record(dict(record, **fields))
+
+    def store_journal_note(self, detail: str) -> None:
+        """Repeated failure is reported, not silently retried forever."""
+        path = self.selection.path / DAEMON_LOG
+        try:
+            with open(path, "a", encoding="utf-8") as log:
+                log.write(f"{_now()} service_degraded: {detail}\n")
+        except OSError:
+            pass
+
 
 @contextmanager
 def owned_service(service: RelayService, *, allow_isolated: bool = False, token=None,
-                  require_intent: bool = True):
+                  require_intent: bool = True, adopt_lock_fd=None, adopt_scope_fd=None):
     """Hold the daemon lock and the scope claim for as long as this process serves.
 
     Both are released together on the way out, and the scope RECORD is deliberately kept: a
@@ -655,22 +851,38 @@ def owned_service(service: RelayService, *, allow_isolated: bool = False, token=
             "service_disabled",
             "this service is not enabled; running it would ignore the owner's intent",
         )
-    with SingleInstance(service.selection.path):
+    supervised = adopt_lock_fd is not None
+    with SingleInstance(service.selection.path, adopt_fd=adopt_lock_fd):
         claim = {"ok": True, "reason": None}
-        if service.socket_path:
+        if service.socket_path and not supervised:
             claim = service.scope.claim(service.socket_path, service.new_record(
                 pid=os.getpid(), token=token,
             ))
             if not claim["ok"]:
                 raise ServiceRefused(claim["reason"], json.dumps(claim.get("held_by")))
-        record = service.write_record(service.new_record(pid=os.getpid(), token=token))
+        if supervised:
+            # The supervisor owns both the claim and the record. A worker that rewrote them
+            # would erase the identity a stop needs to reach the supervisor.
+            record = service.record() or service.new_record(pid=os.getpid(), token=token)
+        else:
+            record = service.write_record(service.new_record(pid=os.getpid(), token=token))
         try:
             yield record
         finally:
-            if service.socket_path:
-                service.scope.release(service.socket_path)
-            current = service.record() or record
-            service.write_record(dict(current, pid=None, workerPid=None, stoppedAt=_now()))
+            if not supervised:
+                if service.socket_path:
+                    service.scope.release(service.socket_path)
+                current = service.record() or record
+                service.write_record(
+                    dict(current, pid=None, workerPid=None, stoppedAt=_now()),
+                )
+            elif adopt_scope_fd is not None and adopt_scope_fd >= 0:
+                # Close our copy only. The supervisor still holds the description, so the
+                # scope stays claimed; unlocking would release it for both of us.
+                try:
+                    os.close(adopt_scope_fd)
+                except OSError:
+                    pass
 
 
 class ServiceRefused(Exception):

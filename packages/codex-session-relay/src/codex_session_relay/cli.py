@@ -803,9 +803,11 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
 
     deadline = services.clock.now() + args.deadline if args.deadline else None
     allow_isolated = getattr(args, "allow_isolated_scope", False)
+    adopted = _adopt_supervised(service, args)
     try:
         with owned_service(
             service, allow_isolated=allow_isolated, require_intent=require_intent,
+            adopt_lock_fd=adopted.get("lockFd"), adopt_scope_fd=adopted.get("scopeFd"),
         ) as record:
             daemon = RelayDaemon(
                 services.store, services.registry, services.intake, services.delivery,
@@ -823,6 +825,54 @@ def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
             "ticks": [report.as_dict() for report in reports]}
 
 
+def _adopt_supervised(service, args) -> dict:
+    """Validate a supervised invocation, or refuse it. Never fall back to an unlocked run.
+
+    An fstat match proves the descriptor points at the right FILE, not that it shares the
+    supervisor's open file description - an independently opened descriptor for the same path
+    passes it. The token recorded in daemon.json and the recorded-parent check are what
+    actually establish that this process was launched by that supervisor.
+    """
+    from .service import DAEMON_LOCK, arm_parent_death_signal
+
+    import os
+
+    token = getattr(args, "supervised_token", None)
+    lock_fd = getattr(args, "supervised_lock_fd", None)
+    scope_fd = getattr(args, "supervised_scope_fd", None)
+    supplied = [value for value in (token, lock_fd, scope_fd) if value is not None]
+    if not supplied:
+        return {}
+
+    def refuse(reason, detail):
+        raise PayloadExit(
+            {"ok": False, "reason": reason, "detail": detail}, EXIT_REFUSED,
+        )
+
+    if token is None or lock_fd is None or scope_fd is None:
+        refuse("supervised_invocation_incomplete",
+               "a supervised worker needs the token and both descriptors together")
+    record = service.record() or {}
+    if not record.get("token") or record["token"] != token:
+        refuse("supervised_token_mismatch", "the token does not match this state directory")
+    if record.get("stateDir") not in (None, str(service.selection.path)):
+        refuse("supervised_state_mismatch", "the record names a different state directory")
+    if record.get("socketPath") not in (None, service.socket_path):
+        refuse("supervised_socket_mismatch", "the record names a different operating scope")
+    try:
+        want = os.stat(service.selection.path / DAEMON_LOCK)
+        got = os.fstat(lock_fd)
+    except OSError as error:
+        refuse("supervised_fd_unreadable", f"{type(error).__name__}: {error}")
+    if (got.st_dev, got.st_ino) != (want.st_dev, want.st_ino):
+        refuse("supervised_fd_mismatch", "the inherited descriptor is not this daemon lock")
+    death = arm_parent_death_signal(record.get("pid") or -1)
+    if death["orphaned"]:
+        refuse("supervisor_already_gone",
+               f"parent is {death['parent']}, not the recorded supervisor {record.get('pid')}")
+    return {"lockFd": lock_fd, "scopeFd": scope_fd if scope_fd >= 0 else None}
+
+
 def cmd_service(services, args) -> dict:
     service = _service_for(services)
     action = args.service_command
@@ -838,13 +888,52 @@ def cmd_service(services, args) -> dict:
         _require_adapter(services)
         call = service.start if action == "start" else service.restart
         return _refuse_unless_ok(call(
-            allow_isolated=args.allow_isolated_scope, max_ticks=args.max_ticks,
-            deadline=args.deadline, actor=args.actor or "cli",
+            allow_isolated=args.allow_isolated_scope, deadline=args.deadline,
+            segment_seconds=args.segment_seconds, max_segments=args.max_segments,
+            actor=args.actor or "cli",
         ))
     if action == "run":
         _require_adapter(services)
-        return _run_bounded(services, service, args, require_intent=True)
+        return _supervise(services, service, args)
     raise SystemExit2(f"unknown service action {action!r}", EXIT_USAGE)
+
+
+def _supervise(services, service, args) -> dict:
+    """The supervisor: it holds the locks and replaces bounded workers."""
+    from .service import ServiceRefused
+
+    def recover():
+        # Establish what happened to anything in flight BEFORE a worker can send. Recovery
+        # itself sends nothing; it only decides what the evidence supports.
+        services.reconciler.recover_on_start(services.adapter)
+        _release_expired_leases(services)
+
+    try:
+        return service.supervise(
+            allow_isolated=args.allow_isolated_scope, segment_seconds=args.segment_seconds,
+            max_segments=args.max_segments, deadline=args.deadline, on_start=recover,
+        )
+    except ServiceRefused as refusal:
+        raise PayloadExit(
+            {"ok": False, "reason": refusal.reason, "detail": refusal.detail}, EXIT_REFUSED,
+        ) from refusal
+
+
+def _release_expired_leases(services) -> None:
+    """An expired lease returns the attempt to reconciliation, never to the send queue.
+
+    A sending row whose lease ran out may already have reached the recipient, so putting it
+    back to queued would make it eligible to send again on no evidence at all. held_uncertain
+    is where the reconciler can judge it (I-78).
+    """
+    now = services.clock.now()
+    with services.store.transaction() as db:
+        db.execute(
+            "UPDATE deliveries SET state = 'held_uncertain', lease_owner = NULL,"
+            " lease_until = NULL, updated_at = ?"
+            " WHERE state = 'sending' AND lease_until IS NOT NULL AND lease_until <= ?",
+            (services.clock.iso(), now),
+        )
 
 
 def _reachability(services, report) -> dict:
@@ -1143,6 +1232,9 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--max-ticks", type=int)
     daemon.add_argument("--deadline", type=float)
     daemon.add_argument("--allow-isolated-scope", action="store_true")
+    daemon.add_argument("--supervised-token")
+    daemon.add_argument("--supervised-lock-fd", type=int)
+    daemon.add_argument("--supervised-scope-fd", type=int)
     daemon.set_defaults(handler=cmd_daemon)
 
     service = subparsers.add_parser("service")
@@ -1154,10 +1246,12 @@ def build_parser() -> argparse.ArgumentParser:
         hosted = actions.add_parser(name)
         hosted.add_argument("--actor")
         hosted.add_argument("--allow-isolated-scope", action="store_true")
-        hosted.add_argument("--max-ticks", type=int)
-        # One bounded segment by default. Supervision ACROSS segments is a separate change;
-        # an unbounded run is not constructible here and must not become one by omission.
-        hosted.add_argument("--deadline", type=float, default=3600.0)
+        # The WORKER's bound. The supervisor replaces workers; it is not itself bounded by
+        # this, or the service would end after a single segment.
+        hosted.add_argument("--segment-seconds", type=float)
+        # The supervisor's own optional bounds, for a test or a deliberately finite run.
+        hosted.add_argument("--max-segments", type=int)
+        hosted.add_argument("--deadline", type=float)
     service.set_defaults(handler=cmd_service)
 
     doctor = subparsers.add_parser("doctor")

@@ -1,8 +1,9 @@
 """JUN-91 delivery: busy handling, dispatch, bounds, and honest reporting."""
 
+import os
 import unittest
 
-from codex_session_relay.delivery import COMPLETION, REVISION
+from codex_session_relay.delivery import COMPLETION, REVISION, DeliveryService
 from codex_session_relay.errors import RefusalReason
 from codex_session_relay.lifecycle import ARCHIVED, BUDGET_LIMITED, CANNOT_ACCEPT, PAUSED, UNKNOWN
 from codex_session_relay.transport import (
@@ -14,7 +15,7 @@ from codex_session_relay.transport import (
     WITHHELD_PRE_SEND,
 )
 
-from .support import CHILD, PARENT, DeliveryTestCase
+from .support import CHILD, HOST, PARENT, DeliveryTestCase
 
 
 class Queueing(DeliveryTestCase):
@@ -583,3 +584,168 @@ class DirectionalMessages(DeliveryTestCase):
         # What the message DOES tell the child to do is available: emit under generation 2.
         relationship = self.registry.get(self._rid)
         self.assertEqual(relationship["executionGeneration"], 2)
+
+
+class CrossAssignmentDelivery(DeliveryTestCase):
+    """One shared service carries several assignments; none may answer for another."""
+
+    def other_assignment(self):
+        """A second project whose parent is ALSO an authorized recipient of the first."""
+        from codex_session_relay.models import Endpoint
+
+        other_root = os.path.join(self.tmp, "other-project")
+        os.makedirs(other_root, exist_ok=True)
+        return self.registry.register(
+            parent=Endpoint("01other-parent", HOST, cwd="/other", cxc_session="cxc-other"),
+            child=Endpoint("01other-child", HOST, cwd=other_root, cxc_session="cxc-other-c"),
+            issue_key="REL-2",
+            artifact_roots=[other_root],
+            allowed_recipients=["01other-parent"],
+            dispatch_request_id="dispatch-2",
+            dispatch_turn_id="turn-dispatch-2",
+        )
+
+    def test_a_completion_may_not_be_addressed_to_another_assignments_parent(self):
+        other = self.other_assignment()
+        # The first assignment authorizes the other project's parent as a recipient, which is
+        # legitimate. Membership alone must still not make it a valid destination.
+        relationship, event_id = self.ready_event(
+            recipients=[PARENT, other["parent"]["taskId"]],
+        )
+        refused = self.assertRefused(
+            RefusalReason.RECIPIENT_NOT_AUTHORIZED,
+            self.delivery.enqueue, event_id,
+            recipient_task_id=other["parent"]["taskId"],
+        )
+        self.assertIn("its own parent", refused.detail)
+        self.assertIsNone(self.delivery.find(event_id))
+
+    def test_a_tampered_delivery_row_is_refused_before_any_transport_call(self):
+        other = self.other_assignment()
+        relationship, event_id = self.queued_event(
+            recipients=[PARENT, other["parent"]["taskId"]],
+        )
+        self.adapter.add_thread(other["parent"]["taskId"])
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE deliveries SET recipient_task_id = ?, recipient_thread_id = ?"
+                " WHERE event_id = ?",
+                (other["parent"]["taskId"], other["parent"]["taskId"], event_id),
+            )
+        self.assertRefused(
+            RefusalReason.RECIPIENT_NOT_AUTHORIZED, self.attempt, event_id,
+        )
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+
+    def test_the_ordinary_completion_still_goes_to_its_own_parent(self):
+        self.other_assignment()
+        relationship, event_id = self.queued_event()
+        record = self.attempt(event_id)
+        self.assertEqual(record["deliveryState"], "dispatched")
+        self.assertEqual(self.delivery.get(event_id)["recipient_task_id"], PARENT)
+
+    def test_projects_are_distinguishable_for_a_shared_service(self):
+        from codex_session_relay.registry import project_key
+
+        other = self.other_assignment()
+        mine = self.register(issue_key="REL-3", dispatch_request_id="dispatch-3")
+        self.assertNotEqual(project_key(mine), project_key(other))
+        self.assertEqual(project_key(other), "/other")
+
+
+class RestartPreservation(DeliveryTestCase):
+    """Everything durable survives a process boundary, and nothing is sent twice for it."""
+
+    def reopen(self):
+        """Close the store and open it again: the process boundary, minus the process."""
+        from codex_session_relay.ack import AckService
+        from codex_session_relay.receipts import ReceiptIntake
+        from codex_session_relay.reconcile import Reconciler
+        from codex_session_relay.registry import Registry
+        from codex_session_relay.store import Store
+        from codex_session_relay.sync import SyncOutbox
+
+        path = self.store.path
+        self.store.close()
+        self.store = Store(path)
+        self.addCleanup(self.store.close)
+        self.registry = Registry(self.store, self.clock)
+        self.intake = ReceiptIntake(self.store, self.registry, self.clock)
+        self.delivery = DeliveryService(self.store, self.registry, self.intake, self.clock)
+        self.ack = AckService(
+            self.store, self.registry, self.intake, self.delivery, self.clock,
+        )
+        self.reconciler = Reconciler(self.store, self.registry, self.delivery, self.clock)
+        self.sync = SyncOutbox(self.store, self.clock)
+
+    def snapshot(self, table, columns):
+        return [
+            tuple(row[column] for column in columns)
+            for row in self.store.all(f"SELECT * FROM {table} ORDER BY rowid")
+        ]
+
+    def test_a_restart_keeps_every_durable_record_and_resends_nothing(self):
+        relationship, dispatched_event = self.queued_event()
+        rid = relationship["relationshipId"]
+        record = self.attempt(dispatched_event)
+        self.assertEqual(record["deliveryState"], DISPATCHED)
+
+        # A second event left genuinely unresolved: a settled attempt never enters
+        # open_attempts, so without this the recovery assertion would prove nothing.
+        path = self.artifact("second.txt", "still in flight")
+        payload = self.ready_payload(relationship, [path], attempt=2)
+        self.accept(payload)
+        in_flight = payload["eventId"]
+        self.delivery.enqueue(in_flight)
+        self.adapter.script("transport_unknown")
+        # Past the minimum send interval, or the claim never happens and there is no
+        # unresolved attempt for recovery to find.
+        later = self.clock.now() + 3600
+        self.attempt(in_flight, now=later)
+        unresolved = self.store.one(
+            "SELECT request_id FROM attempts WHERE event_id = ? AND state = ?",
+            (in_flight, HELD_UNCERTAIN),
+        )["request_id"]
+
+        from codex_session_relay.sync import SyncOutbox
+
+        SyncOutbox(self.store, self.clock).set_target(rid, "coordination_document", "DOC-1")
+        before = {
+            "relationships": self.snapshot("relationships", ("relationship_id", "status",
+                                                             "execution_generation")),
+            "generations": self.snapshot("generations", ("relationship_id",
+                                                         "execution_generation",
+                                                         "anchor_state", "dispatch_turn_id")),
+            "events": self.snapshot("events", ("event_id", "stage", "revision_hash")),
+            "deliveries": self.snapshot("deliveries", ("event_id", "state", "attempt_count")),
+            "sync_targets": self.snapshot("sync_targets", ("relationship_id", "target_ref")),
+        }
+        sends_before = len(self.adapter.sends)
+
+        self.reopen()
+
+        for table, columns in (
+            ("relationships", ("relationship_id", "status", "execution_generation")),
+            ("generations", ("relationship_id", "execution_generation", "anchor_state",
+                             "dispatch_turn_id")),
+            ("events", ("event_id", "stage", "revision_hash")),
+            ("deliveries", ("event_id", "state", "attempt_count")),
+            ("sync_targets", ("relationship_id", "target_ref")),
+        ):
+            self.assertEqual(self.snapshot(table, columns), before[table], table)
+
+        # Recovery establishes what happened. It sends nothing.
+        outcome = self.reconciler.recover_on_start(self.adapter)
+        self.assertIn(unresolved, [entry["requestId"] for entry in outcome["reconciled"]])
+        self.assertEqual(outcome["resent"], [])
+        self.assertIn(dispatched_event, outcome["awaitingAck"])
+        self.assertEqual(len(self.adapter.sends), sends_before, "recovery must not send")
+
+        # And a replay of the already dispatched event is refused by the claim itself,
+        # rather than merely being left out of the schedule.
+        attempts_before = self.delivery.get(dispatched_event)["attempt_count"]
+        self.assertIsNone(self.attempt(dispatched_event, now=later + 3600))
+        self.assertEqual(
+            self.delivery.get(dispatched_event)["attempt_count"], attempts_before,
+        )
+        self.assertEqual(len(self.adapter.sends), sends_before)
