@@ -424,7 +424,13 @@ class RelayService:
         if record.get("bootId") not in (None, boot_id()):
             mismatches.append("recorded before a different boot")
         ticks = start_ticks(record["pid"])
-        if record.get("startTicks") is not None and ticks != record["startTicks"]:
+        if record.get("startTicks") is None or ticks is None:
+            # Without a start time a pid is just a number, and whatever holds it now would
+            # pass. Unverifiable is the honest answer, and stop refuses on it.
+            return UNVERIFIABLE, handle, (
+                "no start time is available for this pid, so identity cannot be established"
+            )
+        if ticks != record["startTicks"]:
             mismatches.append("the pid was reused by a different process")
         if record.get("installationId") != self.installation_id:
             mismatches.append("another installation owns it")
@@ -520,9 +526,6 @@ class RelayService:
     def stop(self, *, actor: str = "cli", timeout: float = 10.0, grace: float = 0.1) -> dict:
         """Signal only a process this installation owns, through a handle to that process."""
         record = self.record()
-        # Recorded before any signal, so a supervisor that is about to die knows this was a
-        # graceful stop and does not launch a replacement on its way out.
-        self.request_stop()
         owner, handle, detail = self.ownership(record)
         try:
             if owner == FOREIGN:
@@ -533,6 +536,10 @@ class RelayService:
                 # process gets killed after its number is reused.
                 return {"ok": False, "reason": "ownership_unverifiable", "detail": detail,
                         "supervisor": "untouched", "worker": "untouched"}
+            # Only now. Writing the stop request before validating ownership left a refused
+            # stop able to halt another installation's supervisor at its next boundary, which
+            # is a refusal that still had an effect.
+            self.request_stop()
             # NONE still falls through to the worker: a supervisor can die leaving its worker
             # alive, and that orphan is exactly what a stop has to reach.
             outcome = ("gone" if owner == NONE
@@ -796,7 +803,14 @@ class RelayService:
                         break
                     child = spawn(
                         lock_fd=lock.fileno(), scope_fd=scope_fd, token=token,
-                        segment_seconds=segment_seconds, allow_isolated=allow_isolated,
+                        # Clamped to what remains of the supervisor's own bound, or a worker
+                        # started just before the deadline outlives it by a whole segment.
+                        segment_seconds=(
+                            segment_seconds if deadline is None else
+                            max(0.1, min(segment_seconds,
+                                         deadline - (time.monotonic() - started)))
+                        ),
+                        allow_isolated=allow_isolated,
                     )
                     self._note(workerPid=child.pid, workerStartTicks=start_ticks(child.pid))
                     code = child.wait()
