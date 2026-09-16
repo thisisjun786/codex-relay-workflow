@@ -262,6 +262,29 @@ class Identity(unittest.TestCase):
             "mismatch",
         )
 
+    def test_a_nonce_query_that_fails_is_unreadable_rather_than_absent(self):
+        """Could not look is not is not there, and compare_store grades the difference.
+
+        A locked, malformed or momentarily unavailable database opens and then fails the
+        query. Calling that readable turned it into a definite store mismatch, so
+        doctor --expect-nonce would claim two participants use different stores on the
+        strength of a transient read failure.
+        """
+        broken = os.path.join(self.tmp, "broken")
+        os.makedirs(broken)
+        with open(os.path.join(broken, "relay.sqlite3"), "wb"):
+            pass
+
+        answer = nonce_lookup(resolve_state_dir(broken), "any-nonce")
+
+        self.assertFalse(answer["found"])
+        self.assertFalse(answer["readable"], "the query failed; nothing was learned")
+        self.assertIsNotNone(answer["detail"])
+        self.assertNotEqual(
+            compare_store(probe(resolve_state_dir(broken))["store"], nonce=answer)["sameStore"],
+            "mismatch",
+        )
+
     def test_a_symlinked_directory_is_the_same_store(self):
         alias = os.path.join(self.tmp, "alias")
         os.symlink(self.a, alias)

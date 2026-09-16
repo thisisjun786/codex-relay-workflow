@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from codex_session_relay import service as service_module
+from codex_session_relay.policy import RetryPolicy
 from codex_session_relay.service import (
     ISOLATED, PRODUCTION, ProcessHandle, RelayService, ScopeRegistry, ServiceRefused,
     installation_id, owned_service, production_scope_root, resolve_scope_root,
@@ -305,6 +306,30 @@ class LaunchReporting(ServiceTestCase):
         self.assertTrue(outcome["ok"], outcome)
         self.assertEqual(outcome["pid"], started["pid"])
 
+    def test_a_launch_that_never_reports_is_not_left_running(self):
+        """Reporting failure and walking away leaves the locks held against the retry.
+
+        A child that is merely slow can come up after the caller was told the start failed,
+        and it holds the daemon lock and the scope claim while it does.
+        """
+        service = self.service("c")
+        service.enable(actor="test")
+        program = "import time\nwhile True:\n    time.sleep(0.05)\n"
+
+        def launcher(_svc, **_kw):
+            child = subprocess.Popen(
+                [sys.executable, "-c", program], stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self.children.append(child)
+            return child
+
+        outcome = service.start(allow_isolated=True, launcher=launcher, timeout=0.5)
+
+        self.assertFalse(outcome["ok"], outcome)
+        self.assertEqual(outcome["reason"], "did_not_report")
+        self.assertEqual(outcome["child"], "terminated")
+        self.assertIsNotNone(self.children[-1].poll(), "the child this call started is gone")
 
 class ForeignWorkers(ServiceTestCase):
     """A dead supervisor does not make its installation's worker ours to signal."""
@@ -379,6 +404,76 @@ class RecordDurability(ServiceTestCase):
             [p.name for p in service.selection.path.glob(".daemon.json.*")], [],
             "no temporary file is left behind",
         )
+
+    def test_the_intent_file_is_replaced_atomically_too(self):
+        """read() calls an unreadable document not configured, which reads as disabled.
+
+        The supervisor re-reads intent at every worker boundary, so a reader landing in the
+        truncated middle of this write stops a service its owner left enabled.
+        """
+        service = self.service("a")
+        service.enable(actor="test")
+        before = service.intent.path.stat()
+
+        service.intent.write(enabled=True, actor="owner")
+
+        self.assertTrue(service.intent.read()["enabled"])
+        self.assertNotEqual(service.intent.path.stat().st_ino, before.st_ino)
+        self.assertEqual(
+            [p.name for p in service.selection.path.glob(".service.json.*")], [],
+        )
+
+
+class SupervisorCleanup(ServiceTestCase):
+    """What the supervisor leaves behind when it does not get to finish."""
+
+    def test_a_worker_that_was_never_waited_on_keeps_its_identity(self):
+        """The cleanup cleared workerPid unconditionally, including after an exception.
+
+        The worker still holds the daemon lock and the scope claim it inherited, so erasing
+        the only identity a stop can aim at leaves it delivering for the rest of its segment
+        while status reports not_running.
+        """
+        service = self.service("a")
+        service.enable(actor="test")
+        worker = FakeWorker(0, pid=os.getpid())
+        worker.wait = _explode
+
+        with self.assertRaises(RuntimeError):
+            service.supervise(allow_isolated=True, spawn=lambda **_k: worker,
+                              sleeper=lambda _s: None, max_segments=1)
+
+        record = service.record()
+        self.assertIsNone(record["pid"], "the supervisor itself is gone")
+        self.assertEqual(record["workerPid"], worker.pid,
+                         "but the orphan it left behind is still reachable")
+        self.assertIsNotNone(record["workerStartTicks"])
+
+    def test_a_clean_run_still_clears_the_worker(self):
+        service = self.service("b")
+        service.enable(actor="test")
+        service.supervise(allow_isolated=True, spawn=lambda **_k: FakeWorker(0),
+                          sleeper=lambda _s: None, max_segments=1)
+        record = service.record()
+        self.assertIsNone(record["workerPid"])
+        self.assertIsNone(record["workerStartTicks"])
+
+    def test_the_restart_delay_never_outlives_the_supervisors_own_bound(self):
+        """An unclamped delay made a 0.01-second deadline take seconds."""
+        service = self.service("c")
+        service.enable(actor="test")
+        slept = []
+        service.supervise(
+            allow_isolated=True, spawn=lambda **_k: FakeWorker(1),
+            sleeper=slept.append, max_segments=4, deadline=0.01,
+            policy=RetryPolicy(restart_base_seconds=30.0, restart_backoff_max_seconds=300.0),
+        )
+        self.assertTrue(slept, "a failed segment does wait before its replacement")
+        self.assertLess(
+            max(slept), 30.0,
+            "the unclamped delay is the policy interval, which outlives the whole bound",
+        )
+        self.assertTrue(all(value <= 0.01 for value in slept), slept)
 
 
 class Intent(ServiceTestCase):
@@ -485,6 +580,12 @@ class FakeWorker:
 
     def wait(self):
         return self.returncode
+
+
+def _explode():
+    """A worker the supervisor never gets an exit code from."""
+    raise RuntimeError("the supervisor died between spawn and wait")
+
 
 
 class Supervision(ServiceTestCase):
@@ -666,6 +767,17 @@ class Projects(ServiceTestCase):
         self.assertFalse(projects["available"])
         self.assertEqual(projects["projects"], [])
         self.assertFalse(service.selection.db_path.exists(), "asking must not create it")
+
+    def test_an_inventory_that_cannot_be_queried_is_not_an_empty_one(self):
+        """The file opened and the query did not. Reporting available says there are none."""
+        service = self.service("a")
+        service.selection.db_path.write_bytes(b"")
+
+        projects = service.status()["projects"]
+
+        self.assertFalse(projects["available"])
+        self.assertIsNotNone(projects["detail"])
+        self.assertEqual(projects["projects"], [])
 
 
 class SupervisedWorker(ServiceTestCase):
