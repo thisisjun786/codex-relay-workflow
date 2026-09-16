@@ -30,8 +30,8 @@ Setting `--state` alone is not enough for an isolated run. The bridge adapter re
 transport ledger from `CODEX_SESSION_RELAY_STATE` independently, so a run that overrides only
 the flag splits the relay store from the ledger that carries send idempotency. Set both.
 
-Status: planned in PR-A. Today `state_dir()` implements the precedence but nothing reports
-the selection.
+Status: implemented. `resolve_state_dir` returns the winning rule and `doctor` reports it with
+the resolved database and the measured access.
 
 ## Proving two participants share one store
 
@@ -49,7 +49,9 @@ because copying the database copies the identifier.
 `doctor --expect-store <id>` exits non-zero on a mismatch. An unproven result is never
 reported as healthy.
 
-Status: planned in PR-A.
+Status: implemented. Unproven also exits non-zero, because a caller that asked whether this is
+the same store must not read exit 0 as yes. Each participant runs the check in its own sandbox;
+one invocation cannot establish another participant's access.
 
 ## The service
 
