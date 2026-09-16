@@ -499,6 +499,119 @@ class Ownership(ServiceTestCase):
         self.assertFalse(service.intent.read()["enabled"])
         child.wait(timeout=10)
 
+    def test_enable_takes_the_lock_before_touching_shared_intent(self):
+        """The ordering itself, so a later edit cannot quietly put the write back first.
+
+        Classifying and then writing are two operations. A foreign supervisor that passes its
+        own enabled-intent check and takes the lock in between would have enabled=true written
+        over a disable that happened during the handoff, leaving it running and eligible to
+        restart. disable already decides under the lock; enable did not.
+        """
+        service = self.service("f")
+        order = []
+        original_lock = service.daemon_lock_if_free
+        original_write = service.intent.write
+
+        @contextlib.contextmanager
+        def watched_lock():
+            order.append("lock")
+            with original_lock() as held:
+                yield held
+
+        def watched_write(**kwargs):
+            order.append("write")
+            return original_write(**kwargs)
+
+        service.daemon_lock_if_free = watched_lock
+        service.intent.write = watched_write
+        try:
+            service.enable(actor="owner")
+        finally:
+            service.daemon_lock_if_free = original_lock
+            service.intent.write = original_write
+
+        self.assertEqual(order[:2], ["lock", "write"])
+        self.assertTrue(service.intent.read()["enabled"])
+
+    def test_enable_refuses_a_lock_holder_nothing_here_can_identify(self):
+        """The same hole disable had: a supervisor that has the lock and has published
+        nothing is not a supervisor whose owner asked for this."""
+        import fcntl
+
+        service = self.service("g")
+        service.disable(actor="owner")
+        service.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        handle = open(service.selection.path / service_module.DAEMON_LOCK, "a+")
+        self.addCleanup(handle.close)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            refused = service.enable(actor="owner")
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertFalse(
+            service.intent.read()["enabled"],
+            "a refused enable must not reverse the owner's disable",
+        )
+
+    def test_an_interrupted_start_does_not_leave_its_child_running(self):
+        """The default launcher puts the supervisor in its own session, so a terminal signal
+        never reaches it. Anything that leaves start() without a confirmed result - an
+        exception, a Ctrl-C while recovery is still initialising - has to stop it, or it comes
+        up afterwards holding both locks for a launch the caller was told nothing about."""
+        service = self.service("h")
+        service.enable(actor="owner")
+
+        class Interrupted:
+            returncode = None
+
+            def __init__(self):
+                self.stopped = []
+                self.polls = 0
+
+            def poll(self):
+                self.polls += 1
+                if self.polls == 1:
+                    raise KeyboardInterrupt
+                return self.returncode
+
+            def terminate(self):
+                self.stopped.append("terminate")
+                self.returncode = -15
+
+            def kill(self):  # pragma: no cover - terminate already settled it
+                self.stopped.append("kill")
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+        child = Interrupted()
+        with self.assertRaises(KeyboardInterrupt):
+            service.start(allow_isolated=True, launcher=lambda *a, **k: child, timeout=5.0)
+
+        self.assertIn(
+            "terminate", child.stopped,
+            "an unconfirmed child was left running after the start was interrupted",
+        )
+
+    def test_a_scope_claim_that_cannot_publish_its_record_releases_the_lock(self):
+        """A lock with no record is a claim on behalf of a registration that does not exist,
+        and it goes on refusing every later start in this process until the object dies."""
+        registry = ScopeRegistry(Path(self.scopes), ISOLATED)
+        registry.prepare()
+        with mock.patch.object(service_module.Path, "write_text",
+                               side_effect=OSError("no space left on device")):
+            with self.assertRaises(OSError):
+                registry.claim(SOCKET, {"storeId": "a-store"})
+
+        self.assertIsNone(registry._handle, "the lock outlived the claim that failed")
+        self.assertTrue(
+            registry.claim(SOCKET, {"storeId": "a-store"})["ok"],
+            "a later claim in the same process was refused by the abandoned lock",
+        )
+
     def test_disable_refuses_a_lock_holder_nothing_here_can_identify(self):
         """A supervisor that has taken the lock and not yet published its record.
 
@@ -1470,7 +1583,40 @@ class SupervisedWorker(ServiceTestCase):
             self.adopt(service, scope_fd=None)
         self.assertEqual(caught.exception.payload["reason"], "supervised_invocation_incomplete")
 
+    def test_a_record_naming_another_store_is_refused(self):
+        """The supervisor recorded which store it registered the scope for.
+
+        This worker opened whatever relay.sqlite3 the path resolves to now, and a database
+        deleted or atomically replaced between worker segments is a different one. Without
+        this the worker serves an empty or unrelated store while the supervisor and the scope
+        registration still name the original - and every participant comparing identities is
+        told they agree.
+        """
+        from codex_session_relay.cli import PayloadExit
+
+        service = self.prepared(storeId="the-supervisors-store")
+        service.store_id = "a-replacement-store"
+        with self.assertRaises(PayloadExit) as caught:
+            self.adopt(service)
+        self.assertEqual(caught.exception.payload["reason"], "supervised_store_mismatch")
+
+    def test_a_record_naming_the_same_store_is_not_stopped_by_the_store_check(self):
+        """The refusal must not swallow the ordinary supervised run.
+
+        This gets as far as the descriptor check, which is where a test with no genuinely
+        inherited descriptor has to stop. What it establishes is that the store check was not
+        what stopped it.
+        """
+        from codex_session_relay.cli import PayloadExit
+
+        service = self.prepared(storeId="one-store")
+        service.store_id = "one-store"
+        with self.assertRaises(PayloadExit) as caught:
+            self.adopt(service)
+        self.assertEqual(caught.exception.payload["reason"], "supervised_fd_mismatch")
+
     def test_a_wrong_token_is_refused(self):
+
         from codex_session_relay.cli import PayloadExit
 
         service = self.prepared()
