@@ -95,6 +95,13 @@ OBSERVABLE = (
     "sandbox",
 )
 
+# The order a mixed answer is reported in. The FIRST finding becomes the receipt's error code, so
+# leaving it to dict insertion order would make the reported cause incidental, and would let this
+# module and the relay's mirror describe one identical host answer with two different codes.
+# Broadest blast radius first: a wrong sandbox matters more than a wrong effort.
+# approvalPolicy is not here because it is decided before this list is ever reached.
+FIELD_PRECEDENCE = ("sandbox", "cwd", "runtimeWorkspaceRoots", "model", "reasoningEffort")
+
 SETTING_UNTRANSMITTABLE = "setting_untransmittable"
 SETTINGS_NOT_PRESERVED = "settings_not_preserved"
 SETTING_UNOBSERVABLE = "setting_unobservable"
@@ -337,7 +344,11 @@ class SettingsContract:
 
         found = []
         seen = self.observed(response)
-        for field, expected in self.requested.items():
+        asked = self.requested
+        for field in FIELD_PRECEDENCE:
+            if field not in asked:
+                continue
+            expected = asked[field]
             if field not in seen:
                 found.append(
                     {

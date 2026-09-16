@@ -113,20 +113,28 @@ What happens at send time:
 | no record for the recipient | withheld before any transport call, `settings_unavailable` |
 | record missing a field | withheld before any transport call, naming the missing fields |
 | resume returns a different sandbox, cwd, roots, model or effort | withheld, `settings_not_preserved`, no turn started |
+| resume returns no value for one of them | withheld, `setting_unobservable`, no turn started |
 | resume returns `environments: null` | withheld, `environments_unknown` |
 | resume returns an approval policy other than `never` | `inbox_only`: stored, not woken |
-| resume matches | `turn/start` carries the same settings, and the turn begins |
+| resume returns no approval policy at all | withheld, `setting_unobservable`, still retryable |
+| resume matches | the turn begins, carrying no overrides |
 
 A withheld send is retry-safe in the only sense that matters: nothing was sent, so nothing can be
 delivered twice. It is not a permanent hold either, because settings that were never recorded can
 be recorded and the next pass decides again.
 
-**One observation limit, stated plainly.** `TurnStartResponse` defines only `turn`, and `Turn`
-carries `id`, `items`, `status`, `startedAt`, `completedAt`, `durationMs` and `error`. There is no
-settings echo anywhere in the start response, so the guarantee this offers is the checked resume
-response plus the settings explicitly carried on the supported start call, which the protocol
-scopes to that turn and subsequent turns. That is an ordinary supported-call guarantee, not a
-confirmation from the backend, and the missing echo is never treated as a failure.
+**Why the turn carries no overrides.** `TurnStartResponse` defines only `turn`, and `Turn`
+carries `id`, `items`, `status`, `startedAt`, `completedAt`, `durationMs` and `error`. There is
+no settings echo anywhere in the start response, so a setting bound there could never be read
+back, and reporting the send accepted off a turn ID alone would be calling an unverifiable
+binding a success. The checked resume is the guarantee instead: it establishes that the thread
+already is in the authorized state, which makes overrides redundant rather than protective.
+Dropping them also removes a side effect, since `TurnStartParams` scopes a model override to
+this turn *and subsequent turns*, so delivering one message used to rewrite the thread for every
+later turn as well.
+
+That guarantee is about the resume observation, not the dispatch. No host-side exclusivity is
+held, so another client could change a thread between the check and the turn.
 
 A sandbox type with no `ThreadResumeParams.sandbox` mode, such as `externalSandbox`, is refused as
 `unsupported_sandbox_type` rather than approximated with a mode that means something else.

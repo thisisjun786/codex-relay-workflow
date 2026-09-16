@@ -5,19 +5,20 @@ This module exists because of one observed host behaviour: a thread/resume carry
 and networkAccess false. The pinned bridge sends exactly that resume and says so in its own
 comment, so an adapter built on it cannot claim to preserve permissions.
 
-The two calls have different jobs and neither replaces the other:
+thread/resume is the DETECTOR, and it is the only call this adapter relies on. Its params accept a
+sandbox MODE string, approvalPolicy, cwd, runtimeWorkspaceRoots, model and a free-form config; its
+RESPONSE reports the full derived policy, the effort and the environments. A host that does not
+have the thread in the requested state is visible there, before anything starts.
 
-    thread/resume   DETECTS. Its params accept a sandbox MODE string, approvalPolicy, cwd,
-                    runtimeWorkspaceRoots and model - but no effort and no environments. Its
-                    RESPONSE reports the full derived policy, the effort and the environments,
-                    which is what makes a host that ignores overrides visible before anything
-                    starts.
-    turn/start      BINDS. It is the only call that accepts the full SandboxPolicy object plus
-                    effort plus environments, scoped to this turn and subsequent turns.
-
-There is no verification after the start: TurnStartResponse defines only turn, and Turn carries
-id, items, status, startedAt, completedAt, durationMs, error and itemsView. That absence is a
-reported limit, not something to simulate, and it never withholds a send by itself.
+turn/start is deliberately NOT used to bind settings, even though it is the only call that accepts
+the full SandboxPolicy object plus effort plus environments. TurnStartResponse defines only turn,
+so a setting bound there can never be read back, and a receipt that reported accepted off a turn
+ID alone would be calling an unverifiable binding a success. A clean resume already establishes
+that the thread IS in the requested state, which makes the overrides redundant; and on this host
+the resume reports a thread's real state rather than adopting an override, so the binding was
+never doing the work it appeared to do. Dropping it also removes an unintended mutation, because
+TurnStartParams says a model override persists into subsequent turns: sending one message was
+quietly rewriting the thread for every later turn.
 """
 
 from .errors import DeliveryRefused, RefusalReason
@@ -27,6 +28,18 @@ RESUME_SANDBOX_MODE = {
     "workspaceWrite": "workspace-write",
     "readOnly": "read-only",
     "dangerFullAccess": "danger-full-access",
+}
+
+# Policy fields the mode string cannot carry, and the config keys that can. Identical to the
+# bridge's POLICY_CONFIG_KEYS; readOnly has no entry because no config spelling moves its network
+# access, so a resume cannot restore it and must not pretend to.
+POLICY_CONFIG_KEYS = {
+    "workspaceWrite": {
+        "writableRoots": ("sandbox_workspace_write", "writable_roots"),
+        "networkAccess": ("sandbox_workspace_write", "network_access"),
+        "excludeTmpdirEnvVar": ("sandbox_workspace_write", "exclude_tmpdir_env_var"),
+        "excludeSlashTmp": ("sandbox_workspace_write", "exclude_slash_tmp"),
+    },
 }
 
 # Defaults the pinned SandboxPolicy declares, applied to both sides before comparing so an
@@ -44,9 +57,20 @@ REQUIRED = (
     "environments",
 )
 
+# The order a mixed answer is reported in, identical to the bridge's FIELD_PRECEDENCE. The FIRST
+# finding becomes the receipt's error code, so without a shared order the two implementations
+# describe one identical host answer with two different codes: for a response that omits the model
+# AND widens the sandbox, one would say settings_not_preserved and the other setting_unobservable.
+# approvalPolicy and environments are not here; both are decided before this list is reached, and
+# environments is relay-only because the bridge has no environments to compare.
+FIELD_PRECEDENCE = ("sandbox", "cwd", "runtimeWorkspaceRoots", "model", "reasoningEffort")
+
 SETTINGS_UNAVAILABLE = "settings_unavailable"
 SETTINGS_INCOMPLETE = "settings_incomplete"
 SETTINGS_NOT_PRESERVED = "settings_not_preserved"
+# The host reported no value at all, so nothing here says the setting was applied or ignored.
+# Kept apart from SETTINGS_NOT_PRESERVED, which means the host reported something different.
+SETTING_UNOBSERVABLE = "setting_unobservable"
 ENVIRONMENTS_UNKNOWN = "environments_unknown"
 UNVERIFIABLE_PERMISSION_PROFILE = "unverifiable_permission_profile"
 UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
@@ -125,12 +149,13 @@ class TaskSettings:
     def resume_params(self, thread_id: str) -> dict:
         """Only fields ThreadResumeParams actually defines. No effort field, no environments.
 
-        Effort has no dedicated resume parameter, but the schema does accept a free-form config
-        object, so the effort is carried there as model_reasoning_effort. That makes the resume
-        response a meaningful check on effort too, instead of one we can read but never set. The
-        authoritative binding is still TurnStartParams.effort.
+        Effort and the sandbox policy detail have no dedicated resume parameters, but the schema
+        accepts a free-form config object, so both travel there under the same keys the bridge
+        uses. This matters beyond the effort: ThreadResumeParams.sandbox is only a MODE, so a
+        resume that sent the mode alone could not restore writable roots or the network flag, and
+        would then compare against values it never asked for.
         """
-        return {
+        params = {
             "threadId": thread_id,
             "excludeTurns": True,
             "sandbox": self.sandbox_mode(),
@@ -140,22 +165,11 @@ class TaskSettings:
             "model": self.data["model"],
             "config": {"model_reasoning_effort": self.data["reasoningEffort"]},
         }
-
-    def start_overrides(self) -> dict:
-        """The override fields only. The caller composes threadId and input, which are required."""
-        return {
-            "sandboxPolicy": normalise_policy(self.data["sandbox"]),
-            "approvalPolicy": self.data["approvalPolicy"],
-            "cwd": self.data["cwd"],
-            "runtimeWorkspaceRoots": list(self.data["runtimeWorkspaceRoots"]),
-            "model": self.data["model"],
-            "effort": self.data["reasoningEffort"],
-            "environments": [
-                {"environmentId": e["environmentId"], "cwd": e["cwd"],
-                 "runtimeWorkspaceRoots": list(e["runtimeWorkspaceRoots"])}
-                for e in normalise_environments(self.data["environments"])
-            ],
-        }
+        policy = normalise_policy(self.data["sandbox"]) or {}
+        for field, (section, key) in POLICY_CONFIG_KEYS.get(policy.get("type"), {}).items():
+            if field in policy:
+                params["config"].setdefault(section, {})[key] = policy[field]
+        return params
 
     # ------------------------------------------------------------ verifying
 
@@ -165,9 +179,18 @@ class TaskSettings:
         The approval policy is checked FIRST. With an authorized policy of never, a returned
         on-request is both a mismatch and the push-channel-closed case, and raising the generic
         mismatch first would turn a permanently closed channel into a retry loop.
+
+        Within each field, ABSENCE is decided before difference. A host that reported nothing has
+        told us nothing about whether the setting was applied, which is a different fact from a
+        host that reported something else, and the two need different answers from a caller.
         """
         found = []
         returned_policy = response.get("approvalPolicy")
+        if returned_policy is None:
+            # Not the closed-channel case: a policy we cannot see is not a policy we know is
+            # interactive. It withholds, and stays eligible for a bounded pre-send retry.
+            return [{"code": SETTING_UNOBSERVABLE, "field": "approvalPolicy",
+                     "expected": "never", "returned": None}]
         if returned_policy != "never":
             # A granular policy is an object; it is never copied into the frozen record, which
             # types this field as string or null. Contract v1 admits only a plain string.
@@ -191,16 +214,26 @@ class TaskSettings:
                           "expected": expected_environments,
                           "returned": normalise_environments(returned_environments)})
 
-        comparisons = (
-            ("sandbox", normalise_policy(self.data["sandbox"]),
-             normalise_policy(response.get("sandbox"))),
-            ("cwd", self.data["cwd"], response.get("cwd")),
-            ("runtimeWorkspaceRoots", list(self.data["runtimeWorkspaceRoots"]),
-             list(response.get("runtimeWorkspaceRoots") or [])),
-            ("model", self.data["model"], response.get("model")),
-            ("reasoningEffort", self.data["reasoningEffort"], response.get("reasoningEffort")),
-        )
-        for field, expected, returned in comparisons:
+        expectations = {
+            "sandbox": normalise_policy(self.data["sandbox"]),
+            "cwd": self.data["cwd"],
+            "runtimeWorkspaceRoots": list(self.data["runtimeWorkspaceRoots"]),
+            "model": self.data["model"],
+            "reasoningEffort": self.data["reasoningEffort"],
+        }
+        for field in FIELD_PRECEDENCE:
+            expected = expectations[field]
+            raw = response.get(field)
+            if raw is None:
+                # Previously runtimeWorkspaceRoots read `or []`, so an omitted list compared
+                # EQUAL to an expected empty list and a send proceeded on an answer the host
+                # never gave. Absence is not agreement.
+                found.append({"code": SETTING_UNOBSERVABLE, "field": field,
+                              "expected": expected, "returned": None})
+                continue
+            returned = normalise_policy(raw) if field == "sandbox" else raw
+            if field == "runtimeWorkspaceRoots":
+                returned = list(returned)
             if expected != returned:
                 found.append({"code": SETTINGS_NOT_PRESERVED, "field": field,
                               "expected": expected, "returned": returned})

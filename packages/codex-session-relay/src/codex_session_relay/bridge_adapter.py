@@ -446,10 +446,17 @@ class _Refusal(Exception):
 async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
     """The bridge's send sequence, with the authorized settings actually carried.
 
-    Deliberately mirrors codex_thread_bridge.bridge.Bridge._mutate rather than calling it: the
-    pinned send resumes with no overrides, and the bridge is never modified. Idempotency is the
-    bridge's own ledger, with its exact operation name and argument fingerprint, so a replay is
-    answered from the receipt and a reused id with different arguments is rejected by the ledger.
+    Mirrors codex_thread_bridge.bridge.Bridge._mutate rather than calling it, so the relay keeps
+    its own ledger identity and never routes a delivery through the bridge's MCP surface.
+    Idempotency is the bridge's own ledger, with its exact operation name and argument
+    fingerprint, so a replay is answered from the receipt and a reused id with different arguments
+    is rejected by the ledger.
+
+    On the settings the two share, they now agree by construction and by test: the same mode and
+    default tables, the same refusal codes, the same finding precedence, and the same shape of
+    turn. They are not otherwise identical, and neither pretends to be: this side additionally
+    refuses an unexpected activePermissionProfile, and the bridge additionally refuses a policy
+    field it cannot transmit and carries observation limits and a post-dispatch annotation.
 
     The receipt stays byte-compatible with the bridge's: top-level status and turnId, resumed,
     rpcError, and a method-prefixed error.
@@ -500,14 +507,15 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
                            f" {first.get('returned')!r}; message withheld",
             })
 
-        # turn/start is the BINDER. It is the only call that accepts the full sandbox policy,
-        # the effort and the environment selection, and the protocol scopes them to this turn
-        # and subsequent turns. Its response defines only turn, so there is nothing to verify
-        # here; that absence is a reported limit, not a failure.
+        # No overrides. turn/start would accept the full policy, the effort and the environments,
+        # but its response defines only turn, so anything bound here could never be read back and
+        # an accepted receipt would be calling an unverifiable binding a success. The resume above
+        # already established that the thread IS in the authorized state, which makes overrides
+        # redundant; and TurnStartParams says a model override persists into subsequent turns, so
+        # sending them would quietly rewrite the thread for every later turn as well.
         turn = await rpc.call("turn/start", {
             "threadId": thread_id,
             "input": [{"type": "text", "text": message}],
-            **settings.start_overrides(),
         })
         receipt["turnId"] = turn["turn"]["id"]
         receipt["status"] = "accepted"
