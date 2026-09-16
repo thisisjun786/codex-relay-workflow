@@ -15,7 +15,11 @@ fingerprint-replay compatibility test, which must pass on both sides.
 
 import pytest
 
-from codex_thread_bridge.settings import UntransmittableSetting, normalise_policy
+from codex_thread_bridge.settings import (
+    SettingsContract,
+    UntransmittableSetting,
+    normalise_policy,
+)
 
 WRITE_POLICY = {
     "type": "workspaceWrite",
@@ -481,3 +485,36 @@ async def test_a_replay_is_answered_even_when_the_host_has_gone_away(bridge, fak
     )
     assert again["replayed"] and again["turnId"] == first["turnId"]
     assert again["settingsAfterDispatch"] == first["settingsAfterDispatch"]
+
+
+async def test_a_cancelled_annotation_propagates_instead_of_completing(
+    bridge, fake_server, tmp_path
+):
+    """The receipt is already durably accepted, so there is nothing to protect by swallowing it.
+
+    Catching CancelledError here would let a cancelled request, or a shutdown, return as though
+    it had finished normally.
+    """
+    import asyncio
+
+    fake, _ = fake_server
+    created = await bridge.create_thread("cancel-prep", str(tmp_path), prompt="hello")
+    assert created["status"] == "accepted"
+
+    receipt = {
+        "requestId": "cancel-prep",
+        "status": "accepted",
+        "threadId": created["threadId"],
+        "turnId": created["turnId"],
+        "settings": {"actual": {}},
+    }
+
+    async def cancelled(_method, _params):
+        raise asyncio.CancelledError
+
+    bridge.rpc.call = cancelled
+    contract = SettingsContract(model="anthropic/claude-opus-5")
+    with pytest.raises(asyncio.CancelledError):
+        await bridge._annotate_dispatch(receipt, contract)
+    # The acceptance stays exactly as _mutate saved it.
+    assert bridge.ledger.get("cancel-prep")["status"] == "accepted"

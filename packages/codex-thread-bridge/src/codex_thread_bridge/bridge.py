@@ -102,6 +102,11 @@ class Bridge:
             state = await self.rpc.call("thread/read", {"threadId": receipt["threadId"]})
             observed = (receipt.get("settings") or {}).get("actual") or {}
             note = annotation(observed, state["thread"])
+        except asyncio.CancelledError:
+            # Cancellation propagates. _mutate has already saved the acceptance durably, so
+            # there is nothing here to protect by swallowing it, and swallowing it would let a
+            # cancelled request or a shutdown return as though it had completed normally.
+            raise
         except BaseException:  # noqa: BLE001 - a diagnostic must never endanger the dispatch
             return receipt
         return self.ledger.save({**receipt, "settingsAfterDispatch": note})
@@ -467,7 +472,11 @@ class Bridge:
                 )
             checkpoint("complete", recoveryRequired=False)
 
-        return await self._mutate(request_id, "create_worktree_thread", params, action)
+        receipt = await self._mutate(request_id, "create_worktree_thread", params, action)
+        # Same diagnostic as the other two paths. It matters most here: this path checks its
+        # settings at creation, then names the thread and re-inspects the checkout before
+        # dispatching, so its window between observation and turn/start is the widest of the three.
+        return await self._annotate_dispatch(receipt, contract)
 
     async def send_message_to_thread(
         self,

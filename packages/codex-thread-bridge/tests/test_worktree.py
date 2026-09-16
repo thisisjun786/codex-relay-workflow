@@ -476,3 +476,24 @@ async def test_destination_conditional_filters_are_disabled_before_checkout(
     receipt = await bridge.create_worktree_thread(**args)
     assert receipt["status"] == "accepted", receipt
     assert not marker.exists()
+
+
+async def test_a_dispatched_worktree_task_is_annotated_like_the_other_paths(
+    bridge, fake_server, repository
+):
+    """The worktree path has the WIDEST window between its check and its dispatch.
+
+    It observes the settings at creation, then names the thread and re-inspects the checkout
+    before turn/start, so if any path needs the post-acceptance diagnostic it is this one.
+    """
+    result = await bridge.create_worktree_thread(
+        **repository,
+        prompt="do the work",
+        model="anthropic/claude-opus-5",
+        reasoning_effort="xhigh",
+    )
+    assert result["status"] == "accepted" and result["turnId"]
+    assert result["settings"]["verification"] == "observed_at_creation"
+    note = result["settingsAfterDispatch"]
+    assert note["concurrentChange"] is False
+    assert note["covers"] == ["model", "reasoningEffort", "cwd"]
