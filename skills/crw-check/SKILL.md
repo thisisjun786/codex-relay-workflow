@@ -25,6 +25,13 @@ Inspect relevant code, tests, and result artifacts. Separate source existence, p
 
 When the claim includes PR readiness or integration, assess CI and review evidence using [Merge readiness](../crw-run/references/merge-readiness.md). Entering review and being merge ready are different states owned by OPS-9.1 in [Operations contract](../crw-run/references/operations.md); judge the claim against that clause rather than reading a pull request's draft or ready flag as a verdict. Reuse valid coordinator evidence and return any gaps to that owner; a bounded audit does not take over the merge.
 
+For implementation completion, use the shared
+[Implementation Done](../crw-plan/references/integrations.md#implementation-done).
+Match the issue to its current delivery PR, intended integration target and actual
+merge evidence. Contrast partial/legacy, reference/replacement, wrong-branch and
+closed-unmerged cases with a complete intended merge. An implementation merge does
+not prove deployment; a verified non-PR result does not need an empty PR.
+
 ## Compare criterion by criterion
 
 Break compound criteria into observable obligations and classify each:
