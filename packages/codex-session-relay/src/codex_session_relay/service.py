@@ -837,7 +837,11 @@ class RelayService:
         if record.get("launchId") is not None:
             return ("launchId", record["launchId"])
         if record.get("startedAt") is not None:
-            return ("startedAt", record["startedAt"])
+            # With the start ticks, because _now() records whole seconds: two anonymous
+            # launches inside the same second share a startedAt, and a replacement acquiring
+            # the lock in that second would compare equal to the launch being stopped. The
+            # kernel's start-time counter for that pid does not collide.
+            return ("startedAt", record["startedAt"], record.get("startTicks"))
         return ("pid", record.get("pid"))
 
     def _settle_absent_owner(self, record, detail):

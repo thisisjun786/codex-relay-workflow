@@ -244,6 +244,42 @@ class Precedence(unittest.TestCase):
                          "the store recorded for this socket must be adopted, not hidden")
         self.assertIn("adopted", chosen.detail)
 
+    def test_two_stores_claiming_one_socket_are_not_silently_chosen_between(self):
+        """Picking whichever sorts first operates on one set of assignments today and the
+        other after a rename. Adopting nothing is wrong too, but it is visible."""
+        from codex_session_relay.store import (
+            discover_store_for_socket, stores_claiming_socket,
+        )
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        socket = "/run/contested.sock"
+        both = []
+        for name in ("aaaa000000000000", "bbbb000000000000"):
+            directory = os.path.join(root, name)
+            os.makedirs(directory)
+            Store(Path(directory) / "relay.sqlite3", socket_path=socket).close()
+            both.append(directory)
+
+        self.assertIsNone(
+            discover_store_for_socket(Path(root), socket),
+            "an ambiguity is not a choice to make silently",
+        )
+        self.assertEqual(sorted(stores_claiming_socket(Path(root), socket)), sorted(both))
+
+    def test_one_store_claiming_a_socket_is_still_adopted(self):
+        """The refusal must not swallow the case discovery exists for."""
+        from codex_session_relay.store import discover_store_for_socket
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        socket = "/run/sole.sock"
+        directory = os.path.join(root, "cccc000000000000")
+        os.makedirs(directory)
+        Store(Path(directory) / "relay.sqlite3", socket_path=socket).close()
+
+        self.assertEqual(
+            str(discover_store_for_socket(Path(root), socket)), directory,
+        )
+
     def test_a_store_with_no_recorded_socket_is_never_adopted_on_a_guess(self):
         """Provenance or nothing. Adopting an unlabelled store is how the wrong one is served."""
         from codex_session_relay.store import socket_scope, stores_without_provenance

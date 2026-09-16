@@ -785,7 +785,16 @@ def _sibling_stores(services) -> dict:
         return {"checked": False, "reason": "the state directory was chosen explicitly",
                 "withoutProvenance": []}
     without = stores_without_provenance(root, skip=services.selection.path.name)
-    return {"checked": True, "reason": None, "withoutProvenance": without}
+    from .store import stores_claiming_socket
+
+    # More than one store recording this socket is an ambiguity discovery refuses to resolve,
+    # so it has to be visible here or a caller just gets a surprisingly empty database.
+    claiming = stores_claiming_socket(
+        root, services.socket_path, skip=services.selection.path.name,
+    )
+    return {"checked": True, "reason": None, "withoutProvenance": without,
+            "claimingThisSocket": claiming,
+            "ambiguous": len(claiming) > 1}
 
 
 def cmd_doctor(services, args) -> dict:
