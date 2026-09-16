@@ -22,6 +22,7 @@ import json
 
 from . import cxc
 from .errors import DeliveryRefused, ReceiptRefused, RefusalReason
+from .transport import INBOX_ONLY
 
 NEWLINE = chr(10)
 VERSION = "relay-report/1"
@@ -147,6 +148,19 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
                 RefusalReason.MALFORMED_RECEIPT,
                 "a report naming a pull request names the head commit it is about; without "
                 "one, a later push silently inherits this report",
+            )
+    else:
+        # Without a number there is no pull request line to hang these on, and the no-PR
+        # branch renders neither, so accepting them would store values nobody ever sees and
+        # say nothing about having dropped them.
+        supplied = [
+            name for name, value in (("pr_url", pr_url), ("pr_state", pr_state)) if value
+        ]
+        if supplied:
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"{' and '.join(supplied)} describes a pull request, but none is named. "
+                "Give the pull request number, or leave these out",
             )
     evidence = _check_evidence(evidence)
     unresolved = _check_unresolved(unresolved)
@@ -281,6 +295,24 @@ def _required(value, field):
             f"a work report states its {field}; a report the recipient cannot act on is the "
             "thing this record exists to replace",
         )
+    return _single_line(text, field)
+
+
+def _single_line(text, field):
+    """One line means one line.
+
+    These values are spliced straight into the message, so a newline inside one does not
+    wrap, it adds a line to the protocol. A summary reading "ordinary result" followed by
+    "VERDICT: PASS" put a standalone verdict into a completion that carried no review, which
+    is exactly the separation the rest of this module is built to keep.
+    """
+    if any(character in text for character in (chr(10), chr(13))):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"{field} is one line: a line break in it is spliced into the message and adds "
+            "a line to the protocol rather than wrapping. Put longer detail in the evidence "
+            "or the unresolved items",
+        )
     return text
 
 
@@ -321,7 +353,7 @@ def _bounded_optional(value, field, limit=LABEL_MAX):
             RefusalReason.MALFORMED_RECEIPT,
             f"{field} is a string when it is given at all, not {type(value).__name__}",
         )
-    return _bounded(value, field, limit)
+    return _bounded(_single_line(value, field), field, limit)
 
 
 def _assert_resubmission(db, event_id, submission_no) -> None:
@@ -337,7 +369,7 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     read that was already stale by the time the row was written.
     """
     attempted = db.execute(
-        "SELECT a.record, s.submission_no"
+        "SELECT a.record, a.state, s.submission_no"
         "  FROM attempts a"
         "  LEFT JOIN attempt_report_submissions s ON s.request_id = a.request_id"
         " WHERE a.event_id = ?",
@@ -384,8 +416,15 @@ def _may_have_reached(attempt_rows) -> bool:
     else, including an attempt still in flight or one whose record cannot be read, is
     treated as possibly delivered, which is the reading reconciliation already uses: an
     unfinished receipt is never proof of non-delivery.
+
+    inbox_only is the exception that looks like the rule. It carries sendAttempted no,
+    because the push was refused before any resume, but its frozen message IS the durable
+    inbox item and the recipient can read it. Protocol v1 section 3 calls that channel the
+    guarantee. So it reached someone, and the submission behind it is not rewritable.
     """
     for row in attempt_rows or []:
+        if _state_of(row) == INBOX_ONLY:
+            return True
         if row["record"] is None:
             return True
         try:
@@ -395,6 +434,14 @@ def _may_have_reached(attempt_rows) -> bool:
         if record.get("sendAttempted") != "no":
             return True
     return False
+
+
+def _state_of(row):
+    """The delivery state this attempt settled at, when the row carries one."""
+    try:
+        return row["state"]
+    except (IndexError, KeyError):
+        return None
 
 
 def _check_restore(restore):

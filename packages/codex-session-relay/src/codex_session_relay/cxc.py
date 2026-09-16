@@ -160,7 +160,7 @@ def check_known(status: str) -> None:
     compatibility check there would force the caller to invent an outcome, and an invented
     outcome is exactly what the rest of this package refuses.
     """
-    if status not in COMPATIBLE_OUTCOMES:
+    if not isinstance(status, str) or status not in COMPATIBLE_OUTCOMES:
         raise ReceiptRefused(
             RefusalReason.OUTCOME_INCONSISTENT,
             f"{status!r} is not a CXC report status this build maps. Accepted: "
