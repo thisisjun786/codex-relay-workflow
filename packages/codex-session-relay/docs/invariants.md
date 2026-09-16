@@ -118,7 +118,7 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-100 | A report reads its relationship, generation, revision and outcome from the stored event; no caller supplies them | `report.record` | implemented |
 | I-101 | A correction names the criteria the recorded verdict names; a review only adds notes and anchors, and anything it raises alone is labelled | `report._finding_lines` | implemented |
 | I-102 | A shape or length that could only fail at render time is refused at record time, because rendering runs inside the delivery claim | `report._check_evidence`, `_check_unresolved`, `_bounded` | implemented |
-| I-103 | A report already delivered cannot be replaced in place; a changed report is a new submission and says so | `report._check_resubmission` | implemented |
+| I-103 | A submission already frozen into a delivered attempt cannot be replaced in place; one never sent stays correctable | `report._assert_resubmission` against `attempt_report_submissions` | implemented |
 | I-104 | An omission notice is placed before the final verdict, so an elided correction still ends on its judgment | `report._compose` | implemented |
 | I-105 | A revision request cannot carry a PASS verdict | `report.record` | implemented |
 | I-106 | A report-backed message keeps the receipt manifestRef the pre-contract message carried | `report._manifest_lines` | implemented |
@@ -133,6 +133,8 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-115 | A report with no pull request still renders its base, head and criteria digest rather than dropping them unannounced | `report._commit_lines` | implemented |
 | I-116 | An attempt that is proven never to have sent is not counted as a delivered submission; anything unproven is | `report._may_have_reached` | implemented |
 | I-117 | A manifest reference too long to render is truncated visibly rather than making the event unsendable | `report._manifest_ref_lines` | implemented |
+| I-118 | A submission number is a positive integer or a named refusal, never a coerced one, because it is half the identity and is printed in frozen bytes | `report._submission` | implemented |
+| I-119 | An exit code is an integer or absent, so evidence a reader cannot interpret is refused rather than delivered | `report._exit_code` | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is

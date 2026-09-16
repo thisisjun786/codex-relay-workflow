@@ -301,8 +301,9 @@ class DeliveryService:
                     f"request id {request_id!r} already belongs to event {clash['event_id']!r}",
                 )
             record = self.intake.get(event_id) or {}
+            report = read_work_report(self.store, event_id)
             message = self._render_for(
-                row, record, request_id, read_work_report(self.store, event_id)
+                row, record, request_id, report
             )
             db.execute(
                 "INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state,"
@@ -317,6 +318,15 @@ class DeliveryService:
                 " message, rendered_at) VALUES (?,?,?,?,?,?)",
                 (request_id, event_id, attempt_no, row["kind"], message, self.clock.iso()),
             )
+            if report is not None:
+                # Which submission these bytes came from. The message says so for its reader;
+                # this is the same fact in a form the relay can compare against, so a
+                # submission that has never been frozen stays correctable in place.
+                db.execute(
+                    "INSERT OR REPLACE INTO attempt_report_submissions (request_id,"
+                    " event_id, submission_no, frozen_at) VALUES (?,?,?,?)",
+                    (request_id, event_id, report["submissionNo"], self.clock.iso()),
+                )
             # Capacity is reserved in the SAME transaction as the claim. Counting after the
             # send let two interleaved callers both pass a cap of one.
             self._count_send(db, recipient, now)

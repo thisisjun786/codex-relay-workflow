@@ -277,6 +277,18 @@ CREATE TABLE IF NOT EXISTS work_reports (
     PRIMARY KEY (event_id, submission_no)
 );
 
+-- Which report submission the bytes frozen for one attempt were rendered from. The message
+-- itself says so, which is what a recipient needs, but the relay needs it programmatically:
+-- a submission that has never been frozen into an attempt can still be corrected in place,
+-- and one that has cannot. An attempt with no row here predates the work report contract and
+-- carries the pre-contract message.
+CREATE TABLE IF NOT EXISTS attempt_report_submissions (
+    request_id    TEXT PRIMARY KEY,
+    event_id      TEXT NOT NULL,
+    submission_no INTEGER NOT NULL,
+    frozen_at     TEXT NOT NULL
+);
+
 -- How an acknowledgement's own turn was established. host_read is an App Server read of the
 -- recipient's real turn list; unverified is recorded intent still awaiting that read. There is
 -- deliberately no tier derived from what the relay itself sent: a stored dispatch proves a send

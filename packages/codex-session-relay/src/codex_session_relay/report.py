@@ -151,12 +151,13 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     evidence = _check_evidence(evidence)
     unresolved = _check_unresolved(unresolved)
     restore = _check_restore(restore)
+    submission_no = _submission(submission_no)
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
         "executionGeneration": int(execution_generation),
         "revisionHash": revision_hash,
-        "submissionNo": int(submission_no),
+        "submissionNo": submission_no,
         "repository": repository,
         "prNumber": pr_number,
         "prUrl": pr_url,
@@ -295,6 +296,22 @@ def _bounded(text, field, limit):
     return text
 
 
+def _submission(value):
+    """A positive integer, refused by name otherwise.
+
+    This is half of the primary key and it is printed in frozen message bytes, so coercing
+    True to 1, or 1.9 to 1, or storing 0, would give an attempt an identity that means
+    something other than what it says.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"a submission number is a positive integer, not {value!r}; it is part of this "
+            "report identity and is printed in the bytes that get frozen",
+        )
+    return value
+
+
 def _bounded_optional(value, field, limit=LABEL_MAX):
     """The short fields, bounded too. They sit on lines that cannot be shortened either."""
     if value is None:
@@ -320,38 +337,42 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     read that was already stale by the time the row was written.
     """
     attempted = db.execute(
-        "SELECT record FROM attempts WHERE event_id = ?", (event_id,)
-    ).fetchall()
-    if not _may_have_reached(attempted):
-        return
-    existing = db.execute(
-        "SELECT MAX(submission_no) AS submission_no FROM work_reports WHERE event_id = ?",
+        "SELECT a.record, s.submission_no"
+        "  FROM attempts a"
+        "  LEFT JOIN attempt_report_submissions s ON s.request_id = a.request_id"
+        " WHERE a.event_id = ?",
         (event_id,),
-    ).fetchone()
-    stored = existing["submission_no"] if existing else None
-    if stored is None:
-        # A message has already gone out for this event and it was the pre-contract one, so
-        # the FIRST report is also a change to what a retry will say. Counting the delivered
-        # legacy message as submission 1 is what makes that change announce itself; the null
-        # MAX used to return early here and let the switch happen silently.
-        delivered = 1
+    ).fetchall()
+    delivered = 0
+    legacy = False
+    for row in attempted:
+        if not _may_have_reached([row]):
+            continue
+        if row["submission_no"] is None:
+            # A pre-contract message reached the recipient. The first report is therefore
+            # also a change to what a retry will say, so it counts as submission 1.
+            legacy = True
+            delivered = max(delivered, 1)
+        else:
+            delivered = max(delivered, row["submission_no"])
+    if delivered == 0:
+        return
+    if submission_no > delivered:
+        return
+    if legacy and delivered == 1:
         detail = (
             "a pre-contract message has already been delivered for this event, so a first "
             "report would change what a retry says without changing what it calls itself; "
             "record it as submission 2 or higher"
         )
     else:
-        delivered = stored
         detail = (
-            f"submission {stored} of this report has already been delivered, so replacing it "
-            f"in place would change what a retry says without changing what it calls itself; "
-            f"record this as submission {stored + 1} or higher"
+            f"submission {delivered} of this report has already been frozen into a delivered "
+            f"attempt, so replacing it in place would change what a retry says without "
+            f"changing what it calls itself; record this as submission {delivered + 1} or "
+            "higher. A submission that has never been sent can still be corrected in place"
         )
-    if int(submission_no) <= delivered:
-        raise ReceiptRefused(
-            RefusalReason.MALFORMED_RECEIPT,
-            detail,
-        )
+    raise ReceiptRefused(RefusalReason.MALFORMED_RECEIPT, detail)
 
 
 def _may_have_reached(attempt_rows) -> bool:
@@ -507,10 +528,28 @@ def _check_evidence(entries):
             )
         checked.append({
             "check": str(item["check"]).strip(),
-            "exitCode": item.get("exitCode"),
+            "exitCode": _exit_code(item.get("exitCode")),
             "detail": str(item.get("detail") or "").strip() or None,
         })
     return checked
+
+
+def _exit_code(value):
+    """An integer or nothing. Anything else is either not proof or not storable.
+
+    A mapping here rendered as an exit code nobody can interpret, which is verification
+    evidence that says nothing, and an arbitrary object failed later inside json.dumps as a
+    host exception rather than a named refusal.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"an exit code is an integer or absent, not {value!r}; evidence a reader cannot "
+            "interpret is not evidence",
+        )
+    return value
 
 
 def _check_unresolved(entries):

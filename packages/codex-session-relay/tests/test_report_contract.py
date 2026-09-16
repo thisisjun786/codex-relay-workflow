@@ -693,6 +693,53 @@ class Bounds(DeliveryTestCase):
                 ),
             )
 
+    def test_a_submission_number_is_not_coerced_into_something_it_is_not(self):
+        _relationship, event_id = self.queued_event()
+        for bad in (True, 1.9, 0, -1, None, "bad"):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id,
+                    **a_report(submission_no=bad)
+                ),
+            )
+
+    def test_an_exit_code_a_reader_cannot_interpret_is_not_evidence(self):
+        _relationship, event_id = self.queued_event()
+        for bad in ({"code": 1}, "0", True, [1]):
+            error = self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id,
+                    **a_report(evidence=[{"check": "pytest", "exitCode": bad}])
+                ),
+            )
+            self.assertIn("an exit code is an integer or absent", error.detail)
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(evidence=[{"check": "pytest"},
+                                           {"check": "ruff", "exitCode": 1}]))
+        self.assertIn("ruff -> exit 1", self.delivery.render_message(event_id))
+
+    def test_a_submission_never_frozen_into_an_attempt_stays_correctable(self):
+        _relationship, event_id = self.queued_event()
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        self.attempt(event_id)
+        # Submission 1 is frozen into a delivered attempt, so 2 is required.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(summary="second", submission_no=2))
+        # Nothing has frozen submission 2 yet, so correcting it in place is still free.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(summary="second, corrected", submission_no=2))
+        self.assertEqual(report.read(self.store, event_id)["summary"], "second, corrected")
+        self.assertEqual([r["submissionNo"] for r in report.read_all(self.store, event_id)],
+                         [1, 2])
+        # Submission 1 was frozen, so it still cannot be rewritten.
+        self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(summary="rewriting history", submission_no=1)),
+        )
+
     def test_a_report_backed_message_still_carries_the_frozen_manifest_pointer(self):
         _relationship, event_id = self.queued_event()
         receipt = dict(self.intake.get(event_id))
