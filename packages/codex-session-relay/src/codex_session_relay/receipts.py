@@ -491,6 +491,12 @@ class ReceiptIntake:
                 self.store.journal("event_reobserved", event, at=now)
             stored = json.loads(existing["receipt"])
             stored["_duplicate"] = True
+            # The stage travels with it. Without it a retry of a receipt whose first enqueue
+            # failed takes this path reporting no stage at all, so the caller's "if this is
+            # final, enqueue it" never runs and an accepted final event stays permanently
+            # without a delivery row - which is the one state nothing else recovers from,
+            # because the requeue pass looks for events that HAVE a recorded intent.
+            stored["_stage"] = existing["stage"]
             return stored
         record = dict(payload)
         record["eventId"] = event

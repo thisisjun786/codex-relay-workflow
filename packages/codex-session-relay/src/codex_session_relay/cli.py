@@ -387,7 +387,11 @@ def cmd_emit(services, args) -> dict:
         # the queue, and the annotation used to ride on it, so a predecessor already in
         # flight kept being reported as the current delivery.
         services.delivery.annotate_predecessors(event)
-        if not args.no_enqueue:
+        # Only when there is no delivery row yet. Acceptance and enqueue are separate
+        # transactions here, so a receipt whose enqueue failed is retried to reach this line -
+        # and a receipt that was already queued must not be queued twice for having been
+        # re-emitted.
+        if not args.no_enqueue and services.delivery.find(event) is None:
             result["delivery"] = dict(services.delivery.enqueue(event))
     return result
 

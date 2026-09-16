@@ -1144,7 +1144,11 @@ class DeliveryService:
             # even though acknowledgement currency already rejects it.
             # A predecessor capped in deferred_busy or withheld_pre_send is in the same
             # position: its hold makes attempt() return early, so this is its only chance.
-            "   AND d.state IN ('sending','held_uncertain','dispatched','inbox_only',"
+            # queued belongs with them: _claim does suppress a stale queued predecessor, but
+            # attempt() returns before _claim for a rate limit, a busy recipient or unreadable
+            # settings - and a recipient that is never free means _claim is never reached at
+            # all, so the predecessor keeps retrying and keeps reporting as current.
+            "   AND d.state IN ('queued','sending','held_uncertain','dispatched','inbox_only',"
             "                  'deferred_busy','withheld_pre_send')",
             (event["relationship_id"], event["execution_generation"], event_id),
         ).fetchall()

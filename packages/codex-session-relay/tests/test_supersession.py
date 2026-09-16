@@ -213,6 +213,57 @@ class PreSendSupersession(DeliveryTestCase):
         self.assertIsNotNone(note, "enqueue is the route every deliverable event takes")
         self.assertEqual(note["reason"], SUPERSEDED_REVISION)
 
+    def test_a_re_emitted_final_receipt_still_reports_its_stage(self):
+        """Acceptance and enqueue are separate transactions on the command line.
+
+        A receipt whose acceptance committed and whose enqueue then failed is retried - and
+        the duplicate return carried no stage at all, so the caller's "if this is final,
+        queue it" never ran and the accepted event stayed permanently without a delivery row.
+        Nothing else recovers that: the requeue pass looks for events that have a recorded
+        delivery intent, and a failure before the intent leaves none.
+        """
+        relationship = self.register()
+        path = self.artifact("out.txt", "the deliverable")
+        payload = self.ready_payload(relationship, [path])
+        first = self.accept(payload)
+        self.assertEqual(first["_stage"], "final")
+
+        again = self.accept(payload)
+
+        self.assertTrue(again["_duplicate"])
+        self.assertEqual(
+            again["_stage"], "final",
+            "a retry could not tell the caller this receipt still needs queuing",
+        )
+
+    def test_a_queued_predecessor_is_annotated_by_its_successor(self):
+        """Same generation, and the predecessor has not reached the transport at all.
+
+        _claim does suppress a stale queued predecessor - but attempt() returns before _claim
+        for a rate limit, a busy recipient or unreadable settings, and a recipient that is
+        never free means _claim is never reached. Until then the predecessor stays eligible,
+        keeps retrying, and carries none of the supersession phase the diagnostics promise.
+        """
+        relationship, older = self.queued_outcome("ready_for_review")
+        self.assertEqual(self.delivery.get(older)["state"], "queued")
+
+        path = self.artifact("newer.txt", "the corrected deliverable")
+        successor = self.ready_payload(relationship, [path], attempt=2)
+        self.accept(successor)
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE revision_lineage SET supersedes_hash = ? WHERE event_id = ?",
+                (self.intake.get(older)["revisionHash"], successor["eventId"]),
+            )
+
+        self.delivery.enqueue(successor["eventId"])
+
+        note = self.store.one(
+            "SELECT * FROM delivery_supersession WHERE event_id = ?", (older,),
+        )
+        self.assertIsNotNone(note, "a queued predecessor said nothing about being replaced")
+        self.assertEqual(note["reason"], SUPERSEDED_REVISION)
+
     def test_an_outstanding_predecessor_is_annotated_by_its_successor(self):
         """Same generation, no advance: attempt() returns early for a non-claimable state.
 
