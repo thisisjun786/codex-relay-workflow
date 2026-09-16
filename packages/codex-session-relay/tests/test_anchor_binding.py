@@ -127,6 +127,71 @@ class AnchorBinding(DeliveryTestCase):
         if delivery["state"] == "dispatched":
             self.assertNotEqual(self.generation_two()["anchorState"], ANCHOR_PENDING)
 
+    def lost_settle_write(self):
+        """A revision the transport really accepted, whose settle write was lost.
+
+        The same shape RestartRecovery uses: the send is held uncertain, and only re-reading
+        the operation receipt establishes afterwards that it reached a turn.
+        """
+        revision = self.revision_pending()
+        self.clock.advance(3600)
+        self.adapter.script("in_progress")
+        record = self.delivery.attempt(revision, self.adapter, now=self.clock.now())
+        self.assertEqual(record["deliveryState"], HELD_UNCERTAIN)
+        self.assertEqual(self.generation_two()["anchorState"], ANCHOR_PENDING)
+        turn = self.adapter.start_turn(CHILD, status="inProgress")
+        self.adapter.ledger[record["requestId"]] = {
+            "requestId": record["requestId"], "status": "accepted",
+            "resumed": {"approvalPolicy": "never"}, "turnId": turn.turn_id,
+        }
+        return revision, turn.turn_id
+
+    def test_a_reconciled_promotion_binds_before_any_repair_pass_runs(self):
+        """The interval the second binding pass narrowed but could not close.
+
+        _write commits the promotion to dispatched and the repair pass commits the binding in
+        a LATER transaction. A child emitting from another process in between has a valid
+        completion refused as unbound_generation even though the dispatch evidence is already
+        durable. So the binding travels in the transaction that promotes - and this test never
+        calls a binding pass, because the whole point is that it no longer has to.
+        """
+        revision, turn_id = self.lost_settle_write()
+
+        self.reconciler.recover_on_start(self.adapter)
+
+        self.assertEqual(self.delivery.get(revision)["state"], "dispatched")
+        self.assertNotEqual(
+            self.generation_two()["anchorState"], ANCHOR_PENDING,
+            "the promotion committed without its binding, so a receipt arriving before the"
+            " next repair pass is refused as unbound",
+        )
+        self.assertEqual(self.generation_two()["dispatchTurnId"], turn_id)
+        self.assertEqual(self.child_receipt_for_generation_two()["executionGeneration"], 2)
+
+    def test_a_promotion_disagreeing_with_a_bound_anchor_is_recorded_not_swallowed(self):
+        """A conflict the repair pass would never see, because it reads pending ones only.
+
+        Deferring it to that pass was the first correction I proposed, and it was wrong: the
+        generation is already bound, so bind_pending_anchors never selects it again and the
+        disagreement would simply vanish. The bound anchor is still never overwritten.
+        """
+        _revision, _turn_id = self.lost_settle_write()
+        self.registry.bind_anchor(
+            self._rid, 2, dispatch_turn_id="a-different-turn", source="dispatch_receipt",
+        )
+
+        self.reconciler.recover_on_start(self.adapter)
+
+        self.assertEqual(
+            self.generation_two()["dispatchTurnId"], "a-different-turn",
+            "a promotion must never move an anchor that is already bound",
+        )
+        recorded = self.store.all(
+            "SELECT detail FROM journal WHERE kind = ?", ("anchor_conflict",),
+        )
+        self.assertTrue(recorded, "the disagreement was neither reported nor recorded")
+        self.assertIn("a-different-turn", recorded[0]["detail"])
+
     def test_binding_is_idempotent_and_never_rebinds_a_bound_anchor(self):
         revision = self.revision_pending()
         self.clock.advance(3600)

@@ -312,6 +312,60 @@ class Registry:
             self.store.journal("anchor_bound", rid, {"generation": number}, at=now)
         return self.generation(rid, number)
 
+    def bind_anchor_in(self, db, rid: str, number: int, *, dispatch_turn_id, source) -> str:
+        """The same binding, against a transaction the caller already owns.
+
+        This exists for the writer that PROMOTES a revision to dispatched. Binding in a
+        separate transaction afterwards leaves an interval in which the dispatch evidence is
+        durable and the generation is still anchor_pending, and a child emitting from another
+        process inside that interval has a perfectly valid completion refused as
+        unbound_generation. Nothing about the binding needs a transport call - the turn id is
+        already in hand before the transaction opens - so there is no reason for it to travel
+        separately.
+
+        It returns an outcome instead of raising, because raising here would roll back the
+        promotion it travelled with over a disagreement about a DIFFERENT fact:
+
+          bound       the generation was pending and now names this turn
+          unchanged   it already names this turn
+          conflict    it names another turn, and is left exactly as it is
+          ineligible  nothing to bind from, or no such generation
+
+        A conflict is journalled HERE rather than left for the repair pass. That pass selects
+        anchor_pending generations only, so a generation that is already bound is never
+        looked at again and the disagreement would simply disappear.
+        """
+        if source != "dispatch_receipt" or validated_turn_id(dispatch_turn_id) is None:
+            return "ineligible"
+        # Read INSIDE the caller's transaction, so the decision and the write cannot be
+        # separated by another writer, and so the outcome comes from the row rather than from
+        # an update count.
+        current = db.execute(
+            "SELECT anchor_state, dispatch_turn_id FROM generations"
+            " WHERE relationship_id = ? AND execution_generation = ?",
+            (rid, number),
+        ).fetchone()
+        if current is None:
+            return "ineligible"
+        now = self.clock.iso()
+        if current["anchor_state"] == ANCHOR_BOUND:
+            if current["dispatch_turn_id"] == dispatch_turn_id:
+                return "unchanged"
+            self.store.journal(
+                "anchor_conflict", rid,
+                {"generation": number, "boundTo": current["dispatch_turn_id"],
+                 "offered": dispatch_turn_id},
+                at=now,
+            )
+            return "conflict"
+        db.execute(
+            "UPDATE generations SET anchor_state = ?, dispatch_turn_id = ?, bound_at = ?"
+            " WHERE relationship_id = ? AND execution_generation = ?",
+            (ANCHOR_BOUND, dispatch_turn_id, now, rid, number),
+        )
+        self.store.journal("anchor_bound", rid, {"generation": number}, at=now)
+        return "bound"
+
     def set_status(self, rid: str, status: str, *, actor: str) -> dict:
         """Deactivation only.
 

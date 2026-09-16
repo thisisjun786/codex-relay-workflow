@@ -12,7 +12,7 @@ attempt with no affirmative evidence stays held and says precisely what it is mi
 import json
 from enum import Enum
 
-from .delivery import COMPLETION, SENDING
+from .delivery import COMPLETION, REVISION, SENDING
 from .transport import (
     DEFERRED_BUSY,
     DISPATCHED,
@@ -24,6 +24,17 @@ from .transport import (
 )
 
 SCAN_LIMIT = 200
+
+
+def _with_anchor(outcome: dict, anchor) -> dict:
+    """Carry the binding outcome out with the settlement, so a conflict is not only journalled.
+
+    Absent when there was nothing to bind, which is every completion and every settlement that
+    promoted nothing.
+    """
+    if anchor is not None:
+        outcome["anchor"] = anchor
+    return outcome
 
 
 class Evidence(str, Enum):
@@ -188,13 +199,16 @@ class Reconciler:
             if attempt["attempt_no"] >= self.policy.cap_for(reason):
                 hold = self.policy.cap_reason(reason)
                 next_eligible = None
-        self._write(
+        anchor = self._write(
             attempt, delivery, record, facts.delivery_state, evidence, observation,
             "not scanned", next_eligible, hold=hold,
             dispatch_evidence="transport_accepted" if facts.delivery_state == DISPATCHED else None,
             dispatch_turn_id=facts.turn_id,
         )
-        return {"evidence": evidence.value, "state": facts.delivery_state, "record": record}
+        return _with_anchor(
+            {"evidence": evidence.value, "state": facts.delivery_state, "record": record},
+            anchor,
+        )
 
     def _settle_from_scan(self, attempt, delivery, scan, observation, scan_detail, now) -> dict:
         """The token is in the recipient's items, but the transport never confirmed.
@@ -213,12 +227,15 @@ class Reconciler:
             "affirmativeEvidence": Evidence.TURN_FOUND.value,
             "checkedAt": self.clock.iso(),
         }
-        self._write(
+        anchor = self._write(
             attempt, delivery, record, record["deliveryState"], Evidence.TURN_FOUND,
             observation, scan_detail, None, aggregate=DISPATCHED,
             dispatch_evidence="turn_found", dispatch_turn_id=scan.turn_id,
         )
-        return {"evidence": Evidence.TURN_FOUND.value, "state": DISPATCHED, "record": record}
+        return _with_anchor(
+            {"evidence": Evidence.TURN_FOUND.value, "state": DISPATCHED, "record": record},
+            anchor,
+        )
 
     def _stay_held(self, attempt, delivery, observation, scan_detail, now) -> dict:
         record = json.loads(attempt["record"]) if attempt["record"] else _unfinished_record(
@@ -251,6 +268,7 @@ class Reconciler:
                hold=None):
         now_iso = self.clock.iso()
         current = self._is_current(attempt, delivery)
+        anchor = None
         with self.store.transaction() as db:
             db.execute(
                 "UPDATE attempts SET internal_state = 'settled', state = ?, record = ?,"
@@ -274,10 +292,41 @@ class Reconciler:
                         now_iso, attempt["event_id"], attempt["attempt_no"], DISPATCHED,
                     ),
                 )
+                if (aggregate or state) == DISPATCHED:
+                    anchor = self._bind_promoted_anchor(db, attempt, delivery, dispatch_turn_id)
             self.store.journal(
                 "reconciled", attempt["request_id"],
                 {"evidence": evidence.value, "state": aggregate or state}, at=now_iso,
             )
+        return anchor
+
+    def _bind_promoted_anchor(self, db, attempt, delivery, dispatch_turn_id):
+        """Bind the revision's generation in the transaction that just promoted it.
+
+        Reconciliation is one of the routes that reaches dispatched without going through the
+        daemon's own dispatch, and the tick's repair pass runs in a DIFFERENT transaction. A
+        child in a third process that emits between the two commits has its completion refused
+        as unbound_generation even though the dispatch evidence is already durable. The turn id
+        arrived with the receipt or the recipient scan, before this transaction opened, so
+        closing that interval costs nothing.
+
+        Only a revision anchors a generation, which is the same condition the repair pass uses.
+        """
+        if delivery["kind"] != REVISION:
+            return None
+        turn_id = dispatch_turn_id or delivery["dispatch_turn_id"]
+        if not turn_id:
+            return None
+        event = db.execute(
+            "SELECT relationship_id, execution_generation FROM events WHERE event_id = ?",
+            (attempt["event_id"],),
+        ).fetchone()
+        if event is None:
+            return None
+        return self.registry.bind_anchor_in(
+            db, event["relationship_id"], event["execution_generation"],
+            dispatch_turn_id=turn_id, source="dispatch_receipt",
+        )
 
     # ---------------------------------------------------------------- restart
 
