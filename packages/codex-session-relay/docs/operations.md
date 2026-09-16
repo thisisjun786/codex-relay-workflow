@@ -160,6 +160,24 @@ what the observation scheduler and this health block ask. Without it every other
 on a shared turn looked permanently unsettled, was re-polled on every round and spent
 observation budget forever.
 
+So is the work itself. Staged claims are selected and settled per assignment, because a child
+thread can serve several and a claim on one of its turns belongs to exactly one of them.
+Selecting by thread alone put a paused assignment's claim into an active assignment's ring,
+and settling by turn alone let whichever assignment polled first suppress the owner's claim
+while producing no receipt of its own - so the owner's parent waited on an outcome that had
+already been discarded. An inactive assignment's staged claim is left untouched until it is
+resumed, and is excluded from backlog for the same reason: the scheduler will not process it.
+
+Each parent's delivery window rotates. The parent order decides who goes first; a persistent
+per-parent cursor decides where that parent's own window starts, and it advances only by what
+was actually attempted. Without it the window was always a parent's oldest rows, so a delivery
+that fails before changing its own state stays eligible, stays oldest and blocks every later
+delivery for that parent indefinitely.
+
+A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
+advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so
+that is the only occasion on which such a row can ever be told its generation has moved on.
+
 Status: implemented. `status` reports the phase, the most recent failed operation with its
 error code and, for a settings rejection, the exact fields the host disagreed on, plus the
 next retry time. The field-level difference is read from the raw receipt, because the
