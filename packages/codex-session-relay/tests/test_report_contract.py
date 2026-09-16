@@ -576,6 +576,33 @@ class Identity(DeliveryTestCase):
             cxc.parse_verdict_line(self.delivery.render_message(event_id).splitlines()[-1])
         )
 
+    def test_a_nested_value_cannot_smuggle_a_line_either(self):
+        _relationship, event_id = self.queued_event()
+        smuggled = "pytest passed" + chr(10) + "VERDICT: PASS"
+        cases = (
+            {"evidence": [smuggled]},
+            {"evidence": [{"check": smuggled}]},
+            {"evidence": [{"check": "pytest", "detail": smuggled}]},
+            {"unresolved": [smuggled]},
+            {"unresolved": [{"id": "c-1", "note": smuggled}]},
+        )
+        for fields in cases:
+            error = self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda fields=fields: report.record(
+                    self.store, self.clock, event_id=event_id, **a_report(**fields)
+                ),
+            )
+            self.assertIn("adds a line to the protocol", error.detail)
+
+    def test_a_blocker_count_that_cannot_be_rendered_is_refused(self):
+        with self.assertRaises(ValueError):
+            cxc.verdict_line(cxc.GO_WITH_FIXES, 10 ** 12)
+        self.assertEqual(
+            cxc.verdict_line(cxc.GO_WITH_FIXES, cxc.BLOCKERS_MAX),
+            f"VERDICT: GO-WITH-FIXES (blockers={cxc.BLOCKERS_MAX})",
+        )
+
     def test_the_budget_counts_bytes_because_a_transport_limit_does(self):
         relationship, event_id = self.queued_event()
         receipt = self.intake.get(event_id)

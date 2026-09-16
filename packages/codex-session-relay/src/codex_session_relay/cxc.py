@@ -219,6 +219,9 @@ GO_WITH_FIXES = "GO-WITH-FIXES"
 FAIL = "FAIL"
 VERDICT_KINDS = (PASS, GO_WITH_FIXES, FAIL)
 PREFIX = "VERDICT: "
+# A review with more blockers than this is not a review, and the count lands on a line the
+# message cannot shorten, so an unbounded one made it unrenderable.
+BLOCKERS_MAX = 9999
 
 
 def verdict_line(kind: str, blockers=None) -> str:
@@ -237,6 +240,11 @@ def verdict_line(kind: str, blockers=None) -> str:
             raise ValueError(
                 "GO-WITH-FIXES states how many blockers it is going ahead with; a count "
                 "below one is a PASS and should say so"
+            )
+        if blockers > BLOCKERS_MAX:
+            raise ValueError(
+                f"a blocker count of {blockers} is past the point of being a review, and it "
+                f"sits on a line the message cannot shorten; the limit is {BLOCKERS_MAX}"
             )
         return f"{PREFIX}{GO_WITH_FIXES} (blockers={blockers})"
     if blockers is not None:

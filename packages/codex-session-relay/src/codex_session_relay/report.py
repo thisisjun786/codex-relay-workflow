@@ -577,10 +577,11 @@ def _check_review(review):
                 RefusalReason.MALFORMED_RECEIPT, "each review finding names a criterion id"
             )
         findings.append({
-            "id": identifier,
+            "id": _single_line(identifier, "a finding id"),
             "verdict": item.get("verdict"),
-            "note": str(item.get("note") or "").strip(),
-            "anchor": str(item.get("anchor") or "").strip(),
+            "note": _single_line(str(item.get("note") or "").strip(), "a finding note"),
+            "anchor": _single_line(str(item.get("anchor") or "").strip(),
+                                   "a finding anchor"),
         })
     return {"kind": kind, "blockers": blockers, "findings": findings}
 
@@ -612,7 +613,7 @@ def _check_evidence(entries):
     checked = []
     for item in _sequence(entries, "evidence"):
         if isinstance(item, str):
-            checked.append(item)
+            checked.append(_single_line(item, "an evidence entry"))
             continue
         if not isinstance(item, dict) or not str(item.get("check") or "").strip():
             raise ReceiptRefused(
@@ -621,9 +622,10 @@ def _check_evidence(entries):
                 f"{item!r}",
             )
         checked.append({
-            "check": str(item["check"]).strip(),
+            "check": _single_line(str(item["check"]).strip(), "an evidence check"),
             "exitCode": _exit_code(item.get("exitCode")),
-            "detail": str(item.get("detail") or "").strip() or None,
+            "detail": _single_line(str(item.get("detail") or "").strip(),
+                                   "an evidence detail") or None,
         })
     return checked
 
@@ -650,7 +652,7 @@ def _check_unresolved(entries):
     checked = []
     for item in _sequence(entries, "unresolved"):
         if isinstance(item, str):
-            checked.append(item)
+            checked.append(_single_line(item, "an unresolved entry"))
             continue
         if not isinstance(item, dict) or not str(item.get("id") or "").strip():
             raise ReceiptRefused(
@@ -658,8 +660,8 @@ def _check_unresolved(entries):
                 f"each unresolved entry is a string or an object naming its id, not {item!r}",
             )
         checked.append({
-            "id": str(item["id"]).strip(),
-            "note": str(item.get("note") or "").strip(),
+            "id": _single_line(str(item["id"]).strip(), "an unresolved id"),
+            "note": _single_line(str(item.get("note") or "").strip(), "an unresolved note"),
         })
     return checked
 
