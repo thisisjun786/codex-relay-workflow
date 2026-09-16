@@ -28,7 +28,9 @@ from .receipts import ReceiptIntake, contract_record
 from .reconcile import Reconciler
 from .registry import Registry, contract_record as relationship_record, record_settings
 from .settings import REQUIRED as REQUIRED_SETTINGS
-from .store import Store, state_dir
+from .store import (
+    Store, compare_store, nonce_lookup, probe, resolve_state_dir, state_dir,
+)
 from .sync import SyncOutbox, render_progress_summary
 
 EXIT_OK, EXIT_REFUSED, EXIT_HOST, EXIT_USAGE = 0, 2, 3, 4
@@ -40,7 +42,7 @@ OFFLINE_COMMANDS = (
     "ack", "ack-proof", "admit-turn", "assignment-show", "claim", "criteria-register",
     "criteria-show", "doctor", "emit", "generation-bind", "generation-open", "register",
     "relationship-resume", "relationship-status", "revision-head", "settings-record",
-    "settings-show", "show", "status", "verdict",
+    "settings-show", "show", "status", "store-challenge", "store-identity", "verdict",
 )
 
 
@@ -55,30 +57,106 @@ class _LazyAdapter:
 
 
 class Services:
+    """Everything a command might need, built only when the command actually needs it.
+
+    Nothing is constructed here on purpose. doctor exists to describe a host where the store
+    cannot be opened, and a Store built during construction opens the file O_RDWR, switches on
+    WAL and runs the schema script - so it would raise before doctor could report why. Each
+    dependency is cached after first use, so laziness never means two stores in one process.
+    """
+
     def __init__(self, args):
-        directory = Path(args.state) if args.state else state_dir(args.socket)
-        self.store = Store(directory / "relay.sqlite3")
+        self.selection = resolve_state_dir(getattr(args, "state", None), args.socket)
         self.clock = SystemClock()
         self.socket_path = args.socket
         self.adapter_requested = bool(args.socket)
+        self._store = None
         self._adapter = None
-        self.criteria = CriteriaService(self.store, self.clock)
-        self.registry = Registry(self.store, self.clock)
-        self.intake = ReceiptIntake(
-            self.store, self.registry, self.clock,
-            admission=AnchorOrExplicit(_LazyAdapter(self) if self.adapter_requested else None),
-        )
-        self.delivery = DeliveryService(self.store, self.registry, self.intake, self.clock)
-        self.ack = AckService(
-            self.store, self.registry, self.intake, self.delivery, self.clock,
-            criteria=self.criteria,
-        )
-        self.reconciler = Reconciler(self.store, self.registry, self.delivery, self.clock)
-        self.sync = SyncOutbox(self.store, self.clock)
-        self.ack.sync = self.sync
-        self.assignments = AssignmentView(
-            self.store, self.registry, self.clock, criteria=self.criteria
-        )
+        self._criteria = None
+        self._registry = None
+        self._intake = None
+        self._delivery = None
+        self._ack = None
+        self._reconciler = None
+        self._sync = None
+        self._assignments = None
+
+    @property
+    def state_directory(self):
+        return self.selection.path
+
+    @property
+    def store(self):
+        if self._store is None:
+            self._store = Store(self.selection.db_path)
+        return self._store
+
+    @property
+    def criteria(self):
+        if self._criteria is None:
+            self._criteria = CriteriaService(self.store, self.clock)
+        return self._criteria
+
+    @property
+    def registry(self):
+        if self._registry is None:
+            self._registry = Registry(self.store, self.clock)
+        return self._registry
+
+    @property
+    def intake(self):
+        if self._intake is None:
+            self._intake = ReceiptIntake(
+                self.store, self.registry, self.clock,
+                admission=AnchorOrExplicit(
+                    _LazyAdapter(self) if self.adapter_requested else None
+                ),
+            )
+        return self._intake
+
+    @property
+    def delivery(self):
+        if self._delivery is None:
+            self._delivery = DeliveryService(
+                self.store, self.registry, self.intake, self.clock
+            )
+        return self._delivery
+
+    @property
+    def ack(self):
+        if self._ack is None:
+            service = AckService(
+                self.store, self.registry, self.intake, self.delivery, self.clock,
+                criteria=self.criteria,
+            )
+            # Wired BEFORE the service is published. record_verdict skips its outbox
+            # obligation when sync is absent, so an ack handed out unwired would drop the
+            # obligation silently rather than fail.
+            service.sync = self.sync
+            self._ack = service
+        return self._ack
+
+    @property
+    def reconciler(self):
+        if self._reconciler is None:
+            self._reconciler = Reconciler(
+                self.store, self.registry, self.delivery, self.clock
+            )
+        return self._reconciler
+
+    @property
+    def sync(self):
+        if self._sync is None:
+            self._sync = SyncOutbox(self.store, self.clock)
+        return self._sync
+
+    @property
+    def assignments(self):
+        if self._assignments is None:
+            self._assignments = AssignmentView(
+                self.store, self.registry, self.clock, criteria=self.criteria
+            )
+        return self._assignments
 
     @property
     def adapter(self):
@@ -107,7 +185,11 @@ class Services:
             except Exception:
                 pass
             self._adapter = None
-        self.store.close()
+        # Only a store that was actually built is closed. Reading the property here would
+        # construct one during teardown, on the very host where constructing it fails.
+        if self._store is not None:
+            self._store.close()
+            self._store = None
 
 
 def _require_adapter(services):
@@ -118,6 +200,20 @@ def _require_adapter(services):
 class SystemExit2(Exception):
     def __init__(self, message, code):
         super().__init__(message)
+        self.code = code
+
+
+class PayloadExit(Exception):
+    """A completed answer that is still a refusal.
+
+    doctor has to print its whole diagnosis AND exit non-zero when it cannot prove two
+    participants share a store. A plain refusal would throw the diagnosis away, and a plain
+    return would let exit 0 be read as yes.
+    """
+
+    def __init__(self, payload, code):
+        super().__init__(payload.get("detail", "refused"))
+        self.payload = payload
         self.code = code
 
 
@@ -583,7 +679,7 @@ def cmd_daemon(services, args) -> dict:
     _require_adapter(services)
     from .daemon import RelayDaemon, SingleInstance
 
-    directory = Path(args.state) if args.state else state_dir(args.socket)
+    directory = services.state_directory
     daemon = RelayDaemon(
         services.store, services.registry, services.intake, services.delivery, services.ack,
         services.reconciler, services.adapter, clock=services.clock,
@@ -597,24 +693,96 @@ def cmd_daemon(services, args) -> dict:
     return {"ticks": [report.as_dict() for report in reports]}
 
 
-def cmd_doctor(services, args) -> dict:
-    import os
+def cmd_store_identity(services, args) -> dict:
+    """One line each participant can emit, for a comparison to consume."""
+    return {"stateSelection": services.selection.to_record(), "store": services.store.locate()}
 
+
+def cmd_store_challenge(services, args) -> dict:
+    """Write a nonce here, or look for one another participant wrote.
+
+    This is the only evidence that survives a copied database: the identifier inside a copy is
+    identical, but a value written AFTER the copy exists in exactly one of the two files.
+    """
+    if args.write:
+        return services.store.write_challenge(actor=args.actor or "cli")
+    if not args.read:
+        raise SystemExit2("store-challenge needs --write or --read <nonce>", EXIT_USAGE)
+    return services.store.read_challenge(args.read)
+
+
+def _ledger_location(services) -> dict:
+    """Where the transport ledger will actually live, which --state does not move.
+
+    bridge_adapter._build resolves it with state_dir(socket_path), reading the environment
+    only, so a run that overrides --state alone splits the relay store from the ledger that
+    carries send idempotency. Mirrors codex_thread_bridge.ledger.open_endpoint_ledger, which
+    cannot be called here because opening it is a side effect.
+    """
+    import hashlib
+
+    if not services.socket_path:
+        return {"configured": False, "directory": None, "path": None, "split": False}
+    directory = Path(state_dir(services.socket_path)).expanduser()
+    canonical = Path(services.socket_path).expanduser().absolute().resolve()
+    endpoint = hashlib.sha256(str(canonical).encode()).hexdigest()[:16]
+    split = directory.resolve() != services.selection.path.resolve()
     return {
-        "stateDirectory": str(services.store.path.parent),
-        "procAvailable": os.path.isdir("/proc/self/fd"),
-        "adapter": "bridge" if services.adapter_requested else "none (read-only, no --socket)",
-        "relationships": services.store.one(
-            "SELECT COUNT(*) AS c FROM relationships"
-        )["c"],
-        "openAttempts": len(Reconciler(
-            services.store, services.registry, services.delivery, services.clock
-        ).open_attempts()),
-        "actorReachability": _reachability(services),
+        "configured": True, "directory": str(directory),
+        "path": str(directory / f"operations-{endpoint}.sqlite3"), "split": split,
     }
 
 
-def _reachability(services) -> dict:
+def _contents(services, report) -> dict:
+    """Counts, but only when the store can actually be opened for them."""
+    if not report["access"]["dbReadable"]:
+        return {"available": False, "relationships": None, "openAttempts": None,
+                "detail": "the database is not readable from this process"}
+    try:
+        relationships = services.store.one("SELECT COUNT(*) AS c FROM relationships")["c"]
+        open_attempts = len(services.reconciler.open_attempts())
+    except Exception as error:  # noqa: BLE001 - doctor reports, it does not fail
+        return {"available": False, "relationships": None, "openAttempts": None,
+                "detail": f"{type(error).__name__}: {error}"}
+    return {"available": True, "relationships": relationships,
+            "openAttempts": open_attempts, "detail": None}
+
+
+def cmd_doctor(services, args) -> dict:
+    """What THIS process can actually do here, measured rather than assumed.
+
+    Constructs no Store: probe() answers from stat, a read-only connection and a rolled-back
+    write transaction, so a missing, unreadable or read-only state directory is an answer
+    instead of the failure that would otherwise replace it.
+    """
+    import os
+
+    report = probe(services.selection)
+    report["procAvailable"] = os.path.isdir("/proc/self/fd")
+    report["adapter"] = (
+        "bridge" if services.adapter_requested else "none (read-only, no --socket)"
+    )
+    report["ledger"] = _ledger_location(services)
+    report["actorReachability"] = _reachability(services, report)
+    report["contents"] = _contents(services, report)
+
+    nonce = nonce_lookup(services.selection, args.expect_nonce) if args.expect_nonce else None
+    report["nonce"] = nonce
+    comparison = compare_store(
+        report["store"], expect_store=args.expect_store, expect_inode=args.expect_inode,
+        nonce=nonce,
+    )
+    asked = any((args.expect_store, args.expect_inode, args.expect_nonce))
+    report.update(comparison)
+    if asked and comparison["sameStore"] != "proven":
+        # A caller that asked whether this is the same store and got no proof must not read
+        # exit 0 as yes. Unproven is refused for the same reason a mismatch is: the criterion
+        # is that a different database is never reported as healthy.
+        raise PayloadExit(report, EXIT_REFUSED)
+    return report
+
+
+def _reachability(services, report) -> dict:
     """What THIS process can actually do here, measured rather than assumed.
 
     A workspace-write task cannot write the default state directory and cannot connect to the
@@ -624,15 +792,10 @@ def _reachability(services) -> dict:
     thread, which is why doctor can answer even where the bridge itself could not load.
     """
     import socket
-    import tempfile
 
-    directory = services.store.path.parent
-    writable, detail = True, None
-    try:
-        with tempfile.NamedTemporaryFile(dir=directory, prefix=".reach-"):
-            pass
-    except OSError as error:
-        writable, detail = False, f"{type(error).__name__}: {error}"
+    # Reuses the probe's measurement rather than repeating it, so one command cannot report
+    # two different answers about the same directory.
+    access = report["access"]
 
     connect = "not configured"
     if services.socket_path:
@@ -647,8 +810,8 @@ def _reachability(services) -> dict:
             probe.close()
 
     return {
-        "stateDirectoryWritable": writable,
-        "stateDirectoryDetail": detail,
+        "stateDirectoryWritable": access["directoryWritable"],
+        "stateDirectoryDetail": access["detail"],
         "socketConfigured": bool(services.socket_path),
         "socketConnect": connect,
         "offlineCommands": list(OFFLINE_COMMANDS),
@@ -916,7 +1079,19 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--deadline", type=float)
     daemon.set_defaults(handler=cmd_daemon)
 
-    subparsers.add_parser("doctor").set_defaults(handler=cmd_doctor)
+    doctor = subparsers.add_parser("doctor")
+    doctor.add_argument("--expect-store", help="the store id another participant reported")
+    doctor.add_argument("--expect-inode", help="the device:inode another participant reported")
+    doctor.add_argument("--expect-nonce", help="a nonce another participant wrote here")
+    doctor.set_defaults(handler=cmd_doctor)
+
+    subparsers.add_parser("store-identity").set_defaults(handler=cmd_store_identity)
+
+    challenge = subparsers.add_parser("store-challenge")
+    challenge.add_argument("--write", action="store_true")
+    challenge.add_argument("--read")
+    challenge.add_argument("--actor")
+    challenge.set_defaults(handler=cmd_store_challenge)
     return parser
 
 
@@ -938,6 +1113,9 @@ def main(argv=None) -> int:
         return EXIT_REFUSED
     except SystemExit2 as error:
         print(json.dumps({"error": "usage", "detail": str(error)}, indent=2))
+        return error.code
+    except PayloadExit as error:
+        print(json.dumps(error.payload, indent=2, default=str))
         return error.code
     except Exception as error:
         print(json.dumps({
