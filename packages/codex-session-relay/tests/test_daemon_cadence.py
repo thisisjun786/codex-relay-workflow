@@ -5,6 +5,8 @@ RelayDaemon.run waits only when it is given something to wait with. The CLI gave
 deadline-only run busy-spun for its whole duration. These tests pin both halves.
 """
 
+import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -21,6 +23,10 @@ class _Args:
         self.socket = socket
         self.max_ticks = max_ticks
         self.deadline = deadline
+        # A bounded daemon run now takes the same scope claim a managed service does, so a
+        # test has to say which registry it is claiming in. Without this it would write an
+        # ownership record under the real home.
+        self.allow_isolated_scope = True
 
 
 class SchedulerWait(unittest.TestCase):
@@ -50,6 +56,16 @@ class CliSuppliesTheCadence(unittest.TestCase):
 
     def _services(self, **kwargs):
         directory = tempfile.mkdtemp(prefix="relay-cadence-")
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        scopes = tempfile.mkdtemp(prefix="relay-cadence-scopes-")
+        self.addCleanup(shutil.rmtree, scopes, ignore_errors=True)
+        previous = os.environ.get("CODEX_SESSION_RELAY_SCOPE_DIR")
+        os.environ["CODEX_SESSION_RELAY_SCOPE_DIR"] = scopes
+        self.addCleanup(
+            lambda: os.environ.__setitem__("CODEX_SESSION_RELAY_SCOPE_DIR", previous)
+            if previous is not None
+            else os.environ.pop("CODEX_SESSION_RELAY_SCOPE_DIR", None)
+        )
         args = _Args(directory, socket="/nonexistent-for-this-test", **kwargs)
         services = Services(args)
         # The lazy adapter returns whatever is already set, so no bridge is built and no socket

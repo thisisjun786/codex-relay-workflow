@@ -1,0 +1,265 @@
+"""Who owns the daemon, and who is allowed to stop it.
+
+These tests use real child processes on purpose. A mocked flock proves that the code called
+flock; only a second process trying to start proves that the first one is actually excluded.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from codex_session_relay import service as service_module
+from codex_session_relay.service import (
+    ISOLATED, PRODUCTION, ProcessHandle, RelayService, ScopeRegistry, ServiceRefused,
+    installation_id, owned_service, production_scope_root, resolve_scope_root,
+)
+from codex_session_relay.store import Store, resolve_state_dir
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SOCKET = "/nonexistent-app-server.sock"
+
+# A child that takes the claim and holds it until told to stop, so exclusion is observed
+# rather than asserted against a double.
+HOLDER = """
+import os, sys, time
+sys.path.insert(0, {src!r})
+from codex_session_relay.service import RelayService, ScopeRegistry, owned_service
+from codex_session_relay.store import resolve_state_dir
+service = RelayService(
+    resolve_state_dir({state!r}), socket_path={socket!r},
+    scope=ScopeRegistry(__import__("pathlib").Path({scopes!r}), "isolated"),
+    store_id={store_id!r},
+)
+with owned_service(service, allow_isolated=True, require_intent=False) as record:
+    # The record file IS the handshake. A pipe would add buffering and lifetime questions
+    # that have nothing to do with what this test is about.
+    while True:
+        time.sleep(0.05)
+"""
+
+
+class ServiceTestCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="relay-service-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.scopes = os.path.join(self.tmp, "scopes")
+        self.children = []
+        self.addCleanup(self._reap)
+
+    def _reap(self):
+        for child in self.children:
+            if child.poll() is None:
+                child.kill()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:  # pragma: no cover - a hung child is a failure
+                self.fail(f"child {child.pid} did not exit")
+
+    def service(self, name="a", *, socket=SOCKET, scopes=None):
+        state = os.path.join(self.tmp, name)
+        os.makedirs(state, exist_ok=True)
+        store = Store(Path(state) / "relay.sqlite3")
+        store_id = store.identity
+        store.close()
+        return RelayService(
+            resolve_state_dir(state), socket_path=socket,
+            scope=ScopeRegistry(Path(scopes or self.scopes), ISOLATED), store_id=store_id,
+        )
+
+    def holder(self, service):
+        """Start a child that really holds the lock and the claim, and wait until it does."""
+        program = HOLDER.format(
+            src=os.path.join(REPO, "src"), state=str(service.selection.path),
+            socket=service.socket_path, scopes=str(service.scope.root),
+            store_id=service.store_id,
+        )
+        child = subprocess.Popen(
+            [sys.executable, "-c", program], stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, text=True,
+        )
+        self.children.append(child)
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            record = service.record()
+            if record and record.get("pid") and service.lock_is_held():
+                return child, record["pid"]
+            if child.poll() is not None:
+                self.fail(f"holder exited {child.returncode}: {child.stderr.read()}")
+            time.sleep(0.02)
+        self.fail("the holder never took the claim")
+
+
+class Ownership(ServiceTestCase):
+    def test_a_second_start_is_refused_and_the_first_is_untouched(self):
+        service = self.service("a")
+        child, pid = self.holder(service)
+        service.intent.write(enabled=True, actor="test")
+        refused = service.start(allow_isolated=True, launcher=self._never_launch)
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["reason"], "already_running")
+        self.assertIsNone(child.poll(), "the running service must not be disturbed")
+
+    def _never_launch(self, *_args, **_kwargs):  # pragma: no cover - reaching it is the failure
+        self.fail("start launched a second process while one was already running")
+
+    def test_a_different_state_directory_cannot_serve_the_same_socket(self):
+        """The hole a per-state-directory lock cannot close."""
+        first = self.service("a")
+        self.holder(first)
+        second = self.service("b")
+        self.assertNotEqual(second.store_id, first.store_id)
+        second.intent.write(enabled=True, actor="test")
+        refused = second.start(allow_isolated=True, launcher=self._never_launch)
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["reason"], "scope_owned_by_other_store")
+        self.assertEqual(refused["conflicts"][0]["storeId"], first.store_id)
+
+    def test_a_stopped_registration_on_another_store_is_still_a_conflict(self):
+        """Live-only scanning would miss this one entirely."""
+        first = self.service("a")
+        child, _pid = self.holder(first)
+        child.terminate()
+        child.wait(timeout=10)
+        second = self.service("b")
+        conflicts = second.conflicts()
+        self.assertEqual([c["storeId"] for c in conflicts], [first.store_id])
+        self.assertFalse(conflicts[0]["live"])
+
+    def test_stop_refuses_a_process_another_installation_owns(self):
+        service = self.service("a")
+        child, pid = self.holder(service)
+        record = service.record()
+        service.write_record(dict(record, installationId="someone-else"))
+        refused = service.stop()
+        self.assertFalse(refused["ok"])
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertIn("another installation", refused["detail"])
+        self.assertIsNone(child.poll(), "a foreign process must not be signalled")
+
+    def test_stop_refuses_a_recycled_pid(self):
+        service = self.service("a")
+        child, pid = self.holder(service)
+        record = service.record()
+        service.write_record(dict(record, startTicks=(record["startTicks"] or 0) + 1))
+        refused = service.stop()
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertIn("reused", refused["detail"])
+        self.assertIsNone(child.poll())
+
+    def test_stop_refuses_when_the_process_cannot_be_aimed_at(self):
+        service = self.service("a")
+        child, pid = self.holder(service)
+        with mock.patch.object(os, "pidfd_open", side_effect=OSError("no pidfd here")):
+            refused = service.stop()
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertIsNone(child.poll(), "refusing is the point; never fall back to os.kill")
+
+    def test_stop_terminates_a_process_this_installation_owns(self):
+        service = self.service("a")
+        child, pid = self.holder(service)
+        stopped = service.stop()
+        self.assertTrue(stopped["ok"], stopped)
+        self.assertEqual(stopped["supervisor"], "exited")
+        child.wait(timeout=10)
+        self.assertIsNone(service.record()["pid"])
+        self.assertFalse(service.lock_is_held())
+
+    def test_a_stale_record_does_not_block_a_fresh_start(self):
+        service = self.service("a")
+        child, pid = self.holder(service)
+        child.terminate()
+        child.wait(timeout=10)
+        status = service.status()
+        self.assertFalse(status["running"])
+        self.assertEqual(status["ownership"], "none")
+        self.assertFalse(service.lock_is_held())
+
+
+class Intent(ServiceTestCase):
+    def test_start_never_enables_a_service_that_was_never_configured(self):
+        service = self.service("a")
+        refused = service.start(allow_isolated=True, launcher=self._fail)
+        self.assertEqual(refused["reason"], "service_disabled")
+        self.assertFalse(service.intent.read()["enabled"])
+        self.assertFalse(service.intent.read()["configured"])
+        self.assertFalse((service.selection.path / "service.json").exists())
+
+    def _fail(self, *_a, **_k):  # pragma: no cover
+        self.fail("a disabled service must not be launched")
+
+    def test_restart_refuses_a_disabled_service_and_leaves_it_disabled(self):
+        service = self.service("a")
+        service.enable(actor="test")
+        service.disable(actor="test")
+        refused = service.restart(allow_isolated=True, launcher=self._fail)
+        self.assertEqual(refused["reason"], "service_disabled")
+        self.assertFalse(service.intent.read()["enabled"])
+
+    def test_a_disable_during_restart_stops_the_replacement(self):
+        """The window between restart stopping the old process and launching the new one."""
+        service = self.service("a")
+        service.enable(actor="test")
+        original = service.stop
+
+        def stop_then_disable(**kwargs):
+            outcome = original(**kwargs)
+            service.intent.write(enabled=False, actor="owner")
+            return outcome
+
+        with mock.patch.object(service, "stop", stop_then_disable):
+            refused = service.restart(allow_isolated=True, launcher=self._fail)
+        self.assertEqual(refused["reason"], "service_disabled")
+        self.assertIn("while the service was stopping", refused["detail"])
+        self.assertFalse(service.intent.read()["enabled"])
+
+
+class ScopeAuthority(ServiceTestCase):
+    def test_the_production_root_does_not_move_with_the_environment(self):
+        fake = tempfile.mkdtemp(prefix="relay-passwd-home-")
+        self.addCleanup(shutil.rmtree, fake, ignore_errors=True)
+        entry = mock.Mock(pw_dir=fake)
+        with mock.patch.object(service_module.pwd, "getpwuid", return_value=entry):
+            with mock.patch.dict(os.environ, {"HOME": "/somewhere/else",
+                                              "XDG_STATE_HOME": "/elsewhere"}, clear=False):
+                first = production_scope_root()
+            with mock.patch.dict(os.environ, {"HOME": "/a/third/place"}, clear=False):
+                os.environ.pop("XDG_STATE_HOME", None)
+                second = production_scope_root()
+        self.assertEqual(first, second)
+        self.assertTrue(str(first).startswith(fake))
+
+    def test_an_override_is_isolated_and_refused_without_an_explicit_opt_in(self):
+        """Two launches with DIFFERENT overrides would otherwise both own the same socket."""
+        for name, root in (("a", "scopes-a"), ("b", "scopes-b")):
+            service = self.service(name, scopes=os.path.join(self.tmp, root))
+            service.intent.write(enabled=True, actor="test")
+            refused = service.start(allow_isolated=False, launcher=self._fail)
+            self.assertEqual(refused["reason"], "isolated_scope_not_allowed")
+            self.assertIn("CODEX_SESSION_RELAY_SCOPE_DIR", refused["detail"])
+            self.assertEqual(service.status()["scopeAuthority"], ISOLATED)
+
+    def _fail(self, *_a, **_k):  # pragma: no cover
+        self.fail("an isolated authority must not start without an explicit opt-in")
+
+    def test_resolve_reports_production_when_nothing_is_overridden(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CODEX_SESSION_RELAY_SCOPE_DIR", None)
+            _root, authority = resolve_scope_root()
+        self.assertEqual(authority, PRODUCTION)
+
+    def test_an_installation_is_this_checkout_and_this_state_directory(self):
+        self.assertNotEqual(
+            installation_id(os.path.join(self.tmp, "a")),
+            installation_id(os.path.join(self.tmp, "b")),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

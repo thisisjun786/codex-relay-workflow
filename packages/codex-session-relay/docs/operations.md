@@ -73,7 +73,9 @@ An update tool should read `service status`, act on `stop` or `restart`, and rel
 guarantee: **a service that was disabled is never enabled as a side effect**. Intent lives in
 `service.json` and absence means never configured, which is not enabled.
 
-Status: planned in PR-A. Today only the bounded foreground `daemon` command exists.
+Status: the commands above are implemented. `service run` currently serves ONE bounded
+segment and exits; supervision across successive worker processes, which is what carries an
+assignment past a single process lifetime, is still planned in PR-A.
 
 ### Ownership
 
@@ -92,7 +94,9 @@ Termination is bound to a process handle rather than a pid, and identity include
 id, the installation and the store, so a reused pid is never signalled by mistake. Where a
 stable handle is unavailable, ownership reports `unverifiable` and stop refuses.
 
-Status: planned in PR-A.
+Status: implemented, except that the inherited-descriptor arrangement only matters once the
+supervisor launches workers, which is still planned. Today the single service process holds
+both locks itself.
 
 ## One service, several projects
 

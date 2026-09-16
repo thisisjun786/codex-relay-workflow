@@ -37,12 +37,16 @@ EXIT_OK, EXIT_REFUSED, EXIT_HOST, EXIT_USAGE = 0, 2, 3, 4
 
 # Which commands need to reach the App Server, and which do not. Reported by doctor, because a
 # caller should learn this from one command instead of from a failure halfway through.
-HOST_REQUIRED_COMMANDS = ("daemon", "deliver", "reconcile", "recover", "verify-acks")
+HOST_REQUIRED_COMMANDS = (
+    "daemon", "deliver", "reconcile", "recover", "service run", "service start",
+    "service restart", "verify-acks",
+)
 OFFLINE_COMMANDS = (
     "ack", "ack-proof", "admit-turn", "assignment-show", "claim", "criteria-register",
     "criteria-show", "doctor", "emit", "generation-bind", "generation-open", "register",
     "relationship-resume", "relationship-status", "revision-head", "settings-record",
     "settings-show", "show", "status", "store-challenge", "store-identity", "verdict",
+    "service status", "service enable", "service disable", "service stop",
 )
 
 
@@ -677,20 +681,10 @@ def _scheduler_wait(clock, deadline, sleeper=None):
 
 def cmd_daemon(services, args) -> dict:
     _require_adapter(services)
-    from .daemon import RelayDaemon, SingleInstance
-
-    directory = services.state_directory
-    daemon = RelayDaemon(
-        services.store, services.registry, services.intake, services.delivery, services.ack,
-        services.reconciler, services.adapter, clock=services.clock,
-    )
-    deadline = services.clock.now() + args.deadline if args.deadline else None
-    with SingleInstance(directory):
-        reports = daemon.run(
-            max_ticks=args.max_ticks, deadline=deadline,
-            sleep=_scheduler_wait(services.clock, deadline),
-        )
-    return {"ticks": [report.as_dict() for report in reports]}
+    # A bounded daemon run is an explicit operator action, so it does NOT require the managed
+    # service's enable intent - but it does take the same scope claim, or two standalone runs
+    # with different state directories could serve one App Server and never see each other.
+    return _run_bounded(services, _service_for(services), args, require_intent=False)
 
 
 def cmd_store_identity(services, args) -> dict:
@@ -780,6 +774,77 @@ def cmd_doctor(services, args) -> dict:
         # is that a different database is never reported as healthy.
         raise PayloadExit(report, EXIT_REFUSED)
     return report
+
+
+def _service_for(services):
+    """Built from the probe, so status stays an offline command that constructs no Store."""
+    from .service import RelayService
+
+    return RelayService(
+        services.selection, socket_path=services.socket_path,
+        store_id=probe(services.selection)["store"]["storeId"],
+    )
+
+
+def _refuse_unless_ok(payload: dict) -> dict:
+    if payload.get("ok"):
+        return payload
+    raise PayloadExit(payload, EXIT_REFUSED)
+
+
+def _run_bounded(services, service, args, *, require_intent: bool) -> dict:
+    """Hold ownership for exactly as long as this process serves, then let it go.
+
+    The daemon is constructed INSIDE the claim so a run that loses the race never opens a
+    transport connection it is about to abandon.
+    """
+    from .daemon import RelayDaemon
+    from .service import ServiceRefused, owned_service
+
+    deadline = services.clock.now() + args.deadline if args.deadline else None
+    allow_isolated = getattr(args, "allow_isolated_scope", False)
+    try:
+        with owned_service(
+            service, allow_isolated=allow_isolated, require_intent=require_intent,
+        ) as record:
+            daemon = RelayDaemon(
+                services.store, services.registry, services.intake, services.delivery,
+                services.ack, services.reconciler, services.adapter, clock=services.clock,
+            )
+            reports = daemon.run(
+                max_ticks=args.max_ticks, deadline=deadline,
+                sleep=_scheduler_wait(services.clock, deadline),
+            )
+    except ServiceRefused as refusal:
+        raise PayloadExit(
+            {"ok": False, "reason": refusal.reason, "detail": refusal.detail}, EXIT_REFUSED,
+        ) from refusal
+    return {"ok": True, "reason": None, "pid": record["pid"],
+            "ticks": [report.as_dict() for report in reports]}
+
+
+def cmd_service(services, args) -> dict:
+    service = _service_for(services)
+    action = args.service_command
+    if action == "status":
+        return service.status()
+    if action == "enable":
+        return service.enable(actor=args.actor or "cli")
+    if action == "disable":
+        return _refuse_unless_ok(service.disable(actor=args.actor or "cli"))
+    if action == "stop":
+        return _refuse_unless_ok(service.stop(actor=args.actor or "cli"))
+    if action in ("start", "restart"):
+        _require_adapter(services)
+        call = service.start if action == "start" else service.restart
+        return _refuse_unless_ok(call(
+            allow_isolated=args.allow_isolated_scope, max_ticks=args.max_ticks,
+            deadline=args.deadline, actor=args.actor or "cli",
+        ))
+    if action == "run":
+        _require_adapter(services)
+        return _run_bounded(services, service, args, require_intent=True)
+    raise SystemExit2(f"unknown service action {action!r}", EXIT_USAGE)
 
 
 def _reachability(services, report) -> dict:
@@ -1077,7 +1142,23 @@ def build_parser() -> argparse.ArgumentParser:
     daemon = subparsers.add_parser("daemon")
     daemon.add_argument("--max-ticks", type=int)
     daemon.add_argument("--deadline", type=float)
+    daemon.add_argument("--allow-isolated-scope", action="store_true")
     daemon.set_defaults(handler=cmd_daemon)
+
+    service = subparsers.add_parser("service")
+    actions = service.add_subparsers(dest="service_command", required=True)
+    for name in ("status", "enable", "disable", "stop"):
+        offline = actions.add_parser(name)
+        offline.add_argument("--actor")
+    for name in ("start", "restart", "run"):
+        hosted = actions.add_parser(name)
+        hosted.add_argument("--actor")
+        hosted.add_argument("--allow-isolated-scope", action="store_true")
+        hosted.add_argument("--max-ticks", type=int)
+        # One bounded segment by default. Supervision ACROSS segments is a separate change;
+        # an unbounded run is not constructible here and must not become one by omission.
+        hosted.add_argument("--deadline", type=float, default=3600.0)
+    service.set_defaults(handler=cmd_service)
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--expect-store", help="the store id another participant reported")
