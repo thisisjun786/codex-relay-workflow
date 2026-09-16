@@ -472,6 +472,19 @@ class Identity(DeliveryTestCase):
         self.assertIn("a bound the plan actually stated ran out", message)
         self.assertNotIn("proving its own criteria", message)
         self.assertIn("pull request: none recorded", message)
+        # A report with no pull request still has revision context, and dropping it silently
+        # left the parent without what it needed to act.
+        report.record(
+            self.store, self.clock, event_id=event_id,
+            **a_report(cxc_status=cxc.BUDGET_EXHAUSTED, cxc_reason="the bound ran out",
+                       pr_number=None, pr_url=None, head_sha="f" * 40,
+                       base_ref="dev", base_sha="e" * 40, criteria_digest="d1e2f3")
+        )
+        message = self.delivery.render_message(event_id)
+        self.assertIn("pull request: none recorded", message)
+        self.assertIn("base: dev " + "e" * 40, message)
+        self.assertIn("head: " + "f" * 40, message)
+        self.assertIn("criteria: d1e2f3", message)
 
     def test_the_budget_counts_bytes_because_a_transport_limit_does(self):
         relationship, event_id = self.queued_event()
@@ -514,6 +527,9 @@ class FinalLine(Directions):
             cxc.parse_verdict_line(message.splitlines()[-1]),
             {"kind": cxc.GO_WITH_FIXES, "blockers": 1},
         )
+        # The frozen bytes have to say which submission produced them, because show now
+        # returns several and a recipient holding an older message has only the message.
+        self.assertIn("submission 1", message)
 
     def test_a_revision_report_does_not_have_to_invent_a_receipt_outcome(self):
         _source, revision_event = self._revision()

@@ -722,7 +722,7 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
             "       --artifact <path> [--continues-anchor <this generation dispatch turn>]",
             "",
             f"relay record: requestId {request}, eventId {event_id},"
-            f" contract {version_of(report)}",
+            f" submission {report['submissionNo']}, contract {version_of(report)}",
             f"Full record: {show_command(event_id)}",
         ], rank=0, essential=True, keep=9),
     ]
@@ -741,11 +741,14 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
 def _pr_lines(report):
     reference = pr_ref(report)
     if not reference:
+        # No pull request does not mean no revision context. A blocked or budget-exhausted
+        # report can still name the branch point and the commit it got to, and dropping
+        # those silently left the parent without what it needed to act.
         return [
             "",
             f"repository: {report['repository']}",
             "pull request: none recorded for this event",
-        ]
+        ] + _commit_lines(report)
     lines = [
         "",
         f"pull request: {reference}"
@@ -753,10 +756,17 @@ def _pr_lines(report):
     ]
     if report.get("prUrl"):
         lines.append(f"  url: {report['prUrl']}")
+    return lines + _commit_lines(report)
+
+
+def _commit_lines(report):
+    """The branch point, the commit and the criteria set, whenever they are known."""
+    lines = []
     base = report.get("baseRef") or ""
-    if report.get("baseSha"):
-        lines.append(f"  base: {base} {report['baseSha']}".rstrip())
-    lines.append(f"  head: {report.get('headSha')}")
+    if report.get("baseSha") or base:
+        lines.append(f"  base: {base} {report.get('baseSha') or ''}".rstrip())
+    if report.get("headSha"):
+        lines.append(f"  head: {report['headSha']}")
     if report.get("criteriaDigest"):
         lines.append(f"  criteria: {report['criteriaDigest']}")
     return lines
