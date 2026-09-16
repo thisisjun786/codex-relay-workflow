@@ -448,6 +448,14 @@ class RelayService:
         """ours | foreign | unverifiable | none, decided through a real process handle."""
         record = self.record() if record is None else record
         if not record or not record.get("pid"):
+            if record and record.get("workerPid"):
+                # A supervisor that died leaving its worker alive keeps the worker identity
+                # on purpose, so this record still names something stop() will reach. It has
+                # to be classified first: answering none here sent the orphan path straight
+                # at another installation's worker.
+                foreign = self._foreign_markers(record)
+                if foreign:
+                    return FOREIGN, None, "; ".join(foreign)
             return NONE, None, "no daemon record"
         # Read from the record itself, so they survive the supervisor's death. A foreign
         # installation whose supervisor is gone can still have a live worker recorded, and

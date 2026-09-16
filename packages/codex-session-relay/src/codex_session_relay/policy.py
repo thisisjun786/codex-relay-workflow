@@ -39,14 +39,21 @@ class RetryPolicy:
 
     def restart_delay_for(self, consecutive_failures: int) -> float:
         """A clean segment waits the plain interval; repeated failure backs off and caps."""
+        import math
+
         if consecutive_failures <= 0:
             return self.restart_interval_seconds
-        # Bounded before the exponent is evaluated. A supervisor whose worker fails on every
-        # segment keeps counting, and past about a thousand failures base * 2 ** (n - 1) is an
-        # integer too large to convert to a float - so the supervisor would die of its own
-        # backoff instead of continuing to retry at the cap.
-        if consecutive_failures > 64:
-            return self.restart_backoff_max_seconds
+        base, ceiling = self.restart_base_seconds, self.restart_backoff_max_seconds
+        # Bounded before the exponent is evaluated, because a supervisor whose worker fails on
+        # every segment keeps counting and base * 2 ** (n - 1) eventually builds an integer too
+        # large to convert to a float - so the supervisor would die of its own backoff instead
+        # of retrying at the cap. The bound is DERIVED from this policy rather than fixed: a
+        # small base needs more doublings to reach its ceiling, and a constant would have sent
+        # a customized supervisor straight to the cap while its own backoff still had room.
+        if base <= 0 or ceiling <= base:
+            return ceiling
+        if consecutive_failures - 1 >= math.ceil(math.log2(ceiling / base)):
+            return ceiling
         return min(
             self.restart_backoff_max_seconds,
             self.restart_base_seconds * (2 ** (consecutive_failures - 1)),

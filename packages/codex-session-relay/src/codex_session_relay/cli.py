@@ -891,10 +891,14 @@ def _adopt_supervised(service, args) -> dict:
         # the supervisor crashes mid-segment the kernel will not signal this worker, so it
         # runs to the end of its bounded segment holding the inherited locks. Bounded, but
         # real, and an operator can see it in the record instead of assuming it is armed.
-        service.write_record(dict(
-            service.record() or record,
-            workerDeathSignal="unarmed", workerDeathSignalDetail=death.get("detail"),
-        ))
+        # Appended to the log rather than written into daemon.json: the supervisor owns that
+        # record and rewrites it at every worker boundary, so a whole-document write from the
+        # worker would race it and could erase the workerPid a stop needs.
+        service.store_journal_note(
+            f"worker {os.getpid()} could not arm PR_SET_PDEATHSIG"
+            f" ({death.get('detail') or 'no detail'}); if the supervisor crashes this worker"
+            " runs to the end of its segment holding the inherited locks"
+        )
     return {"lockFd": lock_fd, "scopeFd": scope_fd if scope_fd >= 0 else None,
             "parentDeathSignal": "armed" if death["armed"] else "unarmed"}
 
