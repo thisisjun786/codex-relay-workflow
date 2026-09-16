@@ -37,15 +37,14 @@ A request to make this the fixed management task covers its matching title,
 sidebar pin, and a compact Linear management record. Respect an explicit title,
 no-rename, unpinned, or read-only constraint.
 
-Use the actual linked initiative name followed by a concise project summary:
-`Initiative name - Project summary`. Read the project's initiative relation;
-do not infer it from the repository or duplicate the initiative prefix in the
-project summary. Preserve an explicit user title. If there is no initiative,
-use the project summary alone; if multiple initiative relations make the choice
-unclear, ask one focused question before renaming. Do not change the
-initiative/project names themselves. Continue independent binding preparation
-while the title choice is unresolved. This convention names the management
-task; execution-task titles follow [Child task titles](../crw-run/references/task-packet.md#child-task-titles).
+Use a concise project summary as the management task title. Preserve an explicit
+user title. Product family and initiative membership are context, not required
+title prefixes; no initiative or multiple initiatives needs no title-choice
+question. Resolve same-name projects by stable ID under the shared target rules
+before binding. If their management titles would be indistinguishable, append a
+short project-ID suffix. Do not rename the initiative or project itself. This
+convention names the management task; execution-task titles follow
+[Child task titles](../crw-run/references/task-packet.md#child-task-titles).
 
 Discover the supported task rename and sidebar tools and their current schemas.
 Apply changes only to the verified current task, and check its resulting title
@@ -82,6 +81,11 @@ document, and managed-task state before acting. Use current assignment context
 and scoped recall to find a lost record. A copied binding for another task does
 not assign ownership here. Follow the shared target-resolution rules for
 explicit one-off targets and changes to the persistent link.
+
+Keep the recorded project ID when its name, product labels, or initiative
+relations change. Existing titles with an initiative prefix are presentation,
+not a reason to rebind or rename during recovery. Refresh the title only within
+an authorized presentation change; do not migrate existing bindings implicitly.
 
 Load the existing owner for the requested operation:
 

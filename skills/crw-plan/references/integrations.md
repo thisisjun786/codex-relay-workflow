@@ -9,13 +9,52 @@ current assignment and the verified management binding for this task. A
 temporary question or link for another project does not change the persistent
 binding; a change to that binding needs an explicit designation or switch.
 Distinguish Linear project IDs, Codex task/host IDs, Desktop project IDs, and
-repository identity. One repository may support several Linear projects.
+repository identity. One repository may support several Linear projects, and
+one project may involve several repositories. Resolve names to stable project
+IDs using the supplied link, verified binding, and semantic scope. If same-name
+candidates remain ambiguous, ask before writing or binding; do not pick by
+title alone. A rename or changed initiative relation does not change a binding.
 
 Use [crw-focus](../../crw-focus/SKILL.md) to designate, record, restore,
 or switch the fixed management task, including its app title and pin. Refresh
 volatile state before acting. An old or copied record locates context but does
 not transfer another task's ownership or execution permissions. Keep binding
 setup with `crw-focus` and the requested operation with its existing owner.
+
+## Linear operating model
+
+Keep goals, product classification, and repository identity separate:
+
+- An initiative describes a goal and its completion condition, not a permanent
+  product bucket. A project may have no initiative or contribute to several.
+  Preserve its stable ID and issues across those relations; do not clone them
+  or sum shared progress as separate output. Verify connector support and read
+  back relations before claiming that a requested link exists.
+- Create a project when the user requests one, including an accepted proposal.
+  A planning request, large backlog, or multiple repositories alone is not a
+  project-creation request. Reuse existing IDs and meaningful scope. Name the
+  result naturally without a fixed product prefix. Do not rename existing
+  projects or migrate their relations merely by loading these instructions.
+- Product family is a single-choice project label group. Reuse the existing
+  workspace values; a common project without one owning product may leave it
+  empty and describe its shared scope. Do not split the project automatically
+  or treat that empty classification as an error.
+- Related repositories use multiple independent project labels, outside a
+  group. Use `저장소 · repo`, adding the owner when short names collide; keep
+  the description to the exact repository URL. Verify label identity, parent
+  group, and resulting assignments. These labels classify related code; they
+  do not assign all those repositories to every issue or select a checkout.
+  Non-code work may have no repository label.
+- Reuse agreed labels. Discuss any additional label scheme when a need arises
+  instead of creating it automatically. Preserve unrelated labels; do not copy
+  all project labels to issues. Keep descriptions brief. Views, filters, and
+  default screens belong to the user and are configured only when requested.
+
+For example, a requested “Complete installation and first launch” project can
+have one product family and independent core, desktop, and installer repository
+labels. An installer fix within it still names only its actual code targets.
+A shared planning project can have neither product family nor repository labels.
+Neither example requires an initiative or a product prefix in the project name.
 
 ## Linear holds canonical documents
 

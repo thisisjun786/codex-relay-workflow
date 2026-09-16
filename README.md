@@ -219,10 +219,17 @@ apply. See [Independent implementation tasks](skills/crw-run/SKILL.md#independen
 
 `crw-focus` records the project and current task IDs in a linked Linear
 document, sets the task title and sidebar pin when supported, and restores that
-context for later requests. Management titles use `Initiative name - Project summary`.
+context for later requests. Management titles use a concise project summary;
+the binding uses the stable project ID regardless of names or initiative membership.
 It routes each request to its existing operation
 owner. Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
+
+`crw-plan` creates projects on the user's request and reuses existing items when
+updating a plan. Initiatives represent goals; product family and related
+repositories are separate project labels. Project names need no product prefix,
+and views remain the user's choice. See the shared
+[Linear operating model](skills/crw-plan/references/integrations.md#linear-operating-model).
 
 `crw-next` distinguishes choosing a first step from choosing what follows a
 delivery. It uses `readchk` to resolve ambiguous intent and `nba` to pick one

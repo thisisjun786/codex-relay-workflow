@@ -23,16 +23,18 @@ Read the user's goal, existing Linear initiative/project/milestones/issues, full
 
 Distinguish proposed, implemented, reviewed, merged, deployed, and behaviorally verified work. A Done label or local commit cannot establish every later state. If evidence disagrees, preserve the source links and record the disagreement.
 
-Identify the durable product and finishable outcome. Reuse existing initiative/project IDs and team conventions. Do not infer product identity from a checkout folder name or merge distinct products because their repositories are related.
+Identify the goal, product classification, and finishable outcome separately using the shared [Linear operating model](references/integrations.md#linear-operating-model). Reuse existing initiative/project IDs and team conventions. Do not infer product identity from a checkout folder name or merge distinct products because their repositories are related.
 
 ## Shape the plan
 
-- **Initiative:** product or longer-term direction, following the workspace convention.
-- **Project:** a finishable outcome. Prefer the established `Product · Outcome` naming when the workspace uses it.
+- **Initiative:** a goal with an observable completion condition, to which projects contribute. It is not a permanent product container.
+- **Project:** a finishable outcome created when the user requests a project. Name the result naturally; do not require a product prefix. A product name can appear when it helps explain the result.
 - **Milestone:** an observable result or coherent delivery boundary. Follow explicit user grouping, such as one milestone per character or module.
 - **Issue:** one reviewable delivery, often one PR, with scope, acceptance criteria, canonical document links, dependencies, and meaningful verification.
 
-Use the smallest structure that makes the next action clear. Do not invent dates, owners, status transitions, or a team per product. Record unknowns plainly.
+Use the smallest structure within the requested scope. Issue count, repository count, or estimated size does not authorize a new project. Planning or updating issues can reuse a project or keep standalone issues without creating missing upper levels. A project may have no initiative or contribute to several; reuse its ID instead of duplicating the project or its issues. Do not invent dates, owners, status transitions, or a team per product. Record unknowns plainly.
+
+Apply product-family and related-repository labels under the shared operating model. Reuse existing labels and keep descriptions short. Additional label schemes need discussion with the user; leave views and default screens to the user unless requested.
 
 Split by deliverable and shared contract, not file count. Derive order from dependency edges and overlapping edit surfaces. A schema/API contract may precede several apparently independent issues. Avoid dependency cycles and distinguish speculative backlog ideas from approved requirements.
 
@@ -42,9 +44,9 @@ Make criteria observable: user behavior, data/state that must survive, and impor
 
 For an existing plan, compute a compact change set: reuse, create, update, or leave unresolved. Match stable IDs and semantic scope before titles. Re-running the same request should converge on the same items.
 
-A request to create or update the Linear plan authorizes the corresponding document/item writes. Prepare concrete changes, apply them within scope, and read back the resulting documents, items, and relations. Do not add a second approval step for routine authorized writes. A draft-only request stays a draft. Deletion, archival, issue closure, messages to others, or a material change to agreed scope need authorization covering that action.
+A request to create or update the Linear plan authorizes the corresponding document/item writes within that scope; project creation still requires the user's project request, including an already accepted proposal. Prepare concrete changes, apply them within scope, and read back the resulting documents, items, and relations. Do not add a second approval step for routine authorized writes. A draft-only request stays a draft. Deletion, archival, issue closure, messages to others, or a material change to agreed scope need authorization covering that action.
 
-Preserve unrelated content, labels, history, and human edits. Refresh before updating if another actor may have changed an item. After an uncertain write, look up the existing result before retrying; report partial completion with actual IDs.
+Preserve unrelated content, labels, history, and human edits. Refresh before updating if another actor may have changed an item. After an uncertain write, look up the existing result before retrying; report partial completion with actual IDs. If a project was created but its labels or relations failed, repair those fields on that ID. Do not repeat the project create. Resolve same-name candidates by IDs and semantic scope; ask only if the supplied target and current binding cannot distinguish them.
 
 Link issues to canonical Linear documents instead of copying the whole specification into every issue. Include the acceptance criteria needed to act. Local drafts remain explicitly unsynced until the Linear write is verified; do not create a parallel permanent planning source.
 
