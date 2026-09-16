@@ -46,6 +46,11 @@ If an outcome needs several PRs, plan a separate implementation issue for each a
 
 Make criteria observable: user behavior, data/state that must survive, and important failure cases. Do not weaken criteria to match code already written. Reuse completed work as evidence or a prerequisite instead of reopening it as a new implementation task.
 
+Before handing off code issues, apply [repository resolution](references/integrations.md#resolve-the-implementation-repository):
+name each issue's actual owner/repo and separate reference repositories. Project
+labels do not substitute for that target. Leave a genuinely unresolved code target
+as an explicit planning dependency, not an invented checkout assignment.
+
 ## Reconcile and apply
 
 For an existing plan, compute a compact change set: reuse, create, update, or leave unresolved. Match stable IDs and semantic scope before titles. Re-running the same request should converge on the same items.

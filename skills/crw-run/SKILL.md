@@ -176,6 +176,13 @@ receipts and sensitive evidence in an appropriate private location; local
 snapshots point to the Linear document and are not another planning source.
 Do not store project state or credentials inside this installed skill.
 
+Before assigning a checkout, apply the shared
+[repository resolution](../crw-plan/references/integrations.md#resolve-the-implementation-repository)
+and put its verified issue target, remote, integration branch and full baseline
+in the packet. Reuse an existing task's worktree and issue branch on resume;
+classification changes alone never relocate it. Non-PR work can omit those code
+fields with its explicit result and verification instead.
+
 ## Prepare and dispatch
 
 Read [Task packet](references/task-packet.md) when preparing prompts. Each packet
