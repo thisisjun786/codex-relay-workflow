@@ -51,6 +51,10 @@ LABEL_MAX = 300
 # a fits-on-one-line ceiling. Bounding it like a label rejected real forge urls that would
 # have rendered perfectly well.
 URL_MAX = 2000
+# A manifestRef arrives from the receipt, where the frozen contract sets no length. It lands
+# on an essential line now, so it is given a bounded REPRESENTATION here rather than a limit
+# imposed on a contract field this layer does not own.
+REF_SHOWN = 240
 
 
 def _size(text) -> int:
@@ -316,9 +320,9 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
     read that was already stale by the time the row was written.
     """
     attempted = db.execute(
-        "SELECT 1 FROM attempts WHERE event_id = ? LIMIT 1", (event_id,)
-    ).fetchone()
-    if attempted is None:
+        "SELECT record FROM attempts WHERE event_id = ?", (event_id,)
+    ).fetchall()
+    if not _may_have_reached(attempted):
         return
     existing = db.execute(
         "SELECT MAX(submission_no) AS submission_no FROM work_reports WHERE event_id = ?",
@@ -348,6 +352,28 @@ def _assert_resubmission(db, event_id, submission_no) -> None:
             RefusalReason.MALFORMED_RECEIPT,
             detail,
         )
+
+
+def _may_have_reached(attempt_rows) -> bool:
+    """Could any of these attempts have put bytes in front of the recipient.
+
+    An attempt row is not a delivery. A settled attempt whose record says sendAttempted is
+    no was refused before the send, so its frozen bytes never reached anyone, and counting
+    it as a delivered submission would leave a gap in the numbering for nothing. Anything
+    else, including an attempt still in flight or one whose record cannot be read, is
+    treated as possibly delivered, which is the reading reconciliation already uses: an
+    unfinished receipt is never proof of non-delivery.
+    """
+    for row in attempt_rows or []:
+        if row["record"] is None:
+            return True
+        try:
+            record = json.loads(row["record"])
+        except (TypeError, ValueError):
+            return True
+        if record.get("sendAttempted") != "no":
+            return True
+    return False
 
 
 def _check_restore(restore):
@@ -669,15 +695,18 @@ def render_completion(row, receipt, request, report, *, budget=BUDGET) -> str:
         _Section("relay record", [
             "",
             "relay record:",
-            f"  contract: {version_of(report)}",
             f"  requestId: {request}",
             f"  eventId: {event_id}",
+            f"  submission: {report['submissionNo']}  contract: {version_of(report)}",
             f"  relationshipId: {row['relationship_id']}",
             f"  executionGeneration: {receipt.get('executionGeneration')}",
-            f"  attempt: {receipt.get('attempt')}  submission: {report['submissionNo']}",
+            f"  attempt: {receipt.get('attempt')}",
             f"  outcome: {receipt.get('outcome')}",
             f"  revisionHash: {receipt.get('revisionHash')}",
-        ], rank=5),
+        # The first five lines are ordered so the floor protects exactly what lets a
+        # recipient pick its own submission out of the several that show returns. The rest
+        # of the record can shorten.
+        ], rank=5, essential=True, keep=5),
         _Section("respond", _ack_lines(event_id), rank=0, essential=True, keep=7),
     ]
     return _compose(sections, event_id, budget=budget)
@@ -954,7 +983,15 @@ def _manifest_ref_lines(receipt):
     stable location their artifacts can still be verified against.
     """
     reference = receipt.get("manifestRef")
-    return ["", f"manifestRef: {reference}"] if reference else []
+    if not reference:
+        return []
+    text = str(reference)
+    if _size(text) > REF_SHOWN:
+        # Truncated visibly, never quietly. A pointer nobody can read is still better than a
+        # message that cannot be sent, and the whole value is in the record.
+        shown = text.encode("utf-8")[:REF_SHOWN].decode("utf-8", "ignore")
+        return ["", f"manifestRef: {shown}... (truncated; full value in the record)"]
+    return ["", f"manifestRef: {text}"]
 
 
 def _ack_lines(event_id):

@@ -131,6 +131,8 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-113 | Recording a later submission preserves the earlier one, so a recipient holding an older elided message can still recover what it promised | `report.record` keyed on (event, submission); `report.read_all`; `cli.cmd_show` | implemented |
 | I-114 | Every delivered message states its report submission and survives elision doing so, so the frozen bytes identify which stored submission produced them | `report.render_completion`, `render_revision`; the identity is its own section with a floor covering it | implemented |
 | I-115 | A report with no pull request still renders its base, head and criteria digest rather than dropping them unannounced | `report._commit_lines` | implemented |
+| I-116 | An attempt that is proven never to have sent is not counted as a delivered submission; anything unproven is | `report._may_have_reached` | implemented |
+| I-117 | A manifest reference too long to render is truncated visibly rather than making the event unsendable | `report._manifest_ref_lines` | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is

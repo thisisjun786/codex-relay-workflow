@@ -185,7 +185,7 @@ class Elision(DeliveryTestCase):
         stored = report.read(self.store, event_id)
         row = self.delivery.get(event_id)
         tight = report.render_completion(
-            row, receipt, "del-x-a1", stored, budget=1400,
+            row, receipt, "del-x-a1", stored, budget=1700,
         )
         self.assertIn("omitted:", tight, "a shortened message says so")
         self.assertIn("show --event", tight, "and says where to read the rest")
@@ -193,6 +193,37 @@ class Elision(DeliveryTestCase):
         self.assertIn("... ", tight, "and the count of what is missing survives with it")
         self.assertIn("next:", tight, "the required next action is never what gets dropped")
         self.assertIn("ack-proof", tight, "nor the instruction for answering")
+        self.assertIn("submission: 1", tight, "nor which submission produced these bytes")
+        self.assertIn("requestId: del-x-a1", tight)
+
+    def test_a_long_manifest_reference_is_truncated_visibly_not_left_unsendable(self):
+        _relationship, event_id = self.queued_event()
+        receipt = dict(self.intake.get(event_id))
+        receipt["manifestRef"] = "/var/lib/relay/frozen/" + "z" * 9000
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        stored = report.read(self.store, event_id)
+        row = self.delivery.get(event_id)
+        # The receipt field has no contract length limit, and the section is essential, so
+        # without a bounded representation this raised inside every delivery claim.
+        message = report.render_completion(row, receipt, "del-q-a1", stored)
+        self.assertIn("manifestRef: /var/lib/relay/frozen/", message)
+        self.assertIn("(truncated; full value in the record)", message)
+        self.assertLessEqual(len(message.encode("utf-8")), report.BUDGET)
+
+    def test_an_attempt_that_never_sent_is_not_a_delivered_submission(self):
+        _relationship, event_id = self.queued_event()
+        # A scripted pre-send refusal DOES settle an attempt row, with sendAttempted no. Its
+        # frozen bytes never reached the recipient, so the first report is still submission 1
+        # and the numbering keeps no gap for nothing.
+        self.adapter.script("busy")
+        record = self.attempt(event_id)
+        self.assertEqual(record["sendAttempted"], "no")
+        self.assertTrue(self.attempts_for(event_id), "the attempt row exists")
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        self.assertEqual(report.read(self.store, event_id)["submissionNo"], 1)
+        # The contrast, that a DISPATCHED attempt does count, is what
+        # Bounds.test_a_report_already_delivered_cannot_be_replaced_in_place asserts. So the
+        # distinction is the sendAttempted flag, not the mere presence of an attempt row.
 
     def test_an_impossible_budget_refuses_instead_of_shipping_a_gutted_message(self):
         relationship, event_id = self.queued_event()
@@ -493,7 +524,7 @@ class Identity(DeliveryTestCase):
         report.record(self.store, self.clock, event_id=event_id, **a_report(summary=korean))
         stored = report.read(self.store, event_id)
         row = self.delivery.get(event_id)
-        budget = 2200
+        budget = 2500
         message = report.render_completion(row, receipt, "del-z-a1", stored, budget=budget)
         self.assertLessEqual(
             len(message.encode("utf-8")), budget,
@@ -676,7 +707,7 @@ class Bounds(DeliveryTestCase):
         )
         # And it survives the elision that drops the file listing, because it is the pointer
         # those files can still be verified against once they have moved.
-        tight = report.render_completion(row, receipt, "del-m-a1", stored, budget=1400)
+        tight = report.render_completion(row, receipt, "del-m-a1", stored, budget=1700)
         self.assertIn("omitted:", tight)
         self.assertIn("manifestRef: /var/lib/relay/frozen/abc123", tight)
 
@@ -860,7 +891,7 @@ class Recovery(DeliveryTestCase):
         stored = report.read(self.store, event_id)
         row = self.delivery.get(event_id)
         receipt = self.intake.get(event_id)
-        tight = report.render_completion(row, receipt, "del-r-a1", stored, budget=1400)
+        tight = report.render_completion(row, receipt, "del-r-a1", stored, budget=1700)
         self.assertIn("omitted:", tight)
         self.assertIn(report.show_command(event_id), tight)
 
