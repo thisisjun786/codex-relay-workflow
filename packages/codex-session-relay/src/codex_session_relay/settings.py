@@ -78,15 +78,27 @@ UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
 
 
 def normalise_policy(policy):
-    """Fill the declared defaults so an omitted field compares equal to its default."""
-    if not isinstance(policy, dict) or "type" not in policy:
+    """Fill the declared defaults so an omitted default compares equal to an explicit one.
+
+    Total by design: it returns None for anything it cannot read, and never raises. Its callers
+    run BEFORE turn/start, so an exception here would leave _mutate recording outcome_unknown --
+    telling a caller the message may have been delivered -- for a response that in fact withheld
+    it. An unreadable policy has to come back as a value, so the comparison can refuse it.
+    """
+    if not isinstance(policy, dict):
         return None
-    kind = policy["type"]
+    kind = policy.get("type")
+    # Not just a missing type: an unhashable one would raise on the defaults lookup below.
+    if not isinstance(kind, str):
+        return None
     merged = dict(POLICY_DEFAULTS.get(kind, {}))
-    merged.update({k: v for k, v in policy.items() if k != "type"})
+    merged.update({key: value for key, value in policy.items() if key != "type"})
     merged["type"] = kind
     if "writableRoots" in merged:
-        merged["writableRoots"] = list(merged["writableRoots"])
+        roots = merged["writableRoots"]
+        if not isinstance(roots, list):
+            return None
+        merged["writableRoots"] = list(roots)
     return merged
 
 

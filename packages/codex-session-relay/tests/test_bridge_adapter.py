@@ -842,6 +842,34 @@ class MirrorMatchesTheBridge(unittest.TestCase):
         self.assertEqual(AUTHORIZED.mismatches(response), [])
         self.assertEqual(self._bridge_contract().findings(response), [])
 
+
+    def test_neither_side_raises_on_a_policy_it_cannot_read(self):
+        """Both run before turn/start, so an exception would become outcome_unknown.
+
+        That verdict tells a caller the message may have been delivered, and it is the one
+        outcome a delivery cannot reconcile, for a response that in fact withheld everything.
+        """
+        from codex_session_relay import settings as relay
+
+        unreadable = (
+            None, "workspaceWrite", 42, ["workspaceWrite"], {"no_type": 1},
+            {"type": {"unhashable": 1}}, {"type": ["not-a-string"]},
+            {"type": "workspaceWrite", "writableRoots": None},
+            {"type": "workspaceWrite", "writableRoots": 7},
+        )
+        for policy in unreadable:
+            with self.subTest(policy=repr(policy)):
+                self.assertIsNone(self.bridge.normalise_policy(policy))
+                self.assertIsNone(relay.normalise_policy(policy))
+                findings = AUTHORIZED.mismatches(authorized_resume_response(sandbox=policy))
+                self.assertTrue(findings, "an unreadable policy must refuse")
+                self.assertEqual(findings[0]["field"], "sandbox")
+        # A well-formed policy still normalises identically on both sides.
+        self.assertEqual(
+            self.bridge.normalise_policy({"type": "workspaceWrite"}),
+            relay.normalise_policy({"type": "workspaceWrite"}),
+        )
+
     def test_the_resume_config_agrees_on_every_key(self):
         relay_config = AUTHORIZED.resume_params("thread-1")["config"]
         self.assertEqual(relay_config, self._bridge_contract().config())

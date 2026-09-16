@@ -131,15 +131,27 @@ class UntransmittableSetting(ValueError):
 
 
 def normalise_policy(policy):
-    """Fill the declared defaults so an omitted default compares equal to an explicit one."""
-    if not isinstance(policy, dict) or "type" not in policy:
+    """Fill the declared defaults so an omitted default compares equal to an explicit one.
+
+    Total by design: it returns None for anything it cannot read, and never raises. Its callers
+    run BEFORE turn/start, so an exception here would leave _mutate recording outcome_unknown --
+    telling a caller the message may have been delivered -- for a response that in fact withheld
+    it. An unreadable policy has to come back as a value, so the comparison can refuse it.
+    """
+    if not isinstance(policy, dict):
         return None
-    kind = policy["type"]
+    kind = policy.get("type")
+    # Not just a missing type: an unhashable one would raise on the defaults lookup below.
+    if not isinstance(kind, str):
+        return None
     merged = dict(POLICY_DEFAULTS.get(kind, {}))
     merged.update({key: value for key, value in policy.items() if key != "type"})
     merged["type"] = kind
     if "writableRoots" in merged:
-        merged["writableRoots"] = list(merged["writableRoots"])
+        roots = merged["writableRoots"]
+        if not isinstance(roots, list):
+            return None
+        merged["writableRoots"] = list(roots)
     return merged
 
 
@@ -368,11 +380,15 @@ class SettingsContract:
             returned = seen[field]
             if field == "sandbox":
                 expected = normalise_policy(expected)
-                if not isinstance(returned, dict) or "type" not in returned:
+                normalised = normalise_policy(returned)
+                if normalised is None:
                     # The host answered with something that is not a sandbox policy. That is a
                     # value we disagree with, not a value we could not see, and indexing it here
                     # would raise: _mutate would then record outcome_unknown, claiming the
                     # message may have been delivered when nothing was ever sent.
+                    # This refuses even when only a MODE was requested and the reported type
+                    # happens to match: a policy we cannot read in full is not a policy that
+                    # confirms anything about the thread.
                     found.append(
                         {
                             "code": SETTINGS_NOT_PRESERVED,
@@ -385,7 +401,9 @@ class SettingsContract:
                 if self.expected_policy is None:
                     # Only a mode was requested, so only the resolved type was asked about.
                     expected = {"type": expected["type"]}
-                    returned = {"type": returned["type"]}
+                    returned = {"type": normalised["type"]}
+                else:
+                    returned = normalised
             if expected != returned:
                 found.append(
                     {

@@ -549,7 +549,22 @@ async def test_a_cancelled_annotation_propagates_instead_of_completing(
     assert bridge.ledger.get("cancel-prep")["status"] == "accepted"
 
 
-@pytest.mark.parametrize("malformed", ["not-a-policy", 42, ["workspaceWrite"], {"no_type": 1}])
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "not-a-policy",
+        42,
+        ["workspaceWrite"],
+        {"no_type": 1},
+        # Nested malformation: normalise_policy used to raise on each of these, and an exception
+        # before turn/start becomes outcome_unknown, the one verdict a delivery cannot reconcile.
+        {"type": "workspaceWrite", "writableRoots": None},
+        {"type": "workspaceWrite", "writableRoots": 7},
+        {"type": "workspaceWrite", "writableRoots": {"a": 1}},
+        {"type": {"unhashable": 1}},
+        {"type": ["not-a-string"]},
+    ],
+)
 async def test_an_unreadable_sandbox_answer_is_a_refusal_not_a_crash(
     bridge, fake_server, tmp_path, malformed
 ):
@@ -565,4 +580,38 @@ async def test_an_unreadable_sandbox_answer_is_a_refusal_not_a_crash(
     assert result["rpcError"]["code"] == "settings_not_preserved"
     assert result["settings"]["findings"][0]["field"] == "sandbox"
     assert result["settings"]["actual"]["sandbox"] == malformed
+    assert fake.count("turn/start") == 0
+
+
+def test_normalise_policy_never_raises_and_answers_none_for_what_it_cannot_read():
+    """Its callers run before turn/start, so raising would misreport a withheld message."""
+    for unreadable in (
+        None,
+        "workspaceWrite",
+        42,
+        ["workspaceWrite"],
+        {"no_type": 1},
+        {"type": {"unhashable": 1}},
+        {"type": ["not-a-string"]},
+        {"type": "workspaceWrite", "writableRoots": None},
+        {"type": "workspaceWrite", "writableRoots": 7},
+    ):
+        assert normalise_policy(unreadable) is None, unreadable
+    assert normalise_policy({"type": "workspaceWrite"}) == WRITE_POLICY
+    assert normalise_policy({"type": "readOnly"}) == {"type": "readOnly", "networkAccess": False}
+
+
+async def test_a_matching_mode_does_not_rescue_an_unreadable_policy(bridge, fake_server, tmp_path):
+    """Only the mode was requested and the reported type matches, yet it still refuses.
+
+    A policy that cannot be read in full confirms nothing about the thread, so accepting it on
+    the strength of its type would be the same silence-as-proof mistake in a smaller place.
+    """
+    fake, _ = fake_server
+    fake.override_creation = {"sandbox": {"type": "workspaceWrite", "writableRoots": None}}
+    result = await bridge.create_thread(
+        "mode-only", str(tmp_path), prompt="hello", sandbox="workspace-write"
+    )
+    assert result["status"] == "failed"
+    assert result["rpcError"]["code"] == "settings_not_preserved"
     assert fake.count("turn/start") == 0
