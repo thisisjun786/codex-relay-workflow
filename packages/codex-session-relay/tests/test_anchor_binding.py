@@ -16,6 +16,7 @@ from codex_session_relay.registry import ANCHOR_PENDING
 from codex_session_relay.transport import HELD_UNCERTAIN
 
 from .support import CHILD, PARENT, DeliveryTestCase
+from .test_daemon import DaemonTestCase
 
 
 class AnchorBinding(DeliveryTestCase):
@@ -143,3 +144,38 @@ class AnchorBinding(DeliveryTestCase):
         self.delivery.attempt(revision, self.adapter, now=self.clock.now())
         self.assertEqual(self.ack.bind_pending_anchors(), [])
         self.assertEqual(self.generation_two()["anchorState"], ANCHOR_PENDING)
+
+
+class BindingAfterReconciliation(DaemonTestCase):
+    """Reconciliation is what promotes a lost send to dispatched, and binding ran before it."""
+
+    def test_a_revision_promoted_by_reconciliation_binds_in_the_same_tick(self):
+        """Otherwise the generation stays anchor_pending until the NEXT tick.
+
+        A child that emits its completion in that interval has it refused as
+        unbound_generation even though the dispatch evidence is already committed.
+        """
+        order = []
+        original_bind = self.daemon._bind_anchors
+        original_reconcile = self.daemon._reconcile
+
+        def bind(report):
+            order.append("bind")
+            return original_bind(report)
+
+        def reconcile(report, now):
+            order.append("reconcile")
+            return original_reconcile(report, now)
+
+        self.daemon._bind_anchors = bind
+        self.daemon._reconcile = reconcile
+        try:
+            self.daemon.tick(now=self.clock.now())
+        finally:
+            self.daemon._bind_anchors = original_bind
+            self.daemon._reconcile = original_reconcile
+
+        self.assertEqual(
+            order, ["bind", "reconcile", "bind"],
+            "binding has to run again after the pass that can promote a revision",
+        )

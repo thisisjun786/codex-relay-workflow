@@ -124,6 +124,12 @@ class RelayDaemon:
         self._observe(report, now)
         self._requeue_missing(report, now)
         self._reconcile(report, now)
+        # Again, because reconciliation is what promotes a held_uncertain revision to
+        # dispatched, and binding ran before it. A revision promoted in this tick would
+        # otherwise stay anchor_pending until the next one, and a child that emits its
+        # completion in that interval has it refused as unbound_generation even though the
+        # dispatch evidence is already committed.
+        self._bind_anchors(report)
         self._verify_acks(report, now)
         self._deliver(report, now)
         report.quiet = not (report.observed or report.reconciled or report.delivered

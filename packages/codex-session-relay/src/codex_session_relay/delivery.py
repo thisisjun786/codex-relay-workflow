@@ -1364,8 +1364,14 @@ def _phase(row, attempts, ack, failure=None, superseded=None) -> str:
     accepted, and a settled withheld_pre_send can be an ordinary thread/read failure rather
     than a settings mismatch. Both are read from the attempt record, not from the state word.
     """
-    if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
-        return "acknowledged"
+    if ack is not None and ack["verified"] == "verified":
+        # A verified REJECTION is just as settled as a verified acceptance: the receipt was
+        # delivered and the parent answered. Recognising only the accepted case let a
+        # rejection fall past every later branch to awaiting_receipt, which says the child
+        # has produced nothing - the opposite of what happened.
+        if ack["accepted"]:
+            return "acknowledged"
+        return "rejected"
     if row["state"] == SUPERSEDED:
         return "superseded"
     if superseded is not None:

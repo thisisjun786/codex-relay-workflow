@@ -228,6 +228,33 @@ class RefusedBeforeTheQueue(DeliveryTestCase):
         self.assertEqual(scoped["pendingIntents"], [])
 
 
+class SettledAcknowledgements(unittest.TestCase):
+    """A verified rejection is as settled as a verified acceptance."""
+
+    def phase(self, ack):
+        from codex_session_relay.delivery import _phase
+
+        row = {"state": "dispatched", "kind": "completion_event", "hold_reason": None}
+        return _phase(row, [], ack)
+
+    def test_a_verified_rejection_is_not_reported_as_awaiting_a_receipt(self):
+        """Recognising only the accepted case let a rejection fall past every later branch.
+
+        The receipt was delivered and the parent answered; awaiting_receipt says the child
+        has produced nothing, which is the opposite of what happened.
+        """
+        phase = self.phase({"verified": "verified", "accepted": 0})
+        self.assertNotEqual(phase, "awaiting_receipt")
+        self.assertEqual(phase, "rejected")
+
+    def test_a_verified_acceptance_still_reports_acknowledged(self):
+        self.assertEqual(self.phase({"verified": "verified", "accepted": 1}), "acknowledged")
+
+    def test_an_unverified_acknowledgement_settles_nothing(self):
+        """Intent is not evidence; an unverified ack must not close the delivery."""
+        self.assertEqual(self.phase({"verified": "unverified", "accepted": 1}), "awaiting_ack")
+
+
 class RevisionPhases(DeliveryTestCase):
     """Contract v1 acknowledges the child-to-parent direction only."""
 
