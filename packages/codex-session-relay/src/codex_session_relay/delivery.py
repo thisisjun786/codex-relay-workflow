@@ -511,6 +511,23 @@ class DeliveryService:
                 "error": f"{type(error).__name__}: {error}",
             }
         facts = classify_operation_receipt(receipt)
+        # Read from the RAW receipt: the host reports a settings rejection as a failed
+        # receipt carrying settingsFindings, and classification keeps only the code. By the
+        # time _settle sees it the field-level difference is already gone.
+        findings = receipt.get("settingsFindings") if isinstance(receipt, dict) else None
+        if facts.failed_operation or facts.delivery_state in (
+            WITHHELD_PRE_SEND, INBOX_ONLY, HELD_UNCERTAIN,
+        ):
+            self.record_failure(
+                event_id,
+                "settings_check" if findings else (facts.failed_operation or "transport"),
+                detail=facts.error_text or facts.delivery_state,
+                relationship_id=row["relationship_id"],
+                parent_task_id=relationship["parent"]["taskId"],
+                error_code=facts.rpc_error_code,
+                difference=_render_findings(findings),
+                retry_safe=facts.retry_safe,
+            )
         # Membership in the pre-send snapshot proves this start steered a turn we had already
         # seen. Absence proves nothing: another client can open a turn after the snapshot, and
         # our start can then steer THAT one. So an unmatched id is 'not previously observed',
@@ -644,6 +661,11 @@ class DeliveryService:
         hold = None
         if attempts >= self.policy.busy_max_attempts:
             hold = self.policy.cap_reason("busy")
+        self.record_failure(
+            event_id, "parent_busy", detail="the recipient is mid-turn and is never interrupted",
+            relationship_id=row["relationship_id"],
+            next_retry_at=now + self.policy.delay_for(attempts + 1, "busy"),
+        )
         with self.store.transaction() as db:
             db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"
@@ -663,6 +685,11 @@ class DeliveryService:
         # into a delivery that never happens. The reason is recorded in recipient_lifecycle
         # and the journal, and the next observation decides again.
         when = now + self.policy.lifecycle_recheck_seconds
+        self.record_failure(
+            event_id, "lifecycle_read",
+            detail=observation.detail or observation.withhold_reason or "not deliverable",
+            error_code=observation.withhold_reason, next_retry_at=when,
+        )
         with self.store.transaction() as db:
             db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, updated_at = ?"
@@ -765,6 +792,108 @@ class DeliveryService:
             else:
                 self._annotate_supersession_in(db, event_id, reason)
             return reason
+
+
+    def _last_failure(self, event_id):
+        rows = self.failures_for(event_id)
+        return rows[0] if rows else None
+
+    def _supersession_note(self, event_id):
+        row = self.store.one(
+            "SELECT reason, noted_at FROM delivery_supersession WHERE event_id = ?",
+            (event_id,),
+        )
+        return dict(row) if row else None
+
+    def observation_health(self, *, now=None, stale_after=900.0) -> dict:
+        """Whether the loop is actually looking, which a live process does not answer.
+
+        The JUN-100 and JUN-101 incident had a live pid, inside its time bound, polling
+        nothing useful and delivering nothing. Liveness is reported separately and is
+        never counted here.
+        """
+        from datetime import datetime
+
+        def age(stamp):
+            if not stamp:
+                return None
+            try:
+                seen = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return max(0.0, (now or self.clock.now()) - seen.timestamp())
+
+        staged = [
+            {"eventId": row["event_id"], "turnId": row["turn_id"],
+             "ageSeconds": age(row["staged_at"] or row["first_seen_at"])}
+            for row in self.store.all(
+                "SELECT event_id, turn_id, staged_at, first_seen_at FROM events"
+                " WHERE stage = 'staged' ORDER BY first_seen_at"
+            )
+        ]
+        anchors, backlog = {}, {}
+        for row in self.store.all(
+            "SELECT p.relationship_id, p.turn_id, p.last_polled_at, p.last_error"
+            "  FROM poll_observations p"
+            "  JOIN relationships r ON r.relationship_id = p.relationship_id"
+            " WHERE p.execution_generation = r.execution_generation"
+        ):
+            anchors[row["relationship_id"]] = {
+                "turnId": row["turn_id"], "lastPolledAt": row["last_polled_at"],
+                "ageSeconds": age(row["last_polled_at"]), "lastError": row["last_error"],
+            }
+        for row in self.store.all(
+            "SELECT relationship_id, COUNT(*) AS n FROM events WHERE stage = 'staged'"
+            " GROUP BY relationship_id"
+        ):
+            backlog[row["relationship_id"]] = row["n"]
+        oldest = max([s["ageSeconds"] or 0.0 for s in staged], default=0.0)
+        never = [rid for rid, a in anchors.items() if a["lastPolledAt"] is None]
+        stale = [rid for rid, a in anchors.items()
+                 if a["ageSeconds"] is not None and a["ageSeconds"] > stale_after]
+        if never or stale:
+            health, reason = "stalled", (
+                f"{len(never)} anchors never successfully polled,"
+                f" {len(stale)} not polled for over {stale_after:.0f}s"
+            )
+        elif oldest > stale_after:
+            health, reason = "degraded", f"a staged event has waited {oldest:.0f}s"
+        else:
+            health, reason = "healthy", ""
+        return {"stagedEvents": staged, "oldestStagedAgeSeconds": oldest,
+                "anchors": anchors, "backlog": backlog,
+                "health": health, "reason": reason,
+                "note": "process liveness is reported separately and is not health"}
+
+    def record_failure(self, scope_key, operation, *, detail, relationship_id=None,
+                       parent_task_id=None, error_code=None, difference=None,
+                       retry_safe=None, next_retry_at=None) -> None:
+        """The most recent cause for one subject and one operation.
+
+        Fed from RETURNED failure values as well as exceptions. The settings rejection that
+        matters most in practice never raises: the host answers with a failed receipt and the
+        transport classification keeps only a code, dropping the field-level findings.
+        """
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO failed_operations (scope_key, operation, relationship_id,"
+                " parent_task_id, detail, error_code, difference, retry_safe, occurred_at,"
+                " next_retry_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(scope_key, operation) DO UPDATE SET detail=excluded.detail,"
+                " error_code=excluded.error_code, difference=excluded.difference,"
+                " retry_safe=excluded.retry_safe, occurred_at=excluded.occurred_at,"
+                " next_retry_at=excluded.next_retry_at",
+                (scope_key, operation, relationship_id, parent_task_id, str(detail),
+                 error_code, difference, None if retry_safe is None else int(retry_safe),
+                 self.clock.iso(), next_retry_at),
+            )
+
+    def failures_for(self, scope_key):
+        rows = self.store.all(
+            "SELECT * FROM failed_operations WHERE scope_key = ? ORDER BY occurred_at DESC",
+            (scope_key,),
+        )
+        return [dict(row) for row in rows]
 
     def _supersession_reason(self, db, event_id: str):
         """Is this still the thing the assignment stands on? Read inside the caller's write.
@@ -886,11 +1015,16 @@ class DeliveryService:
                 "ackVerified": ack["verified"] if ack else None,
                 "verdict": verdict["verdict"] if verdict else None,
                 "attemptDetail": [dict(a) for a in attempts],
+                "phase": _phase(row, attempts, ack),
+                "lastFailedOperation": self._last_failure(row["event_id"]),
+                "nextRetryAt": row["next_eligible_at"],
+                "supersededNote": self._supersession_note(row["event_id"]),
             })
         return {"deliveries": items}
 
 
 def _message_status(row, record) -> str:
+    """How far the persisted bytes actually got."""
     """How far the persisted bytes actually got.
 
     Read from the attempt's own settled record rather than from the bytes existing, because a
@@ -941,6 +1075,20 @@ class _NotClaimable(Exception):
     pass
 
 
+def _render_findings(findings):
+    """The exact fields the host disagreed on, not just that it disagreed."""
+    if not findings:
+        return None
+    parts = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        field = finding.get("field", finding.get("code", "?"))
+        parts.append(f"{field}: expected {finding.get('expected')!r},"
+                     f" host {finding.get('returned')!r}")
+    return "; ".join(parts) or None
+
+
 class _Superseded(Exception):
     """This delivery is no longer current, decided inside the claim."""
 
@@ -963,3 +1111,32 @@ def _manifest_paths(event_row):
         entry["path"] for entry in entries
         if isinstance(entry, dict) and isinstance(entry.get("path"), str)
     )
+
+
+
+def _phase(row, attempts, ack) -> str:
+    """Which stage a delivery is actually stuck at.
+
+    withheld_pre_send used to mean five different things at once: the receipt has not been
+    collected, the parent is mid-turn, the host would not confirm the authorized settings, a
+    turn was started, or the acknowledgement is outstanding. An operator reading one word
+    could not tell which, and the cause is the only part that suggests an action.
+    """
+    if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
+        return "acknowledged"
+    if row["state"] == SUPERSEDED:
+        return "superseded"
+    if row["state"] == INBOX_ONLY or row["hold_reason"] == PUSH_CHANNEL_CLOSED:
+        return "channel_closed"
+    if row["state"] == DISPATCHED:
+        return "awaiting_ack"
+    if row["state"] == DEFERRED_BUSY:
+        return "parent_busy"
+    if row["state"] == HELD_UNCERTAIN:
+        return "turn_accepted"
+    settled = [a for a in attempts if a["internal_state"] == "settled"]
+    if row["state"] == WITHHELD_PRE_SEND and settled:
+        return "settings_rejected"
+    if row["hold_reason"]:
+        return f"held:{row['hold_reason']}"
+    return "awaiting_receipt"

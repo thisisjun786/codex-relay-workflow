@@ -139,7 +139,15 @@ reported as stalled: staged event age, when each current anchor was last success
 polled, and the backlog per assignment are all exposed, and a live pid is never counted as
 working.
 
-Status: planned in PR-B.
+Status: implemented. `status` reports the phase, the most recent failed operation with its
+error code and, for a settings rejection, the exact fields the host disagreed on, plus the
+next retry time. The field-level difference is read from the raw receipt, because the
+transport classification keeps only a code.
+
+Observation health is reported beside it: staged event ages, when each current anchor was
+last successfully polled, and the backlog per assignment. A failed read updates the attempt
+time and never the success time, so an anchor whose first read failed reads as never polled
+rather than fresh. Process liveness is reported separately and is never counted as health.
 
 ## What one tick guarantees
 

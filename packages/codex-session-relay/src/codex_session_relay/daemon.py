@@ -253,7 +253,12 @@ class RelayDaemon:
                     turn = self.adapter.read_turn(thread, turn_id)
                 except Exception as error:
                     report.notes.append(f"turn read failed for {turn_id}: {error}")
+                    self._record_poll(relationship, turn_id, status=None, error=error)
                     continue
+                self._record_poll(
+                    relationship, turn_id,
+                    status=turn.status if turn is not None else "absent", error=None,
+                )
                 if turn is None or turn.status not in ("completed", "failed", "interrupted"):
                     continue
                 reference = TurnRef(thread, turn.turn_id, turn.status)
@@ -316,7 +321,33 @@ class RelayDaemon:
             self._advance_cursor(f"ring:{rid}", taken, len(ring))
         return selected
 
+    def _record_poll(self, relationship, turn_id, *, status, error) -> None:
+        """That we LOOKED, which an observations row cannot tell anyone.
+
+        observations records terminal turns only, so a healthy long-running anchor has
+        no entry there at all and would read as stale forever. A failed read updates the
+        attempt time but never the success time: an anchor whose first read failed has
+        never been polled, and saying otherwise is the one lie that matters here.
+        """
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO poll_observations (relationship_id, execution_generation,"
+                " turn_id, last_status, last_polled_at, last_attempt_at, last_error)"
+                " VALUES (?,?,?,?,?,?,?)"
+                " ON CONFLICT(relationship_id, execution_generation, turn_id) DO UPDATE"
+                "   SET last_status = excluded.last_status,"
+                "       last_polled_at = COALESCE(excluded.last_polled_at,"
+                "                                 poll_observations.last_polled_at),"
+                "       last_attempt_at = excluded.last_attempt_at,"
+                "       last_error = excluded.last_error",
+                (relationship["relationshipId"], relationship["executionGeneration"],
+                 turn_id, status, None if error else now, now,
+                 None if error is None else f"{type(error).__name__}: {error}"),
+            )
+
     def _worth_polling(self, thread, turn_id) -> bool:
+        """Is there anything left to learn from this turn?"""
         """Is there anything left to learn from this turn?"""
         if self.intake.staged_events(thread_id=thread, turn_id=turn_id):
             return True

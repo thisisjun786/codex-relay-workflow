@@ -657,7 +657,9 @@ def cmd_show(services, args) -> dict:
 
 
 def cmd_status(services, args) -> dict:
-    return services.delivery.snapshot(relationship_id=args.relationship)
+    payload = services.delivery.snapshot(relationship_id=args.relationship)
+    payload["observation"] = services.delivery.observation_health()
+    return payload
 
 
 def _scheduler_wait(clock, deadline, sleeper=None):

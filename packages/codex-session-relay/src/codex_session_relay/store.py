@@ -443,6 +443,36 @@ CREATE TABLE IF NOT EXISTS delivery_supersession (
     applied  INTEGER NOT NULL DEFAULT 0
 );
 
+-- The most recent failure per (subject, operation), so an operator reads a cause rather
+-- than a state word. Keyed, not appended, so it cannot grow without bound.
+CREATE TABLE IF NOT EXISTS failed_operations (
+    scope_key       TEXT NOT NULL,
+    operation       TEXT NOT NULL,
+    relationship_id TEXT,
+    parent_task_id  TEXT,
+    detail          TEXT NOT NULL,
+    error_code      TEXT,
+    difference      TEXT,
+    retry_safe      INTEGER,
+    occurred_at     TEXT NOT NULL,
+    next_retry_at   REAL,
+    PRIMARY KEY (scope_key, operation)
+);
+
+-- Whether we have actually LOOKED at an anchor lately, which an observations row cannot
+-- answer: that table records terminal turns only, so a healthy long-running anchor has no
+-- entry at all. last_polled_at stays NULL until a poll genuinely succeeds.
+CREATE TABLE IF NOT EXISTS poll_observations (
+    relationship_id      TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    turn_id              TEXT NOT NULL,
+    last_status          TEXT,
+    last_polled_at       TEXT,
+    last_attempt_at      TEXT NOT NULL,
+    last_error           TEXT,
+    PRIMARY KEY (relationship_id, execution_generation, turn_id)
+);
+
 CREATE INDEX IF NOT EXISTS deliveries_state ON deliveries (state, next_eligible_at);
 -- Per-parent selection reads one parent's oldest eligible rows at a time, which is a
 -- different access pattern from deliveries_state. Declaring it is not proof it is used:
