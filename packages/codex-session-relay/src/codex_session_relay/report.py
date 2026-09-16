@@ -47,6 +47,10 @@ REASON_MAX = 600
 # The short identifying fields. Each one lands on a line the composer cannot shorten, so an
 # unbounded value there is the same undeliverable report by a different route.
 LABEL_MAX = 300
+# A url sits on a line the composer CAN drop, so it only needs a storage ceiling rather than
+# a fits-on-one-line ceiling. Bounding it like a label rejected real forge urls that would
+# have rendered perfectly well.
+URL_MAX = 2000
 
 
 def _size(text) -> int:
@@ -108,7 +112,7 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     next_action = _bounded(_required(next_action, "next_action"), "next_action", ACTION_MAX)
     reason = _bounded(_required(cxc_reason, "cxc_reason"), "cxc_reason", REASON_MAX)
     pr_state = _bounded_optional(pr_state, "pr_state")
-    pr_url = _bounded_optional(pr_url, "pr_url")
+    pr_url = _bounded_optional(pr_url, "pr_url", URL_MAX)
     base_ref = _bounded_optional(base_ref, "base_ref")
     base_sha = _bounded_optional(base_sha, "base_sha")
     head_sha = _bounded_optional(head_sha, "head_sha")
@@ -162,8 +166,8 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
             " base_sha, head_sha, criteria_digest, cxc_status, cxc_reason, contract_version,"
             " summary, evidence, unresolved, next_action, review, restore, recorded_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-            " ON CONFLICT(event_id) DO UPDATE SET"
-            "   submission_no = excluded.submission_no, repository = excluded.repository,"
+            " ON CONFLICT(event_id, submission_no) DO UPDATE SET"
+            "   repository = excluded.repository,"
             "   pr_number = excluded.pr_number, pr_url = excluded.pr_url,"
             "   pr_state = excluded.pr_state, base_ref = excluded.base_ref,"
             "   base_sha = excluded.base_sha, head_sha = excluded.head_sha,"
@@ -192,9 +196,31 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
 
 
 def read(store, event_id: str):
-    row = store.one("SELECT * FROM work_reports WHERE event_id = ?", (event_id,))
+    """The current submission. Earlier ones are still there; see read_all."""
+    row = store.one(
+        "SELECT * FROM work_reports WHERE event_id = ?"
+        " ORDER BY submission_no DESC LIMIT 1",
+        (event_id,),
+    )
     if row is None:
         return None
+    return _row(row)
+
+
+def read_all(store, event_id: str) -> list:
+    """Every submission, oldest first.
+
+    A message that had to elide part of its report points its recipient at the full record.
+    If a later submission replaced the only stored copy, that promise would break for anyone
+    still holding the older message, so the rows are kept and this is how they are read.
+    """
+    rows = store.all(
+        "SELECT * FROM work_reports WHERE event_id = ? ORDER BY submission_no", (event_id,)
+    )
+    return [_row(row) for row in rows]
+
+
+def _row(row) -> dict:
     return {
         "eventId": row["event_id"],
         "relationshipId": row["relationship_id"],
@@ -272,9 +298,10 @@ def _check_resubmission(store, event_id, submission_no) -> None:
     answering. Correcting a report before anything is sent stays free.
     """
     existing = store.one(
-        "SELECT submission_no FROM work_reports WHERE event_id = ?", (event_id,)
+        "SELECT MAX(submission_no) AS submission_no FROM work_reports WHERE event_id = ?",
+        (event_id,),
     )
-    if existing is None:
+    if existing is None or existing["submission_no"] is None:
         return
     attempted = store.one(
         "SELECT 1 FROM attempts WHERE event_id = ? LIMIT 1", (event_id,)
@@ -341,6 +368,18 @@ def _check_restore(restore):
 def _check_review(review):
     if review is None:
         return None
+    if not isinstance(review, dict):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"a review is an object with a kind and its findings, not "
+            f"{type(review).__name__}; a bare verdict word is not a review",
+        )
+    findings_in = review.get("findings")
+    if findings_in is not None and not isinstance(findings_in, (list, tuple)):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"review findings is a list, not {type(findings_in).__name__}",
+        )
     kind = review.get("kind")
     blockers = review.get("blockers")
     # Raises on an unknown kind, on GO-WITH-FIXES without a count, and on a count attached
@@ -348,6 +387,11 @@ def _check_review(review):
     cxc.verdict_line(kind, blockers)
     findings = []
     for item in review.get("findings") or []:
+        if not isinstance(item, dict):
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"each review finding is an object naming a criterion, not {item!r}",
+            )
         identifier = str(item.get("id") or "").strip()
         if not identifier:
             raise ReceiptRefused(

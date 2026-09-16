@@ -247,11 +247,11 @@ CREATE TABLE IF NOT EXISTS verdict_context (
 -- earlier report, and the repository is stored beside the number so the same pull request
 -- number on two projects stays two pull requests.
 CREATE TABLE IF NOT EXISTS work_reports (
-    event_id             TEXT PRIMARY KEY,
+    event_id             TEXT NOT NULL,
+    submission_no        INTEGER NOT NULL DEFAULT 1,
     relationship_id      TEXT NOT NULL,
     execution_generation INTEGER NOT NULL,
     revision_hash        TEXT NOT NULL,
-    submission_no        INTEGER NOT NULL DEFAULT 1,
     repository           TEXT NOT NULL,
     pr_number            INTEGER,
     pr_url               TEXT,
@@ -269,7 +269,12 @@ CREATE TABLE IF NOT EXISTS work_reports (
     next_action          TEXT NOT NULL,
     review               TEXT,
     restore              TEXT,
-    recorded_at          TEXT NOT NULL
+    recorded_at          TEXT NOT NULL,
+    -- Keyed on the submission too, so recording a later one preserves the earlier row. An
+    -- earlier message may have elided part of its report and told its recipient to read the
+    -- rest with show; overwriting the only full copy would break that promise for anyone
+    -- still holding the older message.
+    PRIMARY KEY (event_id, submission_no)
 );
 
 -- How an acknowledgement's own turn was established. host_read is an App Server read of the

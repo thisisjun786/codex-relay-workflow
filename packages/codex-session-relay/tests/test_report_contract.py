@@ -664,6 +664,66 @@ class Bounds(DeliveryTestCase):
         report.record(self.store, self.clock, event_id=event_id, **a_report())
         self.assertIsNotNone(self.attempt(event_id))
 
+    def test_a_forge_url_is_bounded_for_storage_not_for_one_line(self):
+        _relationship, event_id = self.queued_event()
+        # The url sits on a line the composer CAN drop, so a label-sized ceiling rejected
+        # real urls that would have rendered perfectly well.
+        long_url = "https://example.invalid/" + "a" * 400
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(pr_url=long_url))
+        self.assertIn(long_url, self.delivery.render_message(event_id))
+        self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(pr_url="https://x.invalid/" + "a" * 3000)),
+        )
+
+    def test_a_bare_verdict_word_is_not_a_review(self):
+        _relationship, event_id = self.queued_event()
+        for bad in ("PASS", 1, ["c-1"], {"kind": cxc.PASS, "findings": "c-1"},
+                    {"kind": cxc.PASS, "findings": ["c-1"]}):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id, **a_report(review=bad)
+                ),
+            )
+
+    def test_a_tuple_is_an_ordered_sequence_and_stays_accepted(self):
+        _relationship, event_id = self.queued_event()
+        # The hazard the shape check exists for is a mapping iterating as its keys and a
+        # string iterating as characters. A tuple has the same semantics as the list it
+        # normalises to, so refusing it would be pedantry rather than protection.
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(evidence=("pytest passed",), unresolved=("one thing",)))
+        stored = report.read(self.store, event_id)
+        self.assertEqual(stored["evidence"], ["pytest passed"])
+        self.assertEqual(stored["unresolved"], ["one thing"])
+
+    def test_a_later_submission_does_not_erase_what_an_earlier_message_promised(self):
+        from codex_session_relay import cli
+
+        _relationship, event_id = self.queued_event()
+        first = [f"finding {n}: something specific" for n in range(30)]
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(unresolved=first, summary="first submission"))
+        self.attempt(event_id)
+        report.record(self.store, self.clock, event_id=event_id,
+                      **a_report(unresolved=["only this now"], summary="second submission",
+                                 submission_no=2))
+        # The current report is the second one.
+        self.assertEqual(report.read(self.store, event_id)["summary"], "second submission")
+        # The first is still whole, which is what its own elided message pointed at.
+        every = report.read_all(self.store, event_id)
+        self.assertEqual([r["submissionNo"] for r in every], [1, 2])
+        self.assertEqual(every[0]["unresolved"], first)
+        services = type("S", (), {"store": self.store, "delivery": self.delivery,
+                                  "intake": self.intake})()
+        args = type("A", (), {"event": event_id, "message": False})()
+        payload = cli.cmd_show(services, args)
+        self.assertEqual(len(payload["workReportSubmissions"]), 2)
+        self.assertEqual(payload["workReportSubmissions"][0]["unresolved"], first)
+
 
 class VerdictPosition(Directions):
     def _revision_report(self, **overrides):
