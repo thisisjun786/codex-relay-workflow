@@ -27,6 +27,9 @@ from codex_session_relay.store import Store, resolve_state_dir
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOCKET = "/nonexistent-app-server.sock"
 
+# A child that does nothing but stay alive, for tests that only need a live pid.
+IDLE_CHILD = "import time\nwhile True:\n    time.sleep(0.05)\n"
+
 # A child that takes the claim and holds it until told to stop, so exclusion is observed
 # rather than asserted against a double.
 HOLDER = """
@@ -607,6 +610,48 @@ class Ownership(ServiceTestCase):
         child.wait(timeout=10)
         self.assertIsNone(service.record()["pid"])
         self.assertFalse(service.lock_is_held())
+
+    def test_stop_does_not_reach_into_a_replacement_launch(self):
+        """Re-reading after the supervisor exits can pick up a NEW launch's record.
+
+        Acting on that stops the replacement's worker and clears the replacement's pid using
+        the outcome of the supervisor we actually stopped - reporting success while the new
+        service is still alive.
+        """
+        service = self.service("a")
+        child, _pid = self.holder(service)
+        ours = dict(service.record(), launchId="launch-ours")
+        service.write_record(ours)
+        replacement = subprocess.Popen(
+            [sys.executable, "-c", IDLE_CHILD],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.children.append(replacement)
+        original = service._terminate
+
+        def publish_a_new_launch(handle, **kwargs):
+            outcome = original(handle, **kwargs)
+            # A start that acquired the lock the moment ours let go.
+            service.write_record(dict(
+                ours, launchId="launch-theirs", pid=os.getpid(),
+                workerPid=replacement.pid,
+                workerStartTicks=service_module.start_ticks(replacement.pid),
+            ))
+            return outcome
+
+        with mock.patch.object(service, "_terminate", publish_a_new_launch):
+            service.stop()
+
+        child.wait(timeout=10)
+        self.assertIsNone(
+            replacement.poll(),
+            "the replacement launch's worker is not ours to signal",
+        )
+        self.assertEqual(
+            service.record()["launchId"], "launch-theirs",
+            "and its record must not be overwritten with our outcome",
+        )
+        self.assertEqual(service.record()["workerPid"], replacement.pid)
 
     def test_stop_reaches_the_worker_the_record_names_now(self):
         """A supervisor replacing a worker while stop runs left the first read stale.

@@ -126,10 +126,19 @@ def assert_assignment_delivery(relationship, *, kind, recipient_task_id,
             RefusalReason.RECIPIENT_NOT_AUTHORIZED,
             f"event belongs to relationship {event_relationship_id!r}, not {rid!r}",
         )
-    expected = (
-        relationship["child"]["taskId"] if kind == "revision_request"
-        else relationship["parent"]["taskId"]
-    )
+    # Named explicitly rather than defaulted. An unrecognised kind falling through to the
+    # parent branch was admitted as a completion, so the parent received a verification
+    # request the acknowledgement path then refuses - a delivery nobody can answer.
+    if kind == "revision_request":
+        expected = relationship["child"]["taskId"]
+    elif kind == "completion_event":
+        expected = relationship["parent"]["taskId"]
+    else:
+        raise ScopeError(
+            RefusalReason.RECIPIENT_NOT_AUTHORIZED,
+            f"{kind!r} is not a delivery direction this contract defines, so there is no"
+            " authorized recipient for it",
+        )
     if recipient_task_id != expected:
         direction = "child" if kind == "revision_request" else "parent"
         raise ScopeError(

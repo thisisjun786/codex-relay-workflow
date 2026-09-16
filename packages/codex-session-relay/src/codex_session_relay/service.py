@@ -773,11 +773,22 @@ class RelayService:
         # first read and now means the pid we started with names a worker that has already
         # exited, and stopping that one would report success while the replacement, which
         # holds the inherited locks, is still delivering.
-        worker = self._stop_worker(self.record() or record, timeout=timeout, grace=grace)
-        record = self.record() or record
+        #
+        # But only when the re-read still describes the SAME launch. A start that acquires
+        # the lock after the old supervisor exits publishes its own record here, and acting
+        # on that would stop the new launch's worker and clear the new supervisor's pid using
+        # the old one's outcome - reporting success while the replacement is still alive.
+        fresh = self.record()
+        superseded_by_a_new_launch = (
+            fresh is not None and record is not None
+            and fresh.get("launchId") != record.get("launchId")
+        )
+        if fresh is not None and not superseded_by_a_new_launch:
+            record = fresh
+        worker = self._stop_worker(record, timeout=timeout, grace=grace)
         supervisor_done = outcome in ("exited", "gone")
         worker_done = worker in ("exited", "gone")
-        if record is not None:
+        if record is not None and not superseded_by_a_new_launch:
             # Identity is kept until termination is CONFIRMED. Clearing a pid we have not
             # seen exit would lose the only handle a later stop has to reach it.
             cleared = dict(record, stoppedBy=actor)
@@ -936,6 +947,12 @@ class RelayService:
             # running - or about to fail on an App Server connection - is not success either.
             if (record.get("pid") and record.get("readyAt")
                     and record.get("launchId") == launch and self.lock_is_held()):
+                # The child minted or opened the store; this process only probed a path that
+                # may not have existed yet. Without adopting its identity, conflicts() cannot
+                # recognise the child's own scope registration as this store and reports the
+                # service we just started as same_scope_different_store.
+                if self.store_id is None and record.get("storeId"):
+                    self.store_id = record["storeId"]
                 return {"ok": True, "reason": None, "pid": record["pid"],
                         "scopeAuthority": self.scope.authority,
                         "scopeRoot": str(self.scope.root), "status": self.status()}
@@ -1102,13 +1119,17 @@ class RelayService:
                 scope_fd = claim["lockFd"]
             self.write_record(self.new_record(pid=os.getpid(), token=token))
             try:
+                # Started BEFORE on_start, so the bound covers the whole supervisor run.
+                # Recovery can make real App Server calls for unresolved attempts, and timing
+                # only the loop let --deadline N spend an arbitrary startup interval first and
+                # then run for another N - even spawning a worker past the requested bound.
+                started = time.monotonic()
                 if on_start is not None:
                     on_start()
                 # Only now is this service serving. Recovery runs before any worker can send,
                 # and a caller told "started" while it was still in flight would go on to use
                 # a service that might yet fail to initialise at all.
                 self._note(readyAt=_now())
-                started = time.monotonic()
                 while True:
                     if max_segments is not None and len(segments) >= max_segments:
                         break
