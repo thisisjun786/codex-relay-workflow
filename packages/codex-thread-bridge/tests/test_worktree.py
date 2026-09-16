@@ -497,3 +497,62 @@ async def test_a_dispatched_worktree_task_is_annotated_like_the_other_paths(
     note = result["settingsAfterDispatch"]
     assert note["concurrentChange"] is False
     assert note["covers"] == ["model", "reasoningEffort", "cwd"]
+
+
+async def test_a_retained_receipt_survives_validation_this_version_added(
+    bridge, fake_server, repository
+):
+    """New validation applies to new requests, never to the recovery of an old one.
+
+    This tool predates the transmittability check, so a receipt can be retained for a policy the
+    check now refuses. Reusing the stable request ID is the one recovery route the tool tells
+    callers to use, and a check that ran before the ledger lookup would close it.
+    """
+    import json
+
+    legacy = {
+        **repository,
+        "request_id": "legacy-worktree",
+        "expected_sandbox_policy": {"type": "readOnly", "networkAccess": True},
+    }
+    params = {
+        "source_repository": legacy["source_repository"],
+        "starting_revision": legacy["starting_revision"],
+        "destination": legacy["destination"],
+        "worktree_mode": "bridge-managed-retained",
+        "sandbox": "read-only",
+        "expected_sandbox_policy": legacy["expected_sandbox_policy"],
+        "prompt": None,
+        "title": None,
+        "model": None,
+        "reasoning_effort": None,
+        "app_server_project_id": None,
+    }
+    fingerprint = bridge.ledger._fingerprint("legacy-worktree", "create_worktree_thread", params)
+    bridge.ledger.db.execute(
+        "INSERT INTO operations VALUES (?, ?, ?)",
+        (
+            "legacy-worktree",
+            fingerprint,
+            json.dumps(
+                {
+                    "requestId": "legacy-worktree",
+                    "operation": "create_worktree_thread",
+                    "status": "outcome_unknown",
+                    "threadId": "older-thread",
+                    "recoveryRequired": True,
+                    "fingerprintVersion": 2,
+                }
+            ),
+        ),
+    )
+    bridge.ledger.db.commit()
+
+    recovered = await bridge.create_worktree_thread(**legacy)
+    assert recovered["replayed"]
+    assert recovered["threadId"] == "older-thread"
+    assert recovered["recoveryRequired"]
+
+    # The same policy in a FRESH request is still refused, before anything is created.
+    with pytest.raises(ValueError, match="setting_untransmittable"):
+        await bridge.create_worktree_thread(**{**legacy, "request_id": "fresh-worktree"})

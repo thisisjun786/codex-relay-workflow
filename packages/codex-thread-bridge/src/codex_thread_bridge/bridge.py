@@ -335,14 +335,25 @@ class Bridge:
             "app_server_project_id": app_server_project_id,
         }
 
-        contract = SettingsContract(
-            sandbox=sandbox,
-            expected_sandbox_policy=expected_sandbox_policy,
-            model=model,
-            reasoning_effort=reasoning_effort,
-        )
+        # Built inside validate_fresh, which _mutate runs only AFTER its ledger lookup. This tool
+        # predates the transmittability check, so a receipt may be retained for a policy the check
+        # now refuses, such as readOnly with networkAccess true. Constructing the contract out
+        # here would raise before the lookup and make that receipt unrecoverable through the one
+        # route this tool tells callers to use: reuse the stable request ID. New validation
+        # applies to new requests, never to the recovery of an old one.
+        built = {}
+
+        def validate_fresh():
+            built["contract"] = SettingsContract(
+                sandbox=sandbox,
+                expected_sandbox_policy=expected_sandbox_policy,
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
 
         async def action(receipt):
+            contract = built["contract"]
+
             def checkpoint(phase, **fields):
                 receipt.update(phase=phase, **fields)
                 self.ledger.save(receipt)
@@ -472,11 +483,13 @@ class Bridge:
                 )
             checkpoint("complete", recoveryRequired=False)
 
-        receipt = await self._mutate(request_id, "create_worktree_thread", params, action)
+        receipt = await self._mutate(
+            request_id, "create_worktree_thread", params, action, validate_fresh=validate_fresh
+        )
         # Same diagnostic as the other two paths. It matters most here: this path checks its
         # settings at creation, then names the thread and re-inspects the checkout before
         # dispatching, so its window between observation and turn/start is the widest of the three.
-        return await self._annotate_dispatch(receipt, contract)
+        return await self._annotate_dispatch(receipt, built.get("contract"))
 
     async def send_message_to_thread(
         self,
