@@ -827,9 +827,18 @@ class RelayService:
         The launch id alone is not enough: a direct 'service run' never has one, so two
         anonymous launches compare equal. The supervisor's pid and the moment it started
         differ across a replacement whether or not a launch id was assigned.
+
+        Taken in order of stability rather than all at once. A supervisor finishing normally
+        clears its own pid during cleanup while keeping the launch id and start time, so a
+        tuple including the pid turned an ordinary exit into a phantom replacement and made
+        a successful stop report failure.
         """
         record = record or {}
-        return (record.get("launchId"), record.get("pid"), record.get("startedAt"))
+        if record.get("launchId") is not None:
+            return ("launchId", record["launchId"])
+        if record.get("startedAt") is not None:
+            return ("startedAt", record["startedAt"])
+        return ("pid", record.get("pid"))
 
     def _settle_absent_owner(self, record, detail):
         """Decide 'nothing is running' while HOLDING the lock that would prove otherwise.
