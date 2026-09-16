@@ -617,6 +617,22 @@ class Bounds(DeliveryTestCase):
             "manifestRef: /var/lib/relay/frozen/abc123", message,
             "the pre-contract message carried it, so adding a report must not take it away",
         )
+        # And it survives the elision that drops the file listing, because it is the pointer
+        # those files can still be verified against once they have moved.
+        tight = report.render_completion(row, receipt, "del-m-a1", stored, budget=1400)
+        self.assertIn("omitted:", tight)
+        self.assertIn("manifestRef: /var/lib/relay/frozen/abc123", tight)
+
+    def test_a_malformed_restore_section_is_refused_rather_than_crashing(self):
+        _relationship, event_id = self.queued_event()
+        for bad in ({"skills": [{"name": "loop"}]}, {"skills": [["loop"]]},
+                    {"skills": "loop"}, ["loop"], "loop"):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id, **a_report(restore=bad)
+                ),
+            )
 
 
 class VerdictPosition(Directions):

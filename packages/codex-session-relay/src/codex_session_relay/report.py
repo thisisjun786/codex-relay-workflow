@@ -276,11 +276,37 @@ def _check_restore(restore):
     _restore_lines resolves each named activity through cxc.skill_pointer, which refuses an
     unknown name on purpose, so an unvalidated name recorded here would surface as a failed
     render and a rolled-back delivery rather than as a typo somebody could fix.
+
+    Shape is checked before membership. Testing an unhashable entry against a dict raises
+    TypeError, which reaches the caller as a host failure instead of a named refusal, and a
+    validator that crashes on malformed input is not validating it.
     """
-    restore = dict(restore or {})
-    unknown = [
-        name for name in restore.get("skills") or [] if name not in cxc.SKILL_POINTERS
-    ]
+    if restore is None:
+        return {}
+    if not isinstance(restore, dict):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"a restore section is an object of named fields, not {type(restore).__name__}",
+        )
+    skills = restore.get("skills")
+    if skills is None:
+        names = []
+    elif isinstance(skills, (list, tuple)):
+        names = list(skills)
+    else:
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"restore skills is a list of activity names, not {type(skills).__name__}",
+        )
+    unknown = []
+    for name in names:
+        if not isinstance(name, str):
+            raise ReceiptRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                f"each restore skill is the name of a recorded activity, not {name!r}",
+            )
+        if name not in cxc.SKILL_POINTERS:
+            unknown.append(name)
     if unknown:
         raise ReceiptRefused(
             RefusalReason.MALFORMED_RECEIPT,
@@ -518,6 +544,8 @@ def render_completion(row, receipt, request, report, *, budget=BUDGET) -> str:
         _Section("next", [f"next: {report['nextAction']}"], rank=0, essential=True, keep=1),
         _Section("workflow restore", _restore_lines(report), rank=3),
         _Section("deliverables", _manifest_lines(receipt, event_id), rank=6),
+        _Section("manifest reference", _manifest_ref_lines(receipt), rank=2, essential=True,
+                 keep=2),
         _Section("relay record", [
             "",
             "relay record:",
@@ -769,13 +797,9 @@ def _manifest_lines(receipt, event_id):
     dropping it would leave the recipient verifying against files that had relocated. Adding
     a work report must not quietly take it away.
     """
-    reference = receipt.get("manifestRef")
     manifest = receipt.get("manifest")
     if not manifest:
-        lines = ["", "deliverables: none (execution-only outcome)"]
-        if reference:
-            lines.append(f"manifestRef: {reference}")
-        return lines
+        return ["", "deliverables: none (execution-only outcome)"]
     lines = ["", f"deliverables: {len(manifest)}"]
     for entry in manifest:
         size = entry.get("bytes")
@@ -783,9 +807,18 @@ def _manifest_lines(receipt, event_id):
             f"  {entry['path']}  sha256={entry['sha256']}"
             + (f"  bytes={size}" if size is not None else "")
         )
-    if reference:
-        lines.append(f"manifestRef: {reference}")
     return lines
+
+
+def _manifest_ref_lines(receipt):
+    """Its own section, because it is a verification pointer and not a file listing.
+
+    Living inside the deliverables block meant the first thing the composer dropped took the
+    pointer with it, so precisely the long reports most likely to be shortened lost the
+    stable location their artifacts can still be verified against.
+    """
+    reference = receipt.get("manifestRef")
+    return ["", f"manifestRef: {reference}"] if reference else []
 
 
 def _ack_lines(event_id):
