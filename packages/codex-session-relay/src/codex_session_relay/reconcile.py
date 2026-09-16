@@ -280,7 +280,7 @@ class Reconciler:
                 ),
             )
             if current:
-                db.execute(
+                promoted = db.execute(
                     "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"
                     " dispatch_evidence = ?,"
                     " dispatch_turn_id = COALESCE(?, dispatch_turn_id), lease_owner = NULL,"
@@ -291,8 +291,13 @@ class Reconciler:
                         dispatch_evidence or delivery["dispatch_evidence"], dispatch_turn_id,
                         now_iso, attempt["event_id"], attempt["attempt_no"], DISPATCHED,
                     ),
-                )
-                if (aggregate or state) == DISPATCHED:
+                ).rowcount
+                # The guarded UPDATE is the authoritative race check, not the snapshot
+                # _is_current read before this transaction opened. If another worker settled
+                # this delivery and dispatched a later attempt in between, it matches no rows
+                # - and binding there would hand the generation the obsolete attempt's turn,
+                # after which the turn the real dispatch reached can never bind.
+                if promoted == 1 and (aggregate or state) == DISPATCHED:
                     anchor = self._bind_promoted_anchor(db, attempt, delivery, dispatch_turn_id)
             self.store.journal(
                 "reconciled", attempt["request_id"],

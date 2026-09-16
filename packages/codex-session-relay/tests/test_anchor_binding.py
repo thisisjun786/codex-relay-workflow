@@ -9,6 +9,8 @@ The existing suite missed it because its one binding test calls bind_dispatched_
 hand (test_ack_reconcile.py). These tests never help the code along.
 """
 
+from unittest import mock
+
 from codex_session_relay import identity
 from codex_session_relay.delivery import REVISION
 from codex_session_relay.errors import RefusalReason
@@ -192,7 +194,33 @@ class AnchorBinding(DeliveryTestCase):
         self.assertTrue(recorded, "the disagreement was neither reported nor recorded")
         self.assertIn("a-different-turn", recorded[0]["detail"])
 
+    def test_a_stale_reconciliation_does_not_bind_the_obsolete_attempts_turn(self):
+        """The guarded UPDATE is the race check, not the snapshot _is_current read.
+
+        _is_current answers from a delivery row fetched before the transaction opened. If
+        another worker settles that delivery and dispatches a later attempt in between, the
+        guarded UPDATE matches no rows - and binding anyway would hand the generation this
+        obsolete attempt's turn, after which the turn the real dispatch reached can never
+        bind and its receipts are refused.
+        """
+        revision, _turn_id = self.lost_settle_write()
+        # Another worker settles this delivery and dispatches a later attempt while our
+        # reconciliation is still reading. The guarded UPDATE will now match nothing.
+        self.store.db.execute(
+            "UPDATE deliveries SET attempt_count = attempt_count + 1 WHERE event_id = ?",
+            (revision,),
+        )
+
+        with mock.patch.object(self.reconciler, "_is_current", return_value=True):
+            self.reconciler.recover_on_start(self.adapter)
+
+        self.assertEqual(
+            self.generation_two()["anchorState"], ANCHOR_PENDING,
+            "a stale attempt bound the generation to a turn the real dispatch never used",
+        )
+
     def test_binding_is_idempotent_and_never_rebinds_a_bound_anchor(self):
+
         revision = self.revision_pending()
         self.clock.advance(3600)
         record = self.delivery.attempt(revision, self.adapter, now=self.clock.now())
