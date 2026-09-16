@@ -491,6 +491,12 @@ class ReceiptIntake:
                 self.store.journal("event_reobserved", event, at=now)
             stored = json.loads(existing["receipt"])
             stored["_duplicate"] = True
+            # The stage travels with it. Without it a retry of a receipt whose first enqueue
+            # failed takes this path reporting no stage at all, so the caller's "if this is
+            # final, enqueue it" never runs and an accepted final event stays permanently
+            # without a delivery row - which is the one state nothing else recovers from,
+            # because the requeue pass looks for events that HAVE a recorded intent.
+            stored["_stage"] = existing["stage"]
             return stored
         record = dict(payload)
         record["eventId"] = event
@@ -536,7 +542,7 @@ class ReceiptIntake:
 
     # ------------------------------------------------------------- staging
 
-    def staged_events(self, *, thread_id=None, turn_id=None):
+    def staged_events(self, *, thread_id=None, turn_id=None, relationship_id=None):
         sql = "SELECT * FROM events WHERE stage = ?"
         params = [STAGED]
         if thread_id is not None:
@@ -545,6 +551,12 @@ class ReceiptIntake:
         if turn_id is not None:
             sql += " AND turn_id = ?"
             params.append(turn_id)
+        if relationship_id is not None:
+            # A child thread can serve several assignments, so a staged claim on one of its
+            # turns belongs to exactly one of them. Asking by thread alone hands another
+            # assignment's work to whoever polls first.
+            sql += " AND relationship_id = ?"
+            params.append(relationship_id)
         return self.store.all(sql + " ORDER BY first_seen_at", tuple(params))
 
     def resolve_staged(self, turn: TurnRef) -> dict:
@@ -558,12 +570,35 @@ class ReceiptIntake:
         """
         if turn.turn_status not in TERMINAL:
             return {"finalized": [], "suppressed": [], "pending": True}
-        finalized, suppressed = [], []
-        now = self.clock.iso()
         rows = self.staged_events(thread_id=turn.thread_id, turn_id=turn.turn_id)
         if not rows:
             return {"finalized": [], "suppressed": [], "pending": False}
         with self.store.transaction() as db:
+            return self.resolve_staged_in(db, turn)
+
+    def resolve_staged_in(self, db, turn: TurnRef, relationship_id=None) -> dict:
+        """The same settlement inside a caller's transaction.
+
+        Exists so that finalizing a claim, recording the observation that finalized it, and
+        queuing what it produced can be ONE commit. Split across three, a failure in the third
+        leaves a final event nobody will ever look at again.
+
+        Scoped to one assignment when the caller names it. A turn belonging to a shared child
+        can carry claims from several assignments, and settling all of them on behalf of
+        whichever one happened to poll first suppressed the others without ever synthesizing
+        their receipts - so their parents waited on an outcome that had already been thrown
+        away. Each assignment settles its own.
+        """
+        if turn.turn_status not in TERMINAL:
+            return {"finalized": [], "suppressed": [], "pending": True}
+        finalized, suppressed = [], []
+        now = self.clock.iso()
+        rows = self.staged_events(
+            thread_id=turn.thread_id, turn_id=turn.turn_id, relationship_id=relationship_id,
+        )
+        if not rows:
+            return {"finalized": [], "suppressed": [], "pending": False}
+        if True:
             for row in rows:
                 if turn.turn_status == "completed":
                     db.execute(
@@ -631,16 +666,31 @@ class ReceiptIntake:
 
     def record_observation(self, turn: TurnRef, classification, *, relationship_id=None, event=None):
         """The daemon's own key, (thread, turn, terminal status), deduplicating its stream."""
-        now = self.clock.iso()
         with self.store.transaction() as db:
+            self.record_observation_in(
+                db, turn, classification, relationship_id=relationship_id, event=event,
+            )
+
+    def record_observation_in(self, db, turn: TurnRef, classification, *, relationship_id=None,
+                              event=None):
+        now = self.clock.iso()
+        db.execute(
+            "INSERT OR IGNORE INTO observations (thread_id, turn_id, terminal_status,"
+            " relationship_id, classification, event_id, observed_at) VALUES (?,?,?,?,?,?,?)",
+            (
+                turn.thread_id, turn.turn_id, turn.turn_status, relationship_id,
+                classification.value if hasattr(classification, "value") else str(classification),
+                event, now,
+            ),
+        )
+        if relationship_id is not None:
+            # observations is keyed by the turn alone, so the row above belongs to whichever
+            # assignment settled it first. This is the per-assignment fact, and it is what
+            # the scheduler and the health block ask.
             db.execute(
-                "INSERT OR IGNORE INTO observations (thread_id, turn_id, terminal_status,"
-                " relationship_id, classification, event_id, observed_at) VALUES (?,?,?,?,?,?,?)",
-                (
-                    turn.thread_id, turn.turn_id, turn.turn_status, relationship_id,
-                    classification.value if hasattr(classification, "value") else str(classification),
-                    event, now,
-                ),
+                "INSERT OR IGNORE INTO assignment_settlements (relationship_id, thread_id,"
+                " turn_id, terminal_status, settled_at) VALUES (?,?,?,?,?)",
+                (relationship_id, turn.thread_id, turn.turn_id, turn.turn_status, now),
             )
 
 

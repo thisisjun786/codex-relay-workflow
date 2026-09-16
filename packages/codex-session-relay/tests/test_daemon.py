@@ -186,6 +186,71 @@ class AutomaticInvocation(DaemonTestCase):
         self.assertEqual(failure["outcome"], "failed")
         self.assertIn(failure["event_id"], sent[0])
 
+    def test_an_absent_anchor_is_not_counted_as_a_healthy_poll(self):
+        """observation_health reads poll freshness and settlement, nothing else.
+
+        Recording an absent turn as a successful poll refreshed last_polled_at on every tick,
+        so an anchor the host exhaustively reports gone - one that can never settle - stayed
+        healthy indefinitely. Process alive is not the same as work progressing, and neither
+        is a poll that found nothing.
+        """
+        self.register()  # the anchor turn is never created on the host
+
+        self.daemon.tick()
+
+        row = self.store.one(
+            "SELECT last_status, last_polled_at, last_error FROM poll_observations"
+            "  WHERE turn_id = ?", (DISPATCH_TURN,),
+        )
+        self.assertIsNotNone(row, "the anchor was never polled at all")
+        self.assertEqual(row["last_status"], "absent")
+        self.assertIsNone(
+            row["last_polled_at"],
+            "an absent anchor was recorded as a successful poll, so health never decays",
+        )
+        self.assertIsNotNone(row["last_error"])
+
+    def test_a_pause_during_the_host_read_does_not_retire_a_failed_turn(self):
+        """The scheduler selects active assignments and then reads the host.
+
+        A pause landing in between says nothing about what the turn did. Recording a
+        settlement anyway retires it - _worth_polling drops it from every later tick - while
+        the synthesized receipt that is the only carrier of that outcome was never written. A
+        resume then finds nothing left to observe and the parent waits for a verdict forever.
+        """
+        from unittest import mock
+
+        from codex_session_relay.errors import RefusalReason, RegistrationError
+
+        self.register()
+        self.adapter.start_turn(CHILD, turn_id=DISPATCH_TURN, status="failed")
+
+        def paused(*_args, **_kwargs):
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_NOT_ACTIVE,
+                "paused while the host read was in flight",
+            )
+
+        with mock.patch.object(self.intake, "daemon_observation", side_effect=paused):
+            report = self.daemon.tick()
+
+        self.assertEqual(report.observed, 0)
+        self.assertIsNone(
+            self.store.one(
+                "SELECT 1 FROM assignment_settlements WHERE turn_id = ?", (DISPATCH_TURN,),
+            ),
+            "the turn was retired while its outcome was never written",
+        )
+
+        # And once the assignment is active again, the very next tick produces the receipt.
+        resumed = self.daemon.tick()
+
+        self.assertEqual(resumed.observed, 1)
+        self.assertIsNotNone(
+            self.store.one("SELECT 1 FROM events WHERE producer = 'daemon_observation'"),
+            "the outcome never reached the parent after the assignment resumed",
+        )
+
     def test_a_synthesized_failure_is_persisted_and_delivered_as_separate_outcomes(self):
         relationship = self.register()
         self.adapter.start_turn(CHILD, turn_id=DISPATCH_TURN, status="failed")

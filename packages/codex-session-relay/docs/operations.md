@@ -124,22 +124,127 @@ transport call.
 | Phase | Meaning |
 |---|---|
 | `awaiting_receipt` | the child has not produced a completion receipt yet |
+| `awaiting_send` | the receipt is collected and accepted; this relay has not reached the recipient yet |
+| `in_flight` | a send was claimed and its outcome is not yet settled |
 | `parent_busy` | the parent is mid-turn; it is never interrupted |
 | `settings_rejected` | the host would not confirm the authorized execution settings |
+| `withheld:<operation>` | refused before any transport call, naming the operation that refused |
 | `turn_accepted` | the transport started a turn |
 | `awaiting_ack` | delivered, acknowledgement outstanding |
+| `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
 | `channel_closed` | the push channel itself is unavailable; stored, not woken |
 | `superseded` | a newer generation or revision replaced this one |
+| `superseded:<reason>` | an outstanding send a newer generation or revision replaced; its state is left alone so a lost response stays reconcilable |
 
 Each carries the most recent failed operation, its concrete error, the exact settings
 difference where there is one, and the next retry time.
 
+`status` also reports `pendingIntents`: events whose delivery was wanted and refused before a
+delivery row could exist, which a paused or unauthorized assignment produces. They have no
+phase in the table above because they have no delivery; they carry the refusal, the attempt
+count and the next retry instead. Without them the most stuck state in the system was the one
+status could not show.
+
 Health is separate from liveness. A running process with a growing observation backlog is
 reported as stalled: staged event age, when each current anchor was last successfully
 polled, and the backlog per assignment are all exposed, and a live pid is never counted as
-working.
+working. An anchor whose turn is terminal with nothing staged behind it is reported as
+settled and excluded from freshness: the scheduler deliberately stops reading it, so its
+last poll cannot advance, and ageing it out would report every quiet assignment as stalled.
+New staged work on that turn makes it eligible again.
 
-Status: planned in PR-B.
+Settlement is recorded per assignment. Two assignments can legitimately watch the same child
+turn, and the `observations` table is keyed by the turn alone, so it can only ever name whichever
+assignment settled it first. `assignment_settlements` carries the per-assignment fact, which is
+what the observation scheduler and this health block ask. Without it every other assignment
+on a shared turn looked permanently unsettled, was re-polled on every round and spent
+observation budget forever.
+
+So is the work itself. Staged claims are selected and settled per assignment, because a child
+thread can serve several and a claim on one of its turns belongs to exactly one of them.
+Selecting by thread alone put a paused assignment's claim into an active assignment's ring,
+and settling by turn alone let whichever assignment polled first suppress the owner's claim
+while producing no receipt of its own - so the owner's parent waited on an outcome that had
+already been discarded. An inactive assignment's staged claim is left untouched until it is
+resumed, and is excluded from backlog for the same reason: the scheduler will not process it.
+
+Each parent's delivery window rotates. The parent order decides who goes first; a persistent
+per-parent cursor decides where that parent's own window starts, and it advances only by what
+was actually attempted. Without it the window was always a parent's oldest rows, so a delivery
+that fails before changing its own state stays eligible, stays oldest and blocks every later
+delivery for that parent indefinitely.
+
+A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
+advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so
+that is the only occasion on which such a row can ever be told its generation has moved on.
+
+Status: implemented. `status` reports the phase, the most recent failed operation with its
+error code and, for a settings rejection, the exact fields the host disagreed on, plus the
+next retry time. The field-level difference is read from the raw receipt, because the
+transport classification keeps only a code.
+
+Observation health is reported beside it: staged event ages, when each current anchor was
+last successfully polled, and the backlog per assignment. A failed read updates the attempt
+time and never the success time, so an anchor whose first read failed reads as never polled
+rather than fresh. Process liveness is reported separately and is never counted as health.
+
+## What one tick guarantees
+
+The loop is bounded, so the interesting question is not what it does but what it cannot
+starve or lose.
+
+**No anchor is left behind.** A revision can reach `dispatched` by several routes, and binding
+used to happen on only one of them, which left the generation unbound and made every later
+receipt for it refused. Binding is now a recovery over state that runs first in each tick, so
+whichever route dispatched it, the next tick repairs it and a receipt arriving in that same
+tick is accepted.
+
+**A refused queue is remembered, not lost.** Finalizing a claim, recording the observation
+that finalized it and queuing what it produced are one commit. A refusal that may not last -
+a paused relationship, a recipient not yet authorized - records a delivery intent, and
+recovery retries that intent with an exponential backoff so one permanently unqueueable event
+cannot hold a slot. Anything else rolls the whole thing back, and the next tick re-observes.
+
+Absence of a delivery row is deliberately NOT treated as evidence that delivery was wanted: a
+receipt emitted with `--no-enqueue` and an event stranded by an old generation look exactly
+the same from outside, and neither should be sent.
+
+**The current generation is always reachable.** Observation reads are capped per tick. Within
+that cap the tick serves a rotating subset of relationships rather than promising every one
+of them a read, because that promise stops being possible once the relationship count passes
+the budget. Each served relationship gets its current anchor first and then a rotating slice
+of the rest, from a cursor persisted in the database so a restart resumes the rotation.
+
+| | anchor revisit | full backlog coverage |
+|---|---|---|
+| share of two or more | every service round | `ceil(R / served) * ceil(N / (share - 1))` ticks |
+| share of one | every two service rounds | `ceil(R / served) * 2N` ticks |
+
+A candidate with nothing left to learn is dropped before the budget rather than after it,
+which is what the old prefix got wrong: past eight generations the slice was permanently the
+first eight, every one already observed, and the generation actually running was never
+selected again.
+
+An observation is also no longer treated as the end of a turn. A receipt written just after
+the completion was seen still has to be resolved, so a turn is skipped only when it has been
+observed and has no unresolved staged claim.
+
+Status: implemented.
+
+**Every parent gets a turn.** Selection asks which parents have anything to send before it
+asks how much each of them has, then takes a bounded share from each, dealt one at a time.
+A single oldest-first window let one parent's backlog take every slot. Reconciliation is
+selected the same way. A parent whose send errors or defers is skipped for the rest of that
+tick only; it reserves no capacity and creates no hold.
+
+This is scheduler fairness, not transport concurrency. The adapter serialises on one worker,
+so a stalled call still blocks the one behind it.
+
+**A stale event is stopped before the send.** A generation that has moved on invalidates
+every outcome of the previous one, whether or not the new generation has produced a revision
+yet, and the claim statement itself refuses one. An outstanding send is annotated rather than
+rewritten, so reconciliation can still settle it, and an already delivered copy keeps its
+history without being read as verification of the current head.
 
 ## What a restart preserves
 

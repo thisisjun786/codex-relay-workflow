@@ -250,6 +250,38 @@ class Registry:
             (number, now, rid),
         )
         self.store.journal("generation_opened", rid, {"generation": number, "reason": reason}, at=now)
+        # Anything still outstanding for an earlier generation is history from this moment on.
+        # It is ANNOTATED, never rewritten: a send whose response was lost still has to be
+        # reconciled, and a terminal superseded aggregate cannot be. Without this a delivery
+        # that was sending or held_uncertain when the generation advanced reconciled to
+        # dispatched with no note at all, and status presented it as an ordinary current one.
+        db.execute(
+            "INSERT INTO delivery_supersession (event_id, reason, noted_at, applied)"
+            " SELECT d.event_id, 'stale_generation', ?, 0 FROM deliveries d"
+            "  JOIN events e ON e.event_id = d.event_id"
+            " WHERE d.relationship_id = ? AND e.execution_generation < ?"
+            # dispatched belongs here too: its acknowledgement will be refused as
+            # stale_generation, so leaving it unannotated meant status showed awaiting_ack
+            # for an obligation that can no longer be met. Annotating does not rewrite the
+            # delivery, so the history of what was actually sent is untouched.
+            # deferred_busy and withheld_pre_send belong here for a stronger reason: once
+            # either has reached its attempt cap, hold_reason is set and attempt() returns
+            # before the pre-send supersession check, so generation advance is the ONLY
+            # occasion on which they can ever be annotated. Without them a capped delivery
+            # reports a current-looking cap forever.
+            # inbox_only belongs with them: it is terminal, attempt() cannot revisit it, and
+            # its acknowledgement is refused as stale - so without this it reports
+            # channel_closed as though it were still current.
+            # queued belongs here for a reason of the same shape: _claim does suppress a stale
+            # queued row, but attempt() can return BEFORE _claim - rate limiting, a busy
+            # recipient, an unavailable host - and a recipient that is never free means _claim
+            # is never reached at all. Generation advance already knows the row is stale, so
+            # leaving it unannotated let it keep retrying while reporting as current.
+            "   AND d.state IN ('queued','sending','held_uncertain','dispatched',"
+            "                  'deferred_busy','withheld_pre_send','inbox_only')"
+            " ON CONFLICT(event_id) DO NOTHING",
+            (now, rid, number),
+        )
         return number
 
     def bind_anchor(self, rid: str, number: int, *, dispatch_turn_id: str, source: str) -> dict:
@@ -284,6 +316,60 @@ class Registry:
             )
             self.store.journal("anchor_bound", rid, {"generation": number}, at=now)
         return self.generation(rid, number)
+
+    def bind_anchor_in(self, db, rid: str, number: int, *, dispatch_turn_id, source) -> str:
+        """The same binding, against a transaction the caller already owns.
+
+        This exists for the writer that PROMOTES a revision to dispatched. Binding in a
+        separate transaction afterwards leaves an interval in which the dispatch evidence is
+        durable and the generation is still anchor_pending, and a child emitting from another
+        process inside that interval has a perfectly valid completion refused as
+        unbound_generation. Nothing about the binding needs a transport call - the turn id is
+        already in hand before the transaction opens - so there is no reason for it to travel
+        separately.
+
+        It returns an outcome instead of raising, because raising here would roll back the
+        promotion it travelled with over a disagreement about a DIFFERENT fact:
+
+          bound       the generation was pending and now names this turn
+          unchanged   it already names this turn
+          conflict    it names another turn, and is left exactly as it is
+          ineligible  nothing to bind from, or no such generation
+
+        A conflict is journalled HERE rather than left for the repair pass. That pass selects
+        anchor_pending generations only, so a generation that is already bound is never
+        looked at again and the disagreement would simply disappear.
+        """
+        if source != "dispatch_receipt" or validated_turn_id(dispatch_turn_id) is None:
+            return "ineligible"
+        # Read INSIDE the caller's transaction, so the decision and the write cannot be
+        # separated by another writer, and so the outcome comes from the row rather than from
+        # an update count.
+        current = db.execute(
+            "SELECT anchor_state, dispatch_turn_id FROM generations"
+            " WHERE relationship_id = ? AND execution_generation = ?",
+            (rid, number),
+        ).fetchone()
+        if current is None:
+            return "ineligible"
+        now = self.clock.iso()
+        if current["anchor_state"] == ANCHOR_BOUND:
+            if current["dispatch_turn_id"] == dispatch_turn_id:
+                return "unchanged"
+            self.store.journal(
+                "anchor_conflict", rid,
+                {"generation": number, "boundTo": current["dispatch_turn_id"],
+                 "offered": dispatch_turn_id},
+                at=now,
+            )
+            return "conflict"
+        db.execute(
+            "UPDATE generations SET anchor_state = ?, dispatch_turn_id = ?, bound_at = ?"
+            " WHERE relationship_id = ? AND execution_generation = ?",
+            (ANCHOR_BOUND, dispatch_turn_id, now, rid, number),
+        )
+        self.store.journal("anchor_bound", rid, {"generation": number}, at=now)
+        return "bound"
 
     def set_status(self, rid: str, status: str, *, actor: str) -> dict:
         """Deactivation only.

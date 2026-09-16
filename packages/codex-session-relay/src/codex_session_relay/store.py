@@ -98,6 +98,20 @@ CREATE TABLE IF NOT EXISTS observations (
     PRIMARY KEY (thread_id, turn_id, terminal_status)
 );
 
+-- Which ASSIGNMENT has settled a turn, which observations cannot answer: its key is the
+-- turn alone, so when two assignments share a child turn only the first records a row and
+-- every other one looks permanently unsettled. Kept as a separate table rather than by
+-- re-keying observations, because this store has no migration path and an existing database
+-- would silently keep the old key. New databases and old ones both gain this on open.
+CREATE TABLE IF NOT EXISTS assignment_settlements (
+    relationship_id TEXT NOT NULL,
+    thread_id       TEXT NOT NULL,
+    turn_id         TEXT NOT NULL,
+    terminal_status TEXT NOT NULL,
+    settled_at      TEXT NOT NULL,
+    PRIMARY KEY (relationship_id, thread_id, turn_id, terminal_status)
+);
+
 CREATE TABLE IF NOT EXISTS refusals (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     at              TEXT NOT NULL,
@@ -468,7 +482,66 @@ CREATE TABLE IF NOT EXISTS store_challenge (
     written_at TEXT NOT NULL
 );
 
+-- Delivery was WANTED for this event and refused for a reason that may not last. Absence of
+-- a delivery row cannot carry that meaning: an event emitted with --no-enqueue and an event
+-- stranded by an old generation look identical to one whose queuing was refused.
+CREATE TABLE IF NOT EXISTS delivery_intent (
+    event_id          TEXT PRIMARY KEY,
+    relationship_id   TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    recipient_task_id TEXT NOT NULL,
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    next_retry_at     REAL,
+    last_error        TEXT,
+    noted_at          TEXT NOT NULL
+);
+
+-- This delivery is no longer what the assignment stands on. Kept separate from the delivery
+-- state on purpose: an outstanding send must keep its state so reconciliation can still
+-- settle it, and an already dispatched one must keep its history.
+CREATE TABLE IF NOT EXISTS delivery_supersession (
+    event_id TEXT PRIMARY KEY,
+    reason   TEXT NOT NULL,
+    noted_at TEXT NOT NULL,
+    applied  INTEGER NOT NULL DEFAULT 0
+);
+
+-- The most recent failure per (subject, operation), so an operator reads a cause rather
+-- than a state word. Keyed, not appended, so it cannot grow without bound.
+CREATE TABLE IF NOT EXISTS failed_operations (
+    scope_key       TEXT NOT NULL,
+    operation       TEXT NOT NULL,
+    relationship_id TEXT,
+    parent_task_id  TEXT,
+    detail          TEXT NOT NULL,
+    error_code      TEXT,
+    difference      TEXT,
+    retry_safe      INTEGER,
+    occurred_at     TEXT NOT NULL,
+    next_retry_at   REAL,
+    PRIMARY KEY (scope_key, operation)
+);
+
+-- Whether we have actually LOOKED at an anchor lately, which an observations row cannot
+-- answer: that table records terminal turns only, so a healthy long-running anchor has no
+-- entry at all. last_polled_at stays NULL until a poll genuinely succeeds.
+CREATE TABLE IF NOT EXISTS poll_observations (
+    relationship_id      TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    turn_id              TEXT NOT NULL,
+    last_status          TEXT,
+    last_polled_at       TEXT,
+    last_attempt_at      TEXT NOT NULL,
+    last_error           TEXT,
+    PRIMARY KEY (relationship_id, execution_generation, turn_id)
+);
+
 CREATE INDEX IF NOT EXISTS deliveries_state ON deliveries (state, next_eligible_at);
+-- Per-parent selection reads one parent's oldest eligible rows at a time, which is a
+-- different access pattern from deliveries_state. Declaring it is not proof it is used:
+-- the query plan is inspected in the fairness tests rather than assumed.
+CREATE INDEX IF NOT EXISTS deliveries_relationship_created ON deliveries
+    (relationship_id, created_at);
 CREATE INDEX IF NOT EXISTS attempts_open ON attempts (internal_state);
 CREATE INDEX IF NOT EXISTS events_relationship ON events (relationship_id, execution_generation);
 CREATE INDEX IF NOT EXISTS events_stage ON events (stage, turn_id);
@@ -733,6 +806,19 @@ class Store:
         self.db.execute(
             "INSERT OR IGNORE INTO schema_meta VALUES ('store_created_at', ?)", (_now_iso(),)
         )
+        # An existing store already holds terminal observations, and the scheduler and the
+        # health block ask assignment_settlements instead. Leaving it empty on upgrade would
+        # make every historical turn look unsettled, so a current turn that can no longer be
+        # read would leave a previously settled assignment stalled forever and spending
+        # polling budget. Backfilled from the rows that name their relationship; rows written
+        # before that column existed name nobody and cannot be attributed to one.
+        self.db.execute(
+            "INSERT OR IGNORE INTO assignment_settlements (relationship_id, thread_id,"
+            " turn_id, terminal_status, settled_at)"
+            " SELECT relationship_id, thread_id, turn_id, terminal_status, observed_at"
+            "   FROM observations WHERE relationship_id IS NOT NULL"
+        )
+
         if socket_path:
             # Provenance, so this store is findable by the socket it serves rather than only
             # by the hash of whichever spelling created it. INSERT OR IGNORE: the first

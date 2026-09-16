@@ -23,7 +23,7 @@ from .currency import (
     currency_of,
 )
 from .delivery import COMPLETION, REVISION
-from .errors import AckRefused, RefusalReason
+from .errors import AckRefused, RefusalReason, RelayError
 from .identity import (
     ack_proof as derive_ack_proof,
     revision_request_event_id,
@@ -591,6 +591,42 @@ class AckService:
             event["relationship_id"], event["execution_generation"],
             dispatch_turn_id=row["dispatch_turn_id"], source="dispatch_receipt",
         )
+
+    def bind_pending_anchors(self, *, limit: int = 50) -> list:
+        """Bind every generation still anchor_pending whose revision actually dispatched.
+
+        Binding used to be a hook on ONE path - the daemon's own new dispatch - so a revision
+        that reached dispatched any other way left its generation unbound, and by I-06 every
+        later receipt for that generation was refused. The routes that missed it are ordinary:
+        the deliver command, either reconcile promotion, and a dispatch committed in the last
+        tick before a shutdown.
+
+        Recovery over state covers all of them at once, and it repairs a generation that was
+        left pending before this existed rather than only preventing new ones. bind_anchor is
+        idempotent for the same turn and refuses a conflicting rebind (I-05), so this can
+        never move an anchor that is already bound.
+        """
+        rows = self.store.all(
+            "SELECT d.event_id FROM deliveries d"
+            "  JOIN events e ON e.event_id = d.event_id"
+            "  JOIN generations g ON g.relationship_id = e.relationship_id"
+            "   AND g.execution_generation = e.execution_generation"
+            " WHERE d.kind = ? AND d.state IN (?,?) AND d.dispatch_turn_id IS NOT NULL"
+            "   AND g.anchor_state = ?"
+            " ORDER BY d.updated_at LIMIT ?",
+            (REVISION, DISPATCHED, ACKNOWLEDGED, "anchor_pending", limit),
+        )
+        bound = []
+        for row in rows:
+            try:
+                result = self.bind_dispatched_revision(row["event_id"])
+            except RelayError:
+                # A conflicting rebind stays refused and stays reportable; it is not this
+                # pass's business to resolve, and swallowing the others would hide them.
+                continue
+            if result is not None:
+                bound.append(row["event_id"])
+        return bound
 
 
 # The host reports a turn's start as WHOLE SECONDS, while we record the send with microsecond

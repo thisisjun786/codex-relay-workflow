@@ -12,7 +12,7 @@ attempt with no affirmative evidence stays held and says precisely what it is mi
 import json
 from enum import Enum
 
-from .delivery import COMPLETION, SENDING
+from .delivery import COMPLETION, REVISION, SENDING
 from .transport import (
     DEFERRED_BUSY,
     DISPATCHED,
@@ -24,6 +24,17 @@ from .transport import (
 )
 
 SCAN_LIMIT = 200
+
+
+def _with_anchor(outcome: dict, anchor) -> dict:
+    """Carry the binding outcome out with the settlement, so a conflict is not only journalled.
+
+    Absent when there was nothing to bind, which is every completion and every settlement that
+    promoted nothing.
+    """
+    if anchor is not None:
+        outcome["anchor"] = anchor
+    return outcome
 
 
 class Evidence(str, Enum):
@@ -41,15 +52,67 @@ class Reconciler:
         self.clock = clock
         self.policy = policy or delivery.policy
 
-    def open_attempts(self) -> list:
-        """Everything a restart has to look at: in-flight sends and unresolved attempts."""
-        return self.store.all(
-            "SELECT a.* FROM attempts a JOIN deliveries d ON d.event_id = a.event_id"
-            " WHERE a.internal_state = 'in_flight'"
-            "    OR (a.state = ? AND d.state IN (?, ?))"
-            " ORDER BY a.observed_at",
+    UNRESOLVED = (
+        " WHERE (a.internal_state = 'in_flight'"
+        "        OR (a.state = ? AND d.state IN (?, ?)))"
+    )
+
+    def open_attempts(self, *, limit=None, parents=None, offset=0) -> list:
+        """Everything a restart has to look at: in-flight sends and unresolved attempts.
+
+        With no arguments this stays exhaustive, because recover_on_start has to see all of
+        it. The bounded, parent-filtered form is what a tick uses, so one parent's backlog of
+        unchanged attempts cannot hide another parent's actionable one. Deliberately NOT
+        filtered on active status: an unresolved send belonging to a cancelled assignment
+        still needs its evidence settled.
+
+        offset is what keeps the bounded form from being a fixed prefix. Attempts whose
+        fingerprint has not changed are skipped by the caller's gate but still occupy their
+        place, so without it a parent with more unresolved attempts than its share would
+        re-read the same leading ones on every tick and never reach the rest.
+        """
+        sql = (
+            "SELECT a.*, r.parent_task_id AS parent_task_id FROM attempts a"
+            " JOIN deliveries d ON d.event_id = a.event_id"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            + self.UNRESOLVED
+        )
+        params = [HELD_UNCERTAIN, HELD_UNCERTAIN, SENDING]
+        if parents:
+            sql += " AND r.parent_task_id IN (" + ",".join("?" * len(parents)) + ")"
+            params.extend(parents)
+        sql += " ORDER BY a.observed_at"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+            if offset:
+                sql += " OFFSET ?"
+                params.append(offset)
+        return self.store.all(sql, tuple(params))
+
+    def open_attempt_count(self, parent) -> int:
+        """How many unresolved attempts one parent has, so a cursor over them can wrap."""
+        row = self.store.one(
+            "SELECT COUNT(*) AS c FROM attempts a"
+            " JOIN deliveries d ON d.event_id = a.event_id"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            + self.UNRESOLVED +
+            " AND r.parent_task_id = ?",
+            (HELD_UNCERTAIN, HELD_UNCERTAIN, SENDING, parent),
+        )
+        return row["c"] if row else 0
+
+    def open_parents(self) -> list:
+        """Which parents have unresolved work, independent of how much each of them has."""
+        rows = self.store.all(
+            "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM attempts a"
+            " JOIN deliveries d ON d.event_id = a.event_id"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            + self.UNRESOLVED +
+            " ORDER BY r.parent_task_id",
             (HELD_UNCERTAIN, HELD_UNCERTAIN, SENDING),
         )
+        return [row["parent_task_id"] for row in rows]
 
     def reconcile_attempt(self, request_id: str, adapter, *, now=None) -> dict:
         now = self.clock.now() if now is None else now
@@ -136,13 +199,16 @@ class Reconciler:
             if attempt["attempt_no"] >= self.policy.cap_for(reason):
                 hold = self.policy.cap_reason(reason)
                 next_eligible = None
-        self._write(
+        anchor = self._write(
             attempt, delivery, record, facts.delivery_state, evidence, observation,
             "not scanned", next_eligible, hold=hold,
             dispatch_evidence="transport_accepted" if facts.delivery_state == DISPATCHED else None,
             dispatch_turn_id=facts.turn_id,
         )
-        return {"evidence": evidence.value, "state": facts.delivery_state, "record": record}
+        return _with_anchor(
+            {"evidence": evidence.value, "state": facts.delivery_state, "record": record},
+            anchor,
+        )
 
     def _settle_from_scan(self, attempt, delivery, scan, observation, scan_detail, now) -> dict:
         """The token is in the recipient's items, but the transport never confirmed.
@@ -161,12 +227,15 @@ class Reconciler:
             "affirmativeEvidence": Evidence.TURN_FOUND.value,
             "checkedAt": self.clock.iso(),
         }
-        self._write(
+        anchor = self._write(
             attempt, delivery, record, record["deliveryState"], Evidence.TURN_FOUND,
             observation, scan_detail, None, aggregate=DISPATCHED,
             dispatch_evidence="turn_found", dispatch_turn_id=scan.turn_id,
         )
-        return {"evidence": Evidence.TURN_FOUND.value, "state": DISPATCHED, "record": record}
+        return _with_anchor(
+            {"evidence": Evidence.TURN_FOUND.value, "state": DISPATCHED, "record": record},
+            anchor,
+        )
 
     def _stay_held(self, attempt, delivery, observation, scan_detail, now) -> dict:
         record = json.loads(attempt["record"]) if attempt["record"] else _unfinished_record(
@@ -199,6 +268,7 @@ class Reconciler:
                hold=None):
         now_iso = self.clock.iso()
         current = self._is_current(attempt, delivery)
+        anchor = None
         with self.store.transaction() as db:
             db.execute(
                 "UPDATE attempts SET internal_state = 'settled', state = ?, record = ?,"
@@ -210,7 +280,7 @@ class Reconciler:
                 ),
             )
             if current:
-                db.execute(
+                promoted = db.execute(
                     "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"
                     " dispatch_evidence = ?,"
                     " dispatch_turn_id = COALESCE(?, dispatch_turn_id), lease_owner = NULL,"
@@ -221,11 +291,47 @@ class Reconciler:
                         dispatch_evidence or delivery["dispatch_evidence"], dispatch_turn_id,
                         now_iso, attempt["event_id"], attempt["attempt_no"], DISPATCHED,
                     ),
-                )
+                ).rowcount
+                # The guarded UPDATE is the authoritative race check, not the snapshot
+                # _is_current read before this transaction opened. If another worker settled
+                # this delivery and dispatched a later attempt in between, it matches no rows
+                # - and binding there would hand the generation the obsolete attempt's turn,
+                # after which the turn the real dispatch reached can never bind.
+                if promoted == 1 and (aggregate or state) == DISPATCHED:
+                    anchor = self._bind_promoted_anchor(db, attempt, delivery, dispatch_turn_id)
             self.store.journal(
                 "reconciled", attempt["request_id"],
                 {"evidence": evidence.value, "state": aggregate or state}, at=now_iso,
             )
+        return anchor
+
+    def _bind_promoted_anchor(self, db, attempt, delivery, dispatch_turn_id):
+        """Bind the revision's generation in the transaction that just promoted it.
+
+        Reconciliation is one of the routes that reaches dispatched without going through the
+        daemon's own dispatch, and the tick's repair pass runs in a DIFFERENT transaction. A
+        child in a third process that emits between the two commits has its completion refused
+        as unbound_generation even though the dispatch evidence is already durable. The turn id
+        arrived with the receipt or the recipient scan, before this transaction opened, so
+        closing that interval costs nothing.
+
+        Only a revision anchors a generation, which is the same condition the repair pass uses.
+        """
+        if delivery["kind"] != REVISION:
+            return None
+        turn_id = dispatch_turn_id or delivery["dispatch_turn_id"]
+        if not turn_id:
+            return None
+        event = db.execute(
+            "SELECT relationship_id, execution_generation FROM events WHERE event_id = ?",
+            (attempt["event_id"],),
+        ).fetchone()
+        if event is None:
+            return None
+        return self.registry.bind_anchor_in(
+            db, event["relationship_id"], event["execution_generation"],
+            dispatch_turn_id=turn_id, source="dispatch_receipt",
+        )
 
     # ---------------------------------------------------------------- restart
 

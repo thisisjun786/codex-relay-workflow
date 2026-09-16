@@ -381,8 +381,18 @@ def cmd_emit(services, args) -> dict:
     result = {"receipt": contract_record(stored), "stage": stored.get("_stage"),
               "duplicate": stored.get("_duplicate"), "terminalProof": proof,
               "observedTurnStatus": observed_status}
-    if stored.get("_stage") == "final" and not args.no_enqueue:
-        result["delivery"] = dict(services.delivery.enqueue(event))
+    if stored.get("_stage") == "final":
+        # Whatever this event replaces stops being current the moment this one is final, and
+        # that is true whether or not anyone asked to deliver THIS one. --no-enqueue skips
+        # the queue, and the annotation used to ride on it, so a predecessor already in
+        # flight kept being reported as the current delivery.
+        services.delivery.annotate_predecessors(event)
+        # Only when there is no delivery row yet. Acceptance and enqueue are separate
+        # transactions here, so a receipt whose enqueue failed is retried to reach this line -
+        # and a receipt that was already queued must not be queued twice for having been
+        # re-emitted.
+        if not args.no_enqueue and services.delivery.find(event) is None:
+            result["delivery"] = dict(services.delivery.enqueue(event))
     return result
 
 
@@ -423,21 +433,36 @@ def cmd_deliver(services, args) -> dict:
     _require_adapter(services)
     if args.event:
         record = services.delivery.attempt(args.event, services.adapter)
+        # Every route to dispatched binds its anchor, not only the daemon's own.
+        services.ack.bind_pending_anchors()
         return {"attempt": record}
     out = []
-    for row in services.delivery.eligible(now=services.clock.now(), limit=args.limit):
+    # per_parent_limit is the TICK's fairness share, and an operator asking for --limit 20 is
+    # not running a tick: capping each parent at two made a bulk deliver quietly send two.
+    # The share still governs the daemon. Fairness across parents is unaffected, because
+    # eligible() deals the rows one parent at a time whatever the per-parent window is.
+    for row in services.delivery.eligible(
+        now=services.clock.now(), limit=args.limit, per_parent_limit=args.limit,
+    ):
         out.append(services.delivery.attempt(row["event_id"], services.adapter))
+    # The bulk path dispatches revisions too, so it binds for exactly the same reason the
+    # single-event path does.
+    services.ack.bind_pending_anchors()
     return {"attempts": out}
 
 
 def cmd_reconcile(services, args) -> dict:
     _require_adapter(services)
-    return services.reconciler.reconcile_attempt(args.request_id, services.adapter)
+    outcome = services.reconciler.reconcile_attempt(args.request_id, services.adapter)
+    services.ack.bind_pending_anchors()
+    return outcome
 
 
 def cmd_recover(services, args) -> dict:
     _require_adapter(services)
-    return services.reconciler.recover_on_start(services.adapter)
+    outcome = services.reconciler.recover_on_start(services.adapter)
+    outcome["anchorsBound"] = services.ack.bind_pending_anchors()
+    return outcome
 
 
 def cmd_claim(services, args) -> dict:
@@ -661,7 +686,13 @@ def cmd_show(services, args) -> dict:
 
 
 def cmd_status(services, args) -> dict:
-    return services.delivery.snapshot(relationship_id=args.relationship)
+    payload = services.delivery.snapshot(relationship_id=args.relationship)
+    # Scoped with the deliveries. A global health block beside a filtered list invites
+    # reading another assignment's backlog as this one's.
+    payload["observation"] = services.delivery.observation_health(
+        relationship_id=args.relationship,
+    )
+    return payload
 
 
 def _scheduler_wait(clock, deadline, sleeper=None):

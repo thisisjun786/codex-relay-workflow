@@ -16,10 +16,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .delivery import COMPLETION
+from .errors import (
+    DeliveryRefused, RefusalReason, RegistrationError, RelayError, ScopeError,
+)
 from .models import TurnRef
 from .policy import RetryPolicy
 from .receipts import ObservationOutcome, classify_observation
-from .transport import DISPATCHED, HELD_UNCERTAIN
+from .scope import assert_assignment_delivery
+from .transport import DEFERRED_BUSY, DISPATCHED, HELD_UNCERTAIN, WITHHELD_PRE_SEND
 
 
 @dataclass
@@ -30,6 +34,8 @@ class TickReport:
     deferred: int = 0
     skipped: int = 0
     acksVerified: int = 0
+    anchorsBound: int = 0
+    requeued: int = 0
     quiet: bool = True
     notes: list = field(default_factory=list)
 
@@ -38,6 +44,8 @@ class TickReport:
             "observed": self.observed, "reconciled": self.reconciled,
             "delivered": self.delivered, "deferred": self.deferred,
             "skipped": self.skipped, "acksVerified": self.acksVerified,
+            "anchorsBound": self.anchorsBound,
+            "requeued": self.requeued,
             "quiet": self.quiet, "notes": self.notes,
         }
 
@@ -107,19 +115,78 @@ class RelayDaemon:
         self.policy = policy or RetryPolicy()
         self.clock = clock or delivery.clock
         self.log = log or (lambda _message: None)
+        self._last_refusal = None
 
     # ------------------------------------------------------------------ tick
 
     def tick(self, *, now=None) -> TickReport:
         now = self.clock.now() if now is None else now
         report = TickReport()
+        self._bind_anchors(report)
         self._observe(report, now)
+        self._requeue_missing(report, now)
         self._reconcile(report, now)
+        # Again, because reconciliation is what promotes a held_uncertain revision to
+        # dispatched, and binding ran before it. A revision promoted in this tick would
+        # otherwise stay anchor_pending until the next one, and a child that emits its
+        # completion in that interval has it refused as unbound_generation even though the
+        # dispatch evidence is already committed.
+        self._bind_anchors(report)
         self._verify_acks(report, now)
         self._deliver(report, now)
         report.quiet = not (report.observed or report.reconciled or report.delivered
-                            or report.deferred or report.acksVerified)
+                            or report.deferred or report.acksVerified or report.anchorsBound
+                            or report.requeued)
         return report
+
+    def _bind_anchors(self, report) -> None:
+        """Repair any generation left anchor_pending by a dispatch this loop did not make.
+
+        First in the tick on purpose: a receipt arriving during this same tick is then
+        accepted rather than refused as unbound.
+        """
+        try:
+            # Added, not assigned. tick() runs this pass twice - once before reconciliation
+            # and once after the pass that can promote a revision - and assigning let the
+            # second pass erase what the first repaired, so a tick that bound a durable
+            # anchor reported anchorsBound 0 and even quiet.
+            report.anchorsBound += len(self.ack.bind_pending_anchors())
+        except Exception as error:  # noqa: BLE001 - a tick never dies on one pass
+            report.notes.append(f"anchor recovery failed: {error}")
+
+    def _requeue_missing(self, report, now) -> None:
+        """Queue a final event that has no delivery row.
+
+        A refusal at enqueue time can be perfectly legitimate - a relationship paused between
+        selection and queuing - and the observation that produced the event is still true. So
+        the obligation is derived from state and retried here, instead of the event being lost
+        because the turn it came from will never look new again.
+        """
+        try:
+            candidates = self.delivery.pending_intents(
+                now=now, limit=self.policy.max_sends_per_tick,
+            )
+        except Exception as error:  # noqa: BLE001
+            report.notes.append(f"requeue scan failed: {error}")
+            return
+        for row in candidates:
+            event_id = row["event_id"]
+            try:
+                self.delivery.enqueue(
+                    event_id, kind=row["kind"], recipient_task_id=row["recipient_task_id"],
+                )
+            except Exception as error:  # noqa: BLE001 - still refused; back this one off so
+                # it cannot hold a recovery slot against events that would succeed.
+                report.notes.append(f"requeue refused for {event_id}: {error}")
+                with self.store.transaction() as db:
+                    self.delivery.record_intent_in(
+                        db, event_id, relationship_id=row["relationship_id"],
+                        kind=row["kind"], recipient_task_id=row["recipient_task_id"],
+                        error=error, now=now,
+                    )
+                continue
+            self.delivery.clear_intent(event_id)
+            report.requeued += 1
 
     def _verify_acks(self, report, now) -> None:
         """Complete acknowledgements a parent authored without a host.
@@ -172,37 +239,207 @@ class RelayDaemon:
 
     def _observe(self, report, now) -> None:
         """Detect terminal turns and settle what they decide, without re-reporting old news."""
-        for relationship in self._active_relationships():
-            for turn_id in self._turns_to_poll(relationship):
-                thread = relationship["child"]["taskId"]
+        relationships = self._active_relationships()
+        if not relationships:
+            return
+        budget = self.policy.max_turn_reads_per_tick
+        # How many relationships this tick can serve properly. Serving ALL of them would mean
+        # promising every current anchor a read, which stops being possible the moment the
+        # relationship count passes the budget. Rotating which ones are served keeps the
+        # promise finite instead of impossible.
+        served = max(1, min(len(relationships),
+                            budget // max(1, self.policy.min_relationship_share)))
+        start = self._cursor("relationships", len(relationships))
+        order = [relationships[(start + offset) % len(relationships)]
+                 for offset in range(len(relationships))]
+        share = max(1, budget // served)
+        reads = 0
+        for relationship in order[:served]:
+            thread = relationship["child"]["taskId"]
+            for turn_id in self._turns_to_poll(relationship, share):
+                if reads >= budget:
+                    break
+                reads += 1
                 try:
                     turn = self.adapter.read_turn(thread, turn_id)
                 except Exception as error:
                     report.notes.append(f"turn read failed for {turn_id}: {error}")
+                    self._record_poll(relationship, turn_id, status=None, error=error)
                     continue
+                self._record_poll(
+                    relationship, turn_id,
+                    status=turn.status if turn is not None else "absent",
+                    # An absent turn is not a successful poll. Recording it as one refreshed
+                    # last_polled_at on every tick, and observation_health reads only poll
+                    # freshness and settlement - so an anchor the host says is gone, which can
+                    # never settle, reported healthy forever.
+                    error=None if turn is not None else "the host reports this turn absent",
+                )
                 if turn is None or turn.status not in ("completed", "failed", "interrupted"):
                     continue
                 reference = TurnRef(thread, turn.turn_id, turn.status)
-                if self._already_observed(reference):
+                # Already observed is not already finished. A receipt written just after the
+                # completion was seen still has to be resolved, so the observation alone is
+                # no longer enough to skip the turn.
+                if self._already_observed(
+                    reference, relationship["relationshipId"],
+                ) and not self.intake.staged_events(
+                    thread_id=thread, turn_id=turn_id,
+                    relationship_id=relationship["relationshipId"],
+                ):
                     continue
                 self._settle_turn(relationship, reference, report)
+        # Advanced whether or not anything was read. Advancing only on a read would let a
+        # window of relationships with nothing to do pin the cursor, and every relationship
+        # behind them would wait forever - the same starvation one level up.
+        self._advance_cursor("relationships", served, len(relationships))
 
-    def _turns_to_poll(self, relationship) -> list:
-        """The anchor, plus any turn carrying a staged claim.
+    def _turns_to_poll(self, relationship, share: int) -> list:
+        """The current anchor, plus a rotating slice of everything else worth reading.
 
-        Polling only the anchor would leave a claim staged on a later admitted turn unresolved
-        forever, which is exactly the multi-turn case a loop produces.
+        The old version collected every anchor oldest-first, sliced to the budget, and left
+        _observe to discard the already-observed ones AFTER the slice. Past eight generations
+        that slice was permanently the first eight, all of them already observed, and the
+        current generation was never selected again - which is how a live daemon inside its
+        time bound delivered nothing for JUN-100 generation 11.
+
+        So candidates are filtered BEFORE the budget, the current anchor is reserved, and the
+        rest rotate through a persistent cursor so a backlog larger than the share is covered
+        in a finite number of ticks rather than re-read from the same end every time.
         """
-        turns = []
+        rid = relationship["relationshipId"]
+        thread = relationship["child"]["taskId"]
+        current = None
+        history = []
         for generation in relationship["generations"]:
-            if generation["dispatchTurnId"]:
-                turns.append(generation["dispatchTurnId"])
-        for row in self.intake.staged_events(thread_id=relationship["child"]["taskId"]):
-            if row["turn_id"] not in turns:
-                turns.append(row["turn_id"])
-        return turns[: self.policy.max_reconciles_per_tick]
+            turn_id = generation["dispatchTurnId"]
+            if not turn_id:
+                continue
+            if generation["executionGeneration"] == relationship["executionGeneration"]:
+                current = turn_id
+            else:
+                history.append(turn_id)
+        # Scoped to THIS assignment. A child thread can serve several, and collecting their
+        # staged turns together put a paused assignment's work into an active assignment's
+        # ring and let one assignment settle another's claim.
+        staged = [
+            row["turn_id"]
+            for row in self.intake.staged_events(thread_id=thread, relationship_id=rid)
+        ]
+        ring = [
+            turn_id for turn_id in dict.fromkeys(staged + history)
+            if turn_id != current and self._worth_polling(thread, turn_id, rid)
+        ]
+        selected = []
+        if current and self._worth_polling(thread, current, rid):
+            selected.append(current)
+        remaining = share - len(selected)
+        if remaining <= 0 and ring and self._alternate(rid):
+            # A share of one cannot give the anchor and the ring a read in the same tick, so
+            # it alternates between them. Advancing the ring cursor without reading its
+            # candidate would be skipping work, not scheduling it.
+            selected, remaining = [], 1
+        if remaining > 0 and ring:
+            taken = min(remaining, len(ring))
+            start = self._cursor(f"ring:{rid}", len(ring))
+            selected.extend(ring[(start + offset) % len(ring)] for offset in range(taken))
+            self._advance_cursor(f"ring:{rid}", taken, len(ring))
+        return selected
 
-    def _already_observed(self, reference: TurnRef) -> bool:
+    def _record_poll(self, relationship, turn_id, *, status, error) -> None:
+        """That we LOOKED, which an observations row cannot tell anyone.
+
+        observations records terminal turns only, so a healthy long-running anchor has
+        no entry there at all and would read as stale forever. A failed read updates the
+        attempt time but never the success time: an anchor whose first read failed has
+        never been polled, and saying otherwise is the one lie that matters here.
+        """
+        now = self.clock.iso()
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO poll_observations (relationship_id, execution_generation,"
+                " turn_id, last_status, last_polled_at, last_attempt_at, last_error)"
+                " VALUES (?,?,?,?,?,?,?)"
+                " ON CONFLICT(relationship_id, execution_generation, turn_id) DO UPDATE"
+                "   SET last_status = excluded.last_status,"
+                "       last_polled_at = COALESCE(excluded.last_polled_at,"
+                "                                 poll_observations.last_polled_at),"
+                "       last_attempt_at = excluded.last_attempt_at,"
+                "       last_error = excluded.last_error",
+                (relationship["relationshipId"], relationship["executionGeneration"],
+                 turn_id, status, None if error else now, now,
+                 None if error is None else f"{type(error).__name__}: {error}"),
+            )
+
+    def _worth_polling(self, thread, turn_id, relationship_id=None) -> bool:
+        """Is there anything left to learn from this turn, for THIS assignment?
+
+        Scoped for the same reason _already_observed is: two assignments can share a child
+        turn, and asking globally meant one assignment's observation made the turn look
+        finished to the other, which then never settled it at all.
+        """
+        if self.intake.staged_events(
+            thread_id=thread, turn_id=turn_id, relationship_id=relationship_id,
+        ):
+            return True
+        if relationship_id is not None:
+            return self.store.one(
+                "SELECT 1 FROM assignment_settlements WHERE thread_id = ? AND turn_id = ?"
+                "   AND relationship_id = ?",
+                (thread, turn_id, relationship_id),
+            ) is None
+        return self.store.one(
+            "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?",
+            (thread, turn_id),
+        ) is None
+
+    def _cursor(self, listing: str, size: int) -> int:
+        if size <= 0:
+            return 0
+        row = self.store.one(
+            "SELECT cursor FROM discovery_cursors WHERE task_id = 'scheduler' AND listing = ?",
+            (listing,),
+        )
+        try:
+            return int(row["cursor"]) % size if row and row["cursor"] is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _advance_cursor(self, listing: str, by: int, size: int) -> None:
+        """Persisted, so a restart resumes the rotation instead of starting from one end."""
+        if size <= 0:
+            return
+        position = (self._cursor(listing, size) + max(1, by)) % size
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at)"
+                " VALUES ('scheduler',?,?,?)"
+                " ON CONFLICT(task_id, listing) DO UPDATE SET cursor = excluded.cursor,"
+                " updated_at = excluded.updated_at",
+                (listing, str(position), self.clock.iso()),
+            )
+
+    def _alternate(self, rid: str) -> bool:
+        """Toggle whose turn it is when the share is one."""
+        listing = f"alt:{rid}"
+        turn = self._cursor(listing, 2)
+        self._advance_cursor(listing, 1, 2)
+        return turn == 1
+
+    def _already_observed(self, reference: TurnRef, relationship_id=None) -> bool:
+        """Per assignment, because two assignments can legitimately share a child turn.
+
+        Asking globally meant the first assignment's settlement closed the turn for every
+        other one: the second never reached _synthesize, so a failed shared turn left its
+        other parents with no terminal outcome at all.
+        """
+        if relationship_id is not None:
+            return self.store.one(
+                "SELECT 1 FROM assignment_settlements WHERE thread_id = ? AND turn_id = ?"
+                " AND terminal_status = ? AND relationship_id = ?",
+                (reference.thread_id, reference.turn_id, reference.turn_status,
+                 relationship_id),
+            ) is not None
         return self.store.one(
             "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?"
             " AND terminal_status = ?",
@@ -210,38 +447,161 @@ class RelayDaemon:
         ) is not None
 
     def _settle_turn(self, relationship, reference, report) -> None:
-        resolved = self.intake.resolve_staged(reference)
+        """Finalize, record and queue as ONE commit, with a rule for each kind of failure.
+
+        Recording the observation first and queuing after is what lost events: a refusal at
+        the queue left a final event with no delivery row, and the next tick skipped the turn
+        because it had already been observed.
+
+        A DURABLE refusal - a paused relationship, an unauthorized recipient - is a legitimate
+        answer, so the observation stands and _requeue_missing picks the event up once the
+        refusal no longer applies. Anything else is transient and nothing is known, so the
+        whole transaction rolls back and the next tick re-observes cleanly.
+        """
         outcome = classify_observation(reference.turn_status, None)
-        event_id = None
-        synthesized = None
-        if reference.turn_status in ("failed", "interrupted") and not resolved["finalized"]:
-            try:
-                receipt = self.intake.daemon_observation(
-                    relationship["relationshipId"], reference
-                )
-                event_id = receipt["eventId"]
-                synthesized = event_id
-            except Exception as error:
-                report.notes.append(f"daemon observation refused: {error}")
-        self.intake.record_observation(
-            reference, outcome, relationship_id=relationship["relationshipId"], event=event_id
-        )
-        # Storing an execution-only receipt is not telling anyone. A parent that is waiting for
-        # a verdict has to learn that the child failed, so a synthesized observation is queued
-        # like any other event; persistence and notification are separate outcomes and are
-        # reported separately.
-        for queueable in list(resolved["finalized"]) + ([synthesized] if synthesized else []):
-            try:
-                self.delivery.enqueue(queueable)
-            except Exception as error:
-                report.notes.append(f"enqueue refused for {queueable}: {error}")
+        synthesized, failed = self._synthesize(relationship, reference, report)
+        if failed:
+            # Recording the observation now would bury the failure: the turn would never look
+            # new again, the staged claim would be suppressed, and nothing would be left for
+            # recovery to find. Leave the turn untouched and try again next tick.
+            return
+        try:
+            self._commit_settlement(relationship, reference, outcome, synthesized, queue=True)
+        except (DeliveryRefused, ScopeError, RegistrationError) as refusal:
+            report.notes.append(f"enqueue refused for {reference.turn_id}: {refusal}")
+            self._last_refusal = refusal
+            self._commit_settlement(
+                relationship, reference, outcome, synthesized, queue=False,
+            )
+        except Exception as error:  # noqa: BLE001 - transient: keep nothing, retry next tick
+            report.notes.append(f"settlement rolled back for {reference.turn_id}: {error}")
+            return
         report.observed += 1
+
+    def _synthesize(self, relationship, reference, report):
+        """An execution-only receipt for a turn that failed with no claim of its own.
+
+        Written before the settlement transaction because it is a durable fact in its own
+        right and opens its own writes. If queuing it then fails, _requeue_missing finds it,
+        which is why storing it separately does not lose it.
+        """
+        if reference.turn_status not in ("failed", "interrupted"):
+            return None, False
+        # A staged claim on this turn is no reason to skip: a failed or interrupted ending
+        # SUPPRESSES that claim rather than finalizing it, so without a synthesized receipt
+        # the parent is left waiting on a verdict that can never arrive.
+        try:
+            return self.intake.daemon_observation(
+                relationship["relationshipId"], reference,
+            )["eventId"], False
+        except RelayError as refusal:
+            if refusal.reason == RefusalReason.RELATIONSHIP_NOT_ACTIVE:
+                # NOT a decision about this turn. The scheduler selected an active assignment
+                # and the relationship paused while the host read was in flight, so the pause
+                # says nothing about what the turn did. Recording a settlement here would
+                # retire the turn - _worth_polling drops it - while the only carrier of the
+                # outcome, this synthesized receipt, was never written. A resume would then
+                # find nothing left to observe and the parent would wait forever. So this is
+                # transient like any other: keep nothing and look again once it is active.
+                report.notes.append(
+                    f"observation deferred, {relationship['relationshipId']} is not active:"
+                    f" {refusal}"
+                )
+                return None, True
+            # Any other refusal IS a decision - this daemon may not assert anything about that
+            # turn - so settlement proceeds and records what it did observe.
+            report.notes.append(f"daemon observation refused: {refusal}")
+            return None, False
+        except Exception as error:  # noqa: BLE001 - transient: nothing is known yet
+            report.notes.append(f"daemon observation failed: {error}")
+            return None, True
+
+    def _commit_settlement(self, relationship, reference, outcome, synthesized, *, queue):
+        with self.store.transaction() as db:
+            # This assignment's claims only. Settling every claim on a shared child's turn
+            # suppressed the other assignments' events without synthesizing their receipts.
+            resolved = self.intake.resolve_staged_in(
+                db, reference, relationship["relationshipId"],
+            )
+            self.intake.record_observation_in(
+                db, reference, outcome, relationship_id=relationship["relationshipId"],
+                event=synthesized,
+            )
+            queueable = list(resolved["finalized"])
+            if synthesized:
+                queueable.append(synthesized)
+            for event_id in queueable:
+                # Ownership comes from the EVENT, never from the relationship we happened to
+                # be polling. Staged claims are selected by thread and turn, and two
+                # assignments can share a child, so assuming the polled relationship would
+                # queue B's event to A's parent.
+                owner = self.intake.row(event_id)["relationship_id"]
+                # This event has just become final, so anything of its generation that was
+                # already in flight is no longer what the generation stands on. Done in the
+                # same transaction that finalized it, so the two facts cannot disagree.
+                self.delivery.annotate_predecessors_in(db, event_id)
+                if not queue:
+                    # Delivery WAS wanted here. Recording that is what lets recovery retry
+                    # this event and only this event, instead of guessing from the absence
+                    # of a delivery row.
+                    self.delivery.record_intent_in(
+                        db, event_id, relationship_id=owner, kind=COMPLETION,
+                        recipient_task_id=self.registry.get(owner)["parent"]["taskId"],
+                        error=self._last_refusal, now=self.clock.now(),
+                    )
+                    continue
+                # enqueue_in does not validate and enqueue does, so the authorization the old
+                # path got for free has to be asked for here, inside the same transaction.
+                record = self.registry.require_active(owner)
+                recipient = record["parent"]["taskId"]
+                assert_assignment_delivery(
+                    record, kind=COMPLETION, recipient_task_id=recipient,
+                    event_relationship_id=owner,
+                )
+                # Storing a receipt is not telling anyone. A parent waiting for a verdict has
+                # to learn that the child failed, so a synthesized observation is queued like
+                # any other event.
+                self.delivery.enqueue_in(
+                    db, event_id, relationship_id=owner, kind=COMPLETION,
+                    recipient_task_id=recipient,
+                )
 
     # ------------------------------------------------------------- reconcile
 
     def _reconcile(self, report, now) -> None:
         budget = self.policy.max_reconciles_per_tick
-        for attempt in self.reconciler.open_attempts()[:budget]:
+        parents = self.reconciler.open_parents()
+        if not parents:
+            return
+        # Same starvation, one layer over. Slicing a global prefix meant one parent's
+        # unchanged attempts occupied every reconciliation slot - and a gate skip still
+        # consumed its place - so another parent's revision never reached dispatched and its
+        # anchor never bound.
+        cursor = self._cursor("reconcile_parents", len(parents))
+        order = parents[cursor:] + parents[:cursor]
+        self._advance_cursor("reconcile_parents", 1, len(parents))
+        share = max(1, budget // len(order))
+        queues = [list(self._attempts_for(parent, share)) for parent in order]
+        dealt = []
+        while len(dealt) < budget and any(queues):
+            for queue in queues:
+                if len(dealt) >= budget:
+                    break
+                if queue:
+                    dealt.append(queue.pop(0))
+        # Advanced by what was actually DEALT, never by what was merely selected. Advancing
+        # inside the selection moved a parent's cursor past attempts this tick then dropped
+        # on the budget, and with more parents than budget the parent rotation and the
+        # attempt cursors stepped over the same attempts together - permanently, which is
+        # the starvation the per-parent cursor was added to remove.
+        for parent in order:
+            taken = sum(1 for row in dealt if row["parent_task_id"] == parent)
+            if taken:
+                self._advance_cursor(
+                    f"reconcile:{parent}", taken,
+                    self.reconciler.open_attempt_count(parent),
+                )
+        for attempt in dealt:
             request_id = attempt["request_id"]
             decision, fingerprint = self._gate(attempt)
             if not decision:
@@ -259,6 +619,34 @@ class RelayDaemon:
                 error=None if complete else "reads incomplete",
             )
             report.reconciled += 1
+
+    def _attempts_for(self, parent, share) -> list:
+        """One parent's slice, taken from a rotating position rather than the head.
+
+        The parent order already has a cursor; the attempts inside a parent did not. A
+        parent with more unresolved attempts than its share re-read the same leading ones
+        every tick, and because _gate skips an attempt whose fingerprint is unchanged while
+        it still holds its place, the ones behind them were never reconciled at all - so a
+        later revision could sit unresolved and its anchor never bind.
+        """
+        total = self.reconciler.open_attempt_count(parent)
+        if not total:
+            return []
+        want = min(share, total)
+        start = self._cursor(f"reconcile:{parent}", total)
+        taken = list(self.reconciler.open_attempts(
+            limit=want, parents=[parent], offset=start,
+        ))
+        if len(taken) < want:
+            # Wrapped past the end, so the remainder comes from the front. Without this a
+            # cursor near the end would return a short slice and waste the budget.
+            seen = {row["request_id"] for row in taken}
+            for row in self.reconciler.open_attempts(limit=want, parents=[parent]):
+                if len(taken) >= want:
+                    break
+                if row["request_id"] not in seen:
+                    taken.append(row)
+        return taken
 
     @staticmethod
     def _reads_were_complete(outcome) -> bool:
@@ -313,22 +701,74 @@ class RelayDaemon:
     # ---------------------------------------------------------------- deliver
 
     def _deliver(self, report, now) -> None:
-        eligible = self.delivery.eligible(now=now, limit=self.policy.max_sends_per_tick)
+        parents = self.delivery.eligible_parents(now=now)
+        if not parents:
+            return
+        cursor = self._cursor("delivery_parents", len(parents))
+        # Where each parent's own window STARTS. The parent rotation decides who goes first;
+        # without this the window inside a parent was always its oldest rows, so a delivery
+        # that raises before changing its own state - and therefore stays eligible and stays
+        # oldest - blocked every later delivery for that parent on every subsequent tick.
+        totals = {parent: self.delivery.eligible_count(parent, now=now) for parent in parents}
+        offsets = {
+            parent: self._cursor(f"deliver:{parent}", totals[parent])
+            for parent in parents if totals[parent]
+        }
+        eligible = self.delivery.eligible(
+            now=now, limit=self.policy.max_sends_per_tick, cursor=cursor, offsets=offsets,
+        )
+        # Moved on by ONE position after every window, whatever the outcomes were. Every
+        # eligible parent is dealt from, so the rotation is not about who is included - it
+        # decides who goes FIRST, and therefore who gets the odd slot when the budget does
+        # not divide evenly. Advancing by the parent count would wrap to the same head and
+        # hand that slot to the same parent forever.
+        self._advance_cursor("delivery_parents", 1, len(parents))
+        struggling = set()
+        attempted = {}
         for row in eligible:
+            parent = row["parent_task_id"]
+            if parent in struggling:
+                # Skipped for the REST OF THIS TICK only. It reserves no capacity, opens no
+                # attempt and creates no hold, so the next tick reconsiders this parent
+                # normally; it simply cannot spend the whole budget failing.
+                report.skipped += 1
+                continue
+            attempted[parent] = attempted.get(parent, 0) + 1
             try:
                 record = self.delivery.attempt(row["event_id"], self.adapter, now=now)
             except Exception as error:
                 report.notes.append(f"delivery refused for {row['event_id']}: {error}")
+                struggling.add(parent)
                 continue
             if record is None:
+                # A busy parent or a withheld send is a returned outcome, not an exception,
+                # and it is exactly the case that used to consume a whole tick.
+                struggling.add(parent)
                 report.deferred += 1
                 continue
-            report.delivered += 1
+            if record["deliveryState"] in (HELD_UNCERTAIN, DEFERRED_BUSY, WITHHELD_PRE_SEND):
+                struggling.add(parent)
+            if record.get("sendAttempted") == "no":
+                # Suppressed before any transport call. Counting it as delivered reports a
+                # delivery that never reached the recipient, which is the opposite of what
+                # this counter is read for.
+                report.skipped += 1
+            else:
+                report.delivered += 1
             if row["kind"] != COMPLETION and record["deliveryState"] == DISPATCHED:
                 try:
                     self.ack.bind_dispatched_revision(row["event_id"])
                 except Exception as error:
                     report.notes.append(f"anchor binding failed: {error}")
+
+        # Advanced by what was ATTEMPTED, never by what was selected. A row the budget
+        # dropped, or one skipped because its parent was already struggling, was never looked
+        # at - moving the cursor past it is how the reconcile path previously skipped work
+        # permanently. Wrapping on the count taken before the tick keeps the window inside a
+        # parent moving without ever stepping over an unread row.
+        for parent, taken in attempted.items():
+            if taken and totals.get(parent):
+                self._advance_cursor(f"deliver:{parent}", taken, totals[parent])
 
     # ----------------------------------------------------------------- state
 

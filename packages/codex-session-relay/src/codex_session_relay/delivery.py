@@ -11,6 +11,9 @@ side effect.
 import json
 
 from .errors import DeliveryRefused, RefusalReason
+from .currency import (
+    STALE_GENERATION, SUPERSEDED as SUPERSEDED_REVISION, head_revision,
+)
 from .identity import request_id as derive_request_id
 from .lifecycle import UNKNOWN as LIFECYCLE_UNKNOWN, hold_reason_for, observe, record as record_lifecycle
 from .policy import RetryPolicy
@@ -32,6 +35,12 @@ from .report import read as read_work_report, render_completion, render_revision
 
 COMPLETION = "completion_event"
 REVISION = "revision_request"
+# What a CHILD reports when a generation ended without something to review. These are facts
+# about how the execution finished, not candidates for the generation's revision head, so the
+# same-generation head rule does not apply to them. Deliberately a list of outcomes rather
+# than "everything that is not reviewable": a revision_request is not reviewable either, and
+# it IS answered by the child's reply.
+EXECUTION_ONLY_OUTCOMES = ("failed", "interrupted", "blocked_needs_input")
 CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
 SENDING = "sending"
 MANIFEST_LINES = 10
@@ -110,6 +119,74 @@ class DeliveryService:
             ),
         )
         self.store.journal("delivery_queued", event_id, {"kind": kind}, at=now)
+        # Every route by which an event becomes deliverable passes through here, including a
+        # receipt the host already reports as terminal, which never touches the settlement
+        # path. So this is where a newly deliverable event announces what it replaces.
+        self.annotate_predecessors_in(db, event_id)
+
+    def record_intent_in(self, db, event_id, *, relationship_id, kind, recipient_task_id,
+                         error, now) -> None:
+        """Remember that delivery was wanted here and refused for a reason that may not last.
+
+        Written in the SAME transaction as the observation that produced the event, so the two
+        facts cannot disagree. Deriving this instead - final event, no delivery row - would
+        also match an event emitted with --no-enqueue and one stranded by an old generation,
+        neither of which anyone asked to send.
+
+        Each refusal backs the retry off, so a permanently unqueueable event cannot hold a
+        recovery slot against events that would succeed.
+        """
+        row = db.execute(
+            "SELECT attempts FROM delivery_intent WHERE event_id = ?", (event_id,),
+        ).fetchone()
+        attempts = (row["attempts"] if row else 0) + 1
+        delay = self._backoff(attempts)
+        db.execute(
+            "INSERT INTO delivery_intent (event_id, relationship_id, kind, recipient_task_id,"
+            " attempts, next_retry_at, last_error, noted_at) VALUES (?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(event_id) DO UPDATE SET attempts = excluded.attempts,"
+            " next_retry_at = excluded.next_retry_at, last_error = excluded.last_error",
+            (event_id, relationship_id, kind, recipient_task_id, attempts, now + delay,
+             str(error), self.clock.iso()),
+        )
+
+    def _backoff(self, attempts: int) -> float:
+        """Bounded before the exponent is evaluated, not after.
+
+        An intent that stays legitimately unqueueable - a relationship that stays paused -
+        has no cap on its attempt count. Computing base * 2 ** (attempts - 1) and then
+        clamping means the 1025th refusal builds an integer too large to convert to a float,
+        and the OverflowError escapes the refusal handler that was meant to absorb it. The
+        transaction rolls back with the intent still due, so every later tick fails the same
+        way. Once the ceiling is reached the exponent stops mattering, so stop there.
+        """
+        base, ceiling = self.policy.presend_base_seconds, self.policy.presend_max_seconds
+        if base <= 0:
+            return ceiling
+        steps = max(0, attempts - 1)
+        # Derived from this policy's own ratio, not a fixed step count: a small base needs
+        # more doublings to reach its ceiling, and a constant would send such a policy
+        # straight to the cap while its backoff still had room.
+        import math
+
+        if ceiling <= base or steps >= math.ceil(math.log2(ceiling / base)):
+            return ceiling
+        return min(ceiling, base * (2 ** steps))
+
+    def pending_intents(self, *, now: float, limit: int = 4) -> list:
+        """Events whose delivery was wanted, refused, and is due to be tried again."""
+        return self.store.all(
+            "SELECT i.* FROM delivery_intent i"
+            "  LEFT JOIN deliveries d ON d.event_id = i.event_id"
+            " WHERE d.event_id IS NULL"
+            "   AND (i.next_retry_at IS NULL OR i.next_retry_at <= ?)"
+            " ORDER BY i.next_retry_at LIMIT ?",
+            (now, limit),
+        )
+
+    def clear_intent(self, event_id: str) -> None:
+        with self.store.transaction() as db:
+            db.execute("DELETE FROM delivery_intent WHERE event_id = ?", (event_id,))
 
     def _render_for(self, row, record, request, report=None) -> str:
         """Deterministic, directional, and carrying no turn id belonging to the recipient.
@@ -244,17 +321,97 @@ class DeliveryService:
         ]
         return NEWLINE.join(lines)
 
-    def eligible(self, *, now: float, limit: int = 10) -> list:
-        return self.store.all(
-            "SELECT d.* FROM deliveries d"
+    ELIGIBLE_WHERE = (
+        " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL"
+        "   AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ?)"
+        "   AND r.status = 'active' AND r.superseded_by IS NULL AND e.stage = 'final'"
+    )
+
+    def eligible_parents(self, *, now: float) -> list:
+        """Who has anything to send, decided independently of how much each of them has.
+
+        This is the half that removes starvation. A single ORDER BY created_at LIMIT is a
+        global prefix: a parent with forty thousand older rows fills it by itself and a parent
+        with one newer row is never seen. Asking which PARENTS are eligible cannot be crowded
+        out by row counts.
+        """
+        rows = self.store.all(
+            "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM deliveries d"
             " JOIN relationships r ON r.relationship_id = d.relationship_id"
             " JOIN events e ON e.event_id = d.event_id"
-            " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL"
-            "   AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ?)"
-            "   AND r.status = 'active' AND r.superseded_by IS NULL AND e.stage = 'final'"
-            " ORDER BY d.created_at LIMIT ?",
-            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, limit),
+            + self.ELIGIBLE_WHERE +
+            " ORDER BY r.parent_task_id",
+            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now),
         )
+        return [row["parent_task_id"] for row in rows]
+
+    def eligible_for_parent(self, parent: str, *, now: float, limit: int, offset: int = 0):
+        return self.store.all(
+            "SELECT d.*, r.parent_task_id AS parent_task_id FROM deliveries d"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            " JOIN events e ON e.event_id = d.event_id"
+            + self.ELIGIBLE_WHERE +
+            "   AND r.parent_task_id = ?"
+            " ORDER BY d.created_at LIMIT ? OFFSET ?",
+            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, parent, limit, offset),
+        )
+
+    def eligible_count(self, parent: str, *, now: float) -> int:
+        """How many eligible deliveries one parent has, so a cursor over them can wrap."""
+        row = self.store.one(
+            "SELECT COUNT(*) AS c FROM deliveries d"
+            " JOIN relationships r ON r.relationship_id = d.relationship_id"
+            " JOIN events e ON e.event_id = d.event_id"
+            + self.ELIGIBLE_WHERE +
+            "   AND r.parent_task_id = ?",
+            (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now, parent),
+        )
+        return row["c"] if row else 0
+
+    def eligible(self, *, now: float, limit: int = 10, per_parent_limit=None, cursor: int = 0,
+                 offsets=None) -> list:
+        """A fair slice: every eligible parent, then a bounded share each, dealt one at a time.
+
+        Dealt singly rather than in contiguous blocks, because a block allocation leaves the
+        last parent short whenever the budget is not a multiple of the share.
+        """
+        parents = self.eligible_parents(now=now)
+        if not parents:
+            return []
+        share = per_parent_limit or self.policy.max_sends_per_parent_per_tick
+        start = cursor % len(parents)
+        order = parents[start:] + parents[:start]
+        queues = {
+            parent: self._window_for(
+                parent, now=now, share=share, offset=(offsets or {}).get(parent, 0),
+            )
+            for parent in order
+        }
+        selected = []
+        while len(selected) < limit and any(queues[parent] for parent in order):
+            for parent in order:
+                if len(selected) >= limit:
+                    break
+                if queues[parent]:
+                    selected.append(queues[parent].pop(0))
+        return selected
+
+    def _window_for(self, parent, *, now, share, offset):
+        """One parent's share, taken from a rotating position and wrapped at the end.
+
+        Without the wrap a cursor near the end of a parent's backlog returns a short window -
+        five rows at offset four yields one - so the rotation that exists to stop starvation
+        would quietly cost throughput every time it came round.
+        """
+        taken = list(self.eligible_for_parent(parent, now=now, limit=share, offset=offset))
+        if len(taken) < share and offset:
+            seen = {row["event_id"] for row in taken}
+            for row in self.eligible_for_parent(parent, now=now, limit=share, offset=0):
+                if len(taken) >= share:
+                    break
+                if row["event_id"] not in seen:
+                    taken.append(row)
+        return taken
 
     # ---------------------------------------------------------------- claim
 
@@ -272,7 +429,21 @@ class DeliveryService:
         reconciliation searches the recipient for the token the message actually carried.
         Allocation, token and bytes now commit together or not at all.
         """
+        # Decided and recorded BEFORE the claim, in its own committed transaction: a
+        # suppression written inside the claim would be rolled back by the refusal that
+        # follows it. The claim below then refuses a stale generation atomically anyway,
+        # so the gap between the two cannot let one through.
+        superseded = self._suppress_if_superseded(event_id)
+        if superseded:
+            raise _Superseded(superseded)
         with self.store.transaction() as db:
+            # Re-read inside the write. The generation predicate below catches an
+            # advanced generation, but a newer FINAL revision of the SAME generation
+            # can be committed between the check above and this statement, and that
+            # would claim and send an event something had already replaced.
+            late = self._supersession_reason(db, event_id)
+            if late:
+                raise _LateSupersession(late)
             cursor = db.execute(
                 "UPDATE deliveries"
                 "   SET state = ?, lease_owner = ?, lease_until = ?,"
@@ -285,7 +456,15 @@ class DeliveryService:
                 "                WHERE r.relationship_id = deliveries.relationship_id"
                 "                  AND r.status = 'active' AND r.superseded_by IS NULL)"
                 "   AND EXISTS (SELECT 1 FROM events e"
-                "                WHERE e.event_id = deliveries.event_id AND e.stage = 'final')",
+                "                WHERE e.event_id = deliveries.event_id AND e.stage = 'final')"
+                # A generation that has moved on cannot be claimed at all. Checked here
+                # rather than only before, because the generation can advance while the
+                # host reads are in flight.
+                "   AND NOT EXISTS (SELECT 1 FROM events ev"
+                "                    JOIN relationships rr"
+                "                      ON rr.relationship_id = ev.relationship_id"
+                "                   WHERE ev.event_id = deliveries.event_id"
+                "                     AND ev.execution_generation < rr.execution_generation)",
                 (
                     SENDING, owner, now + self.policy.lease_seconds, self.clock.iso(),
                     event_id, QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, now,
@@ -362,7 +541,9 @@ class DeliveryService:
         assert_assignment_delivery(
             relationship, kind=row["kind"], recipient_task_id=recipient,
             recipient_thread_id=row["recipient_thread_id"],
-            event_relationship_id=row["relationship_id"],
+            # From the EVENT, not the delivery row. Comparing the delivery row against itself
+            # is a tautology and would pass a row pointed at another assignment.
+            event_relationship_id=(self.intake.row(event_id) or {})["relationship_id"],
             manifest_paths=_manifest_paths(self.intake.row(event_id)),
         )
         if self._rate_limited(recipient, now):
@@ -394,7 +575,8 @@ class DeliveryService:
         try:
             settings = self._settings_for(recipient)
         except DeliveryRefused as refusal:
-            self._withhold_settings(event_id, now, refusal, attempts=row["attempt_count"])
+            self._withhold_settings(event_id, now, refusal, attempts=row["attempt_count"],
+                                    row=row)
             return None
 
         known_turns = set(adapter.list_turn_ids(row["recipient_thread_id"], limit=25))
@@ -404,6 +586,17 @@ class DeliveryService:
             )
         except _NotClaimable:
             return None
+        except _LateSupersession as late:
+            # The transaction rolled back, so nothing is recorded yet. Record it now,
+            # through the same path the pre-claim check uses, and report it identically.
+            self._suppress_if_superseded(event_id)
+            return {"deliveryState": SUPERSEDED, "supersededReason": late.reason,
+                    "eventId": event_id, "sendAttempted": "no"}
+        except _Superseded as superseded:
+            # No transport call at all: suppression writes state and journals and nothing
+            # else, so a stale event cannot wake the parent or open a generation.
+            return {"deliveryState": SUPERSEDED, "supersededReason": superseded.reason,
+                    "eventId": event_id, "sendAttempted": "no"}
 
         try:
             receipt = adapter.send_message(
@@ -416,6 +609,23 @@ class DeliveryService:
                 "error": f"{type(error).__name__}: {error}",
             }
         facts = classify_operation_receipt(receipt)
+        # Read from the RAW receipt: the host reports a settings rejection as a failed
+        # receipt carrying settingsFindings, and classification keeps only the code. By the
+        # time _settle sees it the field-level difference is already gone.
+        findings = receipt.get("settingsFindings") if isinstance(receipt, dict) else None
+        if facts.failed_operation or facts.delivery_state in (
+            WITHHELD_PRE_SEND, INBOX_ONLY, HELD_UNCERTAIN,
+        ):
+            self.record_failure(
+                event_id,
+                "settings_check" if findings else (facts.failed_operation or "transport"),
+                detail=facts.error_text or facts.delivery_state,
+                relationship_id=row["relationship_id"],
+                parent_task_id=relationship["parent"]["taskId"],
+                error_code=facts.rpc_error_code,
+                difference=_render_findings(findings),
+                retry_safe=facts.retry_safe,
+            )
         # Membership in the pre-send snapshot proves this start steered a turn we had already
         # seen. Absence proves nothing: another client can open a turn after the snapshot, and
         # our start can then steer THAT one. So an unmatched id is 'not previously observed',
@@ -453,7 +663,8 @@ class DeliveryService:
         settings.require_usable()
         return settings
 
-    def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int) -> None:
+    def _withhold_settings(self, event_id: str, now: float, refusal, *, attempts: int,
+                           row=None) -> None:
         """Withheld before any transport call, naming what is missing.
 
         Not a permanent hold: settings that were never recorded can be recorded, and the next
@@ -475,6 +686,17 @@ class DeliveryService:
                  "detail": refusal.detail},
                 at=self.clock.iso(),
             )
+        # Outside the transaction above, and recorded because there is no attempt to read it
+        # from. Every other cause reaches an operator through the attempt record; this one
+        # refused before one existed, so status reported the generic awaiting_receipt and
+        # said nothing about the settings that are actually missing.
+        self.record_failure(
+            event_id, "settings_check",
+            detail=refusal.detail,
+            relationship_id=row["relationship_id"] if row is not None else None,
+            error_code=refusal.reason.value if refusal.reason else "settings_unavailable",
+            retry_safe=True, next_retry_at=when,
+        )
 
     def record_settings_violation(self, request_id: str, event_id: str, findings) -> dict:
         """Annotate a dispatch that already reached a turn. It stays a dispatch.
@@ -549,6 +771,11 @@ class DeliveryService:
         hold = None
         if attempts >= self.policy.busy_max_attempts:
             hold = self.policy.cap_reason("busy")
+        self.record_failure(
+            event_id, "parent_busy", detail="the recipient is mid-turn and is never interrupted",
+            relationship_id=row["relationship_id"],
+            next_retry_at=now + self.policy.delay_for(attempts + 1, "busy"),
+        )
         with self.store.transaction() as db:
             db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?,"
@@ -568,6 +795,11 @@ class DeliveryService:
         # into a delivery that never happens. The reason is recorded in recipient_lifecycle
         # and the journal, and the next observation decides again.
         when = now + self.policy.lifecycle_recheck_seconds
+        self.record_failure(
+            event_id, "lifecycle_read",
+            detail=observation.detail or observation.withhold_reason or "not deliverable",
+            error_code=observation.withhold_reason, next_retry_at=when,
+        )
         with self.store.transaction() as db:
             db.execute(
                 "UPDATE deliveries SET state = ?, next_eligible_at = ?, updated_at = ?"
@@ -626,17 +858,353 @@ class DeliveryService:
             )
 
     def mark_superseded(self, event_id: str, *, reason: str = SUPERSEDED_HOLD) -> None:
-        row = self.find(event_id)
-        if row is None or row["state"] in (DISPATCHED, "acknowledged"):
-            # A delivery the recipient may already be acting on is never withdrawn.
-            return
+        """Withdraw a delivery the recipient cannot already be acting on.
+
+        The guard is part of the UPDATE rather than a preflight read: a concurrent dispatch
+        between the check and the write would otherwise be overwritten.
+        """
+        with self.store.transaction() as db:
+            cursor = db.execute(
+                "UPDATE deliveries SET state = ?, hold_reason = ?, updated_at = ?"
+                "  WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL",
+                (SUPERSEDED, reason, self.clock.iso(), event_id,
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND),
+            )
+            if cursor.rowcount == 1:
+                self.store.journal(
+                    "delivery_superseded", event_id, {"reason": reason}, at=self.clock.iso(),
+                )
+            else:
+                self._annotate_supersession_in(db, event_id, reason)
+
+    def _suppress_if_superseded(self, event_id: str):
+        """Record that this delivery is no longer current, and say so. Commits.
+
+        An outstanding send is annotated rather than rewritten: reconciliation refuses to
+        promote a terminal superseded aggregate, so rewriting one would make a lost
+        response permanently unresolvable.
+        """
+        with self.store.transaction() as db:
+            reason = self._supersession_reason(db, event_id)
+            if not reason:
+                return None
+            cursor = db.execute(
+                "UPDATE deliveries SET state = ?, hold_reason = ?, updated_at = ?"
+                "  WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL",
+                (SUPERSEDED, reason, self.clock.iso(), event_id,
+                 QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND),
+            )
+            if cursor.rowcount == 1:
+                self.store.journal(
+                    "delivery_superseded", event_id, {"reason": reason},
+                    at=self.clock.iso(),
+                )
+            else:
+                self._annotate_supersession_in(db, event_id, reason)
+            return reason
+
+
+    def _last_failure(self, event_id):
+        rows = self.failures_for(event_id)
+        return rows[0] if rows else None
+
+    def _supersession_note(self, event_id):
+        row = self.store.one(
+            "SELECT reason, noted_at FROM delivery_supersession WHERE event_id = ?",
+            (event_id,),
+        )
+        return dict(row) if row else None
+
+    def observation_health(self, *, now=None, stale_after=900.0, relationship_id=None) -> dict:
+        """Whether the loop is actually looking, which a live process does not answer.
+
+        The JUN-100 and JUN-101 incident had a live pid, inside its time bound, polling
+        nothing useful and delivering nothing. Liveness is reported separately and is
+        never counted here.
+        """
+        from datetime import datetime
+
+        def age(stamp):
+            if not stamp:
+                return None
+            try:
+                seen = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+            return max(0.0, (now or self.clock.now()) - seen.timestamp())
+
+        staged = [
+            {"eventId": row["event_id"], "turnId": row["turn_id"],
+             "ageSeconds": age(row["staged_at"] or row["first_seen_at"])}
+            for row in self.store.all(
+                # Joined through relationships with the same active predicate the anchors
+                # use. A paused, cancelled or superseded assignment is no longer settled by
+                # the scheduler, so its staged event would age forever and hold the whole
+                # health block at degraded while every active assignment was fine.
+                "SELECT e.event_id, e.turn_id, e.staged_at, e.first_seen_at FROM events e"
+                "  JOIN relationships r ON r.relationship_id = e.relationship_id"
+                " WHERE e.stage = 'staged'"
+                "   AND r.status = 'active' AND r.superseded_by IS NULL"
+                + (" AND e.relationship_id = ?" if relationship_id else "")
+                + " ORDER BY e.first_seen_at",
+                (relationship_id,) if relationship_id else (),
+            )
+        ]
+        anchors, backlog = {}, {}
+        # Built from the ACTIVE current generations and left-joined to their polls, not from
+        # poll_observations. Starting from the poll table omits an anchor that has never been
+        # read at all - which is exactly the relationship a rotating scheduler has not reached
+        # yet - so the aggregate could report healthy while some current anchor was untouched.
+        for row in self.store.all(
+            "SELECT g.relationship_id, g.dispatch_turn_id, p.last_polled_at, p.last_error"
+            "     , r.child_task_id"
+            "     , (SELECT COUNT(*) FROM assignment_settlements o"
+            "         WHERE o.thread_id = r.child_task_id"
+            "           AND o.turn_id = g.dispatch_turn_id"
+            # Per assignment, like the scheduler's own check. Two assignments can share a
+            # child turn, and asking globally let one assignment's observation mark the
+            # other settled - excluding an assignment whose own settlement was still
+            # outstanding from the very freshness check that would have shown it.
+            # assignment_settlements is the per-assignment fact; observations is keyed by
+            # the turn alone and can only ever name whoever settled it first.
+            "           AND o.relationship_id = r.relationship_id) AS observed"
+            "     , (SELECT COUNT(*) FROM events e"
+            "         WHERE e.turn_thread_id = r.child_task_id"
+            "           AND e.turn_id = g.dispatch_turn_id"
+            # Per assignment, like the observation beside it. A staged claim belonging to
+            # another assignment on a shared child turn is not this one's outstanding work,
+            # and counting it unsettled a settled assignment into a false stall.
+            "           AND e.relationship_id = r.relationship_id"
+            "           AND e.stage = 'staged') AS staged_here"
+            "  FROM relationships r"
+            "  JOIN generations g ON g.relationship_id = r.relationship_id"
+            "   AND g.execution_generation = r.execution_generation"
+            "  LEFT JOIN poll_observations p"
+            "    ON p.relationship_id = g.relationship_id"
+            "   AND p.execution_generation = g.execution_generation"
+            "   AND p.turn_id = g.dispatch_turn_id"
+            " WHERE r.status = 'active' AND r.superseded_by IS NULL"
+            + (" AND r.relationship_id = ?" if relationship_id else ""),
+            (relationship_id,) if relationship_id else (),
+        ):
+            if row["dispatch_turn_id"] is None:
+                # A generation whose anchor is still pending has no turn to poll. That is a
+                # delivery phase, not a scheduler that stopped looking, and counting it as
+                # never polled reported stalled for a relay behaving exactly as designed.
+                anchors[row["relationship_id"]] = {
+                    "turnId": None, "lastPolledAt": None, "ageSeconds": None,
+                    "lastError": None, "settled": False, "anchorPending": True,
+                }
+                continue
+            # The scheduler deliberately stops reading a turn once it is terminal and nothing
+            # is staged behind it, so its last poll can never advance again. Ageing that out
+            # marked every quiet, fully observed assignment stalled forever, which is the
+            # opposite of the signal this exists to give.
+            settled = bool(row["observed"]) and not row["staged_here"]
+            anchors[row["relationship_id"]] = {
+                "turnId": row["dispatch_turn_id"], "lastPolledAt": row["last_polled_at"],
+                "ageSeconds": age(row["last_polled_at"]), "lastError": row["last_error"],
+                "settled": settled, "anchorPending": False,
+            }
+        for row in self.store.all(
+            # Joined through relationships with the same predicate stagedEvents uses. Reading
+            # events directly made the two fields disagree the moment an assignment was
+            # paused or cancelled: stagedEvents went empty while backlog still reported work
+            # the scheduler will never process.
+            "SELECT e.relationship_id AS relationship_id, COUNT(*) AS n FROM events e"
+            "  JOIN relationships r ON r.relationship_id = e.relationship_id"
+            " WHERE e.stage = 'staged'"
+            "   AND r.status = 'active' AND r.superseded_by IS NULL"
+            + (" AND e.relationship_id = ?" if relationship_id else "")
+            + " GROUP BY e.relationship_id",
+            (relationship_id,) if relationship_id else (),
+        ):
+            backlog[row["relationship_id"]] = row["n"]
+        oldest = max([s["ageSeconds"] or 0.0 for s in staged], default=0.0)
+        never = [rid for rid, a in anchors.items()
+                 if a["lastPolledAt"] is None and not a["settled"]
+                 and not a["anchorPending"]]
+        stale = [rid for rid, a in anchors.items()
+                 if not a["settled"] and not a["anchorPending"]
+                 and a["ageSeconds"] is not None
+                 and a["ageSeconds"] > stale_after]
+        if never or stale:
+            health, reason = "stalled", (
+                f"{len(never)} anchors never successfully polled,"
+                f" {len(stale)} not polled for over {stale_after:.0f}s"
+            )
+        elif oldest > stale_after:
+            health, reason = "degraded", f"a staged event has waited {oldest:.0f}s"
+        else:
+            health, reason = "healthy", ""
+        return {"stagedEvents": staged, "oldestStagedAgeSeconds": oldest,
+                "anchors": anchors, "backlog": backlog,
+                "health": health, "reason": reason,
+                "note": "process liveness is reported separately and is not health"}
+
+    def record_failure(self, scope_key, operation, *, detail, relationship_id=None,
+                       parent_task_id=None, error_code=None, difference=None,
+                       retry_safe=None, next_retry_at=None) -> None:
+        """The most recent cause for one subject and one operation.
+
+        Fed from RETURNED failure values as well as exceptions. The settings rejection that
+        matters most in practice never raises: the host answers with a failed receipt and the
+        transport classification keeps only a code, dropping the field-level findings.
+        """
         with self.store.transaction() as db:
             db.execute(
-                "UPDATE deliveries SET state = ?, hold_reason = ?, updated_at = ?"
-                " WHERE event_id = ?",
-                (SUPERSEDED, reason, self.clock.iso(), event_id),
+                "INSERT INTO failed_operations (scope_key, operation, relationship_id,"
+                " parent_task_id, detail, error_code, difference, retry_safe, occurred_at,"
+                " next_retry_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(scope_key, operation) DO UPDATE SET detail=excluded.detail,"
+                " error_code=excluded.error_code, difference=excluded.difference,"
+                " retry_safe=excluded.retry_safe, occurred_at=excluded.occurred_at,"
+                " next_retry_at=excluded.next_retry_at",
+                (scope_key, operation, relationship_id, parent_task_id, str(detail),
+                 error_code, difference, None if retry_safe is None else int(retry_safe),
+                 self.clock.iso(), next_retry_at),
             )
-            self.store.journal("delivery_superseded", event_id, {"reason": reason}, at=self.clock.iso())
+
+    def failures_for(self, scope_key):
+        rows = self.store.all(
+            "SELECT * FROM failed_operations WHERE scope_key = ? ORDER BY occurred_at DESC",
+            (scope_key,),
+        )
+        return [dict(row) for row in rows]
+
+    def _supersession_reason(self, db, event_id: str):
+        """Is this still the thing the assignment stands on? Read inside the caller's write.
+
+        Two rules, and the first is the one the 2026-09-16 reproduction needs: a generation
+        that has moved on invalidates every outcome of the previous one - ready, blocked,
+        failed, manifest or not - whether or not the new generation has produced a revision
+        yet. JUN-119 g2 events delivered after g3 opened and JUN-100 g5 delivered after g7
+        were all rejected downstream as stale_generation; suppressing before the send is the
+        fix, and a new generation having nothing in it yet is not a reason to send the old.
+        """
+        event = db.execute(
+            "SELECT relationship_id, execution_generation, outcome, event_id FROM events"
+            "  WHERE event_id = ?", (event_id,),
+        ).fetchone()
+        if event is None:
+            return None
+        relationship = db.execute(
+            "SELECT execution_generation FROM relationships WHERE relationship_id = ?",
+            (event["relationship_id"],),
+        ).fetchone()
+        if relationship is None:
+            return None
+        if event["execution_generation"] < relationship["execution_generation"]:
+            return STALE_GENERATION
+        if event["outcome"] == REVISION:
+            # Relay-owned, and answered by whatever the child sends back for this generation -
+            # reviewable or not. head_revision considers only ready_for_review receipts, so
+            # routing a request through it left one answered by a failed, interrupted or
+            # blocked reply reported as awaiting_child_receipt forever, even though the
+            # completion it asked for had already arrived.
+            # Any final event of that generation, not only a child-authored one. A revision
+            # turn can fail or be interrupted without the child ever writing a receipt, and
+            # the relay then records the outcome itself through daemon_observation - which is
+            # exactly the answer the request was waiting for, and is what the parent receives.
+            # Requiring producer = 'child' left the request current after that had happened.
+            answered = db.execute(
+                "SELECT 1 FROM events"
+                " WHERE relationship_id = ? AND execution_generation = ?"
+                "   AND stage = 'final' AND suppressed_reason IS NULL AND event_id != ?",
+                (event["relationship_id"], event["execution_generation"], event_id),
+            ).fetchone()
+            return SUPERSEDED_REVISION if answered is not None else None
+        # The head rule is one REVISION replacing another, and head_revision only ever
+        # considers reviewable events. A child's EXECUTION-ONLY outcome is not competing for
+        # that head: it is a different kind of fact about the same generation, and a later
+        # one. Measuring it against a head that is already final suppressed it before any
+        # transport call, so a generation that ended badly after producing a reviewable
+        # revision never told the parent it had ended, while the generation was still current
+        # and the event declared no supersession of its own. The generation rule above still
+        # covers these, because a generation that has moved on invalidates every outcome of
+        # the previous one whatever its shape.
+        #
+        # Named rather than expressed as "not reviewable". A revision_request is relay-owned
+        # and is not reviewable either, but it IS answered by the child's reply - exempting it
+        # left the relay's own ask reported as awaiting_child_receipt after the receipt it
+        # asked for had arrived.
+        if event["outcome"] in EXECUTION_ONLY_OUTCOMES:
+            return None
+        head = head_revision(
+            db, event["relationship_id"], event["execution_generation"],
+        )
+        if not head["eventId"] or head["eventId"] == event_id:
+            # A null head means the generation has no single reviewable revision this one
+            # stands behind, which is what an execution-only failure looks like in its OWN
+            # current generation. That is not evidence anything replaced it. Ambiguous
+            # lineage also lands here and is deliberately NOT read as supersession: it is
+            # arbitrated at acknowledgement by revision_currency, and suppressing on it
+            # here would destroy the delivery chance of every independent revision in a
+            # generation that simply never declared a chain.
+            return None
+        successor = db.execute(
+            "SELECT stage FROM events WHERE event_id = ?", (head["eventId"],),
+        ).fetchone()
+        # A STAGED successor is a claim, not a replacement. If it later fails it is
+        # suppressed, and destroying this event's only delivery chance on the strength of it
+        # would be permanent.
+        if successor is None or successor["stage"] != "final":
+            return None
+        return SUPERSEDED_REVISION
+
+    def _annotate_supersession_in(self, db, event_id: str, reason: str) -> None:
+        db.execute(
+            "INSERT INTO delivery_supersession (event_id, reason, noted_at, applied)"
+            " VALUES (?,?,?,0) ON CONFLICT(event_id) DO NOTHING",
+            (event_id, reason, self.clock.iso()),
+        )
+
+    def annotate_predecessors_in(self, db, event_id: str) -> None:
+        """Mark outstanding deliveries this newly final event replaces within its generation.
+
+        The pre-send check cannot reach them: attempt() returns early for a non-claimable
+        state, so a revision that was already sending, held_uncertain or dispatched when its
+        successor arrived left no supersession row at all. Reconciliation could then promote
+        it to dispatched and status would present it as the current delivery.
+
+        Annotation only. Rewriting an outstanding send would make a lost response
+        permanently unresolvable, which is worse than the confusion it fixes.
+        """
+        event = db.execute(
+            "SELECT relationship_id, execution_generation FROM events WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        if event is None:
+            return
+        others = db.execute(
+            "SELECT d.event_id FROM deliveries d"
+            "  JOIN events e ON e.event_id = d.event_id"
+            " WHERE e.relationship_id = ? AND e.execution_generation = ?"
+            "   AND d.event_id != ?"
+            # inbox_only is terminal and attempt() cannot revisit it, so a predecessor that
+            # settled there would stay reported as channel_closed with no supersession note
+            # even though acknowledgement currency already rejects it.
+            # A predecessor capped in deferred_busy or withheld_pre_send is in the same
+            # position: its hold makes attempt() return early, so this is its only chance.
+            # queued belongs with them: _claim does suppress a stale queued predecessor, but
+            # attempt() returns before _claim for a rate limit, a busy recipient or unreadable
+            # settings - and a recipient that is never free means _claim is never reached at
+            # all, so the predecessor keeps retrying and keeps reporting as current.
+            "   AND d.state IN ('queued','sending','held_uncertain','dispatched','inbox_only',"
+            "                  'deferred_busy','withheld_pre_send')",
+            (event["relationship_id"], event["execution_generation"], event_id),
+        ).fetchall()
+        for row in others:
+            # Asked per candidate rather than assumed: the successor may not in fact replace
+            # it, and _supersession_reason is the one place that rule lives.
+            reason = self._supersession_reason(db, row["event_id"])
+            if reason:
+                self._annotate_supersession_in(db, row["event_id"], reason)
+
+    def annotate_predecessors(self, event_id: str) -> None:
+        """The same annotation in its own transaction, for a caller that has none."""
+        with self.store.transaction() as db:
+            self.annotate_predecessors_in(db, event_id)
 
     # -------------------------------------------------------- observability
 
@@ -687,7 +1255,7 @@ class DeliveryService:
         for row in rows:
             attempts = self.store.all(
                 "SELECT request_id, attempt_no, internal_state, state, affirmative_evidence,"
-                " operation_observation, recipient_scan FROM attempts WHERE event_id = ?"
+                " operation_observation, recipient_scan, record FROM attempts WHERE event_id = ?"
                 " ORDER BY attempt_no",
                 (row["event_id"],),
             )
@@ -695,6 +1263,8 @@ class DeliveryService:
             verdict = self.store.one(
                 "SELECT verdict FROM verdicts WHERE event_id = ?", (row["event_id"],)
             )
+            failure = self._last_failure(row["event_id"])
+            superseded = self._supersession_note(row["event_id"])
             items.append({
                 "eventId": row["event_id"],
                 "kind": row["kind"],
@@ -709,8 +1279,31 @@ class DeliveryService:
                 "ackVerified": ack["verified"] if ack else None,
                 "verdict": verdict["verdict"] if verdict else None,
                 "attemptDetail": [dict(a) for a in attempts],
+                "phase": _phase(row, attempts, ack, failure, superseded),
+                "lastFailedOperation": failure,
+                "nextRetryAt": row["next_eligible_at"],
+                "supersededNote": superseded,
             })
-        return {"deliveries": items}
+        # Events whose delivery was wanted and refused have no deliveries row at all, so a
+        # permanently paused or unauthorized assignment had no status entry, no phase and no
+        # retry time while the daemon went on retrying it. The most stuck state in the system
+        # was the one status could not show.
+        intents = [
+            {"eventId": row["event_id"], "relationshipId": row["relationship_id"],
+             "kind": row["kind"], "recipient": row["recipient_task_id"],
+             "phase": "refused_pre_queue", "attempts": row["attempts"],
+             "nextRetryAt": row["next_retry_at"], "lastError": row["last_error"],
+             "notedAt": row["noted_at"]}
+            for row in self.store.all(
+                "SELECT i.* FROM delivery_intent i"
+                "  LEFT JOIN deliveries d ON d.event_id = i.event_id"
+                " WHERE d.event_id IS NULL"
+                + (" AND i.relationship_id = ?" if relationship_id else "")
+                + " ORDER BY i.noted_at",
+                (relationship_id,) if relationship_id else (),
+            )
+        ]
+        return {"deliveries": items, "pendingIntents": intents}
 
 
 def _message_status(row, record) -> str:
@@ -764,6 +1357,36 @@ class _NotClaimable(Exception):
     pass
 
 
+def _render_findings(findings):
+    """The exact fields the host disagreed on, not just that it disagreed."""
+    if not findings:
+        return None
+    parts = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        field = finding.get("field", finding.get("code", "?"))
+        parts.append(f"{field}: expected {finding.get('expected')!r},"
+                     f" host {finding.get('returned')!r}")
+    return "; ".join(parts) or None
+
+
+class _LateSupersession(Exception):
+    """Discovered inside the claim, after the pre-claim check had already passed."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+class _Superseded(Exception):
+    """This delivery is no longer current, decided inside the claim."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _manifest_paths(event_row):
     """The declared paths a receipt carries, or none. The manifest lives inside the receipt
     JSON rather than in a column of its own."""
@@ -778,3 +1401,90 @@ def _manifest_paths(event_row):
         entry["path"] for entry in entries
         if isinstance(entry, dict) and isinstance(entry.get("path"), str)
     )
+
+
+
+def _phase(row, attempts, ack, failure=None, superseded=None) -> str:
+    """Which stage a delivery is actually at, without inventing certainty.
+
+    withheld_pre_send used to mean five different things at once, and the cause is the only
+    part that suggests an action. But the cure must not overclaim either: held_uncertain
+    means the transport gave no usable answer, which is NOT the same as a turn having been
+    accepted, and a settled withheld_pre_send can be an ordinary thread/read failure rather
+    than a settings mismatch. Both are read from the attempt record, not from the state word.
+    """
+    if ack is not None and ack["verified"] == "verified":
+        # A verified REJECTION is just as settled as a verified acceptance: the receipt was
+        # delivered and the parent answered. Recognising only the accepted case let a
+        # rejection fall past every later branch to awaiting_receipt, which says the child
+        # has produced nothing - the opposite of what happened.
+        if ack["accepted"]:
+            return "acknowledged"
+        return "rejected"
+    if row["state"] == SUPERSEDED:
+        return "superseded"
+    if superseded is not None:
+        # An outstanding send that a newer generation or revision has replaced. Its state is
+        # deliberately left alone so a lost response stays reconcilable, but reporting it as
+        # awaiting_ack or outcome_unknown describes an obligation nothing can now meet.
+        return f"superseded:{superseded['reason']}"
+    if row["state"] == INBOX_ONLY or row["hold_reason"] == PUSH_CHANNEL_CLOSED:
+        return "channel_closed"
+    if row["state"] == DISPATCHED:
+        # Only the child-to-parent direction has an acknowledgement in contract v1. A
+        # revision request is answered by the child's next completion receipt, and
+        # AckService refuses to acknowledge one, so calling this awaiting_ack left every
+        # dispatched revision looking permanently stuck on an obligation nothing can meet.
+        if row["kind"] == REVISION:
+            return "awaiting_child_receipt"
+        return "awaiting_ack"
+    if row["state"] == DEFERRED_BUSY:
+        return "parent_busy"
+    settled = [a for a in attempts if a["internal_state"] == "settled"]
+    latest = settled[-1] if settled else None
+    operation = latest["operation_observation"] if latest else None
+    record = {}
+    if latest is not None and latest["record"]:
+        try:
+            record = json.loads(latest["record"])
+        except ValueError:
+            record = {}
+    failed = record.get("failedOperation")
+    if row["state"] == HELD_UNCERTAIN:
+        # A turn id is the only affirmative evidence that a turn exists. A failed turn/start
+        # with no id means the call was REFUSED, not that its answer was lost, and reporting
+        # turn_accepted for it claimed a turn on no evidence at all.
+        if record.get("turnId"):
+            return "turn_accepted"
+        return "outcome_unknown"
+    if row["state"] == WITHHELD_PRE_SEND and latest is not None:
+        # thread/resume fails for ordinary connectivity and internal reasons too, and the
+        # generic branch records the same operation for all of them. Naming those a settings
+        # rejection hands an operator a remediation that cannot work.
+        # The recorded failure is the discriminator: _settle writes settings_check only when
+        # the receipt actually carried field-level findings.
+        if failed == "thread/resume" and failure is not None \
+                and failure["operation"] == "settings_check":
+            return "settings_rejected"
+        if failed:
+            return f"withheld:{failed}"
+        return "withheld_pre_send"
+    if row["state"] == WITHHELD_PRE_SEND:
+        # Refused before any attempt existed - missing or unusable authorized settings - so
+        # there is no attempt record to read the cause from. The persisted failure is.
+        if failure is not None:
+            return f"withheld:{failure['operation']}"
+        return "withheld_pre_send"
+    if row["hold_reason"]:
+        return f"held:{row['hold_reason']}"
+    del operation
+    if row["state"] == SENDING:
+        # The claim committed and the process stopped, or is stopping. There IS an attempt,
+        # and it may already need reconciliation, so awaiting_receipt would point at the
+        # child when the open question is about a send this relay made.
+        return "in_flight"
+    if row["state"] == QUEUED:
+        # A delivery row exists, so the receipt was already collected and accepted. What is
+        # outstanding is this relay reaching the recipient, not the child producing anything.
+        return "awaiting_send"
+    return "awaiting_receipt"
