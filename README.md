@@ -236,8 +236,8 @@ items, creates missing ones within that request, and keeps narrow updates scoped
 Consultation and draft-only planning do not write to Linear.
 Each implementation issue maps to one PR; work requiring several PRs is split
 into dependent issues. Non-PR research or design keeps a verified result instead.
-Initiatives represent goals; product family and related
-repositories are separate project labels. Project names need no product prefix,
+Initiatives represent goals; product family is a project label, while an issue's
+repository label identifies its actual edit target. Project names need no product prefix,
 and views remain the user's choice. See the shared
 [Linear operating model](skills/crw-plan/references/integrations.md#linear-operating-model).
 
