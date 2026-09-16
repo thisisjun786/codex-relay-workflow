@@ -29,7 +29,7 @@ Identify the goal, product classification, and finishable outcome separately usi
 
 ## Shape the plan
 
-- **Initiative input:** the agreed goal, finish condition, scope and open decisions from `crw-define` or an existing accepted definition. Preserve its identity and link contributing projects; return material goal changes to definition within the request’s scope.
+- **Initiative input:** the agreed goal, finish condition, scope and open decisions from `crw-define` or an existing accepted definition. Preserve its identity and link contributing projects. Keep the page body aligned using the shared [initiative body standard](references/integrations.md#initiative-body-standard): explain which result each project contributes and how their outputs connect, while leaving issue-level detail below. Return material goal changes to definition within the request's scope.
 - **Project:** a finishable outcome created when the user requests a project. Name the result naturally; do not require a product prefix. A product name can appear when it helps explain the result.
 - **Milestone:** an observable result or coherent delivery boundary. Follow explicit user grouping, such as one milestone per character or module.
 - **Issue:** one implementation PR, with scope, acceptance criteria, canonical document links, dependencies, and meaningful verification. Apply the shared [issue-to-PR rule](references/integrations.md#issue-to-pr-mapping), including its non-PR work exception.
@@ -59,7 +59,7 @@ A request to create, update, or apply the full plan in Linear authorizes its sco
 
 Preserve unrelated content, labels, history, and human edits. Refresh before updating if another actor may have changed an item. After an uncertain write, look up the existing result before retrying; report partial completion with actual IDs. If a project was created but its labels or relations failed, repair those fields on that ID. Do not repeat the project create. Resolve same-name candidates by IDs and semantic scope; ask only if the supplied target and current binding cannot distinguish them.
 
-Link issues to canonical Linear documents instead of copying the whole specification into every issue. Include the acceptance criteria needed to act. Local drafts remain explicitly unsynced until the Linear write is verified; do not create a parallel permanent planning source.
+Link issues to the canonical Linear item body or supporting document instead of copying the whole specification into every issue. Include the acceptance criteria needed to act. Local drafts remain explicitly unsynced until the Linear write is verified; do not create a parallel permanent planning source.
 
 ## Deliver
 
