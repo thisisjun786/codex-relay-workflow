@@ -407,7 +407,17 @@ class RelayService:
 
     def write_record(self, payload: dict) -> dict:
         self.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.record_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # Replaced atomically. write_text truncates first, and _note rewrites this file on
+        # every worker boundary, so a concurrent stop could read the empty or half-written
+        # middle, call a running supervisor absent and return not_running without signalling
+        # its worker - or miss the foreign markers and write a stop request for someone else.
+        temporary = self.record_path.with_name(f".{self.record_path.name}.{os.getpid()}")
+        try:
+            temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(temporary, self.record_path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise
         return payload
 
     def new_record(self, *, pid, token=None, worker_pid=None) -> dict:
@@ -415,6 +425,8 @@ class RelayService:
             "pid": pid, "startTicks": start_ticks(pid), "bootId": boot_id(),
             "workerPid": worker_pid, "token": token,
             "launchId": self.launch_id,
+            # Written by supervise once on_start has returned. Absent means "not serving yet".
+            "readyAt": None,
             "storeId": self.store_id, "installationId": self.installation_id,
             "stateDir": str(self.selection.path), "socketPath": self.socket_path,
             "scopeAuthority": self.scope.authority, "scopeRoot": str(self.scope.root),
@@ -427,18 +439,20 @@ class RelayService:
         record = self.record() if record is None else record
         if not record or not record.get("pid"):
             return NONE, None, "no daemon record"
+        # Read from the record itself, so they survive the supervisor's death. A foreign
+        # installation whose supervisor is gone can still have a live worker recorded, and
+        # answering none there sent stop() down the orphan path and straight at it.
+        foreign = self._foreign_markers(record)
         handle = ProcessHandle(record["pid"])
         if handle.already_gone:
+            if foreign:
+                return FOREIGN, handle, "; ".join(foreign)
             return NONE, handle, "the recorded process is gone"
         if not handle.usable:
+            if foreign:
+                return FOREIGN, handle, "; ".join(foreign)
             return UNVERIFIABLE, handle, handle.detail
-        mismatches = []
-        if record.get("bootId") not in (None, boot_id()):
-            mismatches.append("recorded before a different boot")
-        if record.get("installationId") != self.installation_id:
-            mismatches.append("another installation owns it")
-        if self.store_id is not None and record.get("storeId") not in (None, self.store_id):
-            mismatches.append("it is using a different store")
+        mismatches = list(foreign)
         ticks = start_ticks(record["pid"])
         if mismatches:
             # Decided BEFORE the start-time question. Installation, store and boot each prove
@@ -456,6 +470,17 @@ class RelayService:
         if mismatches:
             return FOREIGN, handle, "; ".join(mismatches)
         return OURS, handle, None
+
+    def _foreign_markers(self, record) -> list:
+        """What the record alone proves about who owns it, with no live process required."""
+        markers = []
+        if record.get("bootId") not in (None, boot_id()):
+            markers.append("recorded before a different boot")
+        if record.get("installationId") != self.installation_id:
+            markers.append("another installation owns it")
+        if self.store_id is not None and record.get("storeId") not in (None, self.store_id):
+            markers.append("it is using a different store")
+        return markers
 
     def lock_is_held(self) -> bool:
         """Probed by trying to take it: the lock is the only honest liveness signal."""
@@ -528,7 +553,46 @@ class RelayService:
             "lastExit": (record or {}).get("lastExit"),
             "nextRestartAt": (record or {}).get("nextRestartAt"),
             "conflicts": self.conflicts(),
+            "projects": self.projects(),
         }
+
+    def projects(self) -> dict:
+        """Which projects this one service is carrying, read without opening a Store.
+
+        Grouping only. The cross-delivery refusal is decided per assignment from its own
+        endpoints; this exists so an operator can see that a single supervisor is serving
+        several repositories rather than having to infer it.
+        """
+        from .registry import project_key
+        from .store import read_only_rows
+
+        answer = read_only_rows(
+            self.selection,
+            "SELECT relationship_id, issue_key, status, parent_task_id, parent_host_id,"
+            "       parent_cwd"
+            "  FROM relationships"
+            " WHERE superseded_by IS NULL",
+        )
+        if not answer["readable"]:
+            return {"available": False, "detail": answer["detail"], "projects": []}
+        grouped = {}
+        for row in answer["rows"]:
+            key = project_key({"parent": {"cwd": row["parent_cwd"],
+                                          "hostId": row["parent_host_id"]}})
+            entry = grouped.setdefault(
+                key, {"project": key, "assignments": 0, "active": 0, "parents": set(),
+                      "issues": set()},
+            )
+            entry["assignments"] += 1
+            entry["active"] += 1 if row["status"] == "active" else 0
+            entry["parents"].add(row["parent_task_id"])
+            entry["issues"].add(row["issue_key"])
+        projects = [
+            {"project": e["project"], "assignments": e["assignments"], "active": e["active"],
+             "parents": sorted(e["parents"]), "issues": sorted(e["issues"])}
+            for e in sorted(grouped.values(), key=lambda e: e["project"])
+        ]
+        return {"available": True, "detail": answer["detail"], "projects": projects}
 
     def conflicts(self) -> list:
         if not self.socket_path:
@@ -612,7 +676,13 @@ class RelayService:
             if handle.already_gone or not handle.usable:
                 return "gone" if handle.already_gone else "unverifiable"
             ticks = (record or {}).get("workerStartTicks")
-            if ticks is not None and start_ticks(pid) != ticks:
+            current = start_ticks(pid)
+            if ticks is None or current is None:
+                # The same rule the supervisor gets. Without a recorded start time the worker
+                # pid is just a number, and a crashed worker whose number was reused would
+                # put SIGTERM into an unrelated process.
+                return "unverifiable"
+            if current != ticks:
                 return "gone"
             return self._terminate(handle, timeout=timeout, grace=grace)
         finally:
@@ -675,7 +745,10 @@ class RelayService:
             # The pid must still be there: supervision clears it on the way out while the
             # daemon lock is not yet released, so a launch that already finished spends a
             # moment matching the id and holding the lock with nothing left running.
-            if record.get("pid") and record.get("launchId") == launch and self.lock_is_held():
+            # readyAt is written only after on_start returns, so recovery that is still
+            # running - or about to fail on an App Server connection - is not success either.
+            if (record.get("pid") and record.get("readyAt")
+                    and record.get("launchId") == launch and self.lock_is_held()):
                 return {"ok": True, "reason": None, "pid": record["pid"],
                         "scopeAuthority": self.scope.authority,
                         "scopeRoot": str(self.scope.root), "status": self.status()}
@@ -819,6 +892,10 @@ class RelayService:
             try:
                 if on_start is not None:
                     on_start()
+                # Only now is this service serving. Recovery runs before any worker can send,
+                # and a caller told "started" while it was still in flight would go on to use
+                # a service that might yet fail to initialise at all.
+                self._note(readyAt=_now())
                 started = time.monotonic()
                 while True:
                     if max_segments is not None and len(segments) >= max_segments:

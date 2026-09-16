@@ -162,6 +162,34 @@ class Precedence(unittest.TestCase):
         self.assertEqual(relative["store"]["storeId"], absolute["store"]["storeId"])
         self.assertEqual(relative["store"]["inode"], absolute["store"]["inode"])
 
+    def test_two_spellings_of_one_socket_choose_the_same_default_store(self):
+        """The scope registry canonicalises the socket; this hash used to take it verbatim.
+
+        With no --state and no environment override, an alias for the socket produced a
+        different default state directory and therefore a different store. The registry then
+        refused the second invocation as a foreign owner rather than letting it join the
+        service already running on that socket.
+        """
+        real = os.path.join(self.tmp, "run", "app-server.sock")
+        os.makedirs(os.path.dirname(real))
+        open(real, "w").close()
+        alias_dir = os.path.join(self.tmp, "alias")
+        os.symlink(os.path.join(self.tmp, "run"), alias_dir)
+
+        canonical = resolve_state_dir(None, real)
+        through_symlink = resolve_state_dir(None, os.path.join(alias_dir, "app-server.sock"))
+
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            relative = resolve_state_dir(None, os.path.join("run", "app-server.sock"))
+        finally:
+            os.chdir(here)
+
+        self.assertEqual(through_symlink.socket_scope, canonical.socket_scope)
+        self.assertEqual(relative.socket_scope, canonical.socket_scope)
+        self.assertEqual(through_symlink.path, canonical.path)
+        self.assertEqual(relative.path, canonical.path)
 
 class Identity(unittest.TestCase):
     def setUp(self):

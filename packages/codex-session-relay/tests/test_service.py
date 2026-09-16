@@ -39,6 +39,8 @@ service = RelayService(
 )
 service.launch_id = {launch!r}
 with owned_service(service, allow_isolated=True, require_intent=False) as record:
+    # What supervise() writes once on_start has returned: this child is serving.
+    service._note(readyAt="2026-01-01T00:00:00Z")
     # The record file IS the handshake. A pipe would add buffering and lifetime questions
     # that have nothing to do with what this test is about.
     while True:
@@ -64,7 +66,7 @@ service.launch_id = {launch!r}
 with SingleInstance(service.selection.path):
     service.write_record(dict(
         service.new_record(pid=os.getpid()),
-        pid=None, workerPid=None, stoppedAt="cleanup",
+        readyAt="2026-01-01T00:00:00Z", pid=None, workerPid=None, stoppedAt="cleanup",
     ))
     while True:
         time.sleep(0.05)
@@ -304,6 +306,81 @@ class LaunchReporting(ServiceTestCase):
         self.assertEqual(outcome["pid"], started["pid"])
 
 
+class ForeignWorkers(ServiceTestCase):
+    """A dead supervisor does not make its installation's worker ours to signal."""
+
+    def test_a_foreign_record_whose_supervisor_died_still_protects_its_worker(self):
+        """The gone check answered before the foreign markers were ever read.
+
+        stop() deliberately falls through to the worker when the supervisor is gone, because
+        that orphan is exactly what a stop has to reach. Classifying a foreign record as
+        none first aimed that fall-through at another installation's worker.
+        """
+        service = self.service("a")
+        child, worker_pid = self.holder(service)
+        record = service.record()
+        service.write_record(dict(
+            record, installationId="someone-else", workerPid=worker_pid,
+            workerStartTicks=service_module.start_ticks(worker_pid),
+        ))
+        real = os.pidfd_open
+
+        def supervisor_is_gone(pid, *args, **kwargs):
+            if pid == record["pid"]:
+                raise ProcessLookupError(f"supervisor {pid} is gone")
+            return real(pid, *args, **kwargs)
+
+        with mock.patch.object(os, "pidfd_open", supervisor_is_gone):
+            refused = service.stop()
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertIn("another installation", refused["detail"])
+        self.assertEqual(refused["worker"], "untouched")
+        self.assertIsNone(child.poll(), "a foreign worker must not be signalled")
+        self.assertFalse(
+            service.stop_request_path.exists(),
+            "a refused stop must not leave a request that halts another installation",
+        )
+
+    def test_a_worker_with_no_recorded_start_time_is_unverifiable_not_killable(self):
+        """The rule the supervisor already had. A reused worker pid is an unrelated process."""
+        service = self.service("a")
+        child, worker_pid = self.holder(service)
+        service.write_record(dict(
+            service.record(), workerPid=worker_pid, workerStartTicks=None,
+        ))
+
+        self.assertEqual(
+            service._stop_worker(service.record(), timeout=1.0, grace=0.05), "unverifiable",
+        )
+        self.assertIsNone(child.poll(), "an unverifiable worker must not be signalled")
+
+
+class RecordDurability(ServiceTestCase):
+    def test_a_record_is_replaced_atomically_rather_than_truncated(self):
+        """_note rewrites this file at every worker boundary; a reader must never see half.
+
+        A concurrent stop reading the truncated middle would call a running supervisor
+        absent and return not_running without ever signalling its worker.
+        """
+        service = self.service("a")
+        service.write_record(service.new_record(pid=os.getpid()))
+        before = service.record_path.stat()
+
+        service._note(restarts=7)
+
+        self.assertEqual(service.record()["restarts"], 7)
+        self.assertNotEqual(
+            service.record_path.stat().st_ino, before.st_ino,
+            "an in-place rewrite is the truncation window; the file must be replaced",
+        )
+        self.assertEqual(
+            [p.name for p in service.selection.path.glob(".daemon.json.*")], [],
+            "no temporary file is left behind",
+        )
+
+
 class Intent(ServiceTestCase):
     def test_start_never_enables_a_service_that_was_never_configured(self):
         service = self.service("a")
@@ -504,6 +581,91 @@ class Supervision(ServiceTestCase):
         with self.assertRaises(ServiceRefused) as caught:
             service.supervise(allow_isolated=True, spawn=lambda **_k: FakeWorker(0))
         self.assertEqual(caught.exception.reason, "service_disabled")
+
+    def test_a_launch_is_not_ready_until_initialisation_has_returned(self):
+        """start matched a record written before on_start ran.
+
+        Recovery happens in on_start, and it can take longer than the poll interval or fail
+        outright on the App Server connection. Everything start matched on - the pid, the
+        launch id, the daemon lock - is already true while that is still in flight.
+        """
+        service = self.service("a")
+        service.enable(actor="test")
+        service.launch_id = "launch-under-test"
+        seen = {}
+
+        def on_start():
+            seen["record"] = service.record()
+
+        outcome, _launches, _slept = self.supervised(service, codes=[0], on_start=on_start)
+
+        self.assertTrue(outcome["ok"], outcome)
+        self.assertEqual(seen["record"]["launchId"], "launch-under-test")
+        self.assertIsNotNone(seen["record"]["pid"], "the record start polls was already there")
+        self.assertIsNone(
+            seen["record"]["readyAt"],
+            "initialisation had not returned, so this is not a started service",
+        )
+        self.assertIsNotNone(service.record()["readyAt"], "and it is ready afterwards")
+
+    def test_a_failed_initialisation_never_becomes_ready(self):
+        service = self.service("a")
+        service.enable(actor="test")
+
+        def on_start():
+            raise RuntimeError("the App Server connection failed")
+
+        with self.assertRaises(RuntimeError):
+            self.supervised(service, codes=[0], on_start=on_start)
+        self.assertIsNone(service.record()["readyAt"])
+
+
+class Projects(ServiceTestCase):
+    """The operations contract says status groups by project; it has to actually do it."""
+
+    def assignment(self, service, name, *, cwd, issue, status="active"):
+        from codex_session_relay.store import Store
+
+        store = Store(service.selection.db_path)
+        try:
+            store.db.execute(
+                "INSERT INTO relationships (relationship_id, issue_key, status,"
+                " parent_task_id, parent_host_id, parent_cwd, child_task_id, child_host_id,"
+                " execution_generation, artifact_roots, allowed_recipients, created_at,"
+                " updated_at) VALUES (?,?,?,?,?,?,?,?,1,'[]','[]','now','now')",
+                (f"rel-{name}", issue, status, f"01parent-{name}", "host",
+                 cwd, f"01child-{name}", "host"),
+            )
+        finally:
+            store.close()
+
+    def test_status_groups_a_shared_service_by_project(self):
+        service = self.service("a")
+        self.assignment(service, "one", cwd="/code/alpha", issue="ALPHA-1")
+        self.assignment(service, "two", cwd="/code/alpha", issue="ALPHA-2", status="paused")
+        self.assignment(service, "three", cwd="/code/beta", issue="BETA-1")
+
+        projects = service.status()["projects"]
+
+        self.assertTrue(projects["available"], projects)
+        self.assertEqual([p["project"] for p in projects["projects"]],
+                         ["/code/alpha", "/code/beta"])
+        alpha = projects["projects"][0]
+        self.assertEqual(alpha["assignments"], 2)
+        self.assertEqual(alpha["active"], 1, "a paused assignment is carried but not active")
+        self.assertEqual(alpha["issues"], ["ALPHA-1", "ALPHA-2"])
+        self.assertEqual(len(alpha["parents"]), 2)
+
+    def test_a_store_that_does_not_exist_is_reported_rather_than_created(self):
+        """status is an offline command; it must not bring a store into being to answer."""
+        service = self.service("a")
+        service.selection.db_path.unlink()
+
+        projects = service.status()["projects"]
+
+        self.assertFalse(projects["available"])
+        self.assertEqual(projects["projects"], [])
+        self.assertFalse(service.selection.db_path.exists(), "asking must not create it")
 
 
 class SupervisedWorker(ServiceTestCase):
