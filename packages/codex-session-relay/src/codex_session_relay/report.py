@@ -44,6 +44,9 @@ BUDGET = 6000
 SUMMARY_MAX = 1200
 ACTION_MAX = 1200
 REASON_MAX = 600
+# The short identifying fields. Each one lands on a line the composer cannot shorten, so an
+# unbounded value there is the same undeliverable report by a different route.
+LABEL_MAX = 300
 
 
 def _size(text) -> int:
@@ -104,6 +107,12 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     summary = _bounded(_required(summary, "summary"), "summary", SUMMARY_MAX)
     next_action = _bounded(_required(next_action, "next_action"), "next_action", ACTION_MAX)
     reason = _bounded(_required(cxc_reason, "cxc_reason"), "cxc_reason", REASON_MAX)
+    pr_state = _bounded_optional(pr_state, "pr_state")
+    pr_url = _bounded_optional(pr_url, "pr_url")
+    base_ref = _bounded_optional(base_ref, "base_ref")
+    base_sha = _bounded_optional(base_sha, "base_sha")
+    head_sha = _bounded_optional(head_sha, "head_sha")
+    criteria_digest = _bounded_optional(criteria_digest, "criteria_digest")
     if pr_number is not None:
         if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number < 1:
             raise ReceiptRefused(
@@ -241,6 +250,18 @@ def _bounded(text, field, limit):
     return text
 
 
+def _bounded_optional(value, field, limit=LABEL_MAX):
+    """The short fields, bounded too. They sit on lines that cannot be shortened either."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"{field} is a string when it is given at all, not {type(value).__name__}",
+        )
+    return _bounded(value, field, limit)
+
+
 def _check_resubmission(store, event_id, submission_no) -> None:
     """Once a message has gone out, a changed report is a new submission and says so.
 
@@ -341,6 +362,23 @@ def _check_review(review):
     return {"kind": kind, "blockers": blockers, "findings": findings}
 
 
+def _sequence(entries, field):
+    """A mapping iterates as its keys and a scalar does not iterate at all.
+
+    Without this, a dict quietly became a list of its own key strings and a number raised
+    TypeError out of the validator, so the one guarantee this layer makes, that every
+    malformed shape comes back as a named refusal, did not hold at the top level.
+    """
+    if entries is None:
+        return []
+    if not isinstance(entries, (list, tuple)):
+        raise ReceiptRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            f"{field} is a list of entries, not {type(entries).__name__}",
+        )
+    return list(entries)
+
+
 def _check_evidence(entries):
     """Reject a malformed entry HERE, where a caller can fix it.
 
@@ -349,7 +387,7 @@ def _check_evidence(entries):
     be rendered must therefore be refused at the point it is recorded.
     """
     checked = []
-    for item in entries or []:
+    for item in _sequence(entries, "evidence"):
         if isinstance(item, str):
             checked.append(item)
             continue
@@ -369,7 +407,7 @@ def _check_evidence(entries):
 
 def _check_unresolved(entries):
     checked = []
-    for item in entries or []:
+    for item in _sequence(entries, "unresolved"):
         if isinstance(item, str):
             checked.append(item)
             continue

@@ -126,6 +126,8 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-108 | A restore section naming a skill owner nobody has is refused at record time | `report._check_restore` | implemented |
 | I-109 | The frozen-manifest pointer is its own section, so shortening the file listing never drops it | `report._manifest_ref_lines` | implemented |
 | I-110 | Every malformed report shape is a named refusal, never a host exception from the validator itself | `report._check_restore`, `_check_evidence`, `_check_unresolved` | implemented |
+| I-111 | Every report field that lands on a line the composer cannot shorten is length-bounded at record time | `report._bounded`, `_bounded_optional` | implemented |
+| I-112 | A collection field that is not a list is refused rather than iterated, so a mapping never becomes a list of its own keys | `report._sequence` | implemented |
 
 
 ## Recorded limits, so a row above is not read as more than it is

@@ -634,6 +634,36 @@ class Bounds(DeliveryTestCase):
                 ),
             )
 
+    def test_a_collection_that_is_not_a_list_is_refused_not_iterated(self):
+        _relationship, event_id = self.queued_event()
+        # A mapping iterates as its own keys, so this used to be silently accepted as a list
+        # of strings, and a scalar raised TypeError out of the validator.
+        for field, bad in (("evidence", {"check": "python3 -m pytest"}),
+                          ("evidence", 7), ("unresolved", {"id": "c-1"}),
+                          ("unresolved", 7)):
+            error = self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda field=field, bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id, **a_report(**{field: bad})
+                ),
+            )
+            self.assertIn("is a list of entries", error.detail)
+
+    def test_every_line_the_composer_cannot_shorten_is_bounded(self):
+        _relationship, event_id = self.queued_event()
+        for field in ("pr_state", "pr_url", "base_ref", "base_sha", "head_sha",
+                      "criteria_digest"):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda field=field: report.record(
+                    self.store, self.clock, event_id=event_id,
+                    **a_report(**{field: "x" * 10000})
+                ),
+            )
+        # Left unbounded, a 10 KB pr_state was accepted and then made every claim raise.
+        report.record(self.store, self.clock, event_id=event_id, **a_report())
+        self.assertIsNotNone(self.attempt(event_id))
+
 
 class VerdictPosition(Directions):
     def _revision_report(self, **overrides):
