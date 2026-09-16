@@ -413,21 +413,24 @@ class GuardedSettingsSeam(unittest.TestCase):
 
     # ------------------------------------------------------- the ordinary path
 
-    def test_the_start_actually_carries_every_authorized_setting(self):
-        """The start response cannot echo settings, so the OUTGOING params are asserted."""
+    def test_the_start_binds_nothing_it_could_never_read_back(self):
+        """This asserts the opposite of what it used to, and the reversal is the point.
+
+        It previously proved the turn carried all seven authorized settings. But
+        TurnStartResponse defines only `turn`, so nothing bound there can be read back, and a
+        receipt reporting accepted off a turn ID alone was calling an unverifiable binding a
+        success. The resume above already establishes that the thread IS in the authorized
+        state, which makes the overrides redundant rather than protective. Sending them also had
+        a side effect worth losing: TurnStartParams says a model override persists into
+        subsequent turns, so delivering one message quietly rewrote the thread for every later
+        turn.
+        """
         adapter, calls = self._adapter()
         receipt = adapter.send_message("del-100000000000-a1", "thread-1", "hi", AUTHORIZED)
         self.assertEqual(receipt["status"], "accepted")
         self.assertEqual(self._methods(calls), ["thread/read", "thread/resume", "turn/start"])
         start = dict(calls[-1][1])
-        self.assertEqual(start["sandboxPolicy"]["type"], "workspaceWrite")
-        self.assertFalse(start["sandboxPolicy"]["networkAccess"])
-        self.assertEqual(start["approvalPolicy"], "never")
-        self.assertEqual(start["cwd"], WORKTREE)
-        self.assertEqual(start["runtimeWorkspaceRoots"], [WORKTREE])
-        self.assertEqual(start["model"], "anthropic/claude-opus-5")
-        self.assertEqual(start["effort"], "xhigh")
-        self.assertEqual(start["environments"], AUTHORIZED_ENVIRONMENTS)
+        self.assertEqual(set(start), {"threadId", "input"})
         self.assertEqual(start["input"], [{"type": "text", "text": "hi"}])
 
     def test_the_resume_carries_the_settings_it_can_express(self):
@@ -440,9 +443,86 @@ class GuardedSettingsSeam(unittest.TestCase):
         self.assertEqual(resume["runtimeWorkspaceRoots"], [WORKTREE])
         self.assertEqual(resume["model"], "anthropic/claude-opus-5")
         self.assertTrue(resume["excludeTurns"])
-        # ThreadResumeParams has no effort field; the schema does accept config.
-        self.assertEqual(resume["config"], {"model_reasoning_effort": "xhigh"})
+        # ThreadResumeParams has no effort field and its sandbox is only a MODE; the schema does
+        # accept a free-form config, so the effort AND the policy detail the mode cannot carry
+        # both travel there, under the same keys the bridge uses. Default-valued fields are sent
+        # too: host configuration may set the opposite, and only a transmitted value overrides it.
+        self.assertEqual(
+            resume["config"],
+            {
+                "model_reasoning_effort": "xhigh",
+                "sandbox_workspace_write": {
+                    "writable_roots": [],
+                    "network_access": False,
+                    "exclude_tmpdir_env_var": False,
+                    "exclude_slash_tmp": False,
+                },
+            },
+        )
         self.assertNotIn("environments", resume)
+
+    def test_a_setting_the_host_never_reported_withholds_and_is_not_a_mismatch(self):
+        """Absence and difference are different facts, and they need different answers.
+
+        A host that reported nothing has said nothing about whether the setting was applied.
+        Calling that settings_not_preserved would assert it reported something else.
+        """
+        from codex_session_relay.settings import SETTING_UNOBSERVABLE
+
+        fields = ("model", "reasoningEffort", "cwd", "runtimeWorkspaceRoots", "sandbox")
+        for index, field in enumerate(fields):
+            with self.subTest(field=field):
+                adapter, calls = self._adapter(
+                    resume=authorized_resume_response(**{field: None})
+                )
+                # A distinct id per case: the ledger answers a reused one from its receipt, so
+                # a collision here would silently replay the previous field's result.
+                receipt = adapter.send_message(
+                    f"del-20000000000{index}-a1", "thread-1", "hi", AUTHORIZED
+                )
+                self._assert_no_start(receipt, calls, SETTING_UNOBSERVABLE)
+                self.assertEqual(receipt["settingsFindings"][0]["field"], field)
+
+    def test_an_absent_approval_policy_withholds_rather_than_closing_the_channel(self):
+        """Not seeing a policy is not seeing an interactive one.
+
+        unsupported_approval_policy means the push channel is permanently closed and the delivery
+        goes inbox_only. An absent policy proves no such thing, so it withholds and stays eligible
+        for a bounded pre-send retry.
+        """
+        from codex_session_relay.settings import SETTING_UNOBSERVABLE
+
+        adapter, calls = self._adapter(resume=authorized_resume_response(approvalPolicy=None))
+        receipt = adapter.send_message("del-300000000000-a1", "thread-1", "hi", AUTHORIZED)
+        self._assert_no_start(receipt, calls, SETTING_UNOBSERVABLE)
+        self.assertEqual(receipt["settingsFindings"][0]["field"], "approvalPolicy")
+
+    def test_omitted_null_and_empty_roots_are_three_different_answers(self):
+        """Only an explicit empty list may agree with an expected empty list.
+
+        The previous comparison read the roots as `list(response.get(...) or [])`, so an omitted
+        or null list became [] and compared EQUAL to an expected empty list. A send then went out
+        on a settings answer the host never gave.
+        """
+        from codex_session_relay.settings import SETTING_UNOBSERVABLE, TaskSettings
+
+        expecting_empty = TaskSettings({**AUTHORIZED.data, "runtimeWorkspaceRoots": []})
+        omitted = authorized_resume_response()
+        del omitted["runtimeWorkspaceRoots"]
+        explicit_null = authorized_resume_response(runtimeWorkspaceRoots=None)
+        explicitly_empty = authorized_resume_response(runtimeWorkspaceRoots=[])
+
+        for label, response in (("omitted", omitted), ("null", explicit_null)):
+            with self.subTest(label):
+                findings = expecting_empty.mismatches(response)
+                self.assertTrue(findings, f"an {label} list must not read as agreement")
+                self.assertEqual(findings[0]["code"], SETTING_UNOBSERVABLE)
+                self.assertEqual(findings[0]["field"], "runtimeWorkspaceRoots")
+
+        self.assertEqual(
+            expecting_empty.mismatches(explicitly_empty), [],
+            "an explicit empty list IS the answer that was asked for",
+        )
 
     def test_retained_model_effort_cwd_and_roots_are_all_verified(self):
         for field, response in (
@@ -676,3 +756,120 @@ class GuardedSettingsSeam(unittest.TestCase):
         with self.assertRaises(HostUnavailable):
             adapter.send_message("del-a00000000000-a1", "thread-1", "hi")
         self.assertEqual(calls, [], "nothing may reach the host without authorized settings")
+
+
+class MirrorMatchesTheBridge(unittest.TestCase):
+    """The two implementations of one contract, pinned to agree where they must.
+
+    The relay deliberately mirrors the bridge's send rather than calling it, so nothing but a test
+    stops the two drifting. Constant equality is not enough on its own: the FIRST finding becomes
+    the receipt's error code, so a shared vocabulary with a different order still makes the two
+    sides describe one identical host answer with two different codes.
+    """
+
+    def setUp(self):
+        try:
+            import codex_thread_bridge.settings as bridge_settings
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+        self.bridge = bridge_settings
+
+    def test_the_shared_tables_are_identical(self):
+        from codex_session_relay import settings as relay
+
+        self.assertEqual(self.bridge.SANDBOX_MODES, relay.RESUME_SANDBOX_MODE)
+        self.assertEqual(self.bridge.POLICY_DEFAULTS, relay.POLICY_DEFAULTS)
+        self.assertEqual(self.bridge.POLICY_CONFIG_KEYS, relay.POLICY_CONFIG_KEYS)
+        self.assertEqual(self.bridge.FIELD_PRECEDENCE, relay.FIELD_PRECEDENCE)
+        self.assertEqual(self.bridge.SETTINGS_NOT_PRESERVED, relay.SETTINGS_NOT_PRESERVED)
+        self.assertEqual(self.bridge.SETTING_UNOBSERVABLE, relay.SETTING_UNOBSERVABLE)
+        self.assertEqual(
+            self.bridge.UNSUPPORTED_APPROVAL_POLICY, relay.UNSUPPORTED_APPROVAL_POLICY
+        )
+
+    def _bridge_contract(self):
+        return self.bridge.SettingsContract(
+            cwd=WORKTREE,
+            expected_sandbox_policy=dict(AUTHORIZED_POLICY),
+            model="anthropic/claude-opus-5",
+            reasoning_effort="xhigh",
+            runtime_workspace_roots=[WORKTREE],
+        )
+
+    def test_both_sides_name_the_same_first_cause_for_a_mixed_answer(self):
+        """The counterexample an audit found: model omitted AND sandbox widened.
+
+        With only the codes shared and not the order, the relay reported settings_not_preserved
+        for the widened sandbox while the bridge reported setting_unobservable for the absent
+        model, for one identical response.
+        """
+        widened = dict(AUTHORIZED_POLICY, type="dangerFullAccess")
+        cases = {
+            "model absent and sandbox widened": authorized_resume_response(
+                model=None, sandbox={"type": "dangerFullAccess"}
+            ),
+            "effort absent and cwd different": authorized_resume_response(
+                reasoningEffort=None, cwd="/somewhere/else"
+            ),
+            "roots absent and model different": authorized_resume_response(
+                runtimeWorkspaceRoots=None, model="gpt-6-astra"
+            ),
+            "sandbox absent and effort different": authorized_resume_response(
+                sandbox=None, reasoningEffort="low"
+            ),
+            "everything reported and only the sandbox widened": authorized_resume_response(
+                sandbox=widened
+            ),
+            "several absent at once": authorized_resume_response(
+                model=None, reasoningEffort=None, cwd=None
+            ),
+        }
+        contract = self._bridge_contract()
+        for label, response in cases.items():
+            with self.subTest(label):
+                mine = AUTHORIZED.mismatches(response)
+                theirs = contract.findings(response)
+                self.assertTrue(mine and theirs, "both sides must find something")
+                self.assertEqual(
+                    (mine[0]["code"], mine[0]["field"]),
+                    (theirs[0]["code"], theirs[0]["field"]),
+                    f"{label}: relay said {mine[0]['code']} on {mine[0]['field']}, "
+                    f"bridge said {theirs[0]['code']} on {theirs[0]['field']}",
+                )
+
+    def test_a_clean_answer_satisfies_both_sides(self):
+        response = authorized_resume_response()
+        self.assertEqual(AUTHORIZED.mismatches(response), [])
+        self.assertEqual(self._bridge_contract().findings(response), [])
+
+
+    def test_neither_side_raises_on_a_policy_it_cannot_read(self):
+        """Both run before turn/start, so an exception would become outcome_unknown.
+
+        That verdict tells a caller the message may have been delivered, and it is the one
+        outcome a delivery cannot reconcile, for a response that in fact withheld everything.
+        """
+        from codex_session_relay import settings as relay
+
+        unreadable = (
+            None, "workspaceWrite", 42, ["workspaceWrite"], {"no_type": 1},
+            {"type": {"unhashable": 1}}, {"type": ["not-a-string"]},
+            {"type": "workspaceWrite", "writableRoots": None},
+            {"type": "workspaceWrite", "writableRoots": 7},
+        )
+        for policy in unreadable:
+            with self.subTest(policy=repr(policy)):
+                self.assertIsNone(self.bridge.normalise_policy(policy))
+                self.assertIsNone(relay.normalise_policy(policy))
+                findings = AUTHORIZED.mismatches(authorized_resume_response(sandbox=policy))
+                self.assertTrue(findings, "an unreadable policy must refuse")
+                self.assertEqual(findings[0]["field"], "sandbox")
+        # A well-formed policy still normalises identically on both sides.
+        self.assertEqual(
+            self.bridge.normalise_policy({"type": "workspaceWrite"}),
+            relay.normalise_policy({"type": "workspaceWrite"}),
+        )
+
+    def test_the_resume_config_agrees_on_every_key(self):
+        relay_config = AUTHORIZED.resume_params("thread-1")["config"]
+        self.assertEqual(relay_config, self._bridge_contract().config())

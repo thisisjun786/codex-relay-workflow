@@ -18,6 +18,9 @@ class FakeServer:
         self.reject = {}
         self.drop_after = None
         self.override_creation = {}
+        self.override_resume = {}
+        # Fields the host simply does not report back, to exercise "we cannot tell".
+        self.unreported = set()
         self.approval_policy = "never"
         self.complete_turns = True
         self.goal = None
@@ -37,6 +40,42 @@ class FakeServer:
         if cursor != self.cursor(offset):
             raise ValueError("invalid cursor")
         return offset
+
+    def settings_view(self, params):
+        """What this host reports about a thread's settings, shaped like the real one.
+
+        Measured on codex-cli 0.154.0: sandbox comes back as the FULL policy object with every
+        declared default filled in, effort is whatever config.model_reasoning_effort asked for
+        (the host echoes it without validating it), and the workspace-write policy fields are
+        taken from the config section, since the sandbox parameter is only a mode.
+        """
+        config = params.get("config") or {}
+        workspace = config.get("sandbox_workspace_write") or {}
+        kind = {
+            "read-only": "readOnly",
+            "workspace-write": "workspaceWrite",
+            "danger-full-access": "dangerFullAccess",
+        }[params.get("sandbox", "read-only")]
+        if kind == "workspaceWrite":
+            sandbox = {
+                "type": kind,
+                "writableRoots": workspace.get("writable_roots", []),
+                "networkAccess": workspace.get("network_access", False),
+                "excludeTmpdirEnvVar": workspace.get("exclude_tmpdir_env_var", False),
+                "excludeSlashTmp": workspace.get("exclude_slash_tmp", False),
+            }
+        elif kind == "readOnly":
+            sandbox = {"type": kind, "networkAccess": False}
+        else:
+            sandbox = {"type": kind}
+        return {
+            "cwd": params["cwd"],
+            "runtimeWorkspaceRoots": params.get("runtimeWorkspaceRoots", [params["cwd"]]),
+            "approvalPolicy": "never",
+            "sandbox": sandbox,
+            "model": params.get("model", "configured-default"),
+            "reasoningEffort": config.get("model_reasoning_effort", "medium"),
+        }
 
     async def handle(self, ws):
         self.handshake_extensions.append(ws.request.headers.get("Sec-WebSocket-Extensions"))
@@ -63,25 +102,19 @@ class FakeServer:
                 tid = f"thread-{len(self.threads) + 1}"
                 thread = {"id": tid, "cwd": params["cwd"], "status": {"type": "idle"}, "turns": []}
                 self.threads[tid] = thread
-                result = {
-                    "thread": dict(thread),
-                    "cwd": params["cwd"],
-                    "runtimeWorkspaceRoots": params.get("runtimeWorkspaceRoots", [params["cwd"]]),
-                    "approvalPolicy": "never",
-                    "sandbox": {
-                        "type": {
-                            "read-only": "readOnly",
-                            "workspace-write": "workspaceWrite",
-                            "danger-full-access": "dangerFullAccess",
-                        }[params["sandbox"]],
-                        **({"networkAccess": False} if params["sandbox"] == "read-only" else {}),
-                    },
-                    "model": params.get("model", "configured-default"),
-                    "reasoningEffort": params.get("config", {}).get(
-                        "model_reasoning_effort", "medium"
-                    ),
-                    **self.override_creation,
+                result = {"thread": dict(thread), **self.settings_view(params)}
+                result.update(self.override_creation)
+                thread["settings"] = self.settings_view(params)
+                # The real Thread object carries these three; measured on codex-cli 0.154.0,
+                # thread/read returns model, reasoningEffort, cwd, environments and projectId,
+                # and nothing about sandbox or approvalPolicy.
+                thread["model"] = thread["settings"]["model"]
+                thread["reasoningEffort"] = thread["settings"]["reasoningEffort"]
+                result["thread"] = {
+                    key: value for key, value in thread.items() if key != "settings"
                 }
+                for field in self.unreported:
+                    result.pop(field, None)
             elif method == "thread/name/set":
                 self.threads[params["threadId"]]["name"] = params["name"]
                 result = {}
@@ -101,7 +134,13 @@ class FakeServer:
                 result = {"thread": thread}
             elif method == "thread/resume":
                 thread = self.threads[params["threadId"]]
-                result = {"thread": {**thread, "turns": []}, "approvalPolicy": self.approval_policy}
+                # The real host reports the thread's own state; it does not adopt an override.
+                retained = dict(thread.get("settings") or {})
+                retained["approvalPolicy"] = self.approval_policy
+                result = {"thread": {**thread, "turns": []}, **retained}
+                result.update(self.override_resume)
+                for field in self.unreported:
+                    result.pop(field, None)
             elif method == "thread/turns/list":
                 turns = list(reversed(self.threads[params["threadId"]]["turns"]))
                 try:

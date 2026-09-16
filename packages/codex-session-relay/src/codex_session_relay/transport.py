@@ -16,6 +16,12 @@ KNOWN_METHODS = ("initialize", "thread/read", "thread/resume", "turn/start")
 # not a known non-delivery, and it must stay uncertain.
 SETTINGS_REFUSALS = (
     "settings_not_preserved",
+    # The host reported no value for a requested setting. Decided from the resume response before
+    # any turn/start, so nothing was sent: it belongs with the completed pre-send refusals. An
+    # ABSENT approval policy therefore lands here rather than in inbox_only, because not seeing a
+    # policy is not the same as seeing an interactive one and does not prove the push channel is
+    # permanently closed. A REPORTED non-never policy is unchanged and still inbox_only.
+    "setting_unobservable",
     "environments_unknown",
     "unverifiable_permission_profile",
 )

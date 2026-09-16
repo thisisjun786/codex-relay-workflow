@@ -87,7 +87,7 @@ class SettingsEstablishedBeforeAnySend(DeliveryTestCase):
 class RefusalClassification(DeliveryTestCase):
     """Each settings refusal is a completed pre-send refusal, not an uncertain outcome."""
 
-    CODES = ("settings_not_preserved", "environments_unknown",
+    CODES = ("settings_not_preserved", "setting_unobservable", "environments_unknown",
              "unverifiable_permission_profile")
 
     def _receipt(self, code):
@@ -113,6 +113,41 @@ class RefusalClassification(DeliveryTestCase):
         facts = classify_operation_receipt(self._receipt("something_new"))
         self.assertEqual(facts.delivery_state, HELD_UNCERTAIN)
         self.assertFalse(facts.retry_safe)
+
+    def test_an_absent_policy_withholds_while_a_reported_one_closes_the_channel(self):
+        """The two approval outcomes must not collapse into one another.
+
+        A REPORTED non-never policy means the push channel is closed for good: inbox_only, not
+        retryable. An ABSENT one means we could not see the policy at all, which proves nothing
+        about the channel, so it withholds before the send and stays retryable.
+        """
+        absent = classify_operation_receipt({
+            "requestId": "del-000000000000-a3", "status": "failed",
+            "resumed": {"approvalPolicy": None},
+            "error": "thread/resume: setting_unobservable",
+            "rpcError": {"code": "setting_unobservable", "message": "approvalPolicy"},
+        })
+        self.assertEqual(absent.delivery_state, WITHHELD_PRE_SEND)
+        self.assertEqual(absent.send_attempted, "no")
+        self.assertTrue(absent.retry_safe)
+
+        reported = classify_operation_receipt({
+            "requestId": "del-000000000000-a4", "status": "failed",
+            "resumed": {"approvalPolicy": "on-request"},
+            "error": "thread/resume: Interactive approvals unsupported",
+            "rpcError": {"code": "unsupported_approval_policy", "message": "unsupported"},
+        })
+        self.assertEqual(reported.delivery_state, INBOX_ONLY)
+        self.assertFalse(reported.retry_safe)
+
+        settings = TaskSettings(task_settings("/parent"))
+        findings = settings.mismatches({
+            "approvalPolicy": None,
+            "sandbox": {"type": "dangerFullAccess"},
+            "thread": {"environments": None},
+        })
+        self.assertEqual(len(findings), 1, "an unreadable policy decides alone too")
+        self.assertEqual(findings[0]["code"], "setting_unobservable")
 
     def test_approval_policy_is_decided_before_the_generic_mismatch(self):
         """A permanently closed push channel must not become a retry loop."""
@@ -206,3 +241,42 @@ class SettingsRegistration(DeliveryTestCase):
         record_settings(self.store, self.clock, "01other", task_settings("/a"), source="test")
         record_settings(self.store, self.clock, "01other", task_settings("/b"), source="test")
         self.assertEqual(load_settings(self.store, "01other").data["cwd"], "/b")
+
+
+class AnUnreadablePolicyNeverAgreesWithItself(DeliveryTestCase):
+    """Two unreadable policies both normalise to None, and None == None is not agreement.
+
+    A supported `type` is not enough to make a record usable: a malformed stored policy and an
+    equally malformed response would have compared equal and sent under a sandbox that nothing
+    ever verified.
+    """
+
+    MALFORMED = {"type": "workspaceWrite", "writableRoots": None}
+
+    def test_an_unreadable_record_is_refused_before_any_send(self):
+        broken = task_settings("/parent", sandbox=dict(self.MALFORMED))
+        _relationship, event_id = self.queued_event(settings=broken)
+        self.assertIsNone(self.attempt(event_id))
+        self.assertEqual(self.adapter.sends, [], "nothing may reach the host")
+        entry = self.store.all(
+            "SELECT detail FROM journal WHERE kind = ? ORDER BY rowid DESC LIMIT 1",
+            ("delivery_withheld",),
+        )[0]
+        self.assertIn(RefusalReason.UNSUPPORTED_SANDBOX_TYPE.value, entry["detail"])
+
+    def test_the_comparison_refuses_even_if_such_a_record_reached_it(self):
+        record = task_settings("/parent", sandbox=dict(self.MALFORMED))
+        settings = TaskSettings(record)
+        # Everything else agrees, so only the sandbox can be the finding.
+        findings = settings.mismatches({
+            "approvalPolicy": "never",
+            "sandbox": dict(self.MALFORMED),
+            "cwd": record["cwd"],
+            "runtimeWorkspaceRoots": list(record["runtimeWorkspaceRoots"]),
+            "model": record["model"],
+            "reasoningEffort": record["reasoningEffort"],
+            "thread": {"environments": [dict(e) for e in record["environments"]]},
+        })
+        self.assertTrue(findings, "two unreadable policies must not agree")
+        self.assertEqual(findings[0]["field"], "sandbox")
+        self.assertEqual(findings[0]["code"], "settings_not_preserved")
