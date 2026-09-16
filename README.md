@@ -225,8 +225,12 @@ It routes each request to its existing operation
 owner. Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
 
-`crw-plan` creates projects on the user's request and reuses existing items when
-updating a plan. Initiatives represent goals; product family and related
+`crw-plan` completes a requested full plan from initiatives through projects,
+useful milestones, and executable issues in one operation. It reuses existing
+items, creates missing ones within that request, and keeps narrow updates scoped.
+Each implementation issue maps to one PR; work requiring several PRs is split
+into dependent issues. Non-PR research or design keeps a verified result instead.
+Initiatives represent goals; product family and related
 repositories are separate project labels. Project names need no product prefix,
 and views remain the user's choice. See the shared
 [Linear operating model](skills/crw-plan/references/integrations.md#linear-operating-model).

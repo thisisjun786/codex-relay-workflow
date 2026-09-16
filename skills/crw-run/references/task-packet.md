@@ -15,10 +15,11 @@ Use the real Linear identifier, a concise Korean description of the assigned
 result, and the agreed execution mode. Use `CXC Loop` when it is the effective
 workflow; otherwise use the actual mode, such as `구현` or `검증`. The suffix names
 the assignment, not proof that a loop started. Keep runtime verification separate.
-Preserve an explicit user-supplied title. For a grouped delivery, use its primary
-issue and retain the full issue mapping in the packet. If no primary issue exists,
-use the verified issue identifiers together; if no issue is linked, use the known
-project name instead of inventing an issue number.
+Preserve an explicit user-supplied title. Each implementation packet names its
+one issue and intended PR. A batch retains separate packets and issue/PR pairs;
+do not use a primary issue to hide a combined delivery. If no issue is linked,
+use the known project name instead of inventing an issue number and reconcile
+the mapping through `crw-plan` before new implementation dispatch.
 
 The coordinator passes the title through the creation tool's supported title/name
 field and includes it in the packet. Prompt text alone does not prove the app title
@@ -31,13 +32,16 @@ authorized work. Task identity and recovery always use stable IDs, not title mat
 
 ## Launch packet
 
-This packet targets a verified independent implementation task for any issue
-count or checkout arrangement. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
+This packet targets a verified independent implementation task for one issue/PR
+pair, or an explicitly non-PR result. Follow [Independent implementation tasks](../SKILL.md#independent-implementation-tasks)
 before dispatch. A packet's wording cannot turn an internal subagent into that
 task. Record the existing owner and creation/reuse authorization before sending.
 
 ```text
 Task: [bounded result and issue links]
+Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
+  or existing PR URL; related issues are dependencies, not additional deliveries.
+  For non-PR work, state the result and how it will be verified]
 Title: [issue ID · short task name · agreed workflow, following Child task titles]
 Workflow: [effective workflow per Default independent execution]
 
@@ -171,6 +175,8 @@ retain private recovery receipts so an interrupted task can still be reconciled.
 needed to resume:
 
 - Coordinator task ID and fixed project/backlog link.
+- Each implementation issue's one current PR, repository, and integration target;
+  retain superseded PR links as history. Record non-PR results separately.
 - Each task's scope, dependency edges, overlap decisions, and full baseline SHA.
 - Where a relay holds the assignment: relationship id, current generation, current
   revision, assignment state, and the synchronisation jobs still owed.

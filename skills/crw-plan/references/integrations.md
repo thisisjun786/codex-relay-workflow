@@ -30,9 +30,10 @@ Keep goals, product classification, and repository identity separate:
   Preserve its stable ID and issues across those relations; do not clone them
   or sum shared progress as separate output. Verify connector support and read
   back relations before claiming that a requested link exists.
-- Create a project when the user requests one, including an accepted proposal.
-  A planning request, large backlog, or multiple repositories alone is not a
-  project-creation request. Reuse existing IDs and meaningful scope. Name the
+- Create a project when the user requests one, including an accepted proposal
+  or a full plan from goal through issues. A full-plan request covers the needed
+  hierarchy in its agreed scope; a narrow plan update, large backlog, or multiple
+  repositories alone does not authorize extra projects. Reuse existing IDs and meaningful scope. Name the
   result naturally without a fixed product prefix. Do not rename existing
   projects or migrate their relations merely by loading these instructions.
 - Product family is a single-choice project label group. Reuse the existing
@@ -55,6 +56,27 @@ have one product family and independent core, desktop, and installer repository
 labels. An installer fix within it still names only its actual code targets.
 A shared planning project can have neither product family nor repository labels.
 Neither example requires an initiative or a product prefix in the project name.
+
+### Issue-to-PR mapping
+
+One implementation issue corresponds to one PR, and that PR delivers one
+implementation issue. Split work requiring several PRs into separate issues
+with explicit dependencies, even within one repository. Keep a multi-repository
+outcome in one project when appropriate, with one issue per repository PR.
+Batches coordinate separate issue/PR pairs; they do not combine issues into one
+PR. Referencing a related issue is not claiming to deliver or close it.
+
+Keep review fixes on the same issue and PR. A necessary replacement PR retains
+the superseded link and names the one current delivery PR; it does not create a
+second simultaneous delivery for the issue. A new change after that delivery
+has merged gets a new issue and PR. Research, design, or operational work with
+no repository change uses an explicit non-PR result and verification; do not
+create an empty PR merely to fit the rule.
+
+When existing work breaks this mapping, reconcile its scope and ownership
+through `crw-plan` before new dispatch. Preserve active work, IDs, and history;
+do not silently split, close, or reassign live issues. Editing these instructions
+does not migrate existing work or alter the relay's runtime contracts.
 
 ## Linear holds canonical documents
 

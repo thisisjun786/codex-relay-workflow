@@ -147,8 +147,11 @@ Derive batches from both dependency edges and overlapping edit surfaces.
 Independent issue statuses do not prove independent code changes. Serialize
 shared schema, persistence, contract, or central UI changes when separation would
 cost more than it saves. A small project may have only two useful parallel tasks.
-Prefer one Linear issue per reviewable delivery when its scope already fits.
-Group tightly coupled issues only with an explicit issue-to-delivery mapping.
+Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
+one implementation issue per PR, with one issue/PR pair per implementation
+packet. A batch retains those separate pairs. If one issue needs several PRs,
+or a proposed PR would deliver several issues, reconcile the plan through
+`crw-plan` before new dispatch; preserve existing owners and active work.
 
 Keep the human-readable coordination record in the project's linked Linear
 document as part of the management assignment, without a separate recording request.
