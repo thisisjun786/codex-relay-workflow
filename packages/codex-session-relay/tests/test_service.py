@@ -653,6 +653,50 @@ class Ownership(ServiceTestCase):
             " replacement out",
         )
 
+    def test_a_gone_supervisor_with_no_boot_id_leaves_its_worker_unverifiable(self):
+        """stop() falls through to _stop_worker when ownership answers none, and that
+        validates start ticks only. A reboot resets those along with the pid space, so an
+        unrelated process holding the old worker number would be signalled. The cleared-pid
+        path already refused this; the already-gone path is just as stale and did not.
+        """
+        if service_module.boot_id() is None:
+            self.skipTest("this host records no boot id, so the rule cannot apply")
+        service = self.service("j")
+        finished = subprocess.Popen([sys.executable, "-c", "pass"])
+        finished.wait(timeout=10)
+        service.write_record(dict(
+            service.new_record(pid=os.getpid()), pid=finished.pid, workerPid=os.getpid(),
+            workerStartTicks=service_module.start_ticks(os.getpid()), bootId=None,
+        ))
+
+        owner, handle, detail = service.ownership()
+        if handle is not None:
+            handle.close()
+
+        self.assertEqual(owner, service_module.UNVERIFIABLE)
+        self.assertIn("boot id", detail)
+
+    def test_stop_reads_a_lock_it_cannot_take_after_both_exits_as_a_replacement(self):
+        """A replacement usually has not published yet, so latest still reads the OLD record
+        and the identity comparison cannot see it. Both recorded processes are confirmed gone
+        by this point, so nothing this stop was acting on can be holding the lock, and the
+        failed acquisition is the only evidence available in that window.
+        """
+        service = self.service("k")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+
+        @contextlib.contextmanager
+        def never_free():
+            yield None
+
+        service.daemon_lock_if_free = never_free
+        stopped = service.stop(actor="owner")
+
+        child.wait(timeout=10)
+        self.assertFalse(stopped["ok"], stopped)
+        self.assertEqual(stopped["reason"], "replaced_by_new_launch")
+
     def test_disable_refuses_a_lock_holder_nothing_here_can_identify(self):
         """A supervisor that has taken the lock and not yet published its record.
 
