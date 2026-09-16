@@ -96,16 +96,31 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
         cxc.check_known(cxc_status)
     else:
         cxc.check_status(cxc_status, outcome)
-    if outcome == REVISION_OUTCOME and (review or {}).get("kind") == cxc.PASS:
-        # A revision event exists because the parent ruled needs_changes. A PASS verdict on
-        # it would tell the child its work was approved in the same message that demands
-        # changes, and the review half of a report is caller-supplied even now that identity
-        # is not.
+    # Shape before meaning. Reading review.get() ahead of _check_review assumed every truthy
+    # review was a mapping, so a revision report carrying a bare string raised AttributeError
+    # out of the validator instead of coming back as a named refusal.
+    review = _check_review(review)
+    if outcome == REVISION_OUTCOME:
+        if (review or {}).get("kind") == cxc.PASS:
+            # A revision event exists because the parent ruled needs_changes. A PASS verdict
+            # on it would tell the child its work was approved in the same message that
+            # demands changes, and the review half of a report is caller-supplied even now
+            # that identity is not.
+            raise ReceiptRefused(
+                RefusalReason.DISPOSITION_CONFLICT,
+                "a revision request cannot carry a PASS verdict: this event exists because "
+                "the parent ruled needs_changes, and the message would approve and demand "
+                "changes at the same time",
+            )
+    elif review is not None:
+        # Only a correction renders a verdict line. Storing a review on a completion would
+        # accept a PASS or FAIL that the delivered message never shows and never says it
+        # dropped, which is the silent loss the omission notice exists to prevent.
         raise ReceiptRefused(
             RefusalReason.DISPOSITION_CONFLICT,
-            "a revision request cannot carry a PASS verdict: this event exists because the "
-            "parent ruled needs_changes, and the message would approve and demand changes "
-            "at the same time",
+            f"a {outcome!r} report carries no review: a verdict line belongs to a correction, "
+            "so this judgment would be stored and never delivered. Put the reviewers findings "
+            "in the unresolved items, or record the review on the revision request",
         )
     repository = _bounded(_required(repository, "repository"), "repository", 200)
     summary = _bounded(_required(summary, "summary"), "summary", SUMMARY_MAX)
@@ -129,11 +144,9 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
                 "a report naming a pull request names the head commit it is about; without "
                 "one, a later push silently inherits this report",
             )
-    review = _check_review(review)
     evidence = _check_evidence(evidence)
     unresolved = _check_unresolved(unresolved)
     restore = _check_restore(restore)
-    _check_resubmission(store, event_id, submission_no)
     row = {
         "eventId": event_id,
         "relationshipId": relationship_id,
@@ -160,23 +173,25 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     }
     now = clock.iso()
     with store.transaction() as db:
+        # Re-read inside the write lock. Two recorders can both pass a preflight check and
+        # both claim the same next submission, and a delivery can open an attempt between a
+        # preflight read and this commit. Everything this decides can move, which is why the
+        # rest of this package reads inside the caller transaction rather than before it.
+        _assert_resubmission(db, event_id, row["submissionNo"])
+        # Delete then insert, rather than an upsert with a conflict target. A conflict target
+        # has to match a constraint in the schema the database was actually created with, and
+        # CREATE TABLE IF NOT EXISTS never changes an existing one, so naming one here made
+        # the write depend on which version of this table a store happened to start life on.
+        db.execute(
+            "DELETE FROM work_reports WHERE event_id = ? AND submission_no = ?",
+            (event_id, row["submissionNo"]),
+        )
         db.execute(
             "INSERT INTO work_reports (event_id, relationship_id, execution_generation,"
             " revision_hash, submission_no, repository, pr_number, pr_url, pr_state, base_ref,"
             " base_sha, head_sha, criteria_digest, cxc_status, cxc_reason, contract_version,"
             " summary, evidence, unresolved, next_action, review, restore, recorded_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-            " ON CONFLICT(event_id, submission_no) DO UPDATE SET"
-            "   repository = excluded.repository,"
-            "   pr_number = excluded.pr_number, pr_url = excluded.pr_url,"
-            "   pr_state = excluded.pr_state, base_ref = excluded.base_ref,"
-            "   base_sha = excluded.base_sha, head_sha = excluded.head_sha,"
-            "   criteria_digest = excluded.criteria_digest, cxc_status = excluded.cxc_status,"
-            "   cxc_reason = excluded.cxc_reason, contract_version = excluded.contract_version,"
-            "   summary = excluded.summary, evidence = excluded.evidence,"
-            "   unresolved = excluded.unresolved, next_action = excluded.next_action,"
-            "   review = excluded.review, restore = excluded.restore,"
-            "   recorded_at = excluded.recorded_at",
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 event_id, relationship_id, row["executionGeneration"], revision_hash,
                 row["submissionNo"], repository, pr_number, pr_url, pr_state, base_ref,
@@ -288,7 +303,7 @@ def _bounded_optional(value, field, limit=LABEL_MAX):
     return _bounded(value, field, limit)
 
 
-def _check_resubmission(store, event_id, submission_no) -> None:
+def _assert_resubmission(db, event_id, submission_no) -> None:
     """Once a message has gone out, a changed report is a new submission and says so.
 
     The bytes of every attempt stay frozen in attempt_messages, so history is never lost.
@@ -296,16 +311,19 @@ def _check_resubmission(store, event_id, submission_no) -> None:
     already been attempted, so a retry carries different instructions under the same event
     and the same stated submission. The recipient would have no way to tell which one it was
     answering. Correcting a report before anything is sent stays free.
+
+    Takes the transaction handle rather than the store, so this cannot be satisfied by a
+    read that was already stale by the time the row was written.
     """
-    existing = store.one(
+    existing = db.execute(
         "SELECT MAX(submission_no) AS submission_no FROM work_reports WHERE event_id = ?",
         (event_id,),
-    )
+    ).fetchone()
     if existing is None or existing["submission_no"] is None:
         return
-    attempted = store.one(
+    attempted = db.execute(
         "SELECT 1 FROM attempts WHERE event_id = ? LIMIT 1", (event_id,)
-    )
+    ).fetchone()
     if attempted is None:
         return
     if int(submission_no) <= existing["submission_no"]:

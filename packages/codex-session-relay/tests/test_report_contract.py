@@ -530,6 +530,20 @@ class FinalLine(Directions):
         self.assertEqual(stored["cxcStatus"], cxc.NEEDS_HUMAN)
         self.assertIn("NEEDS_HUMAN", str(report.read(self.store, revision_event)))
 
+    def test_a_malformed_review_on_a_correction_is_refused_not_a_crash(self):
+        _source, revision_event = self._revision()
+        # The PASS conflict check used to read review.get() before any shape check, so a
+        # truthy non-mapping raised AttributeError out of the validator on this path only.
+        for bad in ("PASS", 1, ["c-1"]):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=revision_event,
+                    **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="incomplete",
+                               review=bad)
+                ),
+            )
+
     def test_the_recorded_verdict_decides_which_criteria_a_correction_names(self):
         _source, revision_event = self._revision()
         receipt = self.intake.get(revision_event)
@@ -688,6 +702,17 @@ class Bounds(DeliveryTestCase):
                     self.store, self.clock, event_id=event_id, **a_report(review=bad)
                 ),
             )
+
+    def test_a_completion_cannot_carry_a_review_nobody_would_ever_see(self):
+        _relationship, event_id = self.queued_event()
+        error = self.assertRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            lambda: report.record(
+                self.store, self.clock, event_id=event_id,
+                **a_report(review={"kind": cxc.PASS, "findings": []})
+            ),
+        )
+        self.assertIn("stored and never delivered", error.detail)
 
     def test_a_tuple_is_an_ordered_sequence_and_stays_accepted(self):
         _relationship, event_id = self.queued_event()
