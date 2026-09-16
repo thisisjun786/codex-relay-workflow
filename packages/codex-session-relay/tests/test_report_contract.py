@@ -638,6 +638,12 @@ class Identity(DeliveryTestCase):
             lambda: report.record(self.store, self.clock, event_id=event_id,
                                   **a_report(pr_number=10 ** 6000)),
         )
+        # Negative reaches the positive-integer branch, which must not print it either.
+        self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(pr_number=-(10 ** 6000))),
+        )
         self.assertRefused(
             RefusalReason.MALFORMED_RECEIPT,
             lambda: report.record(self.store, self.clock, event_id=event_id,

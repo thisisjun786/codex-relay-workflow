@@ -143,7 +143,11 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
         if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number < 1:
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
-                f"a pull request number is a positive integer, not {pr_number!r}",
+                # The value is named by TYPE, never printed. Past the integer-to-string
+                # digit limit, formatting it raises ValueError out of the refusal itself,
+                # and a huge negative number reaches this branch.
+                "a pull request number is a positive integer the store can hold, not a "
+                f"{type(pr_number).__name__} outside that range",
             )
         if pr_number > SQLITE_MAX_INT:
             # Past this the insert raises OverflowError, a host exception escaping the
@@ -1084,7 +1088,10 @@ def _finding_lines(receipt, review):
 
 def _one_finding(item, extra):
     note = item.get("note") or extra.get("note")
-    rendered = f"  {item['id']}: {item.get('verdict')}"
+    # An enrichment-only finding has no disposition of its own, and rendering the absence as
+    # "None" told the reader a criterion had a judgment named None.
+    disposition = item.get("verdict")
+    rendered = f"  {item['id']}: {disposition}" if disposition else f"  {item['id']}"
     if note:
         rendered += f" - {note}"
     out = [rendered]
