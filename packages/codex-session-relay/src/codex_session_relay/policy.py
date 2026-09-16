@@ -46,6 +46,12 @@ class RetryPolicy:
         """A clean segment waits the plain interval; repeated failure backs off and caps."""
         if consecutive_failures <= 0:
             return self.restart_interval_seconds
+        # Bounded before the exponent is evaluated. A supervisor whose worker fails on every
+        # segment keeps counting, and past about a thousand failures base * 2 ** (n - 1) is an
+        # integer too large to convert to a float - so the supervisor would die of its own
+        # backoff instead of continuing to retry at the cap.
+        if consecutive_failures > 64:
+            return self.restart_backoff_max_seconds
         return min(
             self.restart_backoff_max_seconds,
             self.restart_base_seconds * (2 ** (consecutive_failures - 1)),

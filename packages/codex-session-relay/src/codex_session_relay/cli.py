@@ -899,7 +899,19 @@ def _adopt_supervised(service, args) -> dict:
     if death["orphaned"]:
         refuse("supervisor_already_gone",
                f"parent is {death['parent']}, not the recorded supervisor {record.get('pid')}")
-    return {"lockFd": lock_fd, "scopeFd": scope_fd if scope_fd >= 0 else None}
+    if not death["armed"]:
+        # Recorded rather than refused. The getppid check above closes the window that
+        # matters here - a supervisor that is ALREADY gone - and refusing outright would make
+        # the relay unusable on any host without prctl. What is lost is the later case: if
+        # the supervisor crashes mid-segment the kernel will not signal this worker, so it
+        # runs to the end of its bounded segment holding the inherited locks. Bounded, but
+        # real, and an operator can see it in the record instead of assuming it is armed.
+        service.write_record(dict(
+            service.record() or record,
+            workerDeathSignal="unarmed", workerDeathSignalDetail=death.get("detail"),
+        ))
+    return {"lockFd": lock_fd, "scopeFd": scope_fd if scope_fd >= 0 else None,
+            "parentDeathSignal": "armed" if death["armed"] else "unarmed"}
 
 
 def cmd_service(services, args) -> dict:
@@ -932,6 +944,13 @@ def _supervise(services, service, args) -> dict:
     from .service import ServiceRefused
 
     service.launch_id = getattr(args, "launch_id", None)
+    # The probe that built this service answers from a file that may not exist yet, so on a
+    # fresh state directory it reports no store id at all. Opening the store HERE is not the
+    # side effect doctor and status refuse: a supervisor is about to use it either way. It
+    # matters because the scope registration is written next, and ScopeRegistry's mismatch
+    # guard needs both ids to be present - a registration recorded with a null id could be
+    # overwritten later by a different store, losing the evidence two stores served one socket.
+    service.store_id = services.store.identity
 
     def recover():
         # Establish what happened to anything in flight BEFORE a worker can send. Recovery
