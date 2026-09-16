@@ -250,6 +250,20 @@ class Registry:
             (number, now, rid),
         )
         self.store.journal("generation_opened", rid, {"generation": number, "reason": reason}, at=now)
+        # Anything still outstanding for an earlier generation is history from this moment on.
+        # It is ANNOTATED, never rewritten: a send whose response was lost still has to be
+        # reconciled, and a terminal superseded aggregate cannot be. Without this a delivery
+        # that was sending or held_uncertain when the generation advanced reconciled to
+        # dispatched with no note at all, and status presented it as an ordinary current one.
+        db.execute(
+            "INSERT INTO delivery_supersession (event_id, reason, noted_at, applied)"
+            " SELECT d.event_id, 'stale_generation', ?, 0 FROM deliveries d"
+            "  JOIN events e ON e.event_id = d.event_id"
+            " WHERE d.relationship_id = ? AND e.execution_generation < ?"
+            "   AND d.state IN ('sending','held_uncertain')"
+            " ON CONFLICT(event_id) DO NOTHING",
+            (now, rid, number),
+        )
         return number
 
     def bind_anchor(self, rid: str, number: int, *, dispatch_turn_id: str, source: str) -> dict:

@@ -37,6 +37,48 @@ class PreSendSupersession(DeliveryTestCase):
         self.delivery.enqueue(payload["eventId"])
         return relationship, payload["eventId"]
 
+    def test_an_outstanding_send_is_annotated_when_the_generation_advances(self):
+        """attempt() rejects a non-claimable state, so nothing reached the pre-send check.
+
+        A delivery that was sending or held_uncertain as a newer generation opened therefore
+        got no delivery_supersession row at all. It could reconcile to dispatched and be
+        presented as an ordinary current delivery rather than as history.
+        """
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        self.adapter.script("transport_unknown")
+        self.attempt(event_id)
+        self.assertEqual(self.delivery.get(event_id)["state"], "held_uncertain")
+
+        self.advance_generation(relationship, 2)
+
+        note = self.store.one(
+            "SELECT * FROM delivery_supersession WHERE event_id = ?", (event_id,),
+        )
+        self.assertIsNotNone(note, "the outstanding send is no longer current and says so")
+        self.assertEqual(note["reason"], STALE_GENERATION)
+        self.assertEqual(
+            self.delivery.get(event_id)["state"], "held_uncertain",
+            "annotated, never rewritten: a lost response still has to be reconcilable",
+        )
+        item = [d for d in self.delivery.snapshot()["deliveries"]
+                if d["eventId"] == event_id][0]
+        self.assertIsNotNone(item["supersededNote"])
+
+    def test_a_current_generations_delivery_is_left_alone(self):
+        """The annotation must not mark the generation that is actually running."""
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        self.adapter.script("transport_unknown")
+        self.attempt(event_id)
+        self.advance_generation(relationship, 2)
+        self.store.db.execute(
+            "DELETE FROM delivery_supersession WHERE event_id = ?", (event_id,),
+        )
+
+        self.advance_generation(relationship, 3)
+
+        rows = self.store.all("SELECT event_id FROM delivery_supersession")
+        self.assertEqual([r["event_id"] for r in rows], [event_id],
+                         "only the older generation's outstanding send is annotated")
     def test_a_new_generation_with_no_revision_still_suppresses_the_old_outcome(self):
         """The exact reproduction: g3 opened, g3 empty, and a g2 event went out anyway."""
         relationship, event_id = self.queued_outcome("ready_for_review")

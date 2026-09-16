@@ -177,7 +177,6 @@ class RelayDaemon:
             report.requeued += 1
 
     def _verify_acks(self, report, now) -> None:
-        pass_placeholder = None
         """Complete acknowledgements a parent authored without a host.
 
         This is the process that holds host access, so it is where recorded intent becomes
@@ -265,9 +264,9 @@ class RelayDaemon:
                 # Already observed is not already finished. A receipt written just after the
                 # completion was seen still has to be resolved, so the observation alone is
                 # no longer enough to skip the turn.
-                if self._already_observed(reference) and not self.intake.staged_events(
-                    thread_id=thread, turn_id=turn_id,
-                ):
+                if self._already_observed(
+                    reference, relationship["relationshipId"],
+                ) and not self.intake.staged_events(thread_id=thread, turn_id=turn_id):
                     continue
                 self._settle_turn(relationship, reference, report)
         # Advanced whether or not anything was read. Advancing only on a read would let a
@@ -303,10 +302,10 @@ class RelayDaemon:
         staged = [row["turn_id"] for row in self.intake.staged_events(thread_id=thread)]
         ring = [
             turn_id for turn_id in dict.fromkeys(staged + history)
-            if turn_id != current and self._worth_polling(thread, turn_id)
+            if turn_id != current and self._worth_polling(thread, turn_id, rid)
         ]
         selected = []
-        if current and self._worth_polling(thread, current):
+        if current and self._worth_polling(thread, current, rid):
             selected.append(current)
         remaining = share - len(selected)
         if remaining <= 0 and ring and self._alternate(rid):
@@ -346,10 +345,21 @@ class RelayDaemon:
                  None if error is None else f"{type(error).__name__}: {error}"),
             )
 
-    def _worth_polling(self, thread, turn_id) -> bool:
-        """Is there anything left to learn from this turn?"""
+    def _worth_polling(self, thread, turn_id, relationship_id=None) -> bool:
+        """Is there anything left to learn from this turn, for THIS assignment?
+
+        Scoped for the same reason _already_observed is: two assignments can share a child
+        turn, and asking globally meant one assignment's observation made the turn look
+        finished to the other, which then never settled it at all.
+        """
         if self.intake.staged_events(thread_id=thread, turn_id=turn_id):
             return True
+        if relationship_id is not None:
+            return self.store.one(
+                "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?"
+                "   AND relationship_id = ?",
+                (thread, turn_id, relationship_id),
+            ) is None
         return self.store.one(
             "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?",
             (thread, turn_id),
@@ -388,7 +398,20 @@ class RelayDaemon:
         self._advance_cursor(listing, 1, 2)
         return turn == 1
 
-    def _already_observed(self, reference: TurnRef) -> bool:
+    def _already_observed(self, reference: TurnRef, relationship_id=None) -> bool:
+        """Per assignment, because two assignments can legitimately share a child turn.
+
+        Asking globally meant the first assignment's settlement closed the turn for every
+        other one: the second never reached _synthesize, so a failed shared turn left its
+        other parents with no terminal outcome at all.
+        """
+        if relationship_id is not None:
+            return self.store.one(
+                "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?"
+                " AND terminal_status = ? AND relationship_id = ?",
+                (reference.thread_id, reference.turn_id, reference.turn_status,
+                 relationship_id),
+            ) is not None
         return self.store.one(
             "SELECT 1 FROM observations WHERE thread_id = ? AND turn_id = ?"
             " AND terminal_status = ?",

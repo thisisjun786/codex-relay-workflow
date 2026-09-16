@@ -903,6 +903,15 @@ class DeliveryService:
             + (" AND r.relationship_id = ?" if relationship_id else ""),
             (relationship_id,) if relationship_id else (),
         ):
+            if row["dispatch_turn_id"] is None:
+                # A generation whose anchor is still pending has no turn to poll. That is a
+                # delivery phase, not a scheduler that stopped looking, and counting it as
+                # never polled reported stalled for a relay behaving exactly as designed.
+                anchors[row["relationship_id"]] = {
+                    "turnId": None, "lastPolledAt": None, "ageSeconds": None,
+                    "lastError": None, "settled": False, "anchorPending": True,
+                }
+                continue
             # The scheduler deliberately stops reading a turn once it is terminal and nothing
             # is staged behind it, so its last poll can never advance again. Ageing that out
             # marked every quiet, fully observed assignment stalled forever, which is the
@@ -911,7 +920,7 @@ class DeliveryService:
             anchors[row["relationship_id"]] = {
                 "turnId": row["dispatch_turn_id"], "lastPolledAt": row["last_polled_at"],
                 "ageSeconds": age(row["last_polled_at"]), "lastError": row["last_error"],
-                "settled": settled,
+                "settled": settled, "anchorPending": False,
             }
         for row in self.store.all(
             "SELECT relationship_id, COUNT(*) AS n FROM events WHERE stage = 'staged'"
@@ -922,9 +931,11 @@ class DeliveryService:
             backlog[row["relationship_id"]] = row["n"]
         oldest = max([s["ageSeconds"] or 0.0 for s in staged], default=0.0)
         never = [rid for rid, a in anchors.items()
-                 if a["lastPolledAt"] is None and not a["settled"]]
+                 if a["lastPolledAt"] is None and not a["settled"]
+                 and not a["anchorPending"]]
         stale = [rid for rid, a in anchors.items()
-                 if not a["settled"] and a["ageSeconds"] is not None
+                 if not a["settled"] and not a["anchorPending"]
+                 and a["ageSeconds"] is not None
                  and a["ageSeconds"] > stale_after]
         if never or stale:
             health, reason = "stalled", (
@@ -998,9 +1009,13 @@ class DeliveryService:
             db, event["relationship_id"], event["execution_generation"],
         )
         if not head["eventId"] or head["eventId"] == event_id:
-            # A null head means the generation has no reviewable revision at all, which is
-            # what an execution-only failure looks like in its OWN current generation. That
-            # is not evidence anything replaced it.
+            # A null head means the generation has no single reviewable revision this one
+            # stands behind, which is what an execution-only failure looks like in its OWN
+            # current generation. That is not evidence anything replaced it. Ambiguous
+            # lineage also lands here and is deliberately NOT read as supersession: it is
+            # arbitrated at acknowledgement by revision_currency, and suppressing on it
+            # here would destroy the delivery chance of every independent revision in a
+            # generation that simply never declared a chain.
             return None
         successor = db.execute(
             "SELECT stage FROM events WHERE event_id = ?", (head["eventId"],),

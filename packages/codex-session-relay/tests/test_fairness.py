@@ -177,6 +177,80 @@ class ReconciliationFairness(ParentFixture):
         self.assertEqual(int(stored["cursor"]), 2)
 
 
+class SharedChildTurns(DaemonTestCase):
+    """Two assignments can legitimately be watching the same child turn."""
+
+    def two_parents_on_one_child(self):
+        """Different parents, different issues, one child thread and one anchor turn."""
+        from codex_session_relay.registry import record_settings
+        from .support import task_settings
+
+        child, turn = "01child-shared", "turn-shared-1"
+        made = []
+        for name in ("a", "b"):
+            parent = f"01parent-{name}"
+            root = os.path.join(self.root, name)
+            os.makedirs(root, exist_ok=True)
+            made.append(self.registry.register(
+                parent=Endpoint(parent, HOST, cwd=f"/p/{name}"),
+                child=Endpoint(child, HOST, cwd=root),
+                issue_key=f"SHARED-{name}", artifact_roots=[root],
+                allowed_recipients=[parent],
+                dispatch_request_id=f"dispatch-{name}", dispatch_turn_id=turn,
+            ))
+            self.adapter.add_thread(parent)
+            record_settings(self.store, self.clock, parent, task_settings(f"/p/{name}"),
+                            source="creation_result")
+        self.adapter.add_thread(child)
+        return made, child, turn
+
+    def test_a_failed_shared_turn_reaches_every_parent_waiting_on_it(self):
+        """_already_observed asked globally, so the first settlement closed the turn for all.
+
+        The second assignment never reached _synthesize, and a failed turn suppresses the
+        staged claim rather than finalizing it - so its parent was left waiting on a verdict
+        that can never arrive.
+        """
+        relationships, child, turn = self.two_parents_on_one_child()
+        self.adapter.start_turn(child, turn_id=turn, status="inProgress")
+        self.adapter.finish_turn(child, turn, status="failed")
+
+        # The relationship rotation serves a bounded number per tick, so both are reached
+        # across ticks rather than in one. What matters is that neither is closed out by
+        # the other's observation.
+        for _tick in range(4):
+            self.clock.advance(60)
+            self.daemon.tick(now=self.clock.now())
+
+        owners = {
+            self.intake.row(row["event_id"])["relationship_id"]
+            for row in self.store.all("SELECT event_id FROM events")
+        }
+        self.assertEqual(
+            owners, {r["relationshipId"] for r in relationships},
+            "both parents must get a terminal outcome for the turn they shared",
+        )
+        recipients = {thread for _r, thread, _m, _o in self.adapter.sends}
+        self.assertEqual(recipients, {"01parent-a", "01parent-b"})
+
+    def test_one_assignment_is_still_settled_only_once(self):
+        """Per-assignment must not become per-tick: the same turn is not re-observed."""
+        relationships, child, turn = self.two_parents_on_one_child()
+        self.adapter.start_turn(child, turn_id=turn, status="inProgress")
+        self.adapter.finish_turn(child, turn, status="failed")
+        for _tick in range(4):
+            self.clock.advance(60)
+            self.daemon.tick(now=self.clock.now())
+        before = self.store.one("SELECT COUNT(*) AS c FROM events")["c"]
+
+        for _tick in range(4):
+            self.clock.advance(60)
+            self.daemon.tick(now=self.clock.now())
+
+        self.assertEqual(self.store.one("SELECT COUNT(*) AS c FROM events")["c"], before)
+        self.assertEqual(len(self.adapter.sends), len(relationships))
+
+
 if __name__ == "__main__":
     unittest.main()
 

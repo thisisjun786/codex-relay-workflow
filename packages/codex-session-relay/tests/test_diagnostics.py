@@ -265,3 +265,45 @@ class ObservationHealth(DaemonTestCase):
         self.assertFalse(health["anchors"][anchor_id]["settled"])
         self.assertEqual(health["health"], "stalled",
                          "there is staged work here and nothing has looked at it since")
+
+    def test_a_generation_whose_anchor_is_not_bound_yet_is_not_a_stall(self):
+        """A needs_changes verdict opens a generation before its revision is dispatched.
+
+        Until the dispatch receipt binds the anchor there is no turn for the observation
+        scheduler to poll, so counting it as never polled reported stalled for a relay doing
+        exactly what it is supposed to do.
+        """
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.registry.open_generation(
+            rid, dispatch_request_id="revision-1", reason="needs_changes_revision",
+        )
+
+        health = self.delivery.observation_health(now=self.clock.now())
+        anchor = health["anchors"][rid]
+
+        self.assertTrue(anchor["anchorPending"])
+        self.assertIsNone(anchor["turnId"])
+        self.assertEqual(
+            health["health"], "healthy",
+            "there is no turn to poll yet, so nothing is being missed",
+        )
+
+    def test_an_unbound_anchor_becomes_pollable_once_it_binds(self):
+        """Pending is a phase, not an exemption. Once bound it is held to the same freshness."""
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        opened = self.registry.open_generation(
+            rid, dispatch_request_id="revision-1", reason="needs_changes_revision",
+        )
+        self.registry.bind_anchor(
+            rid, opened["executionGeneration"], dispatch_turn_id="turn-revision-1",
+            source="dispatch_receipt",
+        )
+        self.clock.advance(7200)
+
+        health = self.delivery.observation_health(now=self.clock.now())
+
+        self.assertFalse(health["anchors"][rid]["anchorPending"])
+        self.assertEqual(health["health"], "stalled",
+                         "now there is a turn, and nothing has ever read it")
