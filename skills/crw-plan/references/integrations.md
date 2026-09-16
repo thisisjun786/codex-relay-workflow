@@ -131,8 +131,8 @@ Keep its source baseline and delivered output identity under the non-PR evidence
 
 ### Implementation Done
 
-An implementation issue is Done when its one current delivery PR is actually
-merged into the intended integration target. Read GitHub's current PR identity,
+For the current one-issue/one-PR model, an implementation issue is Done when its
+one current delivery PR is actually merged into the intended integration target. Read GitHub's current PR identity,
 repository, base branch, merged state and landing commit against the issue's
 accepted scope. A related/reference PR, superseded replacement, approval, green
 CI, merge-ready flag or closed-but-unmerged PR is not that evidence. Merging a
@@ -140,14 +140,21 @@ prerequisite branch into another task branch is not integration into the intende
 target. Verify the landing rather than treating an accepted merge request as done.
 
 The PR must deliver the issue's accepted implementation scope; a partial merge
-cannot hide remaining required implementation. For legacy issues with several
-PRs, preserve links, owners and history, inventory required deliveries and reconcile
-through `crw-plan` before new dispatch. Do not mark the legacy issue complete on
-the first merge, or retroactively manufacture separate completed issues.
+cannot hide remaining required implementation. For an already-approved legacy
+multi-PR issue, preserve links, owners and history, inventory required deliveries
+and reconcile through `crw-plan` before new dispatch. Its completion uses all
+reconciled required PRs actually integrated into the intended target and their
+combined coverage of that issue's accepted criteria, not a demand that one PR
+cover everything. Assess a PR's contribution to each linked issue independently;
+a shared PR cannot complete another issue's remaining scope. Do not mark a legacy
+issue complete on its first partial merge or retroactively manufacture completed issues.
 
-Release, deployment, installation and live behavior are separate claims. They do
-not keep a completed implementation issue open merely because they are later;
-track outstanding operational results separately within authorized planning.
+Release, deployment, installation and live behavior are separate claims. New
+plans track those operational results separately from the implementation PR.
+For an existing issue whose accepted criteria already require installation or
+live verification, preserve those obligations until fulfilled or explicitly
+re-scoped within authorization; a merge alone does not erase them. Operational
+work that is genuinely outside the issue's criteria does not delay its Done.
 Non-PR research, design or verification completes on its agreed observable result.
 Completion evidence does not supply merge, closure, release or deployment authority.
 

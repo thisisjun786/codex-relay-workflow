@@ -365,8 +365,9 @@ checkout, and only within the authorized batch/run scope.
 
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's
-actual merge, intended repository/branch and landing revision. Preserve independent
-release/deployment work and never infer completion from an automatic status alone.
+actual merge, intended repository/branch and landing revision. For legacy multi-PR
+scope, verify the reconciled deliveries and their combined coverage instead. Retain
+existing accepted operational criteria and never infer completion from an automatic status alone.
 
 ## Return corrections to the existing task
 

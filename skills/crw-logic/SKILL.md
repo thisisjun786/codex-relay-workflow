@@ -40,8 +40,9 @@ Use [Counterexample patterns](references/counterexamples.md) when selecting a nu
 
 When auditing status or delivery invariants, use
 [Implementation Done](../crw-plan/references/integrations.md#implementation-done):
-one current delivery PR and actual intended-target merge for implementation,
-verified result for non-PR work. Test a reference or partial merge against a complete
+one current delivery PR and actual intended-target merge for new implementation,
+reconciled combined PR coverage for legacy multi-PR scope, and verified result for
+non-PR work. Existing accepted operational criteria remain binding. Test a reference or partial merge against a complete
 delivery; treat automated Done without matching evidence as a claim to investigate,
 not authority to rewrite status or criteria.
 
