@@ -150,7 +150,9 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
             # refusal path rather than a producer being told what it got wrong.
             raise ReceiptRefused(
                 RefusalReason.MALFORMED_RECEIPT,
-                f"a pull request number of {pr_number} is outside what the store can hold",
+                # The value is deliberately not interpolated: past Python integer-to-string
+                # digit limit, rendering it raises ValueError out of the refusal itself.
+                "a pull request number is outside what the store can hold",
             )
         if not head_sha:
             raise ReceiptRefused(
@@ -356,11 +358,12 @@ def _submission(value):
     True to 1, or 1.9 to 1, or storing 0, would give an attempt an identity that means
     something other than what it says.
     """
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+    if (isinstance(value, bool) or not isinstance(value, int) or value < 1
+            or value > SQLITE_MAX_INT):
         raise ReceiptRefused(
             RefusalReason.MALFORMED_RECEIPT,
-            f"a submission number is a positive integer, not {value!r}; it is part of this "
-            "report identity and is printed in the bytes that get frozen",
+            "a submission number is a positive integer the store can hold; it is part of "
+            "this report identity and is printed in the bytes that get frozen",
         )
     return value
 
@@ -613,9 +616,16 @@ def _disposition(value):
     It is rendered onto the violated-criteria line, so an unchecked value carried the same
     line-splicing route as the fields beside it, and a word outside the enum would describe
     a judgment the contract has no room for.
+
+    Absence is allowed. A report finding is also used purely to enrich an authoritative
+    finding from the revision receipt with a note or a source anchor, and that use has no
+    disposition of its own to state; requiring one refused exactly the enrichment case
+    _finding_lines exists for.
     """
     from .criteria import DISPOSITIONS
 
+    if value is None:
+        return None
     if value not in DISPOSITIONS:
         raise ReceiptRefused(
             RefusalReason.MALFORMED_RECEIPT,
@@ -651,7 +661,9 @@ def _check_evidence(entries):
     checked = []
     for item in _sequence(entries, "evidence"):
         if isinstance(item, str):
-            checked.append(_single_line(item, "an evidence entry"))
+            checked.append(
+                _single_line(_required(item, "an evidence entry"), "an evidence entry")
+            )
             continue
         if not isinstance(item, dict) or not str(item.get("check") or "").strip():
             raise ReceiptRefused(

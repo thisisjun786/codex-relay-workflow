@@ -631,6 +631,39 @@ class Identity(DeliveryTestCase):
         # And the largest one it can hold still records.
         report.record(self.store, self.clock, event_id=event_id,
                       **a_report(pr_number=2 ** 63 - 1))
+        # A number past the integer-to-string digit limit must not make the refusal itself
+        # raise while trying to print it.
+        self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(pr_number=10 ** 6000)),
+        )
+        self.assertRefused(
+            RefusalReason.MALFORMED_RECEIPT,
+            lambda: report.record(self.store, self.clock, event_id=event_id,
+                                  **a_report(submission_no=2 ** 63)),
+        )
+
+    def test_a_blank_evidence_entry_is_not_verification(self):
+        _relationship, event_id = self.queued_event()
+        for bad in ("", "   "):
+            self.assertRefused(
+                RefusalReason.MALFORMED_RECEIPT,
+                lambda bad=bad: report.record(
+                    self.store, self.clock, event_id=event_id, **a_report(evidence=[bad])
+                ),
+            )
+
+    def test_an_enrichment_finding_needs_no_disposition_of_its_own(self):
+        _relationship, event_id = self.queued_event()
+        # The revision receipt owns the disposition; a report finding may exist purely to
+        # attach a source anchor to it, so requiring one refused the enrichment case.
+        report.record(
+            self.store, self.clock, event_id=event_id,
+            **a_report(review=None, unresolved=[{"id": "c-1", "note": "still open"}])
+        )
+        stored = report.read(self.store, event_id)
+        self.assertEqual(stored["unresolved"][0]["id"], "c-1")
 
     def test_a_separator_other_than_a_newline_cannot_splice_a_line(self):
         _relationship, event_id = self.queued_event()
@@ -754,6 +787,22 @@ class FinalLine(Directions):
         self.assertLess(message.index("c-1"), message.index("c-9"))
         self.assertIn("also raised in review, not part of the recorded verdict", message)
         self.assertIn("a reviewer noticed this separately", message)
+
+    def test_an_anchor_only_enrichment_is_accepted_and_rendered(self):
+        _source, revision_event = self._revision()
+        receipt = self.intake.get(revision_event)
+        row = self.delivery.get(revision_event)
+        # The receipt owns c-1 and its disposition. This finding exists only to attach the
+        # source anchor, so it has no disposition of its own to state.
+        stored = report.record(
+            self.store, self.clock, event_id=revision_event,
+            **a_report(cxc_status=cxc.NEEDS_HUMAN, cxc_reason="manifest incomplete",
+                       review={"kind": cxc.GO_WITH_FIXES, "blockers": 1, "findings": [
+                           {"id": "c-1", "anchor": "migrations/004.sql"}]})
+        )
+        message = report.render_revision(row, receipt, "del-y-a1", stored)
+        self.assertIn("c-1: needs_changes", message, "the receipt disposition still leads")
+        self.assertIn("anchor: migrations/004.sql", message)
 
 
 class Bounds(DeliveryTestCase):
