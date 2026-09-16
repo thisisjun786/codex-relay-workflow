@@ -137,3 +137,16 @@ class ObservationHealth(DaemonTestCase):
         self.assertGreater(health["oldestStagedAgeSeconds"], 3600)
         self.assertEqual(health["backlog"][relationship["relationshipId"]], 1)
         self.assertIn("liveness", health["note"])
+
+    def test_an_anchor_the_scheduler_has_not_reached_is_not_reported_healthy(self):
+        """Starting from the poll table would omit it entirely and report healthy."""
+        relationship = self.register()
+        self.adapter.start_turn(CHILD, turn_id="turn-dispatch-1", status="inProgress")
+        # No tick at all: nothing has ever looked at this anchor.
+        health = self.delivery.observation_health(now=self.clock.now())
+        anchor = health["anchors"][relationship["relationshipId"]]
+        self.assertIsNone(anchor["lastPolledAt"])
+        self.assertEqual(
+            health["health"], "stalled",
+            "an anchor nothing has read is not evidence of health",
+        )

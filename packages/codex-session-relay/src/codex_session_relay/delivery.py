@@ -365,6 +365,13 @@ class DeliveryService:
         if superseded:
             raise _Superseded(superseded)
         with self.store.transaction() as db:
+            # Re-read inside the write. The generation predicate below catches an
+            # advanced generation, but a newer FINAL revision of the SAME generation
+            # can be committed between the check above and this statement, and that
+            # would claim and send an event something had already replaced.
+            late = self._supersession_reason(db, event_id)
+            if late:
+                raise _LateSupersession(late)
             cursor = db.execute(
                 "UPDATE deliveries"
                 "   SET state = ?, lease_owner = ?, lease_until = ?,"
@@ -494,6 +501,12 @@ class DeliveryService:
             )
         except _NotClaimable:
             return None
+        except _LateSupersession as late:
+            # The transaction rolled back, so nothing is recorded yet. Record it now,
+            # through the same path the pre-claim check uses, and report it identically.
+            self._suppress_if_superseded(event_id)
+            return {"deliveryState": SUPERSEDED, "supersededReason": late.reason,
+                    "eventId": event_id, "sendAttempted": "no"}
         except _Superseded as superseded:
             # No transport call at all: suppression writes state and journals and nothing
             # else, so a stale event cannot wake the parent or open a generation.
@@ -832,14 +845,23 @@ class DeliveryService:
             )
         ]
         anchors, backlog = {}, {}
+        # Built from the ACTIVE current generations and left-joined to their polls, not from
+        # poll_observations. Starting from the poll table omits an anchor that has never been
+        # read at all - which is exactly the relationship a rotating scheduler has not reached
+        # yet - so the aggregate could report healthy while some current anchor was untouched.
         for row in self.store.all(
-            "SELECT p.relationship_id, p.turn_id, p.last_polled_at, p.last_error"
-            "  FROM poll_observations p"
-            "  JOIN relationships r ON r.relationship_id = p.relationship_id"
-            " WHERE p.execution_generation = r.execution_generation"
+            "SELECT g.relationship_id, g.dispatch_turn_id, p.last_polled_at, p.last_error"
+            "  FROM relationships r"
+            "  JOIN generations g ON g.relationship_id = r.relationship_id"
+            "   AND g.execution_generation = r.execution_generation"
+            "  LEFT JOIN poll_observations p"
+            "    ON p.relationship_id = g.relationship_id"
+            "   AND p.execution_generation = g.execution_generation"
+            "   AND p.turn_id = g.dispatch_turn_id"
+            " WHERE r.status = 'active' AND r.superseded_by IS NULL"
         ):
             anchors[row["relationship_id"]] = {
-                "turnId": row["turn_id"], "lastPolledAt": row["last_polled_at"],
+                "turnId": row["dispatch_turn_id"], "lastPolledAt": row["last_polled_at"],
                 "ageSeconds": age(row["last_polled_at"]), "lastError": row["last_error"],
             }
         for row in self.store.all(
@@ -993,7 +1015,7 @@ class DeliveryService:
         for row in rows:
             attempts = self.store.all(
                 "SELECT request_id, attempt_no, internal_state, state, affirmative_evidence,"
-                " operation_observation, recipient_scan FROM attempts WHERE event_id = ?"
+                " operation_observation, recipient_scan, record FROM attempts WHERE event_id = ?"
                 " ORDER BY attempt_no",
                 (row["event_id"],),
             )
@@ -1089,6 +1111,14 @@ def _render_findings(findings):
     return "; ".join(parts) or None
 
 
+class _LateSupersession(Exception):
+    """Discovered inside the claim, after the pre-claim check had already passed."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
 class _Superseded(Exception):
     """This delivery is no longer current, decided inside the claim."""
 
@@ -1115,12 +1145,13 @@ def _manifest_paths(event_row):
 
 
 def _phase(row, attempts, ack) -> str:
-    """Which stage a delivery is actually stuck at.
+    """Which stage a delivery is actually at, without inventing certainty.
 
-    withheld_pre_send used to mean five different things at once: the receipt has not been
-    collected, the parent is mid-turn, the host would not confirm the authorized settings, a
-    turn was started, or the acknowledgement is outstanding. An operator reading one word
-    could not tell which, and the cause is the only part that suggests an action.
+    withheld_pre_send used to mean five different things at once, and the cause is the only
+    part that suggests an action. But the cure must not overclaim either: held_uncertain
+    means the transport gave no usable answer, which is NOT the same as a turn having been
+    accepted, and a settled withheld_pre_send can be an ordinary thread/read failure rather
+    than a settings mismatch. Both are read from the attempt record, not from the state word.
     """
     if ack is not None and ack["verified"] == "verified" and ack["accepted"]:
         return "acknowledged"
@@ -1132,11 +1163,29 @@ def _phase(row, attempts, ack) -> str:
         return "awaiting_ack"
     if row["state"] == DEFERRED_BUSY:
         return "parent_busy"
-    if row["state"] == HELD_UNCERTAIN:
-        return "turn_accepted"
     settled = [a for a in attempts if a["internal_state"] == "settled"]
-    if row["state"] == WITHHELD_PRE_SEND and settled:
-        return "settings_rejected"
+    latest = settled[-1] if settled else None
+    operation = latest["operation_observation"] if latest else None
+    record = {}
+    if latest is not None and latest["record"]:
+        try:
+            record = json.loads(latest["record"])
+        except ValueError:
+            record = {}
+    failed = record.get("failedOperation")
+    if row["state"] == HELD_UNCERTAIN:
+        # turn/start reached the host and its answer was lost; anything else never got that
+        # far. Calling both turn_accepted would hand an operator a confident wrong answer.
+        if failed == "turn/start" or record.get("turnId"):
+            return "turn_accepted"
+        return "outcome_unknown"
+    if row["state"] == WITHHELD_PRE_SEND and latest is not None:
+        if failed == "thread/resume":
+            return "settings_rejected"
+        if failed:
+            return f"withheld:{failed}"
+        return "withheld_pre_send"
     if row["hold_reason"]:
         return f"held:{row['hold_reason']}"
+    del operation
     return "awaiting_receipt"
