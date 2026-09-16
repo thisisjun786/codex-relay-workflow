@@ -611,6 +611,31 @@ class Ownership(ServiceTestCase):
         self.assertIsNone(service.record()["pid"])
         self.assertFalse(service.lock_is_held())
 
+    def test_a_supervisor_finishing_normally_is_not_a_replacement(self):
+        """Cleanup clears the supervisor's own pid while keeping its launch id.
+
+        A launch identity that included the pid turned that ordinary exit into a phantom
+        replacement, so a stop that genuinely stopped the service reported failure.
+        """
+        service = self.service("a")
+        live = dict(service.new_record(pid=os.getpid()), launchId="launch-7")
+        cleaned = dict(live, pid=None)
+
+        self.assertEqual(
+            service._launch_identity(live), service._launch_identity(cleaned),
+            "the same launch clearing its own pid is still the same launch",
+        )
+        self.assertNotEqual(
+            service._launch_identity(live),
+            service._launch_identity(dict(live, launchId="launch-8")),
+        )
+        # And anonymous runs still separate on when they started.
+        anon = dict(live, launchId=None, startedAt="2026-01-01T00:00:00Z")
+        self.assertNotEqual(
+            service._launch_identity(anon),
+            service._launch_identity(dict(anon, startedAt="2026-01-02T00:00:00Z")),
+        )
+
     def test_two_anonymous_launches_are_still_distinguishable(self):
         """A direct 'service run' carries no launch id, so comparing that field alone made
         two different launches compare equal - and handed the replacement straight back."""
