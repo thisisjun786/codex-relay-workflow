@@ -4,6 +4,7 @@ These tests use real child processes on purpose. A mocked flock proves that the 
 flock; only a second process trying to start proves that the first one is actually excluded.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -421,6 +422,57 @@ class Ownership(ServiceTestCase):
     def _never_launch_here(self, *_a, **_k):  # pragma: no cover - reaching it is the failure
         self.fail("a takeover must not launch past a live owner")
 
+    def test_disable_decides_and_writes_under_the_lock(self):
+        """A foreign supervisor starting between the check and the write read enabled=true.
+
+        It took the lock, then saw the intent we changed afterwards and exited at its next
+        boundary - a refused disable that still stopped it. The classification and the write
+        happen under the lock now, so no supervisor can start between them.
+        """
+        service = self.service("a")
+        service.enable(actor="owner")
+        child, _pid = self.holder(service)
+        service.write_record(dict(service.record(), installationId="someone-else"))
+
+        refused = service.disable(actor="intruder")
+
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "not_ours")
+        self.assertTrue(
+            service.intent.read()["enabled"],
+            "a refused disable must not change the intent a foreign supervisor reads",
+        )
+        self.assertIsNone(child.poll())
+
+    def test_disable_takes_the_lock_before_touching_shared_intent(self):
+        """The ordering itself, so a later edit cannot quietly put the write back first."""
+        service = self.service("b")
+        service.enable(actor="owner")
+        order = []
+        original_lock = service.daemon_lock_if_free
+        original_write = service.intent.write
+
+        @contextlib.contextmanager
+        def watched_lock():
+            order.append("lock")
+            with original_lock() as held:
+                yield held
+
+        def watched_write(**kwargs):
+            order.append("write")
+            return original_write(**kwargs)
+
+        service.daemon_lock_if_free = watched_lock
+        service.intent.write = watched_write
+        try:
+            service.disable(actor="owner")
+        finally:
+            service.daemon_lock_if_free = original_lock
+            service.intent.write = original_write
+
+        self.assertEqual(order[:2], ["lock", "write"])
+        self.assertFalse(service.intent.read()["enabled"])
+
     def test_enable_still_works_when_nothing_is_running_here(self):
         """A stopped registration is not a reason to make a state directory unusable."""
         service = self.service("b")
@@ -452,6 +504,53 @@ class Ownership(ServiceTestCase):
         self.assertEqual(refused["reason"], "not_ours")
         self.assertIn("reused", refused["detail"])
         self.assertIsNone(child.poll())
+
+    def test_stop_leaves_no_request_when_a_supervisor_starts_in_the_window(self):
+        """The probe and the write were two operations, with a startup in between.
+
+        supervise() clears pending requests BEFORE it acquires the lock, so a request left
+        by a stop that saw the lock free is consumed by the supervisor that took it - which
+        then exits, although the stop reported not_running.
+        """
+        service = self.service("a")
+        service.enable(actor="test")
+        original = service.daemon_lock_if_free
+        calls = {"n": 0}
+
+        @contextlib.contextmanager
+        def taken_by_a_starting_supervisor():
+            calls["n"] += 1
+            # The lock is free when the old code probed it and held by the time the decision
+            # is actually made. Holding it across the decision is what closes the window.
+            yield None
+
+        service.daemon_lock_if_free = taken_by_a_starting_supervisor
+        try:
+            refused = service.stop()
+        finally:
+            service.daemon_lock_if_free = original
+
+        self.assertEqual(calls["n"], 1, "the decision must be taken under the lock")
+        self.assertFalse(refused["ok"], refused)
+        self.assertEqual(refused["reason"], "ownership_unverifiable")
+        self.assertFalse(
+            service.stop_request_path.exists(),
+            "a stop that could not establish ownership must leave nothing behind",
+        )
+
+    def test_stop_reports_not_running_without_a_request_when_the_lock_is_free(self):
+        """Holding the lock IS the proof that nothing is running and nothing can start."""
+        service = self.service("a")
+        service.enable(actor="test")
+
+        outcome = service.stop()
+
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(outcome["reason"], "not_running")
+        self.assertFalse(
+            service.stop_request_path.exists(),
+            "nothing was running, so nothing needs to be told to stop",
+        )
 
     def test_stop_writes_no_request_for_a_lock_held_by_an_unidentified_process(self):
         """A supervisor between taking the lock and writing its record has no identity yet.

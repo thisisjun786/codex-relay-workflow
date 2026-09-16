@@ -205,6 +205,61 @@ class Precedence(unittest.TestCase):
         finally:
             os.chdir(here)
 
+    def test_a_store_is_found_by_the_socket_it_recorded_not_by_its_hash(self):
+        """The legacy comparison only helps when THIS invocation uses the old spelling.
+
+        A first post-upgrade command that happens to use the absolute path has
+        legacy == scope, so the comparison never looks at the store the relative spelling
+        created - and creating a canonical database then hides it for good, because
+        afterwards even the old spelling finds the new one.
+        """
+        from codex_session_relay.store import legacy_socket_scope, socket_scope
+
+        os.makedirs(os.path.join(self.tmp, "run"), exist_ok=True)
+        absolute = os.path.join(self.tmp, "run", "app-server.sock")
+        open(absolute, "w").close()
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            relative = os.path.join("run", "app-server.sock")
+            # The store the pre-upgrade installation left behind, under the RELATIVE hash.
+            previous = os.path.join(
+                self.home, ".local", "state", "codex-session-relay",
+                legacy_socket_scope(relative),
+            )
+            os.makedirs(previous)
+            Store(Path(previous) / "relay.sqlite3", socket_path=relative).close()
+
+            # The first post-upgrade command uses the ABSOLUTE spelling, so the legacy
+            # comparison is a no-op: legacy == scope.
+            self.assertEqual(
+                legacy_socket_scope(absolute), socket_scope(absolute),
+                "the fixture needs the case the hash comparison cannot see",
+            )
+            chosen = resolve_state_dir(None, absolute)
+        finally:
+            os.chdir(here)
+
+        self.assertEqual(str(chosen.path), previous,
+                         "the store recorded for this socket must be adopted, not hidden")
+        self.assertIn("adopted", chosen.detail)
+
+    def test_a_store_with_no_recorded_socket_is_never_adopted_on_a_guess(self):
+        """Provenance or nothing. Adopting an unlabelled store is how the wrong one is served."""
+        from codex_session_relay.store import socket_scope, stores_without_provenance
+
+        root = os.path.join(self.home, ".local", "state", "codex-session-relay")
+        stranger = os.path.join(root, "0123456789abcdef")
+        os.makedirs(stranger)
+        Store(Path(stranger) / "relay.sqlite3").close()
+
+        chosen = resolve_state_dir(None, "/run/brand-new.sock")
+
+        self.assertEqual(chosen.socket_scope, socket_scope("/run/brand-new.sock"))
+        self.assertNotEqual(str(chosen.path), stranger)
+        # But it IS visible, so an operator is not left guessing why a store looks empty.
+        self.assertIn(stranger, stores_without_provenance(root, skip=chosen.path.name))
+
     def test_a_fresh_socket_uses_the_canonical_directory(self):
         """The fallback is for an existing store only; nothing new lands in the old name."""
         from codex_session_relay.store import socket_scope

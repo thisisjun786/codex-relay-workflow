@@ -540,6 +540,35 @@ class RelayService:
         finally:
             handle.close()
 
+    @contextmanager
+    def daemon_lock_if_free(self):
+        """Take the daemon lock and KEEP it for the duration of a decision.
+
+        lock_is_held probes and releases, which is enough to describe a state but not to act
+        on one: between the probe and whatever the caller does next, a supervisor can acquire
+        the lock. Holding it across the decision closes that gap - a supervisor cannot start
+        while we hold it - and failing to take it is itself the answer that someone is there.
+
+        Opened with 'a+' so the probe is atomic even on a state directory that has never run
+        a daemon: a supervisor starting there has to create and lock this same file.
+        """
+        path = self.selection.path / DAEMON_LOCK
+        handle = None
+        try:
+            self.selection.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+            handle = open(path, "a+")
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            if handle is not None:
+                handle.close()
+            handle = None
+        try:
+            yield handle
+        finally:
+            if handle is not None:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                handle.close()
+
     # -------------------------------------------------------------- operations
 
     def authority_check(self, *, allow_isolated: bool):
@@ -584,22 +613,40 @@ class RelayService:
         # boundary: writing enabled=false and only then discovering the supervisor is not
         # ours refused the stop while still shutting that supervisor down at its next
         # boundary. A refusal that still has an effect is not a refusal.
-        record = self.record()
-        owner, handle, detail = self.ownership(record)
-        if handle is not None:
-            handle.close()
-        # The same cleanup window enable guards: a supervisor clears its pids before it
-        # releases the lock, and ownership answers none once both are absent.
-        markers = self._foreign_markers(record) if record else []
-        if owner in (FOREIGN, UNVERIFIABLE) or (markers and self.lock_is_held()):
-            return {"ok": False,
-                    "reason": "ownership_unverifiable" if owner == UNVERIFIABLE else "not_ours",
-                    "detail": detail or "; ".join(markers), "intent": self.intent.read(),
-                    "stop": {"ok": False, "reason": "refused", "supervisor": "untouched",
-                             "worker": "untouched"},
-                    "note": "intent is shared with the owner of this state directory and was"
-                            " left unchanged"}
-        written = self.intent.write(enabled=False, actor=actor)
+        #
+        # Decided and written UNDER the daemon lock. Checking ownership and then writing are
+        # two operations, and a foreign supervisor can start between them: it reads
+        # enabled=true, takes the lock, and then sees the intent we changed afterwards and
+        # exits at its next boundary. Holding the lock means no supervisor can start while we
+        # decide, and failing to take it means one is already there to be classified.
+        refusal = None
+        with self.daemon_lock_if_free() as held:
+            if held is None:
+                # Someone holds it. Re-read: a supervisor that started between our read and
+                # now has published its record, or is about to.
+                record = self.record()
+                owner, handle, detail = self.ownership(record)
+                if handle is not None:
+                    handle.close()
+                markers = self._foreign_markers(record) if record else []
+                if owner in (FOREIGN, UNVERIFIABLE) or markers:
+                    refusal = {
+                        "ok": False,
+                        "reason": ("ownership_unverifiable" if owner == UNVERIFIABLE
+                                   else "not_ours"),
+                        "detail": detail or "; ".join(markers),
+                        "intent": self.intent.read(),
+                        "stop": {"ok": False, "reason": "refused",
+                                 "supervisor": "untouched", "worker": "untouched"},
+                        "note": "intent is shared with the owner of this state directory and"
+                                " was left unchanged",
+                    }
+            if refusal is None:
+                written = self.intent.write(enabled=False, actor=actor)
+        if refusal is not None:
+            return refusal
+        # Outside the lock deliberately: stop() takes it for its own decision, and holding it
+        # here would make stop misread a free lock as ours.
         stopped = self.stop(actor=actor, timeout=timeout)
         # A stop that had nothing to stop is not a failure; the intent is what disable owns.
         failed = not stopped["ok"] and stopped["reason"] != "not_running"
@@ -692,6 +739,16 @@ class RelayService:
         """Signal only a process this installation owns, through a handle to that process."""
         record = self.record()
         owner, handle, detail = self.ownership(record)
+        if owner == NONE and not (record or {}).get("workerPid"):
+            # Nothing verifiable is running. Deciding that and writing a stop request are two
+            # operations, and supervise() clears pending requests BEFORE it acquires the lock,
+            # so a supervisor that starts between them consumes the request we leave and exits
+            # - while this call reports not_running. Settle it while holding the lock instead.
+            settled, record, owner, handle, detail = self._settle_absent_owner(record, detail)
+            if settled is not None:
+                if handle is not None:
+                    handle.close()
+                return settled
         try:
             if owner == FOREIGN:
                 return {"ok": False, "reason": "not_ours", "detail": detail,
@@ -700,18 +757,6 @@ class RelayService:
                 # Refusing is the point. Signalling on a pid match alone is how an unrelated
                 # process gets killed after its number is reused.
                 return {"ok": False, "reason": "ownership_unverifiable", "detail": detail,
-                        "supervisor": "untouched", "worker": "untouched"}
-            if (owner == NONE and self.lock_is_held()
-                    and not (record or {}).get("workerPid")):
-                # Something holds the lock and has not published who it is: a supervisor
-                # between taking the lock and writing its record. Writing a stop request here
-                # is not harmless - it clears requests only BEFORE taking the lock, so it
-                # consumes this one and exits. A refusal that still stops the service.
-                # A record that names a WORKER is the other none: our own supervisor gone
-                # with its orphan holding the inherited lock, which is what stop must reach.
-                return {"ok": False, "reason": "ownership_unverifiable",
-                        "detail": "the daemon lock is held by a process that has not yet"
-                                  " recorded its identity",
                         "supervisor": "untouched", "worker": "untouched"}
             # Only now. Writing the stop request before validating ownership left a refused
             # stop able to halt another installation's supervisor at its next boundary, which
@@ -750,6 +795,41 @@ class RelayService:
         ok = supervisor_done and worker_done
         return {"ok": ok, "reason": None if ok else "did_not_exit",
                 "detail": None, "supervisor": outcome, "worker": worker}
+
+    def _settle_absent_owner(self, record, detail):
+        """Decide 'nothing is running' while HOLDING the lock that would prove otherwise.
+
+        Returns (response_or_None, record, owner, handle, detail). A response ends the stop;
+        None means the caller should continue with the re-read record and classification.
+
+        A record naming a WORKER never reaches here: that none is our own supervisor gone
+        with its orphan holding the inherited lock, and reaching that orphan is what stop is
+        for.
+        """
+        with self.daemon_lock_if_free() as held:
+            if held is not None:
+                # We hold it, so no supervisor is running and none can start while we decide.
+                # Returning without a request is the whole point: a request left behind here
+                # would be consumed by the next supervisor to start.
+                return (
+                    {"ok": False, "reason": "not_running", "detail": detail,
+                     "supervisor": "gone", "worker": "gone"},
+                    record, NONE, None, detail,
+                )
+        # Not free: something took it. Re-read - it may have published its identity by now.
+        again = self.record()
+        owner, handle, fresh = self.ownership(again)
+        if owner == NONE and not (again or {}).get("workerPid"):
+            if handle is not None:
+                handle.close()
+            return (
+                {"ok": False, "reason": "ownership_unverifiable",
+                 "detail": "the daemon lock is held by a process that has not yet"
+                           " recorded its identity",
+                 "supervisor": "untouched", "worker": "untouched"},
+                again, owner, None, fresh,
+            )
+        return (None, again, owner, handle, fresh)
 
     def _terminate(self, handle, *, timeout, grace) -> str:
         if not handle.send(signal.SIGTERM):
