@@ -11,7 +11,7 @@ assumptions force rather than a report about a machine.
 
 ## Situation
 
-A host already has the six skills linked, an MCP server registered for the bridge, and a relay
+A host already has the seven current skills (including `crw-define`) linked, an MCP server registered for the bridge, and a relay
 console script on `PATH`. The operator wants to confirm the combination is the verified one before
 starting a daemon for a new assignment.
 

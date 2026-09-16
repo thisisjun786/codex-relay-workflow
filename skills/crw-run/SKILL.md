@@ -1,12 +1,14 @@
 ---
 name: crw-run
-description: "Coordinate one Linear issue or a ready batch through independent child Codex tasks: reuse the responsible task or create one within user authorization and host rules, then verify delivery using CXC. Use for execution, progress coordination, or delivery review; use crw-plan for roadmap authoring and crw-check for intent drift. Formerly linear-run."
+description: "Run a Linear project, milestone, ready batch, or single issue through independent child Codex tasks: reuse the responsible task or create one within user authorization and host rules, then verify delivery using CXC and continue within the agreed scope. Use for execution, progress coordination, or delivery review; use crw-plan for roadmap authoring and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
 
 Use the selected Linear project as the planning source and keep this Codex task
-as its coordinator. Each implementation task owns its
+as its coordinator: one parent per project, one child per issue. Follow the shared
+[parent and child scope](../crw-plan/references/integrations.md#parent-and-child-scope),
+including standalone issues and explicit current-task work. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
@@ -27,6 +29,22 @@ needs a refreshed briefing. Route roadmap authoring to
 
 ## Determine the requested operation
 
+When the user submits `$crw-run <Linear project link>` as the execution request,
+with no narrower operation, treat it as the full project-run request: designate
+this task as the fixed parent through `crw-focus`, run the agreed project scope
+with CXC Loop, reuse each issue's responsible child or create an independent
+child when needed, verify its delivery, perform authorized integration, and
+continue with ready work. This submitted shorthand requests those actions; no
+expanded prompt or creation keyword is needed. Resolve ownership and agreed
+scope first; the link does not approve undefined work or replace another parent.
+
+Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
+no-merge, or current-task limits override the default. An issue or milestone
+target stays within that scope; it is not a request to run its whole project.
+A quoted example, a question about usage, automatic skill selection, or an
+unsubmitted UI prompt does not activate this shorthand. Host and tool restrictions
+still govern each action, including task creation and goal activation.
+
 - **Plan/prompts:** inspect project state and prepare task packets; do not launch.
 - **Dispatch a named batch:** reuse prior authorization and settings, refresh its
   prerequisites, then launch only that batch.
@@ -44,13 +62,57 @@ task; take an unchosen model, effort, or workflow from
 [Default independent execution](../crw-plan/references/integrations.md#default-independent-execution).
 Do not copy a model choice from a previous project into a new one.
 
-Resolve task-creation authority as described below; a skill invocation alone
-does not override the host's explicit-creation requirement. Apply the shared [delivery and integration default](../crw-plan/references/integrations.md#default-dev-integration)
+Resolve task-creation authority from the submitted operation above and the
+conversation below; never override host requirements. Apply the shared [delivery and integration default](../crw-plan/references/integrations.md#default-dev-integration)
 and inherit existing authorization for coordination records and recovery. Release
 publication, deployment, issue closure, and unrelated messages need scope covering
 those actions. When the user designates this as the fixed management task,
 use [crw-focus](../crw-focus/SKILL.md) for its recorded project link,
 title, and sidebar pin, then continue the authorized execution here.
+
+## Keep a project run moving
+
+For a requested project Loop, load the installed `cxc-loop` and `cxc-pabcd`
+in this coordinator too. Under their current host/session rules, inspect and
+reuse its matching goal and plan, or establish them when authorized. The parent's
+objective is coordination and verified delivery of the agreed project scope;
+each child retains its separate issue goal, session and phases. Never borrow a
+child's state as proof of the parent's Loop. Missing required Loop capability
+is a reported gap, not an ordinary turn relabeled as an armed Loop. Plain
+dispatch, status, binding, and discussion of a future Loop do not arm one.
+
+Record the selected project, authorized issue/milestone scope, delivery limits,
+active child IDs, and next dependency in the existing coordination record.
+Newly discovered work must fit that scope; an overnight run is not authority to
+adopt every future issue or another project's backlog. Preserve explicit batch,
+no-goal, no-merge, pause and resource limits.
+
+Repeat within that scope: refresh ownership and prerequisites, actively look
+for independent ready issues using the [parallel scheduling rules](#establish-the-project-baseline), dispatch ready
+issue packets, observe their actual results, verify and integrate permitted
+deliveries, then release the next ready work. A blocked issue holds only its
+dependents; continue independent authorized work. Keep each implementation issue
+with its own child and delivery PR, and serialize integrations into a shared
+target. Non-PR work completes on its verified result.
+
+Choose and record the observation mode before creating or registering children, using
+[OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting)
+to check active-parent receipt compatibility. Refresh existing assignments first;
+do not switch a registered issue to another delivery path. An active parent Loop
+uses bounded transport waits and continues
+after timeouts; it does not rely on a hook or an unverified relay to wake it after
+ending its turn. Report meaningful progress while respecting host communication
+limits. A quiet worker, elapsed wait or empty ready queue is not completion while
+owned work is still running. Do not resend work or create replacement writers
+because a wait expired.
+
+Finish only after the agreed scope is verified, the user stops it, a stated
+resource limit is reached, or no authorized action remains because of a concrete
+blocker. Record unfinished issues, responsible tasks and the exact resume step;
+keep host goal completion/blocked rules with CXC and the host tools. Never mark
+the project complete merely because the current batch ended. If the host ends
+the turn or no supported observation/resume path remains, report continuity as
+unverified or interrupted rather than promising unattended progress.
 
 ## Independent implementation tasks
 
@@ -65,7 +127,7 @@ implementation worker.
 Read the coordination record and inspect the existing responsible task and any
 current writer before creating or assigning work. Verify its actual task/host
 ID, issue scope, current turn, checkout ownership, and execution settings. Reuse
-that task for compatible follow-up work under the existing assignment. A busy
+that task for compatible follow-up work on the same issue under the existing assignment. A busy
 task, an uncertain send, or an inaccessible record is not evidence that no writer
 exists; reconcile before retrying or considering a replacement.
 
@@ -108,13 +170,15 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
+| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Apply the project-run default above, including fixed-parent designation, Loop and child creation/reuse; no expanded prompt is required, and host restrictions still apply |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
 | Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings from the coordination/recovery record; refresh ownership and prerequisites, then continue its next ready batch without repeating approval |
 | Standalone short invocation such as `$crw-run 다음 작업 진행해줘`, with genuinely no creation intent in the conversation or prior authorization for this scope | Prepare the issue packet and inspect ownership; if a new task is needed and the host requires an explicit creation request, obtain only that missing request |
 
-The skill's name, an unsubmitted UI default prompt, a quoted example, or task
-designation alone is not an explicit user request to create a task. Permission
+Merely mentioning the skill's name, an unsubmitted UI default prompt, a quoted
+example, or task designation without execution is not a child-creation request.
+The submitted project-run shorthand above is an execution request. Permission
 for an unrelated earlier task does not authorize this scope. Discover a
 permitted tool; a different transport does not waive the host's creation rule.
 If authority or capability is missing, finish the executable packet and baseline
@@ -139,32 +203,76 @@ milestone percentage, issue status, merged PR, and deployed behavior can disagre
 record the discrepancy rather than silently treating them as equivalent.
 Missing connector access is a concrete limitation, not permission to invent issue details.
 
-Compare local and remote commit ancestry. Preserve local-only commits and dirty
+For a standalone issue, read that issue, its linked canonical documents and
+blocking relations directly; project and milestone reads are inapplicable. Keep
+its issue-scoped ownership and the existing management binding unchanged. Do not
+create a project or call `crw-focus` to satisfy this baseline. If a transport
+requires a project binding, use a permitted projectless execution path or report
+that capability gap; never invent a project ID for a receipt.
+
+For repository-changing work, compare local and remote commit ancestry. Preserve local-only commits and dirty
 work. Record a full baseline commit for each task and decide how any prerequisite
 changes will reach it. Do not push shared baseline commits through every task.
 
-Derive batches from both dependency edges and overlapping edit surfaces.
-Independent issue statuses do not prove independent code changes. Serialize
-shared schema, persistence, contract, or central UI changes when separation would
-cost more than it saves. A small project may have only two useful parallel tasks.
-Prefer one Linear issue per reviewable delivery when its scope already fits.
-Group tightly coupled issues only with an explicit issue-to-delivery mapping.
+At initial dispatch and after a completion, blocker, or integration, scan the
+remaining agreed scope for useful parallel work rather than selecting only the
+next issue. Check verified prerequisites, overlapping edit surfaces, existing
+writers, shared runtime resources, and available execution capacity. Dispatch
+the largest useful set of independent ready issues within explicit concurrency,
+budget, and host limits. A shared repository alone is not a reason to serialize;
+separate owned checkouts can carry independent changes.
+
+Do not wait for an entire batch to finish before filling available capacity with
+newly ready independent work. Independent issue statuses alone do not establish
+independence: serialize shared schema, persistence, contract, or central UI changes
+when separation would cost more than it saves. Keep integration into a shared
+target serial and recheck each candidate against the updated base. Record a
+concrete dependency, conflict, ownership, or capacity reason for deferring an
+otherwise ready issue. Do not invent extra issues or duplicate writers just to
+increase concurrency; reconcile an oversized issue through `crw-plan` when a
+useful split fits the authorized scope.
+Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
+one implementation issue per PR, with one issue/PR pair per implementation
+packet. A batch retains those separate pairs. If one issue needs several PRs,
+or a proposed PR would deliver several issues, reconcile the plan through
+`crw-plan` before new dispatch; preserve existing owners and active work.
 
 Keep the human-readable coordination record in the project's linked Linear
 document as part of the management assignment, without a separate recording request.
+For a standalone issue, use its existing linked coordination document or a compact
+owned section in the issue within the authorized recording scope. Keep private
+recovery receipts keyed by the issue and actual task IDs; no project record or
+project-level parent binding is required. If delegation or a relay is used, retain
+the real coordinator task ID and routing identity; projectless does not mean
+coordinatorless. Preserve unrelated issue content on each update.
 For explicit read-only scope or unavailable access, return the unsynced update and
 retain the task's private recovery receipt. Keep raw launch
 receipts and sensitive evidence in an appropriate private location; local
 snapshots point to the Linear document and are not another planning source.
 Do not store project state or credentials inside this installed skill.
 
+Before assigning a checkout, apply the shared
+[repository resolution](../crw-plan/references/integrations.md#resolve-the-implementation-repository)
+and put its verified issue target, remote, integration branch and full baseline
+in the packet. Reuse an existing task's worktree and issue branch on resume;
+classification changes alone never relocate it. Non-PR work can omit those code
+fields with its explicit result and verification instead.
+
 ## Prepare and dispatch
 
 Read [Task packet](references/task-packet.md) when preparing prompts. Each packet
 must stand alone in a fresh context and name its prerequisites, scope, baseline,
-acceptance criteria, verification, and return artifacts.
+acceptance criteria, verification, and return artifacts. For non-PR work without
+repository changes, use the source document/data revision as the baseline and
+return both that input baseline and the verified output identity: a stable result
+link plus delivered revision/updated-at evidence, or a durable file locator plus
+its digest. Snapshot the verified output when the source cannot recover old revisions. Omit Git
+ancestry, worktree/branch/commit, push/PR/review/merge requirements and their OPS
+clauses when they do not apply; do not create a repository or empty PR. Keep task
+ownership, access, settings, criteria and recovery evidence. This non-PR path
+applies throughout dispatch, observation and completion below.
 
-Every packet carries the current delivery contract, and where the template's older
+For repository-changing work, every packet carries the current delivery contract, and where the template's older
 delivery menu disagrees the contract wins. Name in the packet that the child owns its
 commits, push, the pull request and the review on that same pull request through to
 the applicable gates, and that the coordinator performs the merge while release and
@@ -187,14 +295,15 @@ creation field, verify the actual title by task ID, and correct it on the same
 managed task when supported. The packet's title alone is not app-state evidence.
 
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
-when no new branch or worktree is needed. Reuse a checkout whose ownership is
+when no new branch or worktree is needed. Non-PR work uses its permitted working
+directory and artifact access without Git metadata. For code work, reuse a checkout whose ownership is
 verified for the responsible child; a coordinator may prepare it before handoff.
 Otherwise follow the project/user placement convention. Record the actual path,
 branch, and owner; do not create a second checkout just to prove task separation.
 Placement, the ownership columns, and the write split between a coordinator that
 prepares git metadata and a child that only edits source are in
 [Operations contract](references/operations.md), which also owns the shared relay
-service, its durable store, and how a parent returns to idle after delegating.
+service, its durable store, and the parent's continuation and waiting mode.
 
 Discover the live creation tool and schema before claiming availability.
 Use native app task tools when suitable. Before proposing or adopting the official
@@ -222,8 +331,10 @@ model” is not a configuration override. A catalog entry is not proof of the mo
 that served the request. Settle a setting the creation path cannot apply before
 creating the task rather than downgrading it.
 
-Record request ID, task ID, host ID when supplied, turn ID, checkout, full
-baseline SHA, requested/actual title and settings, and launch outcome. Do not put raw
+Record request ID, task ID, host ID when supplied, turn ID, requested/actual title
+and settings, and launch outcome. For code work include the checkout and full Git
+baseline SHA. For non-PR work include the permitted working location and input
+source revision; add the delivered output identity when the result exists. Do not put raw
 credentials or full private prompts in public project records.
 
 Where a relay holds the assignment, register the relationship with its authorized
@@ -269,7 +380,7 @@ Describe evidence separately:
 | Prompt dispatched | Accepted turn ID and matching user message |
 | Requested settings applied | Actual returned settings, not prompt text |
 | CXC Loop active | Child's active goal and current goalplan/FSM evidence |
-| Work delivered | Completed turn plus actual commit/diff and check artifacts |
+| Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
@@ -282,7 +393,10 @@ Describe evidence separately:
 Do not assume a worktree/task returned by a backend appears in the app's project.
 Check the Desktop listing separately when the user needs that association.
 
-After delivery, identify the final commit or frozen hashed diff/file bundle, then
+After non-PR delivery, verify the delivered output revision/digest against its
+input baseline and acceptance criteria. A later edit at the same URL invalidates
+reused verification; it is not the same output. No commit or merge is required. After code delivery, identify the
+final commit or frozen hashed diff/file bundle, then
 check the prerequisite ancestry, scoped diff, acceptance criteria,
 meaningful negative cases, and relevant user-visible behavior. Reuse valid proof
 for the same revision and criteria; run missing checks or checks invalidated by
@@ -323,6 +437,12 @@ Report **verified**, **needs changes**, or **unverified**, with concrete evidenc
 and distinguish implementation, merge, and deployment. Start a successor
 only after its required contracts/revisions are verified and available in its
 checkout, and only within the authorized batch/run scope.
+
+After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
+before reporting or recording the issue complete. Read back the one delivery PR's
+actual merge, intended repository/branch and landing revision. For legacy multi-PR
+scope, verify the reconciled deliveries and their combined coverage instead. Retain
+existing accepted operational criteria and never infer completion from an automatic status alone.
 
 ## Return corrections to the existing task
 

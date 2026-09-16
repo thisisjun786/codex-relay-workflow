@@ -30,6 +30,12 @@ audit the whole workspace or launch every helper just to select an action.
 Distinguish these two situations. An empty backlog does not prove a fresh start;
 a Done label or completed agent turn does not prove the outcome is delivered.
 
+When repository identity affects readiness, apply the shared
+[repository resolution](../crw-plan/references/integrations.md#resolve-the-implementation-repository).
+Read the issue's repository label, explicit target and existing assignment;
+reconcile disagreement before execution. Project context does not assign an
+edit target. Distinguish resuming preserved work from a new baseline.
+
 ## When the user does not know where to start
 
 Establish the intended user outcome, what already exists, and the constraint or
@@ -38,7 +44,8 @@ open work before proposing a new project or duplicate issue.
 
 If the outcome is unclear, choose the smallest discovery step that would change
 the decision: a focused user question, an external observation, or a bounded
-experiment. If it is clear, choose the smallest useful first delivery with ready
+experiment. Use [crw-define](../crw-define/SKILL.md) when the initiative goal
+itself needs definition. If it is clear, choose the smallest useful first delivery with ready
 prerequisites. Missing documents alone do not justify a full planning exercise;
 use [crw-plan](../crw-plan/SKILL.md) when missing scope or dependencies
 actually prevent execution. Prefer a step that produces evidence or user value
