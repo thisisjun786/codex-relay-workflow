@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Coordinate one Linear issue or a ready batch through independent child Codex tasks: reuse the responsible task or create one within user authorization and host rules, then verify delivery using CXC. Use for execution, progress coordination, or delivery review; use crw-plan for roadmap authoring and crw-check for intent drift. Formerly linear-run."
+description: "Run a Linear project, milestone, ready batch, or single issue through independent child Codex tasks: reuse the responsible task or create one within user authorization and host rules, then verify delivery using CXC and continue within the agreed scope. Use for execution, progress coordination, or delivery review; use crw-plan for roadmap authoring and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
@@ -53,6 +53,49 @@ publication, deployment, issue closure, and unrelated messages need scope coveri
 those actions. When the user designates this as the fixed management task,
 use [crw-focus](../crw-focus/SKILL.md) for its recorded project link,
 title, and sidebar pin, then continue the authorized execution here.
+
+## Keep a project run moving
+
+For a requested project Loop, load the installed `cxc-loop` and `cxc-pabcd`
+in this coordinator too. Under their current host/session rules, inspect and
+reuse its matching goal and plan, or establish them when authorized. The parent's
+objective is coordination and verified delivery of the agreed project scope;
+each child retains its separate issue goal, session and phases. Never borrow a
+child's state as proof of the parent's Loop. Missing required Loop capability
+is a reported gap, not an ordinary turn relabeled as an armed Loop. Plain
+dispatch, status, binding, and discussion of a future Loop do not arm one.
+
+Record the selected project, authorized issue/milestone scope, delivery limits,
+active child IDs, and next dependency in the existing coordination record.
+Newly discovered work must fit that scope; an overnight run is not authority to
+adopt every future issue or another project's backlog. Preserve explicit batch,
+no-goal, no-merge, pause and resource limits.
+
+Repeat within that scope: refresh ownership and prerequisites, dispatch ready
+issue packets, observe their actual results, verify and integrate permitted
+deliveries, then release the next ready work. A blocked issue holds only its
+dependents; continue independent authorized work. Keep each implementation issue
+with its own child and delivery PR, and serialize integrations into a shared
+target. Non-PR work completes on its verified result.
+
+Choose and record the observation mode before creating or registering children, using
+[OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting)
+to check active-parent receipt compatibility. Refresh existing assignments first;
+do not switch a registered issue to another delivery path. An active parent Loop
+uses bounded transport waits and continues
+after timeouts; it does not rely on a hook or an unverified relay to wake it after
+ending its turn. Report meaningful progress while respecting host communication
+limits. A quiet worker, elapsed wait or empty ready queue is not completion while
+owned work is still running. Do not resend work or create replacement writers
+because a wait expired.
+
+Finish only after the agreed scope is verified, the user stops it, a stated
+resource limit is reached, or no authorized action remains because of a concrete
+blocker. Record unfinished issues, responsible tasks and the exact resume step;
+keep host goal completion/blocked rules with CXC and the host tools. Never mark
+the project complete merely because the current batch ended. If the host ends
+the turn or no supported observation/resume path remains, report continuity as
+unverified or interrupted rather than promising unattended progress.
 
 ## Independent implementation tasks
 
@@ -228,7 +271,7 @@ branch, and owner; do not create a second checkout just to prove task separation
 Placement, the ownership columns, and the write split between a coordinator that
 prepares git metadata and a child that only edits source are in
 [Operations contract](references/operations.md), which also owns the shared relay
-service, its durable store, and how a parent returns to idle after delegating.
+service, its durable store, and the parent's continuation and waiting mode.
 
 Discover the live creation tool and schema before claiming availability.
 Use native app task tools when suitable. Before proposing or adopting the official
