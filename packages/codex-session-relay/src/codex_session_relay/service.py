@@ -487,6 +487,17 @@ class RelayService:
         if handle.already_gone:
             if foreign:
                 return FOREIGN, handle, "; ".join(foreign)
+            if (record.get("workerPid") and record.get("bootId") is None
+                    and boot_id() is not None):
+                # The same rule the cleared-pid path above already applies, and this path is
+                # just as stale: the supervisor is gone but its worker number is still in the
+                # record, so stop() falls through to _stop_worker - which validates start
+                # ticks only. A reboot resets those along with the pid space, so an unrelated
+                # process holding the old worker number would be signalled.
+                return UNVERIFIABLE, handle, (
+                    "no boot id is recorded, so this worker pid cannot be distinguished from"
+                    " one reused after a reboot"
+                )
             return NONE, handle, "the recorded process is gone"
         if not handle.usable:
             if foreign:
@@ -897,18 +908,17 @@ class RelayService:
                     latest is not None
                     and self._launch_identity(latest) != self._launch_identity(record)
                 )
+                if held is None and supervisor_done and worker_done:
+                    # Both of the processes this record named are confirmed gone, so whatever
+                    # holds the lock now is not one of them. A replacement usually has not
+                    # published yet, which means latest is still the OLD record and the
+                    # identity comparison cannot see it - so the failed acquisition is itself
+                    # the evidence, and it is the only evidence available in that window.
+                    replaced = True
                 if replaced:
                     return {"ok": False, "reason": "replaced_by_new_launch",
                             "detail": "a new launch published its record during this stop; it"
                                       " was left untouched and is still running",
-                            "supervisor": outcome, "worker": worker}
-                if held is None and latest is None:
-                    # The lock is held by something that has published nothing. It is not
-                    # ours to describe, and writing a stopped record for it would say this
-                    # state directory is idle while that process starts serving.
-                    return {"ok": False, "reason": "ownership_unverifiable",
-                            "detail": "the daemon lock was taken during this stop by a"
-                                      " process that has published no record",
                             "supervisor": outcome, "worker": worker}
                 self.write_record(cleared)
         if owner == NONE and worker == "gone":
