@@ -187,10 +187,10 @@ completion silently ending another parent's work.
 
 ## S9 The parent selects a verified waiting mode
 
-Observed: a coordinator without an active parent Loop has dispatched an independent task.
+Observed: a CRW coordinator has selected event-driven idle handoff for an independent task.
 Its registered assignment, running delivery service and parent-resume path are verified.
 Later the delivery arrives while the parent is mid-turn, and a second assignment's parent
-has meanwhile been paused by the user. Separately, an active project Loop has a running child
+has meanwhile been paused by the user. Separately, a CRW parent in active observation has a running child
 using recorded non-relay dispatch, and its first bounded transport wait times out. Another
 issue is already relay-registered to an active parent on a relay that defers busy recipients.
 
@@ -418,8 +418,8 @@ recovery path. Nothing here authorizes an install, a permission change, or a mid
 ## S19 Each side keeps its own conclusion
 
 Observed: an independent task's own workflow reaches a done state, its pull request is green, and its
-parent has not yet claimed or judged the receipt. This coordinator has no active parent Loop
-and has verified its event-driven delivery and resume path as in S9.
+parent has not yet claimed or judged the receipt. This CRW coordinator has selected
+event-driven idle handoff and verified its delivery and resume path as in S9.
 
 Clauses: OPS-10.1, OPS-8.1, OPS-6.4.
 
@@ -530,3 +530,23 @@ routine step between rounds.
 
 Preserved: the review request and its threads, the findings already collected on that pull request,
 and the separation between entering review, being merge ready, and reporting an outcome.
+
+## S24 Parent coordination finishes without a local implementation diff
+
+Observed: a default CRW parent has no CXC implementation FSM. Every child in its agreed
+scope has delivered verified results, required PRs have landed, and no owned work or
+receipt remains pending. Its own checkout is unchanged. Separately, another parent
+explicitly chose CXC and has a blocked FSM with no supported transition to CRW.
+
+Clauses: OPS-8.1, OPS-8.4, OPS-10.1; lifecycle decisions belong to
+[crw-loop](../../../crw-loop/SKILL.md).
+
+Action: the default CRW parent completes its coordination record on the verified scoped
+deliveries, without manufacturing a parent-local code change. Child completion alone is
+insufficient if any required result, correction, receipt or integration remains unresolved.
+The explicit CXC parent retains its installed lifecycle and cannot start CRW execution
+while its transition is unsupported. Record the transition blocker and exact supported
+resume requirement; do not reset the FSM, edit phases or report a new loop as armed.
+
+Preserved: child identities and delivery evidence, the distinct parent completion boundary,
+and the existing CXC parent's binding, goalplan, pending obligations and recovery evidence.

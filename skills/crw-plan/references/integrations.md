@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-define`, `crw-focus`, `crw-next`, `crw-plan`, `crw-run`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-focus`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Resolve the project target
 

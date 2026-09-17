@@ -40,7 +40,7 @@ If this parent already has an active or blocked CXC goal/FSM, inspect it and pre
 its binding, goalplan, evidence and recovery record. Do not reset it, edit phases,
 fabricate a source delta, mark it complete, or silently switch owners to avoid a
 guard. Reconcile an authorized transition using that workflow's supported lifecycle;
-if unsupported, record the concrete transition blocker before starting CRW execution.
+if unsupported, record the concrete transition blocker and do not start CRW execution.
 This skill does not initialize a host goal merely because its name contains Loop.
 Any explicitly requested host goal remains subject to host completion/blocked rules
 and the actual hooks governing it; do not claim an independent lifecycle if those
