@@ -228,9 +228,18 @@ def publish(target, payload: dict) -> str:
     temp = directory / (
         "." + target.name + ".tmp." + str(os.getpid()) + "." + uuid.uuid4().hex[:12]
     )
+    body = _canonical(payload).encode("utf-8")
     descriptor = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
-        os.write(descriptor, _canonical(payload).encode("utf-8"))
+        # os.write may return a short count, and the temp is linked into place immediately after.
+        # Ignoring the count let a truncated fact become the winning create-once record, which no
+        # retry can replace because the target now exists: the assignment stays unreadable for good.
+        written = 0
+        while written < len(body):
+            count = os.write(descriptor, body[written:])
+            if count <= 0:
+                raise OSError("the fact could not be written in full, so it is not published")
+            written += count
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
@@ -248,18 +257,48 @@ def publish(target, payload: dict) -> str:
     return outcome
 
 
+PRESENT, ABSENT, UNREADABLE = "present", "absent", "unreadable"
+
+
 def _read_fact(path):
-    """Read one fact. Returns (value, readable). Unreadable is never reported as absent."""
+    """Read one fact. Returns (value, PRESENT | ABSENT | UNREADABLE).
+
+    Three answers rather than two, because "it is not there" and "I could not look" are different
+    facts and only one of them is a normal state. Guarding this with an exists() check collapsed
+    them: exists() reports False for a permission error on the parent directory, so an inaccessible
+    intent read as an absent one and a managed workspace classified as unmanaged, which releases the
+    turn and records nothing.
+    """
     try:
         text = Path(path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None, ABSENT
     except OSError:
-        return None, False
+        # Permission, mount, I/O, or a name that is not a file. All of them mean we could not look.
+        return None, UNREADABLE
     try:
-        return json.loads(text), True
+        return json.loads(text), PRESENT
     except ValueError:
-        # Parsed nothing, so nothing is known about this fact. That is "I could not read it",
-        # which must not be reported as "it is not there".
-        return None, False
+        # Parsed nothing, so nothing is known about this fact. Also "I could not look".
+        return None, UNREADABLE
+
+
+def listing(directory, pattern=None):
+    """List a fact directory without ever raising. Returns (paths, readable).
+
+    The listing itself is an outside-world operation and was the one step here not covered by a
+    read guard, so a permission or mount fault on claims/ or attempts/ escaped read_assignment,
+    left evaluate through the CLI's generic handler as a host failure, and ended the Stop with no
+    observation recorded at all.
+    """
+    directory = Path(directory)
+    try:
+        if not directory.is_dir():
+            return [], True
+        entries = directory.glob(pattern) if pattern else directory.iterdir()
+        return sorted(entries), True
+    except OSError:
+        return [], False
 
 
 def _identified(value, fact_id):
@@ -282,46 +321,58 @@ def read_assignment(directory):
 
     A reader arriving mid-race sees a subset of files, which is always a valid earlier state rather
     than a corrupt one, so absence is never an error here. Unreadability is, and it is returned
-    separately because "I could not look" and "there is nothing there" are different answers.
+    separately because "I could not look" and "there is nothing there" are different answers with
+    different consequences: the first must release and be recorded, the second is an ordinary
+    session nobody should touch.
+
+    Nothing in this function raises. Every outside-world step - reading a fact, testing a directory,
+    listing one - answers with a label instead, because an exception here ends the evaluation with
+    nothing classified and nothing recorded, which is the one outcome worse than a wrong answer.
     """
     directory = Path(directory)
     marker, unreadable = {}, []
 
     for key, name in SINGLE_FACTS.items():
-        path = directory / name
-        if not path.exists():
+        value, status = _read_fact(directory / name)
+        if status is ABSENT:
             continue
-        value, readable = _read_fact(path)
-        if not readable:
+        if status is UNREADABLE:
             unreadable.append(key)
             continue
         marker[key] = _identified(value, key)
 
     for key in NUMBERED_FACTS:
-        sub = directory / key
-        if not sub.is_dir():
+        entries, readable = listing(directory / key, "*.json")
+        if not readable:
+            unreadable.append(key)
             continue
         items = []
-        for entry in sorted(sub.glob("*.json")):
+        for entry in entries:
             if entry.name.startswith("."):
                 continue
-            value, readable = _read_fact(entry)
-            if not readable:
+            value, status = _read_fact(entry)
+            if status is ABSENT:
+                continue
+            if status is UNREADABLE:
                 unreadable.append(key + "/" + entry.stem)
                 continue
             items.append(_identified(value, key + "/" + entry.stem))
-        marker[key] = items
+        if entries or (directory / key).exists():
+            marker[key] = items
 
-    claims_dir = directory / "claims"
-    if claims_dir.is_dir():
+    sessions, readable = listing(directory / "claims")
+    if not readable:
+        unreadable.append("claims")
+    elif sessions:
         claims = []
-        for session_dir in sorted(p for p in claims_dir.iterdir() if p.is_dir()):
-            path = session_dir / CLAIM_FILE
-            if not path.exists():
+        for session_dir in sessions:
+            if not session_dir.is_dir():
                 continue
-            value, readable = _read_fact(path)
             fact_id = "claims/" + session_dir.name + "/" + CLAIM_FILE
-            if not readable:
+            value, status = _read_fact(session_dir / CLAIM_FILE)
+            if status is ABSENT:
+                continue
+            if status is UNREADABLE:
                 unreadable.append(fact_id)
                 continue
             claims.append(_identified(value, fact_id))
@@ -341,10 +392,10 @@ def read_disposition(directory, session_id, turn_id):
         # disposition here, and probing a path built from it would be reading somebody else's.
         return None, True
     path = Path(directory) / "dispositions" / session_id / (turn_id + ".json")
-    if not path.exists():
+    value, status = _read_fact(path)
+    if status is ABSENT:
         return None, True
-    value, readable = _read_fact(path)
-    if not readable:
+    if status is UNREADABLE:
         return None, False
     return _identified(value, "dispositions/" + session_id + "/" + turn_id), True
 

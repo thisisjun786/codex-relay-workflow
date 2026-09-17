@@ -171,6 +171,29 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-124 | A submission must clear both floors, the delivered one and the highest stored one, so no write is accepted that nobody would ever see | `report._assert_resubmission` | implemented |
 
 
+## The managed marker and the Stop decision
+
+A hook that only inspects registered relationships cannot see a missing registration, so the marker
+exists before the relationship and is answerable without asking the relay anything.
+
+| Invariant | Why |
+|---|---|
+| Every fact is published once | a sibling temp is fsynced, linked and unlinked, so first-publication-wins is an operating-system fact rather than a convention a writer might forget, and a reader arriving mid-race sees a subset of files, which is always a valid earlier state |
+| A fact is published whole or not at all | `os.write` may return a short count, so the write loops; a fact that cannot be written in full is never linked, because a truncated create-once record is one no retry can replace |
+| The assignment state is derived, never stored | a stored state would need every writer to agree on transition rules, and every delayed writer would then be a regression risk; presence is monotonic, so a late fact cannot move it backwards |
+| Binding is the coordinator's alone | only the party holding the creation receipt can tell the task it created from a session that read an id, so a child claims and never binds |
+| An identity names something only as a nonempty string | missing, empty, blank and non-string all name nothing, and two records naming nothing are never a match: `None == None` is not evidence |
+| An identity used as a directory name is stricter still | a session or turn id that is `.`, `..` or contains a separator names something perfectly well and would redirect a create-once write out of its assignment, so the writers refuse it |
+| A receipt is this turn's or it is nothing | the head is computed first and the matching event fetched by its id, then checked against this session, this turn and this assignment's relationship; a receipt from an earlier turn can stand at the head while the turn being judged produced nothing |
+| Staged receipts count, suppressed ones do not | a child emits inside its own turn, so the host reports `inProgress` and the event is stored staged until the daemon observes the turn ending, which is after the hook has run; requiring `final` would hold every honest child, while `suppressed_reason` keeps a failed or interrupted turn from carrying one |
+| The store to read is the coordinator's, not the caller's guess | precedence is the explicit path, then the `dbPath` recorded in `intent.json`, then the caller's own resolution; a hook resolving its own default can read a different store, find no relationship, and hold a child whose receipt is at the head of the right one |
+| The guard reads the relay read-only | `Store` writes on open, so a guard built on it would create an empty database at a misresolved path, and an empty database answers "no receipt", which is a hold |
+| Nothing is synthesized for the hook | no receipt is written, no verdict recorded and nothing marked verified; when the evidence is missing the answer is to say so |
+| Every evaluation yields a recorded, classified result | it does not end in an uncaught exception, does not read a failure as a normal state, and does not silently skip enforcement; the outside-world stages are enumerated in `guard.EVALUATION_STAGES` and each has an injected-failure case |
+| A defect here is not a data problem | an exception escaping any stage becomes `guard_faulted` carrying its type and message, kept distinct from `state_unreadable` so a bug in this code cannot masquerade as a corrupt marker |
+| Corruption is scoped to what it can affect | the rolling window is a bound on one session, so another session's records are skipped before they are parsed and cannot disable enforcement for this one |
+| An uncountable budget releases | a hold bound that could not be counted is not an empty one, so the evaluation reports it rather than narrowing its scope and silently renewing the budget |
+
 ## Recorded limits, so a row above is not read as more than it is
 
 | Limit | Consequence |
@@ -194,3 +217,8 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | These are forward fixes | per-assignment settlement does not restore claims a previous global settlement already suppressed, and capped-state annotation does not reach deliveries whose generation advanced before it existed. Historical repair is separate work with its own evidence |
 | A re-review is not re-synchronised when it lands on the same disposition | `sync` derives `sync_id` from target, ref, kind, relationship, event, generation, revision and verdict, and enqueues with `INSERT OR IGNORE`. The criteria digest is not part of that identity, so a re-review that rules `verified` a second time produces the same id and no second job: the coordination document keeps the summary written against the earlier wording. A re-review that changes the disposition does enqueue. The local record is complete either way - `verdict_context.set_digest` carries the set actually ruled on and the `verdict_superseded` journal entry carries both digests - so this is a gap in what is pushed outward, not in what is known |
 | A claim locks an event, it does not identify who rules | `verification_claims` records that a review is under way and which turn took it, and `record_verdict` has no parameter naming the claim it rules under. A caller still holding findings made against the previous wording is therefore refused only while it cannot name the current digest: if it attests that digest it is accepted, exactly as the documented `expect_criteria_digest` alternative to claiming has always been. This predates re-review, since two callers sharing one claim could always submit each other's findings, and closing it needs a review token in `verification_claims` plus a parameter on `record_verdict` that the CLI would have to pass |
+| A classified failure is not a correct classification | the evaluation guarantees that a failure is recorded and named, not that the name is right: a read that could have succeeded may still be reported unreadable. The direction is conservative and the classification carries its reason, so it is reportable rather than silent |
+| The stage inventory is declared, not derived | `guard.EVALUATION_STAGES` is a written list checked for coverage by its tests, so a stage added without being listed is untested; the failure-site set it stands in for is not enumerable at all, which is why the stages are the unit |
+| The five-second hook budget is not enforced here | the contract's wall clock bounds the hook process, and this is the interface that process calls; the database timeout is held well under it, but a deadline that decides what to emit on expiry belongs with the hook registration |
+| Holding is asserted, never proven | `--mode hold` cannot verify the per-session sandbox grant it depends on, because that grant lives in another process's creation settings; the default is observe-only, and the mode is recorded in every observation |
+| No hook has run against this | the decision, the bounds and the write protocol are exercised by tests only. Whether a real host invokes this interface, honours a block and delivers the continuation is settled by the JUN-100 host-verification packet for the contract, not for this implementation |

@@ -25,6 +25,7 @@ from pathlib import Path
 from . import intent as intents
 from .currency import AMBIGUOUS, head_revision
 from .marker import (
+    listing,
     named,
     valid_segment,
     publish,
@@ -52,6 +53,20 @@ RELEASE = "release"
 
 OBSERVE, HOLD = "observe", "hold"
 
+# Named so a defect in this code cannot masquerade as a data problem in somebody's marker.
+FAULTED = "guard_faulted"
+
+# The outside-world stages of one evaluation. "Every place that can fail" is not enumerable; these
+# are, and they are what the inventory tests iterate. A stage added later belongs in this tuple.
+EVALUATION_STAGES = (
+    "workspace_listing",
+    "assignment_facts",
+    "disposition",
+    "receipt_store",
+    "hold_history",
+    "observation_record",
+)
+
 READY = "ready_for_review"
 
 
@@ -69,7 +84,9 @@ def _read_only(db_path):
         connection = sqlite3.connect(
             Path(db_path).as_uri() + "?mode=ro", uri=True, timeout=SQLITE_TIMEOUT
         )
-    except (OSError, sqlite3.Error, ValueError):
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        # TypeError belongs here: a corrupt intent can record a dbPath that is not a string, and
+        # Path() raises on it. Uncaught, that ended the whole evaluation with nothing recorded.
         return None
     connection.row_factory = sqlite3.Row
     return connection
@@ -182,68 +199,86 @@ def receipt_matches(receipt, stop, marker) -> bool:
 # ---------------------------------------------------------------- hold budget
 
 
-def _held_records(hook_root):
-    """Every recorded hold under one hook tree, as (session, turn, at). Returns (records, problem).
+def _held_records(hook_root, session_id=None):
+    """Recorded holds under one hook tree, as (session, turn, at). Returns (records, bad, readable).
 
-    A record that is not a record says the store being counted is wrong, and it is reported instead
-    of being read as zero, which would quietly hand back a full hold budget.
+    session_id narrows the walk BEFORE anything is parsed. That ordering is the point: the rolling
+    window is a bound on one session, so another session's malformed record must not be able to
+    reach it. Reporting corruption first let a foreign bad record turn this session's counters into
+    corruption and release an otherwise holdable omission.
     """
     records = []
     root = Path(hook_root)
-    if not root.is_dir():
-        return records, None
-    for path in sorted(root.glob("*/*/*.json")):
-        if path.name.startswith("."):
+    sessions, readable = listing(root)
+    if not readable:
+        return records, None, False
+    for session_dir in sessions:
+        if session_id is not None and session_dir.name != session_id:
             continue
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return records, "hook/" + path.parent.parent.name
-        if not isinstance(record, dict):
-            return records, "hook/" + path.parent.parent.name
-        held = record.get("held")
-        if not isinstance(held, bool):
-            return records, "hook.held"
-        if held:
-            records.append((path.parent.parent.name, path.parent.name, record.get("at")))
-    return records, None
+        turns, readable = listing(session_dir)
+        if not readable:
+            return records, None, False
+        for turn_dir in turns:
+            files, readable = listing(turn_dir, "*.json")
+            if not readable:
+                return records, None, False
+            for path in files:
+                if path.name.startswith("."):
+                    continue
+                try:
+                    record = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    return records, "hook/" + session_dir.name, True
+                if not isinstance(record, dict):
+                    return records, "hook/" + session_dir.name, True
+                held = record.get("held")
+                if not isinstance(held, bool):
+                    return records, "hook.held", True
+                if held:
+                    records.append((session_dir.name, turn_dir.name, record.get("at")))
+    return records, None, True
 
 
 def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
-    """Count this hook's own holds from the records it published. Returns (counters, malformed).
+    """Count this hook's own holds. Returns (counters, malformed, unreadable).
 
     Counted rather than stored, so nothing has to be kept consistent across writers.
 
-    The two scopes are deliberately different. holdsThisGeneration is counted over one assignment,
+    The two scopes are different on purpose. holdsThisGeneration is counted over one assignment,
     because one assignment directory is one dispatch request id and the relay keys the same dispatch
-    id to the same generation, so a generation advance is a new dispatch and a new directory.
-    holdsThisSessionWindow is counted over every assignment under the workspace: it is a bound on
-    the SESSION over a rolling hour, and counting it per assignment would hand the same session a
-    fresh hour every time a new assignment was declared for the same path.
+    id to the same generation. holdsThisSessionWindow is counted over every assignment under the
+    workspace, because it bounds the SESSION over a rolling hour.
+
+    A listing failure is REPORTED rather than absorbed by narrowing the scope. Falling back to the
+    selected assignment made sibling holds disappear and silently renewed the window budget, which
+    is the one direction this accounting must never fail in: every other failure here loses a
+    result, and that one loses a bound.
     """
     counters = {"holdsThisTurn": 0, "holdsThisGeneration": 0, "holdsThisSessionWindow": 0}
-    scoped, problem = _held_records(Path(directory) / "hook")
+    scoped, problem, readable = _held_records(Path(directory) / "hook")
+    if not readable:
+        return counters, None, "hook"
     if problem:
-        return counters, problem
+        return counters, problem, None
     for record_session, record_turn, _at in scoped:
         counters["holdsThisGeneration"] += 1
         if same_identity(record_session, session_id) and same_identity(record_turn, turn_id):
             counters["holdsThisTurn"] += 1
 
-    roots = [Path(directory)]
-    if workspace_root is not None:
-        try:
-            roots = sorted(p for p in Path(workspace_root).iterdir() if p.is_dir())
-        except OSError:
-            roots = [Path(directory)]
+    if workspace_root is None:
+        assignments, readable = [Path(directory)], True
+    else:
+        assignments, readable = listing(Path(workspace_root))
+    if not readable:
+        return counters, None, "workspace"
     horizon = intents.moment(now)
-    for assignment in roots:
-        found, problem = _held_records(assignment / "hook")
+    for assignment in assignments:
+        found, problem, readable = _held_records(assignment / "hook", session_id=session_id)
+        if not readable:
+            return counters, None, "hook"
         if problem:
-            return counters, problem
-        for record_session, _record_turn, at in found:
-            if not same_identity(record_session, session_id):
-                continue
+            return counters, problem, None
+        for _record_session, _record_turn, at in found:
             when = intents.moment(at)
             if horizon is None or when is None or when > horizon - timedelta(
                 minutes=SESSION_WINDOW_MINUTES
@@ -251,7 +286,7 @@ def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
                 # An unreadable or absent timestamp counts INSIDE the window. Failing the other way
                 # would let an undated record renew the budget, and the budget exists to stop a loop.
                 counters["holdsThisSessionWindow"] += 1
-    return counters, None
+    return counters, None, None
 
 
 def _next_hook_seq(directory, session_id, turn_id) -> int:
@@ -499,6 +534,64 @@ def decide(observation, *, counters=None, mode=OBSERVE):
 
 def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_path=None,
              record=True) -> dict:
+    """Decide one Stop, and never end without saying something.
+
+    This is the classification boundary. Everything below it answers with a label rather than an
+    exception, and anything that still escapes is turned into a named guard_faulted result carrying
+    the exception type and message. It is deliberately NOT folded into state_unreadable: that would
+    let a real defect in this code masquerade as a data problem in somebody's marker, and the two
+    need different repairs. A detector that dies detects nothing and leaves no trace it ran, which
+    is the one outcome worse than a wrong answer.
+    """
+    stop = stop_input or {}
+    reached = {"directory": None}
+    try:
+        return _evaluate(
+            root, stop, now=now, mode=mode, db_path=db_path,
+            default_db_path=default_db_path, record=record, reached=reached,
+        )
+    except Exception as error:
+        verdict = _faulted(stop, now, mode, error)
+        if record and reached["directory"] is not None:
+            try:
+                verdict["recordedAs"] = record_observation(
+                    reached["directory"], verdict["record"]
+                )
+            except Exception:
+                # Recording is the last thing that can fail, and failing it must not re-raise: the
+                # caller still gets a classified release rather than a traceback.
+                verdict["recordedAs"] = None
+        return verdict
+
+
+def _faulted(stop, now, mode, error) -> dict:
+    detail = type(error).__name__ + ": " + str(error)
+    record = {
+        "observation": FAULTED,
+        "turnId": stop.get("turn_id"),
+        "sessionId": stop.get("session_id"),
+        "decisionState": FAULTED,
+        "held": False,
+        "mode": mode,
+        "fault": detail,
+        "at": now,
+    }
+    return {
+        "decision": RELEASE,
+        "state": FAULTED,
+        "observation": FAULTED,
+        "reason": "The guard could not finish this evaluation: " + detail
+                  + ". Released and recorded; this is a defect in the guard rather than in the"
+                    " marker, and it is reported as one.",
+        "record": record,
+        "fault": detail,
+        "assignmentId": None,
+        "counters": {},
+        "hook_output": {},
+    }
+
+
+def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reached) -> dict:
     """Gather the records this Stop is judged against, decide, and publish the observation.
 
     The receipt is read only when a readiness was actually declared. A turn that declared itself
@@ -508,22 +601,20 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_pa
     Which store to read has three sources in a deliberate order: db_path, when the caller named one
     explicitly; then the dbPath the COORDINATOR recorded in intent.json, because it is the party
     that registered the relationship and knows where its store lives; then default_db_path, the
-    caller's own resolution, which is only a guess about somebody else's choice. Letting the guess
-    win is the whole defect this ordering exists to prevent: a hook run without the coordinator's
-    state selection would read a different store, find no relationship, and hold a child whose
-    receipt is sitting at the head of the right one.
+    caller's own resolution, which is only a guess about somebody else's choice.
     """
-    stop = stop_input or {}
     workspace = stop.get("cwd")
     session_id, turn_id = stop.get("session_id"), stop.get("turn_id")
 
-    directory = marker = None
+    directory = marker_facts = None
     unreadable = []
     if workspace:
-        directory, marker, unreadable = intents.select_assignment(root, workspace, session_id)
+        directory, marker_facts, unreadable = intents.select_assignment(root, workspace, session_id)
         unreadable = list(unreadable or [])
+        reached["directory"] = directory
 
     disposition = receipt = malformed_label = None
+    counters = {}
     if directory is not None:
         disposition, readable = read_disposition(directory, session_id, turn_id)
         if not readable:
@@ -537,47 +628,48 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_pa
             and same_identity(disposition.get("sessionId"), session_id)
             else None
         )
-        registered = (marker or {}).get("relationship")
-        if declared == READY and isinstance(registered, dict):
+        registered = (marker_facts or {}).get("relationship")
+        # A marker whose published facts are not facts does not get to send us to a database. The
+        # read would fail on its corrupt value and report the STORE as unreadable, which points the
+        # repair at the wrong thing: the marker is what needs fixing, and it is already knowable.
+        shape = intents.malformed(marker_facts or {})
+        if declared == READY and isinstance(registered, dict) and not shape:
             recorded = (
-                marker.get("intent", {}).get("dbPath")
-                if isinstance(marker.get("intent"), dict)
+                marker_facts.get("intent", {}).get("dbPath")
+                if isinstance(marker_facts.get("intent"), dict)
                 else None
             )
-            resolved = db_path or recorded or default_db_path
             receipt, readable = lookup_receipt(
-                resolved,
+                db_path or recorded or default_db_path,
                 relationship_id=registered.get("relationshipId"),
                 session_id=session_id,
                 turn_id=turn_id,
             )
             if not readable:
                 unreadable.append("receipts")
-
-    observation = {
-        "stop_input": stop,
-        "marker": marker,
-        "disposition": disposition,
-        "receipt": receipt,
-        "store_unreadable": unreadable,
-        "malformed": malformed_label,
-        "now": now,
-    }
-
-    counters, corrupt = ({}, None)
-    if directory is not None:
-        counters, corrupt = hold_counters(
+        counters, corrupt, unreadable_history = hold_counters(
             directory,
             session_id=session_id,
             turn_id=turn_id,
             now=now,
             workspace_root=directory.parent,
         )
+        if unreadable_history:
+            # A budget that could not be counted is not an empty budget. Reported here rather than
+            # absorbed, because the alternative is holding on a bound nobody actually checked.
+            unreadable.append(unreadable_history)
         if corrupt:
-            # A hold budget that cannot be counted is corruption of the store this hook keeps, and
-            # it is reported rather than defaulted to zero, which would hand back a full budget.
             counters = {"holdsThisTurn": None}
 
+    observation = {
+        "stop_input": stop,
+        "marker": marker_facts,
+        "disposition": disposition,
+        "receipt": receipt,
+        "store_unreadable": unreadable,
+        "malformed": malformed_label,
+        "now": now,
+    }
     verdict = decide(observation, counters=counters, mode=mode)
     verdict["assignmentId"] = directory.name if directory is not None else None
     verdict["counters"] = counters

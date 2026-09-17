@@ -43,13 +43,20 @@ HOST_REQUIRED_COMMANDS = (
     "daemon", "deliver", "reconcile", "recover", "service run", "service start",
     "service restart", "verify-acks",
 )
+# Every command that touches the managed marker and nothing else. Listed once so the store-selection
+# refusal and the doctor reachability report cannot drift apart.
+MARKER_COMMANDS_BY_NAME = (
+    "intent-declare", "intent-attempt", "intent-bind", "intent-register", "intent-claim",
+    "intent-disposition", "intent-resolve", "intent-show", "guard-evaluate",
+)
+
 OFFLINE_COMMANDS = (
     "ack", "ack-proof", "admit-turn", "assignment-show", "claim", "criteria-register",
     "criteria-show", "doctor", "emit", "generation-bind", "generation-open", "register",
     "relationship-resume", "relationship-status", "revision-head", "settings-record",
     "settings-show", "show", "status", "store-challenge", "store-identity", "verdict",
     "service status", "service enable", "service disable", "service stop",
-)
+) + MARKER_COMMANDS_BY_NAME
 
 
 class _LazyAdapter:
@@ -1291,6 +1298,16 @@ def cmd_guard_evaluate(services, args) -> dict:
 
 
 
+# The same nine commands as MARKER_COMMANDS_BY_NAME, by handler, for the store-selection exemption.
+# Declared here because the handlers have to exist first, and checked against the names by a test so
+# adding one command in a single place cannot go unnoticed.
+MARKER_COMMANDS = (
+    cmd_intent_declare, cmd_intent_attempt, cmd_intent_bind, cmd_intent_register,
+    cmd_intent_claim, cmd_intent_disposition, cmd_intent_resolve, cmd_intent_show,
+    cmd_guard_evaluate,
+)
+
+
 # ----------------------------------------------------------------------- wiring
 
 
@@ -1842,6 +1859,25 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
         )
     return lines
 
+def _reads_no_selected_store(args) -> bool:
+    """Whether this command can answer without the store default discovery would pick.
+
+    The managed marker exists so that a hook can answer without asking the relay anything, and every
+    marker command writes or reads the marker root alone. Left inside the store-selection refusal,
+    an unrelated ambiguity in relay discovery made guard-evaluate exit 2 without classifying or
+    recording the Stop, even when --db-path named the receipt database explicitly: legacy state
+    nobody was using switched the hook off.
+
+    intent-declare is the one exception, because it RECORDS services.selection.db_path into the
+    intent for the hook to use later. Recording a path chosen by a guess is exactly what the
+    refusal prevents, so it stays guarded unless --no-db-path says not to record one.
+    """
+    handler = getattr(args, "handler", None)
+    if handler is cmd_intent_declare:
+        return bool(getattr(args, "no_db_path", False))
+    return handler in MARKER_COMMANDS
+
+
 def _refuse_ambiguous_state(services, args) -> None:
     """Two stores already record this socket, so opening one of them would be a guess.
 
@@ -1880,6 +1916,7 @@ def _refuse_ambiguous_state(services, args) -> None:
         wanted = canonical_socket(services.socket_path)
         if recorded is not None and recorded != wanted and (
             getattr(args, "handler", None) not in (cmd_doctor, cmd_ack_proof)
+            and not _reads_no_selected_store(args)
         ):
             raise PayloadExit({
                 "error": "refused",
@@ -1900,7 +1937,9 @@ def _refuse_ambiguous_state(services, args) -> None:
             }, EXIT_REFUSED)
     if not (selection.ambiguous or selection.unidentified):
         return
-    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof):
+    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof) or _reads_no_selected_store(
+        args
+    ):
         return
     contested = bool(selection.ambiguous)
     raise PayloadExit({

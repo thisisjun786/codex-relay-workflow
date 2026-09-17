@@ -69,7 +69,7 @@ CONFLICT = "conflict"
 # or an explicit null is malformed, and it is reported rather than read through, because a set built
 # out of unhashable values ends the reader in a traceback and a traceback records nothing at all.
 IDENTITY_FIELDS = {
-    "intent": ("dispatchRequestIdHash",),
+    "intent": ("dispatchRequestIdHash", "dbPath"),
     "bound": ("sessionId", "taskId"),
     "relationship": ("relationshipId",),
     "attempts": ("taskId", "outcome"),
