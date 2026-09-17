@@ -126,7 +126,9 @@ def _only(entry, keys: set, where: str) -> None:
     """An unknown key is a misspelling that would otherwise silently widen or narrow the policy."""
     unknown = sorted(set(entry) - keys)
     if unknown:
-        raise ExecutionPolicyError(f"{where} has unknown keys {unknown}; supported are {sorted(keys)}")
+        raise ExecutionPolicyError(
+            f"{where} has unknown keys {unknown}; supported are {sorted(keys)}"
+        )
 
 
 def _identifier(value, where: str) -> str:

@@ -5,6 +5,8 @@ import subprocess
 import pytest
 from conftest import EFFORT, EXECUTION, MODEL
 
+from codex_thread_bridge.execution import ExecutionRefused
+
 
 def git(cwd, *args):
     return subprocess.check_output(
@@ -570,3 +572,81 @@ async def test_a_retained_receipt_survives_validation_this_version_added(
         await bridge.create_worktree_thread(
             **{**legacy, **EXECUTION, "request_id": "fresh-worktree"}
         )
+
+
+async def test_a_worktree_launch_without_a_stated_pair_creates_nothing(
+    bridge, fake_server, repository
+):
+    """Refused before Worktree.validate runs, so there is no reservation and no checkout.
+
+    The order matters as much as the refusal: a guard that ran after the Git preparation would
+    leave a retained worktree behind for a request that was never allowed to exist.
+    """
+    from pathlib import Path
+
+    fake, _ = fake_server
+    source = Path(repository["source_repository"])
+    for absent in ("model", "reasoning_effort"):
+        incomplete = {key: value for key, value in repository.items() if key != absent}
+        with pytest.raises(ExecutionRefused) as raised:
+            await bridge.create_worktree_thread(**incomplete)
+        assert raised.value.code == "execution_setting_missing"
+        assert raised.value.field == absent
+    assert not Path(repository["destination"]).exists()
+    assert git(source, "worktree", "list", "--porcelain").count("worktree ") == 1
+    assert fake.calls == []
+
+
+async def test_a_worktree_launch_transmits_the_pair_it_was_authorized_for(
+    bridge, fake_server, repository
+):
+    fake, _ = fake_server
+    receipt = await bridge.create_worktree_thread(**{**repository, "prompt": "work"})
+    assert receipt["status"] == "accepted"
+    start = next(params for name, params in fake.calls if name == "thread/start")
+    assert start["model"] == MODEL
+    assert start["config"]["model_reasoning_effort"] == EFFORT
+    assert receipt["executionPolicy"]["model"] == MODEL
+    assert receipt["executionPolicy"]["reasoningEffort"] == EFFORT
+    assert receipt["settings"]["requested"]["model"] == MODEL
+    assert receipt["settings"]["requested"]["reasoningEffort"] == EFFORT
+
+
+async def test_a_worktree_exception_covers_only_the_destination_it_names(
+    configured_bridge, fake_server, repository, tmp_path
+):
+    """An exception is bound to a directory, and the worktree path binds to the one it will use."""
+    fake, _ = fake_server
+    excepted = {"model": "openai/gpt-6-astra", "reasoning_effort": "high"}
+    bridge = configured_bridge(
+        {
+            "allowed": [{"model": MODEL, "efforts": [EFFORT]}],
+            "exceptions": {
+                "this-worktree": {
+                    "model": excepted["model"],
+                    "reasoningEffort": excepted["reasoning_effort"],
+                    "cwd": [repository["destination"]],
+                }
+            },
+        }
+    )
+    with pytest.raises(ExecutionRefused) as raised:
+        await bridge.create_worktree_thread(
+            **{
+                **repository,
+                **excepted,
+                "request_id": "elsewhere",
+                "destination": str(tmp_path / "somewhere-else"),
+                "policy_exception": "this-worktree",
+            }
+        )
+    assert raised.value.code == "execution_exception_out_of_scope"
+    assert fake.calls == []
+    receipt = await bridge.create_worktree_thread(
+        **{**repository, **excepted, "policy_exception": "this-worktree"}
+    )
+    assert receipt["status"] == "accepted"
+    start = next(params for name, params in fake.calls if name == "thread/start")
+    assert start["model"] == excepted["model"]
+    assert start["config"]["model_reasoning_effort"] == excepted["reasoning_effort"]
+    assert receipt["executionPolicy"]["exception"] == "this-worktree"

@@ -1,8 +1,8 @@
 import asyncio
 
 import pytest
-
 from conftest import EFFORT, EXECUTION, MODEL
+
 from codex_thread_bridge.ledger import Ledger
 
 
@@ -17,6 +17,8 @@ async def create(bridge, *args, **kwargs):
 async def send(bridge, request_id, thread_id, message, **kwargs):
     carried = {**EXECUTION, **(kwargs.pop("expected_settings", None) or {})}
     return await bridge.send_message_to_thread(request_id, thread_id, message, carried, **kwargs)
+
+
 async def test_create_and_followup_carry_the_stated_pair_and_exact_messages(
     bridge, fake_server, tmp_path
 ):
@@ -27,10 +29,7 @@ async def test_create_and_followup_carry_the_stated_pair_and_exact_messages(
     nobody chose. Both the start and the resume now carry the stated pair.
     """
     fake, _ = fake_server
-    first = await create(
-        bridge,
-        "create", str(tmp_path), prompt="  exact\nmessage  ", title="Demo"
-    )
+    first = await create(bridge, "create", str(tmp_path), prompt="  exact\nmessage  ", title="Demo")
     assert first["status"] == "accepted"
     assert first["creation"]["model"] == MODEL
     creation_params = next(p for name, p in fake.calls if name == "thread/start")
@@ -217,10 +216,7 @@ async def test_environment_mismatch_withholds_prompt(bridge, fake_server, tmp_pa
 async def test_desktop_project_id_not_found_stops_before_creation(bridge, fake_server, tmp_path):
     fake, _ = fake_server
     fake.reject["project/read"] = {"code": -32602, "message": "project not found"}
-    result = await create(
-        bridge,
-        "project", str(tmp_path), app_server_project_id="desktop-id"
-    )
+    result = await create(bridge, "project", str(tmp_path), app_server_project_id="desktop-id")
     assert result["status"] == "failed" and fake.count("thread/start") == 0
 
 
