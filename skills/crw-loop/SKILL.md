@@ -1,13 +1,14 @@
 ---
 name: crw-loop
-description: "Create or restore a project parent goal and automatically repeat CRW execution through the agreed scope: dispatch independent issue children, observe, verify, integrate and advance. Use for a project coordination loop or resuming that run; crw-run supplies dispatch and review operations. Children keep their own implementation workflow."
+description: "Add a native parent goal and automatic continuation to crw-run's execution of one Linear project. Use for a project coordination loop or restoring its goal. Run owns project binding, scheduling and delivery; Loop owns goal lifecycle and persistence. Children keep their own implementation workflow."
 ---
 
 # CRW Loop
 
 One parent coordinates one project; one independent child owns one issue and its
-one delivery PR. This skill owns the parent's host goal, automatic repetition and completion decision.
-Use [crw-run](../crw-run/SKILL.md) for operation selection, ownership, parallel
+one delivery PR. Run and Loop have the same project scope. This skill adds the
+parent's host goal, automatic continuation and goal completion decision.
+Use [crw-run](../crw-run/SKILL.md) for operation selection, project binding, ownership, parallel
 scheduling, task packets, delivery verification and authorized integration. Read
 its linked [shared rules](../crw-plan/references/integrations.md) and applicable
 [operations](../crw-run/references/operations.md). These are operations within this
@@ -17,13 +18,15 @@ same parent, not a request to start another coordinator or recursively invoke sk
 
 A submitted `$crw-loop <Linear project link>` execution request explicitly requests
 a parent coordination goal and automatic execution of the agreed scope. Designate or
-restore the fixed parent with [crw-focus](../crw-focus/SKILL.md), then follow
-[Parent goal lifecycle](references/parent-goal.md) before dispatch. Run alone requests
-neither this goal nor automatic successor passes. A Loop may also own an explicitly
+restore the fixed parent using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding),
+then follow [Parent goal lifecycle](references/parent-goal.md) before dispatch. Run alone
+already advances through in-scope successors; Loop adds the goal and automatic host
+continuation. A Loop may also own an explicitly
 limited milestone/batch while keeping one project parent.
 
-Status, explanation, quoted examples, automatic skill discovery and unsubmitted UI
-prompts do not authorize goal creation or execution. Explicit no-goal, read-only,
+Binding-only, status, explanation, quoted examples, automatic skill discovery and unsubmitted UI
+prompts do not authorize goal creation or execution. For binding-only requests, perform
+the shared binding procedure and return. Explicit no-goal, read-only,
 no-create, no-merge, pause, model and resource limits survive routing. No-goal prevents
 activation of this goal-backed Loop: report that limit, and perform goal-free Run only
 if the request separately covers it. Do not silently substitute Run and call it Loop.

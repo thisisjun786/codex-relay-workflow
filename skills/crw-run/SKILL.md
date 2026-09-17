@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Run a Linear project, milestone, ready batch, or single issue through independent child Codex tasks: reuse the responsible task or create one within user authorization and host rules, then verify delivery using CXC. Supplies basic execution without starting a parent goal or automatic project loop. Use for execution, progress coordination, or delivery review; use crw-plan for roadmap authoring and crw-check for intent drift. Formerly linear-run."
+description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors without creating a parent goal. Also handles project binding/recovery and explicit narrower operations. Use crw-loop to add a parent goal and automatic continuation, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
 ---
 
 # CRW Run
@@ -12,8 +12,9 @@ including standalone issues and explicit current-task work. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
-This skill supplies basic execution. [crw-loop](../crw-loop/SKILL.md) owns a
-separately requested parent goal and automatic repetition; Run alone does not activate it.
+Run owns project execution, including newly ready successors within the agreed scope.
+[crw-loop](../crw-loop/SKILL.md) adds a separately requested parent goal and host-driven
+continuation to that same execution; it does not enlarge Run's project scope.
 Load the installed `codexclaw:cxc-dev` and relevant surface skills for development
 and review work. A child whose effective workflow is CXC Loop loads the installed
 `codexclaw:cxc-loop` and `codexclaw:cxc-pabcd` and owns its goal, goalplan and phases.
@@ -30,19 +31,18 @@ needs a refreshed briefing. Route roadmap authoring to
 ## Determine the requested operation
 
 A submitted `$crw-run <Linear project link>` execution request designates or restores
-this task as the fixed parent through `crw-focus` and performs the current execution
-pass. Reconcile existing work, select and record the currently ready issue batch,
-reuse/create its responsible children, and carry that batch through its authorized
-delivery boundary. Fill available capacity within that selected batch. Report the
-remaining project work and next action; do not automatically adopt newly unblocked
-successors or create a parent goal. The link does not approve undefined work or
-replace another parent. An empty ready batch calls for a concrete status/next action,
-not an automatically armed wait loop.
+this task as the fixed parent using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
+and executes the agreed project scope. Record that scope and delivery boundary,
+including its known blocked successors, rather than equating scope with today's ready
+batch. Reconcile existing work, reuse/create responsible children, verify and integrate
+their results, and admit newly ready in-scope issues as capacity opens. The first batch
+is a scheduling choice, not a finish boundary. The link does not approve undefined work,
+future backlog additions, another project's work or replacing another parent.
 
-An explicit request for a parent goal or automatic continuation through the agreed
-project scope routes to `crw-loop`. A plain project link alone does not. When Run is
-used inside an already authorized Loop, it supplies each execution pass and returns
-results to the same Loop owner; it neither limits that Loop to one batch nor creates
+An explicit request for a parent goal or unattended host continuation routes to
+`crw-loop`. Ordinary requests to finish the project or continue its next issue remain
+Run execution; they do not themselves create a goal. Inside an authorized Loop, Run
+returns progress and pending obligations to the same Loop owner without creating
 another goal. Existing scope and authorization survive skill routing.
 
 Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
@@ -53,11 +53,13 @@ unsubmitted UI prompt does not activate this shorthand. Host and tool restrictio
 still govern each action, including task creation and goal activation.
 
 - **Plan/prompts:** inspect project state and prepare task packets; do not launch.
+- **Bind/restore only:** apply [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
+  and report the connection; do not dispatch children or create a goal.
 - **Dispatch a named batch:** reuse prior authorization and settings, refresh its
   prerequisites, then launch only that batch.
-- **Run a project or milestone:** perform the current pass above unless the request
-  explicitly covers further work. Honor explicit scope through delivery; parent goal
-  creation and automatic resumption require Loop authorization, not just a project target.
+- **Run a project or milestone:** carry its agreed scope through delivery, including
+  successors. A milestone, named batch or issue narrows the same project's assignment.
+  Parent goal creation and host-driven continuation belong to an authorized Loop.
 - **Status only:** read existing tasks and evidence without waking them.
 - **Verify completed work:** inspect its exact revision and relevant behavior,
   send in-scope corrections to the existing responsible task, and recheck its
@@ -74,24 +76,27 @@ conversation below; never override host requirements. Apply the shared [delivery
 and inherit existing authorization for coordination records and recovery. Release
 publication, deployment, issue closure, and unrelated messages need scope covering
 those actions. When the user designates this as the fixed management task,
-use [crw-focus](../crw-focus/SKILL.md) for its recorded project link,
+use [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding) for its recorded project link,
 title, and sidebar pin, then continue the authorized execution here.
 
 ## Keep a project run moving
 
-Run does not initialize, resume, complete or block a parent goal. It can wait for and
-verify the selected issue/batch, handle its corrections and integrate within scope;
-that is delivery follow-through, not automatic project-wide repetition. Before any
-child dispatch, record its observation path and the pass's return boundary under
+Run does not initialize, resume, complete or block a parent goal. It keeps progressing
+the agreed project scope during execution: dispatch, wait, verify, correct, integrate
+and start eligible successors. Before any child dispatch, record its observation path
+and the requested delivery boundary under
 [OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting).
 
-A dispatch-only request may return with pending ownership and an exact next step;
-full batch delivery waits for its selected work or records a real interruption/blocker.
-Neither promises future parent wake-ups. Do not abandon existing children or invent a
-successful delivery merely to end a pass. A status-only request wakes nothing.
+A dispatch-only request may return with pending ownership and an exact next step.
+Otherwise continue until the agreed scope is delivered, the user stops, a resource
+limit is reached, or no authorized progress is possible. An empty ready queue while
+children run calls for bounded observation; a blocked issue does not stop independent
+work. If the host ends the turn, preserve the unfinished project and exact resume step,
+not a claim that the first batch completed the request. Run alone promises no automatic
+future wake-up. A status-only request wakes nothing.
 
 For authorized automatic continuation, [crw-loop](../crw-loop/SKILL.md) owns the parent
-host goal, successive passes, waiting and recovery. Returning from a Run pass hands
+host goal and automatic continuation across turns. Returning from Run hands
 control back to that same owner. Explicit pause/no-goal limits still win, and existing
 CXC parent state must be reconciled through its supported lifecycle, never reset to
 avoid a guard. The default absence of a Run parent goal does not alter child CXC defaults.
@@ -152,10 +157,10 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
-| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Apply the current-pass default above, including fixed-parent designation and child creation/reuse, without a parent goal or automatic successor loop; host restrictions still apply |
+| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, without creating a parent goal; host restrictions still apply |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
-| Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings from the coordination/recovery record; refresh ownership and prerequisites, then finish or report the recorded pass. Only an owning Loop or explicitly wider delivery scope advances to another batch; do not repeat approval already covering that scope |
+| Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings; refresh ownership and prerequisites, then continue the remaining in-scope obligations, including successors. Preserve an explicitly batch-limited assignment; do not repeat approval already covering the scope |
 | Standalone short invocation such as `$crw-run 다음 작업 진행해줘`, with genuinely no creation intent in the conversation or prior authorization for this scope | Prepare the issue packet and inspect ownership; if a new task is needed and the host requires an explicit creation request, obtain only that missing request |
 
 Merely mentioning the skill's name, an unsubmitted UI default prompt, a quoted
@@ -188,7 +193,7 @@ Missing connector access is a concrete limitation, not permission to invent issu
 For a standalone issue, read that issue, its linked canonical documents and
 blocking relations directly; project and milestone reads are inapplicable. Keep
 its issue-scoped ownership and the existing management binding unchanged. Do not
-create a project or call `crw-focus` to satisfy this baseline. If a transport
+create a project or project-parent binding to satisfy this baseline. If a transport
 requires a project binding, use a permitted projectless execution path or report
 that capability gap; never invent a project ID for a receipt.
 
@@ -197,9 +202,9 @@ work. Record a full baseline commit for each task and decide how any prerequisit
 changes will reach it. Do not push shared baseline commits through every task.
 
 At initial dispatch and after a completion, blocker, or integration, scan the
-selected Run batch for useful parallel work rather than selecting only the next issue.
-Only an owning Loop or explicitly wider delivery scope may admit newly unblocked
-successors outside that batch. A plain Run reports those successors as next actions. Check verified prerequisites, overlapping edit surfaces, existing
+agreed project scope for useful parallel work, including newly unblocked successors.
+An explicitly limited batch or issue remains limited in both Run and Loop. Check
+verified prerequisites, overlapping edit surfaces, existing
 writers, shared runtime resources, and available execution capacity. Dispatch
 the largest useful set of independent ready issues within explicit concurrency,
 budget, and host limits. A shared repository alone is not a reason to serialize;
@@ -422,8 +427,8 @@ write git metadata are in [Operations contract](references/operations.md).
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor
 only after its required contracts/revisions are verified and available in its
-checkout, and only within the selected batch or the owning Loop/explicitly wider delivery
-scope. Plain Run reports out-of-batch successors instead of dispatching them.
+checkout and it belongs to the agreed project scope or explicit narrower assignment.
+This is the same rule in Run and Loop; a goal changes persistence, not scope.
 
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's
