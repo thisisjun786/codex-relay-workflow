@@ -183,13 +183,30 @@ class Registration(IntentTestCase):
         self.assertEqual(caught.exception.reason, RefusalReason.RELATIONSHIP_CONFLICT)
         self.assertNotIn("relationship", self.facts())
 
-    def test_registration_is_create_once(self):
+    def test_registration_is_create_once_and_names_a_contradiction_as_one(self):
+        """A replay and a different relationship must not report the same word.
+
+        One is a retry safe to ignore; the other is a coordinator publishing over a registration
+        that already stands, and somebody has to settle it.
+        """
         self.declare()
         self.bind()
         self.assertEqual(self.register()["outcome"], marker.PUBLISHED)
-        self.assertEqual(self.register(relationship_id="rel-ffffffffffffffff")["outcome"],
-                         marker.EXISTS)
+        self.assertEqual(self.register()["outcome"], intent.UNCHANGED)
+        self.assertEqual(
+            self.register(relationship_id="rel-ffffffffffffffff")["outcome"], intent.CONFLICT
+        )
         self.assertEqual(self.facts()["relationship"]["relationshipId"], "rel-0123456789abcdef")
+
+    def test_a_malformed_assignment_id_is_refused_rather_than_published(self):
+        self.declare()
+        for bad in ("../escape", "not-hex", "", "A" * 64):
+            with self.assertRaises(RelayError) as caught:
+                intent.record_attempt(
+                    self.root, workspace=self.workspace, assignment=bad,
+                    outcome="accepted", task_id=TASK, at=T0,
+                )
+            self.assertEqual(caught.exception.reason, RefusalReason.UNKNOWN_GENERATION)
 
 
 class Claims(IntentTestCase):
@@ -388,7 +405,9 @@ class Selection(IntentTestCase):
         )
 
     def test_an_assignment_with_no_published_intent_is_not_selectable(self):
-        directory = marker.assignment_dir(self.root, self.workspace, "half-built")
+        directory = marker.assignment_dir(
+            self.root, self.workspace, marker.assignment_id("half-built")
+        )
         (directory / "attempts").mkdir(parents=True)
         self.declare()
         found, facts, _ = intent.select_assignment(self.root, self.workspace, SESSION)
@@ -406,6 +425,25 @@ class Selection(IntentTestCase):
         self.declare()
         later = self.other("dispatch-request-2")
         found, _facts, _ = intent.select_assignment(self.root, self.workspace, "stranger")
+        self.assertEqual(found.name, later["assignmentId"])
+
+    def test_recency_compares_instants_rather_than_printed_strings(self):
+        """ISO 8601 sorts chronologically only when the offsets match.
+
+        01:00+02:00 is 23:00 the previous day, so a lexical max picks it over a later 00:30+00:00
+        and selects the wrong assignment for every decision that follows.
+        """
+        intent.declare_intent(
+            self.root, workspace=self.workspace, dispatch_request_id="offset-earlier",
+            issue_key="REL-1", declared_at="2026-01-02T01:00:00+02:00",
+        )
+        later = intent.declare_intent(
+            self.root, workspace=self.workspace, dispatch_request_id="offset-later",
+            issue_key="REL-2", declared_at="2026-01-02T00:30:00+00:00",
+        )
+        found, _facts, _unreadable = intent.select_assignment(
+            self.root, self.workspace, "stranger"
+        )
         self.assertEqual(found.name, later["assignmentId"])
 
     def test_an_unmanaged_workspace_selects_nothing(self):

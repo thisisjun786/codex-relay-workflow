@@ -421,5 +421,114 @@ class Recording(GuardTestCase):
         self.assertFalse((self.markers / marker.workspace_key(self.workspace)).exists())
 
 
+class ReviewRegressions(GuardTestCase):
+    """One test per defect the hosted review found, each failing before its fix."""
+
+    def test_a_turn_that_superseded_its_own_revision_is_still_receipted(self):
+        """Selecting the event by session and turn picks an arbitrary row when a turn re-emits.
+
+        If the older one is chosen, the guard reports the revision as superseded and holds a child
+        whose current receipt is sitting at the head. The head is computed first for that reason.
+        """
+        relationship = self.managed()
+        first = self.ready_payload(
+            relationship, [self.artifact("out.txt", "first")], attempt=1,
+            turn=self.assigned_turn("inProgress"),
+        )
+        self.accept(first)
+        second = self.ready_payload(
+            relationship, [self.artifact("out.txt", "second")], attempt=2,
+            turn=self.assigned_turn("inProgress"),
+        )
+        self.accept(second)
+        self.store.db.execute(
+            "UPDATE revision_lineage SET supersedes_hash = ? WHERE event_id = ?",
+            (first["revisionHash"], second["eventId"]),
+        )
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_malformed_intent_is_malformed_rather_than_unmanaged(self):
+        """Dropping it from selection turned a corrupt marker into an ordinary session.
+
+        Unmanaged releases and records nothing at all, so one bad byte would switch detection off
+        for the workspace and leave no trace that it had.
+        """
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "intent.json").unlink()
+        (directory / "intent.json").write_text('"bare"', encoding="utf-8")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertTrue(verdict["recordedAs"].startswith("hook/"))
+
+    def test_a_corrupt_stale_assignment_does_not_release_the_current_one(self):
+        """Read problems merged across the workspace let retained state switch detection off."""
+        self.managed()
+        stale = intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id="older-dispatch",
+            issue_key="REL-0", declared_at="2025-01-01T00:00:00+00:00",
+        )
+        stale_dir = marker.assignment_dir(self.markers, self.workspace, stale["assignmentId"])
+        (stale_dir / "attempts").mkdir(parents=True, exist_ok=True)
+        (stale_dir / "attempts" / "0.json").write_text("{not json", encoding="utf-8")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_a_malformed_disposition_releases_instead_of_holding(self):
+        """A disposition is read outside the assignment walk, so the shape check never saw it.
+
+        Treated as no declaration it became a holdable omission, which holds a turn that did
+        publish something over a fact the reader could not read.
+        """
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "dispositions" / CHILD).mkdir(parents=True)
+        (directory / "dispositions" / CHILD / (DISPATCH_TURN + ".json")).write_text(
+            '"bare"', encoding="utf-8"
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_wrongly_typed_disposition_identity_is_malformed_too(self):
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(
+            directory / "dispositions" / CHILD / (DISPATCH_TURN + ".json"),
+            {"sessionId": CHILD, "turnId": DISPATCH_TURN, "outcome": ["ready_for_review"]},
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "marker_malformed")
+
+    def test_the_session_hold_window_spans_every_assignment_on_the_workspace(self):
+        """The generation bound belongs to one assignment; the rolling hour belongs to the session.
+
+        Counted per assignment, a session could claim a new assignment and spend a fresh hour.
+        """
+        self.managed()
+        other = intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id="another-dispatch",
+            issue_key="REL-2", declared_at="2026-01-01T00:00:00+00:00",
+        )
+        other_dir = marker.assignment_dir(self.markers, self.workspace, other["assignmentId"])
+        for index in range(guard.MAX_HOLDS_PER_SESSION_WINDOW):
+            marker.publish(
+                other_dir / "hook" / CHILD / ("spent-" + str(index)) / "0.json",
+                {"held": True, "sessionId": CHILD, "turnId": "spent-" + str(index), "at": NOW},
+            )
+        verdict = self.evaluate(turn_id="turn-fresh")
+        self.assertEqual(verdict["state"], "unresolved_handoff")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(verdict["counters"]["holdsThisSessionWindow"],
+                         guard.MAX_HOLDS_PER_SESSION_WINDOW)
+        # The generation bound still belongs to the selected assignment alone.
+        self.assertEqual(verdict["counters"]["holdsThisGeneration"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,7 @@ Rules and precedence are fixed by skills/crw-run/references/hook-contract.md.
 import hashlib
 from datetime import timedelta
 
+import json
 import os
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from .marker import (
     publish,
     read_assignment,
     same_identity,
+    valid_assignment,
 )
 from .marker import list_assignments as _list_assignments
 
@@ -357,50 +359,121 @@ def select_assignment(root, workspace, session_id):
     assignment it claimed, so declaring a later assignment for the same path can neither release a
     still-running earlier child nor make it read as somebody else's.
 
-    An assignment with no published intent is not selectable. It is a directory someone is still
-    building, and skipping it leaves the reader on a valid earlier state rather than on nothing,
-    which is the property every other create-once fact already has.
+
+    An assignment with no published intent at all is not selectable. It is a directory someone is
+    still building, and skipping it leaves the reader on a valid earlier state rather than on
+    nothing, which is the property every other create-once fact already has. An assignment whose
+    intent IS published but is not a record, or cannot be read, stays selectable: dropping it would
+    turn a corrupt marker into an unmanaged workspace, and an unmanaged workspace is released with
+    nothing recorded at all, which is the one outcome a corrupt marker must never produce.
+
+    Read problems stay with the candidate they came from. Merged across the workspace, one stale
+    corrupt assignment would release every omission the CURRENT assignment could otherwise detect,
+    because an unreadable store outranks everything: retained state nobody is using would switch
+    detection off.
     """
     candidates = []
-    unreadable = []
     for directory in _list_assignments(root, workspace):
-        marker, problems = read_assignment(directory)
-        unreadable.extend(problems)
-        if not isinstance(marker.get("intent"), dict):
-            # No published intent, or one that is not a record. Not selectable either way; a
-            # malformed intent still reaches the shape check through the unreadable/malformed path
-            # once an assignment IS selected.
-            if "intent" in marker:
-                candidates.append((directory, marker, True))
+        facts, problems = read_assignment(directory)
+        if "intent" not in facts and "intent" not in problems:
             continue
-        candidates.append((directory, marker, False))
+        candidates.append((directory, facts, problems))
+    if not candidates:
+        return None, None, []
 
     claimed = [
-        (directory, marker)
-        for directory, marker, skipped in candidates
-        if not skipped
-        and any(
-            same_identity(claimant(claim), session_id) for claim in marker.get("claims") or []
+        candidate
+        for candidate in candidates
+        if any(
+            same_identity(claimant(claim), session_id)
+            for claim in (candidate[1].get("claims") or [])
+            if isinstance(claim, dict)
         )
     ]
-    pool = claimed or [
-        (directory, marker) for directory, marker, skipped in candidates if not skipped
-    ]
-    if not pool:
-        return None, None, unreadable
-    # Newest declaration wins, ties broken on the assignment id so that every reader of the same
-    # listing selects the same one.
-    directory, marker = max(
-        pool,
-        key=lambda item: (
-            str((item[1].get("intent") or {}).get("declaredAt") or ""),
-            item[0].name,
-        ),
+    directory, facts, problems = max(claimed or candidates, key=_recency)
+    return directory, facts, problems
+
+
+def _recency(candidate):
+    """Newest declaration first, ties broken on the assignment id.
+
+    Compared as instants rather than as strings. ISO 8601 sorts chronologically only when the
+    offsets match, so two declarations written in different zones order lexically by their printed
+    hour: 01:00+02:00 is 23:00 the previous day and would sort AFTER 00:30+00:00, picking the older
+    assignment and changing every bind, claim, disposition and hold decision that follows.
+
+    An undeclared or unparseable timestamp sorts below every real one rather than raising, and the
+    assignment id still breaks the tie, so every reader of the same listing selects the same entry.
+    """
+    from datetime import datetime, timezone
+
+    directory, facts, _problems = candidate
+    intent_fact = facts.get("intent")
+    declared = _moment(intent_fact.get("declaredAt")) if isinstance(intent_fact, dict) else None
+    return (
+        declared is not None,
+        declared or datetime.min.replace(tzinfo=timezone.utc),
+        directory.name,
     )
-    return directory, marker, unreadable
 
 
 # ---------------------------------------------------------------- writing
+
+
+def _assignment(value) -> str:
+    """Refuse a malformed assignment id as a refusal, not as an internal error.
+
+    It reaches these functions from a command line. A mistyped id would otherwise publish facts into
+    a directory no reader can select, and one carrying a parent reference would publish them outside
+    the workspace it claims to be under.
+    """
+    if not valid_assignment(value):
+        raise RegistrationError(
+            RefusalReason.UNKNOWN_GENERATION,
+            "an assignment id is the hex sha256 of a dispatch request id, not " + repr(value),
+        )
+    return str(value)
+
+
+def _read_published(target):
+    try:
+        return json.loads(Path(target).read_text(encoding="utf-8")), True
+    except (OSError, ValueError):
+        return None, False
+
+
+def _publish_or_compare(target, payload, fields) -> str:
+    """Publish a single create-once fact, and say whether losing was a replay or a contradiction.
+
+    Returning 'exists' for both would report a coordinator that published a DIFFERENT value exactly
+    as it reports one that repeated itself, which is the difference between a retry that is safe to
+    ignore and a contest somebody has to settle.
+    """
+    if publish(target, payload) == PUBLISHED:
+        return PUBLISHED
+    existing, readable = _read_published(target)
+    if not readable or not isinstance(existing, dict):
+        return CONFLICT
+    return UNCHANGED if all(existing.get(f) == payload.get(f) for f in fields) else CONFLICT
+
+
+def malformed_disposition(record) -> str | None:
+    """A disposition that parsed but is not a record.
+
+    Dispositions are read at the path the Stop identity derives rather than through the assignment
+    walk, so the marker shape check never sees them. Without this a file holding a bare string is
+    readable, classifies as no declaration at all, and a turn that published SOMETHING is held as if
+    it had published nothing.
+    """
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        return "disposition"
+    for field in ("sessionId", "turnId", "outcome"):
+        if field in record and not isinstance(record[field], str):
+            return "disposition." + field
+    return None
+
 
 
 def _next_index(directory, kind) -> int:
@@ -456,7 +529,7 @@ def declare_intent(
             RefusalReason.UNBOUND_GENERATION, "an intent needs an exact dispatch request id"
         )
     assignment = assignment_id(dispatch_request_id)
-    directory = assignment_dir(root, workspace, assignment)
+    directory = assignment_dir(root, workspace, _assignment(assignment))
     payload = {
         "dispatchRequestIdHash": assignment,
         "issueKey": issue_key,
@@ -473,7 +546,9 @@ def declare_intent(
         # consequence is a wrongly held child. The contract leaves the database location to the
         # operations contract; the coordinator is the party that knows it, so it records it here.
         payload["dbPath"] = str(db_path)
-    outcome = publish(directory / "intent.json", payload)
+    outcome = _publish_or_compare(
+        directory / "intent.json", payload, ("dispatchRequestIdHash", "issueKey", "workspace")
+    )
     return {
         "assignmentId": assignment,
         "assignmentDir": str(directory),
@@ -494,7 +569,7 @@ def record_attempt(root, *, workspace, assignment, outcome: str, at: str, task_i
             RefusalReason.UNKNOWN_GENERATION,
             "an attempt outcome is one of " + ", ".join(ATTEMPT_OUTCOMES) + ", not " + repr(outcome),
         )
-    directory = assignment_dir(root, workspace, assignment)
+    directory = assignment_dir(root, workspace, _assignment(assignment))
     payload = {"outcome": outcome, "at": at}
     if task_id is not None:
         payload["taskId"] = task_id
@@ -521,7 +596,7 @@ def bind(root, *, workspace, assignment, session_id: str, task_id: str, at: str)
             RefusalReason.UNBOUND_GENERATION,
             "a bind needs an exact session id and task id; a record naming nothing binds nothing",
         )
-    directory = assignment_dir(root, workspace, assignment)
+    directory = assignment_dir(root, workspace, _assignment(assignment))
     payload = {"sessionId": session_id, "taskId": task_id, "at": at}
     if publish(directory / "bound.json", payload) == PUBLISHED:
         return {"assignmentId": assignment, "outcome": BOUND, "sessionId": session_id,
@@ -579,9 +654,11 @@ def register_relationship(
             "relationship " + relationship_id + " was dispatched under a different request id, so "
             "it does not belong to assignment " + str(assignment),
         )
-    directory = assignment_dir(root, workspace, assignment)
-    outcome = publish(
-        directory / "relationship.json", {"relationshipId": relationship_id, "at": at}
+    directory = assignment_dir(root, workspace, _assignment(assignment))
+    outcome = _publish_or_compare(
+        directory / "relationship.json",
+        {"relationshipId": relationship_id, "at": at},
+        ("relationshipId",),
     )
     return {"assignmentId": assignment, "relationshipId": relationship_id, "outcome": outcome}
 
@@ -594,7 +671,7 @@ def publish_resolution(
     Resolutions accumulate: a later adjudication is another file, never a rewrite of an earlier one,
     so each keeps the scope it was published with and coverage does not depend on their order.
     """
-    directory = assignment_dir(root, workspace, assignment)
+    directory = assignment_dir(root, workspace, _assignment(assignment))
     entries = [
         {"factId": entry["factId"], "digest": entry["digest"]} for entry in (adjudicated or [])
     ]
@@ -626,8 +703,8 @@ def publish_claim(
         raise RegistrationError(
             RefusalReason.UNBOUND_GENERATION, "a claim needs an exact session id"
         )
-    directory = assignment_dir(root, workspace, assignment)
-    outcome = publish(
+    directory = assignment_dir(root, workspace, _assignment(assignment))
+    outcome = _publish_or_compare(
         directory / "claims" / session_id / "claim.json",
         {
             "dispatchRequestId": dispatch_request_id,
@@ -635,6 +712,7 @@ def publish_claim(
             "firstTurnId": first_turn_id,
             "at": at,
         },
+        ("dispatchRequestId", "sessionId"),
     )
     return {"assignmentId": assignment, "sessionId": session_id, "outcome": outcome}
 
@@ -658,10 +736,11 @@ def publish_disposition(
             "a disposition outcome is one of " + ", ".join(DISPOSITION_OUTCOMES) + ", not "
             + repr(outcome),
         )
-    directory = assignment_dir(root, workspace, assignment)
-    published = publish(
+    directory = assignment_dir(root, workspace, _assignment(assignment))
+    published = _publish_or_compare(
         directory / "dispositions" / session_id / (turn_id + ".json"),
         {"sessionId": session_id, "turnId": turn_id, "outcome": outcome, "at": at},
+        ("sessionId", "turnId", "outcome"),
     )
     return {
         "assignmentId": assignment,

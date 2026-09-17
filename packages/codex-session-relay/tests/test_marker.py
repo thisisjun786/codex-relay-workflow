@@ -28,6 +28,9 @@ class MarkerTestCase(unittest.TestCase):
         self.root = Path(self.tmp) / "markers"
         self.workspace = Path(self.tmp) / "work"
         self.workspace.mkdir()
+        # A real assignment id, because assignment_dir refuses anything that is not the
+        # hex sha256 of a dispatch request id.
+        self.assignment = marker.assignment_id("assign")
 
 
 class Publication(MarkerTestCase):
@@ -71,7 +74,7 @@ class Publication(MarkerTestCase):
 
     def test_an_orphan_temp_is_not_a_fact(self):
         """A writer that dies mid-write leaves a temp and no target, so readers see absence."""
-        directory = marker.assignment_dir(self.root, self.workspace, "assign")
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
         (directory / "attempts").mkdir(parents=True)
         (directory / "attempts" / ".0.json.tmp.999.deadbeef").write_text("{}", encoding="utf-8")
         facts, unreadable = marker.read_assignment(directory)
@@ -116,7 +119,7 @@ class Identity(MarkerTestCase):
 
 class Reading(MarkerTestCase):
     def test_the_reader_assigns_the_factid_from_the_path_it_walked(self):
-        directory = marker.assignment_dir(self.root, self.workspace, "assign")
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
         marker.publish(directory / "intent.json", {"issueKey": "REL-1"})
         marker.publish(directory / "attempts" / "0.json", {"outcome": "accepted"})
         marker.publish(directory / "claims" / "sess" / "claim.json", {"sessionId": "sess"})
@@ -127,7 +130,7 @@ class Reading(MarkerTestCase):
         self.assertEqual(unreadable, [])
 
     def test_an_unreadable_fact_is_reported_and_never_read_as_absent(self):
-        directory = marker.assignment_dir(self.root, self.workspace, "assign")
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
         directory.mkdir(parents=True)
         (directory / "intent.json").write_text("{not json", encoding="utf-8")
         facts, unreadable = marker.read_assignment(directory)
@@ -135,7 +138,7 @@ class Reading(MarkerTestCase):
         self.assertEqual(unreadable, ["intent"])
 
     def test_a_fact_that_is_not_a_record_reaches_the_reader_as_the_wrong_shape(self):
-        directory = marker.assignment_dir(self.root, self.workspace, "assign")
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
         marker.publish(directory / "claims" / "sess" / "claim.json", {"sessionId": "sess"})
         (directory / "claims" / "sess" / "claim.json").unlink()
         (directory / "claims" / "sess" / "claim.json").write_text('"bare"', encoding="utf-8")
@@ -148,7 +151,7 @@ class Reading(MarkerTestCase):
         self.assertEqual(marker.workspace_key(link), marker.workspace_key(self.workspace))
 
     def test_a_disposition_is_read_at_the_path_the_stop_identity_derives(self):
-        directory = marker.assignment_dir(self.root, self.workspace, "assign")
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
         marker.publish(
             directory / "dispositions" / "sess" / "turn-1.json",
             {"sessionId": "sess", "turnId": "turn-1", "outcome": "interrupted"},
@@ -162,7 +165,7 @@ class Reading(MarkerTestCase):
         self.assertIsNone(other)
 
     def test_an_unnamed_identity_reads_no_disposition_rather_than_a_stray_path(self):
-        directory = marker.assignment_dir(self.root, self.workspace, "assign")
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
         found, readable = marker.read_disposition(directory, "sess", "")
         self.assertIsNone(found)
         self.assertTrue(readable)

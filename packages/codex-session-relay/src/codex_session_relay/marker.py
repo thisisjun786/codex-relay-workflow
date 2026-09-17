@@ -21,6 +21,7 @@ The layout and every rule in this module are fixed by skills/crw-run/references/
 import hashlib
 import json
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,16 @@ SINGLE_FACTS = {"intent": "intent.json", "bound": "bound.json", "relationship": 
 NUMBERED_FACTS = ("attempts", "conflicts", "resolutions")
 
 CLAIM_FILE = "claim.json"
+
+# An assignment id is the hex sha256 of a dispatch request id and nothing else. Validated rather
+# than trusted, because the value reaches this module from a command line: a mistyped id would
+# otherwise publish facts into a directory no reader can ever select, and a crafted one carrying
+# path separators or a parent reference would publish them outside the workspace it names.
+ASSIGNMENT_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def valid_assignment(assignment) -> bool:
+    return bool(ASSIGNMENT_RE.match(str(assignment or "")))
 
 
 @dataclass(frozen=True)
@@ -131,7 +142,15 @@ def assignment_dir(root, workspace, assignment) -> Path:
     child read the previous session's bind and released. The undeclared turn held on a fresh
     workspace would go unheld on a reused one.
     """
-    return workspace_dir(root, workspace) / assignment
+    return workspace_dir(root, workspace) / _checked_assignment(assignment)
+
+
+def _checked_assignment(assignment) -> str:
+    if not valid_assignment(assignment):
+        raise ValueError(
+            "an assignment id is the hex sha256 of a dispatch request id, not " + repr(assignment)
+        )
+    return str(assignment)
 
 
 def fact_digest(payload: dict) -> str:

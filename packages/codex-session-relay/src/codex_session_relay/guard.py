@@ -37,6 +37,12 @@ MAX_HOLDS_PER_GENERATION = 2
 MAX_HOLDS_PER_SESSION_WINDOW = 3
 SESSION_WINDOW_MINUTES = 60
 
+# The hook contract gives this evaluation a five-second self-imposed wall clock. SQLite's timeout
+# bounds lock waiting only, and everything after it - the marker walk, the head computation, the
+# hold count, publishing the observation - is additional. Kept well under the budget so a database
+# a writer is holding cannot spend the whole of it before the rest of the work has started.
+SQLITE_TIMEOUT = 2.0
+
 # The only three classifications a hold may ever be issued for.
 OMISSIONS = ("managed_unregistered", "receipt_missing", "undeclared_turn_end")
 
@@ -60,7 +66,7 @@ def _read_only(db_path):
     """
     try:
         connection = sqlite3.connect(
-            Path(db_path).as_uri() + "?mode=ro", uri=True, timeout=5
+            Path(db_path).as_uri() + "?mode=ro", uri=True, timeout=SQLITE_TIMEOUT
         )
     except (OSError, sqlite3.Error, ValueError):
         return None
@@ -71,87 +77,86 @@ def _read_only(db_path):
 def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
     """The reviewable receipt this turn produced, and whether it stands at the current head.
 
-    Three things make a receipt this declaration's rather than some other one's, and all three are
-    identities that must be NAMED: the relationship the assignment published, the session, and the
-    turn. A receipt from an earlier turn or another session can still point at the head while the
-    turn in front of us produced nothing.
+    The head is computed FIRST and the matching event is then fetched by its id. Selecting a row by
+    session and turn and comparing it to the head afterwards picks an arbitrary row when one turn
+    emitted more than one revision, so a child that superseded its own work could have the older
+    event chosen and its perfectly current receipt reported as superseded, which is a hold.
 
-    stage deliberately admits 'staged'. A child emits from inside its own turn, so the host reports
+    Three identities make a receipt this declaration's rather than some other one's, and all three
+    must be NAMED: the relationship the assignment published, the session, and the turn. A receipt
+    from an earlier turn or another session can still stand at the head while the turn in front of
+    us produced nothing.
+
+    stage deliberately admits staged. A child emits from inside its own turn, so the host reports
     that turn as inProgress and the event is stored staged; it is finalized only after the daemon
-    observes the turn ending, which is AFTER this hook has run. Requiring 'final' here would read
-    every honest readiness as a missing receipt and hold it. What 'staged' must never do is survive
-    a turn that failed or was interrupted, and suppressed_reason is exactly that guard.
+    observes the turn ending, which is AFTER this hook has run. Requiring final here would read
+    every honest readiness as a missing receipt and hold it. What staged must never do is survive a
+    turn that failed or was interrupted, and head_revision already excludes a suppressed event.
 
     Returns (receipt, readable). readable False means we could not look, which is never the same
-    answer as "there is nothing there".
+    answer as there is nothing there.
     """
     if not (named(relationship_id) and named(session_id) and named(turn_id)):
         return None, True
     if not db_path:
         # We were never told where the store is, so we cannot look. Reported as unreadable rather
-        # than as an absent receipt, because the difference is a hold.
+        # than as an absent receipt, because the difference between those two answers is a hold.
         return None, False
     connection = _read_only(db_path)
     if connection is None:
         return None, False
+    base = {
+        "relationshipId": relationship_id,
+        "sessionId": session_id,
+        "turnId": turn_id,
+        "atCurrentHead": False,
+    }
     try:
-        row = connection.execute(
-            "SELECT r.status, r.superseded_by, r.execution_generation,"
-            "       e.event_id, e.stage, e.revision_hash"
-            "  FROM relationships r"
-            "  LEFT JOIN events e ON e.relationship_id = r.relationship_id"
-            "   AND e.execution_generation = r.execution_generation"
-            "   AND e.turn_thread_id = ? AND e.turn_id = ?"
-            "   AND e.outcome = ? AND e.producer = 'child'"
-            "   AND e.suppressed_reason IS NULL"
-            "   AND e.stage IN ('staged','final')"
-            " WHERE r.relationship_id = ?",
-            (session_id, turn_id, READY, relationship_id),
+        relationship = connection.execute(
+            "SELECT status, superseded_by, execution_generation FROM relationships"
+            " WHERE relationship_id = ?",
+            (relationship_id,),
         ).fetchone()
-        if row is None:
-            # No such relationship in this store. That is a readable answer: the assignment named a
-            # relationship this store does not have.
-            return None, True
-        if row["status"] != "active" or row["superseded_by"]:
-            return {
-                "relationshipId": relationship_id,
-                "sessionId": session_id,
-                "turnId": turn_id,
-                "atCurrentHead": False,
-                "evidence": "relationship_not_active",
-            }, True
-        if row["event_id"] is None:
-            return {
-                "relationshipId": relationship_id,
-                "sessionId": session_id,
-                "turnId": turn_id,
-                "atCurrentHead": False,
-                "evidence": "no_receipt_for_this_turn",
-            }, True
-        head = head_revision(connection, relationship_id, row["execution_generation"])
+        if relationship is None:
+            # A readable answer: the assignment named a relationship this store does not have.
+            return dict(base, evidence="relationship_absent"), True
+        if relationship["status"] != "active" or relationship["superseded_by"]:
+            return dict(base, evidence="relationship_not_active"), True
+        head = head_revision(connection, relationship_id, relationship["execution_generation"])
+        if head.get("evidence") in AMBIGUOUS:
+            # Not "no receipt". The lineage this generation declares does not identify a single
+            # tip, so nothing is at the head and the coordinator has a lineage problem to settle.
+            # The hold decision is the same; the cause is worth reporting as its own.
+            return dict(base, evidence="head_" + str(head.get("evidence"))), True
+        if not head.get("eventId"):
+            return dict(base, evidence="no_reviewable_revision"), True
+        row = connection.execute(
+            "SELECT event_id, stage, revision_hash, turn_thread_id, turn_id, producer"
+            "  FROM events WHERE event_id = ?",
+            (head["eventId"],),
+        ).fetchone()
     except sqlite3.Error:
         return None, False
     finally:
         connection.close()
 
-    evidence = "at_head"
-    if head.get("evidence") in AMBIGUOUS:
-        # Not "no receipt". The lineage this generation declares does not identify a single tip, so
-        # nothing is at the head and the coordinator has a lineage problem to settle, which is worth
-        # reporting as its own cause even though the hold decision is the same.
-        evidence = "head_" + str(head.get("evidence"))
-    elif head.get("eventId") != row["event_id"]:
-        evidence = "superseded_by_a_later_revision"
-    return {
-        "relationshipId": relationship_id,
-        "sessionId": session_id,
-        "turnId": turn_id,
-        "revisionHash": row["revision_hash"],
-        "eventId": row["event_id"],
-        "stage": row["stage"],
-        "atCurrentHead": evidence == "at_head",
-        "evidence": evidence,
-    }, True
+    if row is None:
+        return dict(base, evidence="no_reviewable_revision"), True
+    if row["producer"] != "child" or row["stage"] not in ("staged", "final"):
+        return dict(base, evidence="head_is_not_a_child_receipt"), True
+    if not (
+        same_identity(row["turn_thread_id"], session_id)
+        and same_identity(row["turn_id"], turn_id)
+    ):
+        return dict(base, evidence="head_belongs_to_another_turn"), True
+    return dict(
+        base,
+        atCurrentHead=True,
+        evidence="at_head",
+        eventId=row["event_id"],
+        revisionHash=row["revision_hash"],
+        stage=row["stage"],
+    ), True
 
 
 def receipt_matches(receipt, stop, marker) -> bool:
@@ -176,49 +181,75 @@ def receipt_matches(receipt, stop, marker) -> bool:
 # ---------------------------------------------------------------- hold budget
 
 
-def hold_counters(directory, *, session_id, turn_id, now):
-    """Count this hook's own holds from the records it published. Returns (counters, malformed).
+def _held_records(hook_root):
+    """Every recorded hold under one hook tree, as (session, turn, at). Returns (records, problem).
 
-    Counted rather than stored, so nothing has to be kept consistent across writers. A record that
-    is not a record says the store being counted is wrong, and it is reported instead of being read
-    as zero, which would quietly hand back a full hold budget.
-
-    holdsThisGeneration is counted over the whole assignment. One assignment directory is one
-    dispatch request id, and the relay keys the same dispatch id to the same generation, so a
-    generation advance is a new dispatch and therefore a new assignment directory.
+    A record that is not a record says the store being counted is wrong, and it is reported instead
+    of being read as zero, which would quietly hand back a full hold budget.
     """
-    counters = {"holdsThisTurn": 0, "holdsThisGeneration": 0, "holdsThisSessionWindow": 0}
-    hook_root = Path(directory) / "hook"
-    if not hook_root.is_dir():
-        return counters, None
-    horizon = intents.moment(now)
-    for path in sorted(hook_root.glob("*/*/*.json")):
+    records = []
+    root = Path(hook_root)
+    if not root.is_dir():
+        return records, None
+    for path in sorted(root.glob("*/*/*.json")):
         if path.name.startswith("."):
             continue
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return counters, "hook/" + path.parent.parent.name
+            return records, "hook/" + path.parent.parent.name
         if not isinstance(record, dict):
-            return counters, "hook/" + path.parent.parent.name
+            return records, "hook/" + path.parent.parent.name
         held = record.get("held")
         if not isinstance(held, bool):
-            return counters, "hook." + "held"
-        if not held:
-            continue
-        record_session, record_turn = path.parent.parent.name, path.parent.name
+            return records, "hook.held"
+        if held:
+            records.append((path.parent.parent.name, path.parent.name, record.get("at")))
+    return records, None
+
+
+def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
+    """Count this hook's own holds from the records it published. Returns (counters, malformed).
+
+    Counted rather than stored, so nothing has to be kept consistent across writers.
+
+    The two scopes are deliberately different. holdsThisGeneration is counted over one assignment,
+    because one assignment directory is one dispatch request id and the relay keys the same dispatch
+    id to the same generation, so a generation advance is a new dispatch and a new directory.
+    holdsThisSessionWindow is counted over every assignment under the workspace: it is a bound on
+    the SESSION over a rolling hour, and counting it per assignment would hand the same session a
+    fresh hour every time a new assignment was declared for the same path.
+    """
+    counters = {"holdsThisTurn": 0, "holdsThisGeneration": 0, "holdsThisSessionWindow": 0}
+    scoped, problem = _held_records(Path(directory) / "hook")
+    if problem:
+        return counters, problem
+    for record_session, record_turn, _at in scoped:
         counters["holdsThisGeneration"] += 1
-        if not same_identity(record_session, session_id):
-            continue
-        if same_identity(record_turn, turn_id):
+        if same_identity(record_session, session_id) and same_identity(record_turn, turn_id):
             counters["holdsThisTurn"] += 1
-        at = intents.moment(record.get("at"))
-        if horizon is None or at is None or at > horizon - timedelta(
-            minutes=SESSION_WINDOW_MINUTES
-        ):
-            # An unreadable or absent timestamp counts INSIDE the window. Failing the other way
-            # would let an undated record renew the budget, and the budget exists to stop a loop.
-            counters["holdsThisSessionWindow"] += 1
+
+    roots = [Path(directory)]
+    if workspace_root is not None:
+        try:
+            roots = sorted(p for p in Path(workspace_root).iterdir() if p.is_dir())
+        except OSError:
+            roots = [Path(directory)]
+    horizon = intents.moment(now)
+    for assignment in roots:
+        found, problem = _held_records(assignment / "hook")
+        if problem:
+            return counters, problem
+        for record_session, _record_turn, at in found:
+            if not same_identity(record_session, session_id):
+                continue
+            when = intents.moment(at)
+            if horizon is None or when is None or when > horizon - timedelta(
+                minutes=SESSION_WINDOW_MINUTES
+            ):
+                # An unreadable or absent timestamp counts INSIDE the window. Failing the other way
+                # would let an undated record renew the budget, and the budget exists to stop a loop.
+                counters["holdsThisSessionWindow"] += 1
     return counters, None
 
 
@@ -287,8 +318,12 @@ def observe_state(observation):
     if unreadable:
         return "state_unreadable", "Cannot read " + ", ".join(sorted(set(unreadable))) + "."
     marker = observation.get("marker")
-    if marker is not None:
-        malformed = intents.malformed(marker)
+    if marker is not None or observation.get("malformed"):
+        # The disposition is read at the path this Stop identity derives rather than through the
+        # assignment walk, so the marker shape check never sees it. Checked here with the same
+        # precedence, because a published record that is not a record must release and be recorded,
+        # and treating it as no declaration at all would HOLD the turn instead.
+        malformed = observation.get("malformed") or intents.malformed(marker or {})
         if malformed:
             # Looked, and what is there is not a fact. Same rule one step further along: a record
             # that cannot be read as a fact must not be reported as an absent one either.
@@ -396,7 +431,11 @@ def decide(observation, *, counters=None, mode=OBSERVE):
         # state is marker_malformed describes a symptom and misses an unreadable store that also
         # carries a malformed fact, which would derive a summary from records that are not records.
         marker = observation.get("marker") or {}
-        if observation.get("store_unreadable") or (marker and intents.malformed(marker)):
+        if (
+            observation.get("store_unreadable")
+            or observation.get("malformed")
+            or (marker and intents.malformed(marker))
+        ):
             marker = {}
         if state == "correlated_unbound":
             # The pre-bind window is not blind: keep what the turn would have been judged as, so the
@@ -471,14 +510,16 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, record=True) 
         directory, marker, unreadable = intents.select_assignment(root, workspace, session_id)
         unreadable = list(unreadable or [])
 
-    disposition = receipt = None
+    disposition = receipt = malformed_label = None
     if directory is not None:
         disposition, readable = read_disposition(directory, session_id, turn_id)
         if not readable:
             unreadable.append("disposition")
+        malformed_label = intents.malformed_disposition(disposition)
         declared = (
             disposition.get("outcome")
-            if isinstance(disposition, dict)
+            if not malformed_label
+            and isinstance(disposition, dict)
             and same_identity(disposition.get("turnId"), turn_id)
             and same_identity(disposition.get("sessionId"), session_id)
             else None
@@ -502,13 +543,18 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, record=True) 
         "disposition": disposition,
         "receipt": receipt,
         "store_unreadable": unreadable,
+        "malformed": malformed_label,
         "now": now,
     }
 
     counters, corrupt = ({}, None)
     if directory is not None:
         counters, corrupt = hold_counters(
-            directory, session_id=session_id, turn_id=turn_id, now=now
+            directory,
+            session_id=session_id,
+            turn_id=turn_id,
+            now=now,
+            workspace_root=directory.parent,
         )
         if corrupt:
             # A hold budget that cannot be counted is corruption of the store this hook keeps, and
