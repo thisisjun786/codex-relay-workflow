@@ -11,10 +11,67 @@ The bridge connects to the running App Server on the same host. It is an
 alternative MCP interface, not a restored native Desktop tool. Backend project
 IDs and Desktop saved-project IDs are not interchangeable.
 
-Observed capabilities: creation, messaging, read/list/wait, and goal reads.
-The bridge does not set a persistent goal, guarantee Desktop project membership,
+Observed capabilities: creation, messaging, read/list/wait, goal reads, steering an
+active turn, and pausing a goal. The bridge does not write a goal objective or
+budget, expose an interrupt or a turn queue, guarantee Desktop project membership,
 or handle client-side dynamic tools/interactive approvals. CXC availability must
 be established inside the created task, not inferred from this capability list.
+
+What this bridge exposes and what the host supports are two different facts, and
+`get_capabilities` reports them in separate `exposure` and `hostSupport` blocks.
+A tool missing from the list is a statement about the bridge only: the host
+protocol has `turn/interrupt` and a turn queue, and this bridge withholds both on
+purpose. `hostSupport` names the version these paths were built against and the
+server actually connected, and reports `unknown_host_version` when they disagree
+rather than inheriting the tool list. A `-32601` means the connected host lacks
+that method; it is never recorded as a capability absent everywhere, and it never
+justifies falling back to a different action. Never report a bridge gap as a host
+gap, and never claim host support this bridge has not established.
+
+## Reach a task that is already working
+
+A running peer is instructed, not waited out. Four actions stay distinct: a
+message starts a turn on an idle task, a steer adds input to a turn already
+running, an interrupt stops a turn and is not exposed here, and a goal pause
+changes goal status without stopping anything. Ordinary communication uses the
+first and never the others, so routine coordination cannot interrupt a peer or
+change its goal.
+
+Read the task's status and active turn with `get_active_turn` before choosing.
+The host's active status carries `activeFlags` and no turn id, so the id is
+derived from the newest turn still reported in progress. Then:
+
+| Observed | Action |
+|---|---|
+| `active` with a turn id | `steer_thread` with that exact id |
+| `idle` | `send_message_to_thread` as before |
+| `notLoaded` or `systemError` | Neither; read again, and treat a system error as its own problem |
+| status and turn list disagree | The turn changed between reads. Read again and reclassify. |
+
+One correction takes exactly one route. Do not send a message and a steer for the
+same instruction, and do not re-send after a rejection: a refused
+`expectedTurnId` means the turn moved on, so re-read and decide again. Carry the
+sender's identity and the issue or revision inside the steered text, because it
+arrives as ordinary input in someone else's turn.
+
+Three claims stay separate. The receipt says the host accepted the input into the
+guarded turn. That the peer read it is only visible in the task's own transcript,
+and that the peer acted on it is only visible in its delivered work. A steer never
+substitutes for a completion receipt, an acknowledgement, or a verification result,
+and it changes no ownership: one parent still holds one project and one child one
+issue.
+
+After an uncertain send, reconcile from records rather than sending again. The
+steer is recorded under `clientUserMessageId` `steer:<request_id>`; replay the same
+request id for the retained receipt and read the turn's items for that id.
+
+For an explicit stop, pause and then finish the turn. `pause_goal` sends status
+only and cannot alter an objective or budget; it refuses a task with no goal,
+reports `already_paused` without writing, and refuses a goal that already ended.
+It is not atomic — the protocol has no expected-status precondition — so read the
+goal again afterwards, and the receipt says so itself. Pausing does not stop a turn
+in flight: re-read the active turn and steer it to finish safely. A paused,
+cancelled or archived task is still never resumed automatically.
 
 The task must use the agreed sandbox and approval policy. Do not widen them to
 make a launch succeed. Prefer a supported native path if the bridge cannot

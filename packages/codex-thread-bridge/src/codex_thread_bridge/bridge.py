@@ -1,6 +1,7 @@
 """Tool behavior, independent of MCP transport and the installed client."""
 
 import asyncio
+import re
 from pathlib import Path
 
 from .ledger import Ledger
@@ -22,6 +23,47 @@ def absolute_directory(cwd: str):
 
 
 DISPLAY_FIELDS = frozenset({"text", "preview", "summary", "objective", "aggregatedOutput"})
+
+# The turn statuses the host still owns. Anything else has finished and cannot be steered.
+ACTIVE_TURN_STATUSES = frozenset({"inProgress"})
+
+# The host whose protocol this bridge's steer and pause paths were built against. Another server
+# may well support them; this bridge does not probe for them, so it reports unknown rather than
+# letting its own tool list stand in for a statement about that host.
+TESTED_HOST_VERSION = "0.154.0"
+
+
+def host_versions(user_agent: str):
+    """The complete version tokens a user agent declares, as product/version pairs.
+
+    Substring matching is not identification: "0.154.0" occurs inside "10.154.0", which would
+    turn an unrecognised server into a tested one. Only a whole token counts.
+
+    A token runs to its delimiter rather than stopping at the release numbers, so a prerelease
+    or build-metadata suffix stays part of it. "0.154.0-alpha.1" is a different build from the
+    tested release and has to read as one, since hostSupport is where the exposure-versus-support
+    question is answered.
+    """
+    return set(re.findall(r"/(\d+(?:\.\d+)+[^\s()/;,]*)", user_agent or ""))
+
+
+# Why a thread cannot be steered, named by the exact status the host reported. Collapsing these
+# into one "not active" answer is how a system error gets handled as though it were an idle peer,
+# and a correction then goes down a path that cannot carry it.
+UNSTEERABLE_STATUS = {
+    "idle": (
+        "thread_idle",
+        "Thread is idle; steer withheld. An idle thread takes send_message_to_thread.",
+    ),
+    "notLoaded": (
+        "thread_not_loaded",
+        "Thread is not loaded; steer withheld. Read it again before choosing a delivery path.",
+    ),
+    "systemError": (
+        "thread_system_error",
+        "Thread reports a system error; steer withheld and no delivery path is recommended.",
+    ),
+}
 
 # The only keys send_message_to_thread's expected_settings accepts. Anything else is a caller
 # mistake and is refused, because a discarded key looks identical to a setting never requested.
@@ -113,6 +155,7 @@ class Bridge:
 
     async def capabilities(self):
         await self.rpc.connect()
+        observed = self.rpc.info.get("userAgent", "")
         return {
             "server": self.rpc.info,
             "transport": "same-host Unix WebSocket",
@@ -127,6 +170,33 @@ class Bridge:
                 "bridgeManagedWorktrees": True,
                 "desktopProjectRegistry": False,
                 "clientSideToolsAndApprovals": False,
+            },
+            # What THIS bridge offers. A tool missing here says nothing about the host: the
+            # protocol has turn/interrupt and a turn queue, and this bridge withholds both.
+            "exposure": {
+                "steerActiveTurn": True,
+                "goalPause": True,
+                "goalObjectiveWrite": False,
+                "turnInterrupt": False,
+                "turnQueue": False,
+                "note": "Tool exposure by this bridge version. Not a probe of the connected host.",
+            },
+            # What the HOST supports is a separate question, and this bridge answers it only for
+            # the version it was built against. A different server leaves it unknown rather than
+            # inheriting this tool list, and a -32601 from one method means that host lacks that
+            # method, never that the capability is absent everywhere.
+            "hostSupport": {
+                "testedHost": f"codex-cli {TESTED_HOST_VERSION}",
+                "observedServer": observed,
+                "state": (
+                    "tested"
+                    if TESTED_HOST_VERSION in host_versions(observed)
+                    else "unknown_host_version"
+                ),
+                "steerActiveTurn": "turn/steer, requires expectedTurnId",
+                "goalPause": "thread/goal/set, status paused",
+                "note": "Generated from the tested host's protocol. No live capability probe is "
+                "performed, and an unrecognised server is reported unknown rather than assumed.",
             },
             "desktopVisibility": "Observed on Codex 0.153.4 with an existing project checkout; "
             "verify actual Desktop listing for each launch. Backend project IDs are separate.",
@@ -541,7 +611,10 @@ class Bridge:
                     "thread/read",
                     {
                         "code": "thread_busy",
-                        "message": "Thread is active; message withheld. Wait for completion.",
+                        "message": "Thread is active; message withheld. This path starts a new "
+                        "turn and an active thread already has one. To instruct the turn that "
+                        "is running, read get_active_turn and call steer_thread with that turn "
+                        "id. Waiting is for when there is nothing to say yet.",
                     },
                 )
             # Resume is an explicit part of messaging, never part of discovery. It carries the
@@ -582,6 +655,201 @@ class Bridge:
     async def get_goal(self, thread_id: str):
         nonempty(thread_id, "thread_id", 128)
         return clipped(await self.rpc.call("thread/goal/get", {"threadId": thread_id}), 4000)
+
+    async def active_turn(self, thread_id: str):
+        """Report the thread's status and the turn a steer could target, without resuming it.
+
+        The protocol's active status carries activeFlags and no turn id, so the id turn/steer
+        demands exists only as the newest turn the host still reports in progress. That makes this
+        a derivation, and it is done in one place so every caller does not redo it — a caller
+        reading a later history page would find a finished turn at the top and derive the wrong id.
+
+        It is a snapshot. The turn can end immediately afterwards, which is exactly why steering
+        takes the id as an explicit precondition instead of resolving it a second time itself.
+        """
+        nonempty(thread_id, "thread_id", 128)
+        metadata = await self.rpc.call("thread/read", {"threadId": thread_id})
+        status = metadata["thread"].get("status") or {}
+        page = await self.rpc.call(
+            "thread/turns/list",
+            {"threadId": thread_id, "limit": 1, "itemsView": "summary"},
+        )
+        data = page.get("data") or []
+        newest = data[0] if data else None
+        running = newest is not None and newest.get("status") in ACTIVE_TURN_STATUSES
+        kind = status.get("type")
+        if kind == "active" and running:
+            observation = "active"
+        elif kind == "active":
+            # The status and the turn list disagree, so the turn ended between the two reads.
+            observation = "active_without_in_progress_turn"
+        elif running:
+            observation = "in_progress_turn_without_active_status"
+        else:
+            observation = kind or "unknown"
+        return clipped(
+            {
+                "threadId": thread_id,
+                "status": status,
+                "activeFlags": status.get("activeFlags", []),
+                "activeTurnId": newest["id"] if running else None,
+                "newestTurnId": newest["id"] if newest else None,
+                "observation": observation,
+                "derivation": "newest turn reported inProgress; the status carries no turn id",
+                "steerable": observation == "active",
+                "snapshot": "observed now; the turn may change before any steer is sent",
+            },
+            4000,
+        )
+
+    async def steer_thread(
+        self, request_id: str, thread_id: str, expected_turn_id: str, message: str
+    ):
+        nonempty(thread_id, "thread_id", 128)
+        nonempty(expected_turn_id, "expected_turn_id", 128)
+        nonempty(message, "message")
+        # Correlates this instruction with the item the host records, so a lost response is
+        # settled by reading what the host kept rather than by sending the instruction again.
+        client_message_id = f"steer:{request_id}"
+        # expectedTurnId belongs to the request identity: the same id aimed at a different turn
+        # is a different instruction, and the ledger must refuse it rather than replay.
+        params = {"threadId": thread_id, "expectedTurnId": expected_turn_id, "message": message}
+
+        async def action(receipt):
+            receipt.update(
+                threadId=thread_id,
+                expectedTurnId=expected_turn_id,
+                clientUserMessageId=client_message_id,
+                # Nothing is resumed on this path, so no setting is observed. That is a different
+                # statement from "nothing was requested", and the two must not read alike.
+                settings={"verification": "not_observable", "reason": "steer performs no resume"},
+            )
+            self.ledger.save(receipt)
+            state = await self.rpc.call("thread/read", {"threadId": thread_id})
+            kind = (state["thread"].get("status") or {}).get("type")
+            if kind != "active":
+                code, text = UNSTEERABLE_STATUS.get(
+                    kind,
+                    ("thread_not_steerable", f"Thread status {kind!r}; steer withheld."),
+                )
+                raise RpcError("thread/read", {"code": code, "message": text})
+            # An active thread is not automatically a steerable one; the host owns that judgment
+            # and its refusal is retained verbatim rather than being anticipated here.
+            steered = await self.rpc.call(
+                "turn/steer",
+                {
+                    "threadId": thread_id,
+                    "expectedTurnId": expected_turn_id,
+                    "clientUserMessageId": client_message_id,
+                    "input": [{"type": "text", "text": message}],
+                },
+            )
+            returned = steered.get("turnId")
+            receipt["steeredTurnId"] = returned
+            self.ledger.save(receipt)
+            if returned != expected_turn_id:
+                raise RpcError(
+                    "turn/steer",
+                    {
+                        "code": "steered_turn_mismatch",
+                        "message": f"turn/steer returned turn {returned!r}, not the guarded "
+                        f"{expected_turn_id!r}. The instruction cannot be reported as delivered "
+                        "to the observed turn; read the thread again and reclassify.",
+                    },
+                )
+            receipt["delivery"] = "accepted_not_applied"
+            receipt["deliveryMeaning"] = (
+                "The host accepted this input into the guarded turn. It does not say the peer "
+                "read it, and it does not say the peer acted on it."
+            )
+
+        return await self._mutate(request_id, "steer_thread", params, action)
+
+    async def pause_goal(self, request_id: str, thread_id: str):
+        nonempty(thread_id, "thread_id", 128)
+        # status is part of the request identity even though this tool sends only one value, so a
+        # future status could never replay an earlier receipt.
+        params = {"threadId": thread_id, "status": "paused"}
+
+        async def action(receipt):
+            receipt["threadId"] = thread_id
+            self.ledger.save(receipt)
+            before = (await self.rpc.call("thread/goal/get", {"threadId": thread_id})).get("goal")
+            if before is None:
+                raise RpcError(
+                    "thread/goal/get",
+                    {"code": "no_goal", "message": "Thread has no goal to pause."},
+                )
+            receipt["goalBefore"] = clipped(before, 4000)
+            self.ledger.save(receipt)
+            status = before.get("status")
+            if status == "paused":
+                receipt.update(
+                    pause="already_paused",
+                    delivery="no_change",
+                    goalAfter=clipped(before, 4000),
+                )
+                return
+            if status != "active":
+                raise RpcError(
+                    "thread/goal/get",
+                    {
+                        "code": "goal_not_active",
+                        "message": f"Goal status is {status!r}; pause withheld. Only an active "
+                        "goal is paused, so a goal that already ended is never overwritten.",
+                    },
+                )
+            # Status only. No objective and no tokenBudget are sent, so this tool cannot rewrite
+            # an objective even by accident, and cannot restore a stale one it read moments ago.
+            response = await self.rpc.call(
+                "thread/goal/set", {"threadId": thread_id, "status": "paused"}
+            )
+            after = response["goal"]
+            receipt["goalAfter"] = clipped(after, 4000)
+            # The protocol offers no expected-status or revision precondition on goal/set, so a
+            # goal that turned terminal between the read above and this call could be overwritten.
+            # Reading first narrows that window; nothing available here closes it.
+            receipt["concurrency"] = "no_host_precondition_for_goal_status"
+            receipt["concurrencyMeaning"] = (
+                "thread/goal/set takes no expected status, so this pause is not atomic. The "
+                "refusals above are judged on the status read a moment earlier: a goal that "
+                "ended in between could still have been overwritten by this write, and the "
+                "goal returned cannot show whether it did. Read the goal again afterwards "
+                "rather than trusting this receipt as exclusive."
+            )
+            self.ledger.save(receipt)
+            moved = [
+                field
+                for field in ("objective", "tokenBudget")
+                if after.get(field) != before.get(field)
+            ]
+            if moved:
+                raise RpcError(
+                    "thread/goal/set",
+                    {
+                        "code": "goal_changed_under_pause",
+                        "message": f"The host returned a different {', '.join(moved)} than the "
+                        "goal read moments earlier. The pause is not reported as clean; inspect "
+                        "goalBefore and goalAfter on this receipt.",
+                    },
+                )
+            if after.get("status") != "paused":
+                raise RpcError(
+                    "thread/goal/set",
+                    {
+                        "code": "goal_not_paused",
+                        "message": f"The host reported status {after.get('status')!r} after the "
+                        "pause request; it is not recorded as applied.",
+                    },
+                )
+            receipt["delivery"] = "applied_by_host"
+            receipt["pause"] = "goal_paused_turn_may_still_be_running"
+            receipt["pauseMeaning"] = (
+                "The goal is paused. A turn already running is not stopped by this call: steer "
+                "the observed turn to finish safely, and keep the two claims separate."
+            )
+
+        return await self._mutate(request_id, "pause_goal", params, action)
 
     async def list_threads(self, cwd=None, limit=20, cursor=None):
         if not 1 <= limit <= 100:
