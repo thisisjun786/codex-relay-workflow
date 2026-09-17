@@ -419,6 +419,179 @@ and the previously selected runtime remains selected. A failure at any step leav
 runtime in place, and nothing here removes, moves or recreates the store: update failure and store
 loss are different accidents and the recovery for one must not cause the other.
 
+## Updating an installation
+
+The first install is the easy half. The second one is where the previous runtime and the store can
+be lost, and until this section existed it could not happen at all.
+
+The environment is named from the definition version and the combined source digests, so a new
+combination always gets a new directory. The entry point recorded for it is that concrete path,
+and the promotion gate compared the Codex registration against it. So once an installation had
+registered `env-A/bin/codex-thread-bridge`, every later update registered nothing, compared the
+new entry point against the old registration, read `CONFLICT`, classified the candidate
+`conflict`, refused to promote, and then deleted the environment it had just built and
+exercised. The registration was pinned to the first install for ever, and `register-mcp` could
+not move it either: it writes only on `CREATED` and reports `CONFLICT` for a name already
+registered with a different command.
+
+The fix is an indirection this command owns rather than a rewrite of somebody's configuration.
+
+### The pointer is what moves
+
+`<destination>/current` is a directory symlink. The registration and any user-facing command
+name `<destination>/current/bin/<console script>`, which is stable across every update, so
+`config.toml` is written once and never rewritten. That matters more than it looks: this
+repository refuses to approximate TOML, and the byte-preservation proof the registration rests on
+is that the prior content is an exact prefix of the new file. An in-place edit cannot satisfy
+that, so a registration that had to change on every update would have to give up the one property
+that makes appending safe.
+
+A console script keeps the absolute shebang pip wrote, so a process started through the pointer
+reports the concrete environment as its `sys.prefix` and its `sys.executable`. The pointer is a
+way to reach a runtime and never an identity. A bridge Codex has already spawned goes on running
+its own environment after the pointer moves, which is how criterion 4's process liveness survives
+an update, and it survives only because nothing here removes a predecessor.
+
+Two strings answer two questions, and they are not interchangeable. The candidate is classified
+through its **concrete** entry point, because before the swap `current` still resolves to the
+predecessor: classifying through it would read the previous interpreter, digest the previous
+bytes, and report the new candidate as a fork of itself. Only the registration expectation uses
+the pointer, and the pointer path is read from the host record rather than rebuilt from the
+destination argument, because the registration comparison is string equality and `--dest`
+spelled differently on a later run is a different string for the same directory.
+
+Registering the pointer widens what a registration means, and the evidence that widening would
+cost is taken back rather than lost. `LINKED` against the pointer says the configuration names
+the pointer; it no longer says which runtime that is. So the link target is its own judgment cell,
+read with `readlink` and compared against the recorded selection, and diagnosis reports the
+registered command, the link target and where the entry point resolves as three fields. A
+`current` repointed by hand at a fork is caught by the cell whose question that is, instead of
+passing because a neighbouring cell was still satisfied.
+
+### The claim a run leaves behind
+
+The environment name is deterministic and the directory is created with an exclusive `mkdir`,
+which is what proves a run owns it. That proof used to expire badly: a run killed outright left
+the directory behind, and every retry of the same destination refused at the existence check for
+ever.
+
+A run now writes a claim inside the environment immediately after creating it, and holds an
+`flock` on that claim for its lifetime. A later run reads the claim and asks who owns it:
+
+| Observed | Answer |
+| --- | --- |
+| No claim, and the directory is not empty | Somebody else's directory. Refused, nothing touched |
+| A claim, the lock held | Another run is building it. Refused, nothing touched |
+| A claim, the lock free, the environment not selected | An abandoned staging this command created. Reclaimed |
+| A claim, and whether anyone holds it could not be established | Kept, and reported as a residual path with what recovery needs |
+| A settled claim for an environment that is selected | Already installed. Reported, nothing rebuilt |
+
+Liveness is the lock and not the recorded process id, for the reason the relay already recorded
+about its own supervisor: inside a container sharing a kernel, the same process id under the same
+boot id is a different process, and a process identity that can lie is worse than no reading. The
+lock cannot lie about contention. Where `flock` is unavailable the answer is that nobody could
+tell, and an owner nobody could establish is never read as an owner that is gone: deleting a live
+run's environment is the accident this exists to prevent. Such a directory is kept and named, so
+an orphan is findable and reportable rather than either silently accumulated or silently removed.
+
+### Reading whether it is safe to swap
+
+OPS-4.4 sequences an update around a daemon that is not running and open attempts that have been
+reconciled. Three readings answer that, each filling only its own cell:
+
+| Cell | The reading that answers it |
+| --- | --- |
+| `daemon` | the relay's `service status`, whose `running` is decided by the lock a supervisor holds |
+| `inFlight` | the relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
+| `storeTables` | the store's own table inventory, read read-only through the relay's `read_only_rows` |
+
+The swap proceeds only when the daemon is established stopped, the open attempts are established
+zero, and the store's tables are established compatible. Any cell that could not be read decides
+`UNESTABLISHED`, which keeps the existing installation exactly as a blocking answer does. A
+check that could not be made is not a check that passed, and a daemon is never reported stopped
+because nobody could ask it.
+
+This command never starts or stops a daemon. OPS-4.1 gives the service to the scope operator, so a
+running daemon is a refusal here and not something to resolve.
+
+### Why the schema reading counts tables and not versions
+
+The obvious reading would compare the store's recorded schema version with the candidate's. It
+would also be worthless. The relay declares `SCHEMA_VERSION = 1`, has never raised it, writes it
+once with `INSERT OR IGNORE` when the database is created, and grows its schema through
+thirty-nine separate `CREATE TABLE IF NOT EXISTS` statements. Every store therefore agrees with
+every candidate at version one, and the comparison would detect neither a downgrade nor an
+upgrade while looking exactly like a check.
+
+So the cell compares what actually differs: the table names in the store's `sqlite_master`
+against the tables the candidate relay declares. It has four answers.
+
+| Answer | Observed | Decision |
+| --- | --- | --- |
+| `ABSENT` | no store exists at the resolved selection | allowed, and reported as absence rather than as agreement |
+| `AGREES` | the same tables | allowed |
+| `EXTENDS` | the candidate declares tables the store does not hold | allowed, and reported as its own answer |
+| `NARROWS` | the store holds tables the candidate does not declare | refused |
+
+`NARROWS` is the implicit downgrade criterion 4 forbids: a runtime that does not know a table
+cannot preserve what is in it. `EXTENDS` is the additive path every previous update has taken,
+and it is reported rather than folded into agreement, because "nothing differs" and "the new one
+knows more" are two facts and a reader deciding whether to take a backup needs to see which one
+happened. Read strictly, OPS-4.5 makes any schema difference a migration with its own issue and
+its own copied backup; this gate refuses the direction that loses data and names the other, and
+the report states both so the requirement and the current behaviour never read as one claim.
+
+The reading is the relay's own, run under the relay's own interpreter. A second copy of the rule
+here would be a restatement of something the relay owns, and the next change would move only one
+of them. It opens the database read-only and runs no schema script, so asking the question does
+not create the store the question is about. Absence is established by looking at the path, never
+inferred from a failed open, because a permission failure and a locked database also fail to open
+and neither of them means nothing is there. The report names which selection answered, since an
+absent store at the wrong state directory while a sibling store holds the in-flight attempts is
+the OPS-3.4 conflict rather than a clean host.
+
+### The order a swap commits in
+
+The selection in the host record and the pointer on disk are two truths, and the order they are
+written in is the whole safety argument. The record's selection is committed first, and the
+pointer is replaced afterwards.
+
+The reverse order has a real failure: the symlink lands, the record write then fails or the
+process raises, recovery reads a selection that does not name this environment, concludes the
+candidate was never promoted, removes it, and leaves the registered MCP command pointing into a
+directory that no longer exists. OPS-4.4 requires every state transition to be committed before
+its side effect, and this is that rule applied to the two halves of one promotion. Recovery also
+refuses to remove an environment the pointer names, so neither truth alone can authorise deleting
+a runtime the other one is still using.
+
+Ownership of the pointer is established from the record before it is replaced. Renaming over an
+existing symlink succeeds whoever created it, so a `current` this command never recorded is left
+alone; a real directory at that path fails the rename outright, which is the safe direction.
+
+The pointer is read through its own partition over `lstat` and `readlink`. The record reader
+cannot answer for it: that reader follows a link and then refuses anything that is not a regular
+file, so a working directory symlink would be reported as an unreadable record.
+
+### What a failed update restores
+
+A failed update leaves the previous runtime selected, the previous pointer target in place, the
+owned configuration untouched, and the store exactly as it was. The result says which step failed
+rather than only that something did: `failedStep` names the step and the boundary it was at, and
+`restored` names the pointer target that was put back or says the pointer never moved.
+
+The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
+destination is retriable; removal that could not finish reports the residual path, what recovery
+needs, and the original failure alongside the cleanup failure rather than replaced by it. A
+candidate that is selected, or whose record could not be read, or that the pointer names, is kept.
+
+Nothing here removes, moves or recreates the store. Update failure and store loss are different
+accidents and the recovery for one must not cause the other.
+
+This is a POSIX path. The environment layout, the interpreter under `bin`, the directory symlink
+and the advisory lock are all POSIX assumptions this command already made elsewhere; Windows is
+out of scope rather than approximated.
+
+
 ## Installation ownership
 
 Classification reads the four OPS-2.1 signals and nothing else: where the entry point actually
