@@ -297,6 +297,12 @@ class _Transport:
         self._inbox = queue.Queue()
         self._stopping = False
         self._accepting = True
+        # Held across the acceptance check AND the enqueue, and taken again by close() to
+        # flip acceptance. Checking a flag and then queueing are two steps, and a submission
+        # that passed the check but queued after the drain had already run left its future
+        # with nobody to answer it: the caller then waited out its whole budget and read a
+        # timeout, which says "outcome unknown" about work that was never started.
+        self._admission = threading.Lock()
         self._drain_seconds = self.DRAIN_SECONDS if drain_seconds is None else drain_seconds
         self._caller_slack = (
             self.CALLER_SLACK_SECONDS if caller_slack is None else caller_slack
@@ -546,16 +552,19 @@ class _Transport:
 
         if not self.thread.is_alive():
             raise RuntimeError("the relay transport worker is not running")
-        if not self._accepting:
-            raise RuntimeError("the relay transport is shutting down; nothing was sent")
         budget = self.timeout + self._caller_slack
         future = self._futures.Future()
         # The deadline travels WITH the submission. A caller that gives up leaves work whose
         # only remaining purpose would be to occupy its recipient, so waiting work that has
         # outlived its caller is answered rather than dispatched late.
-        self._inbox.put(
-            (work, future, recipient, time.monotonic() + budget, withheld, replay)
-        )
+        with self._admission:
+            # Under the same lock close() uses, so a submission is either in the queue before
+            # acceptance ends - and therefore drained and answered - or refused outright.
+            if not self._accepting:
+                raise RuntimeError("the relay transport is shutting down; nothing was sent")
+            self._inbox.put(
+                (work, future, recipient, time.monotonic() + budget, withheld, replay)
+            )
         return future.result(budget)
 
     def call(self, method, params):
@@ -615,7 +624,8 @@ class _Transport:
         # shutdown that will refuse to run it. Resources are closed inside the worker, after
         # the drain - submitting their closure as ordinary work is what allowed the ledger to
         # be closed under a send that still needed it.
-        self._accepting = False
+        with self._admission:
+            self._accepting = False
         self._stopping = True
         future = self._futures.Future()
         self._inbox.put((None, future, None, 0.0, None, None))

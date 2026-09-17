@@ -1190,3 +1190,54 @@ class TransportIsolation(RelayTestCase):
 
         self.assertIn("different arguments", str(caught.exception))
         self.assertEqual(server.starts, ["thread-a"], "the mismatched id still reached the host")
+
+    def test_a_submission_racing_close_is_answered_rather_than_orphaned(self):
+        """Checking acceptance and queueing the work are two steps, and close() fits between.
+
+        A submission that passed the check and queued after the drain had already run left a
+        future nobody would ever settle. Its caller waited out the whole budget and read a
+        timeout - "outcome unknown" about work that was never started, which is the one
+        report a send that never happened must not produce.
+
+        The interleaving is a few bytecodes wide, so it is driven rather than raced: the
+        submitter is held at the moment it is about to enqueue, close() is started behind it,
+        and then the submitter is let go.
+        """
+        import threading
+
+        server = self.barrier_server()
+        built = self.adapter(server)
+        transport = built._transport
+
+        at_the_door = threading.Event()
+        let_go = threading.Event()
+        real_put = transport._inbox.put
+
+        def held_put(item):
+            if item[0] is not None:  # the sentinel must never be held
+                at_the_door.set()
+                let_go.wait(5)
+            real_put(item)
+
+        transport._inbox.put = held_put
+        sender, outcome = self.send_in_background(built, "req-i1", "thread-b")
+        self.assertTrue(at_the_door.wait(5), "the submission never reached the enqueue")
+
+        closer = threading.Thread(target=built.close, daemon=True)
+        closer.start()
+        closer.join(timeout=0.5)
+        let_go.set()
+
+        sender.join(timeout=10)
+        closer.join(timeout=10)
+
+        self.assertFalse(sender.is_alive(), "the caller was left waiting on its own budget")
+        error = outcome.get("error")
+        self.assertNotIsInstance(
+            error, TimeoutError,
+            "the submission was orphaned: a timeout is not an answer about work never run",
+        )
+        if error is not None:
+            self.assertIn("nothing was sent", str(error), outcome)
+        else:
+            self.assertEqual(outcome["receipt"]["status"], "accepted", outcome)
