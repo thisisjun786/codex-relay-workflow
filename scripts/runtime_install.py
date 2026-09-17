@@ -113,6 +113,20 @@ SIGNAL_SUBJECT_PREFIXES = ("has_",)
 # caller may pass None -- the MCP registration is the bridge's and means nothing for the relay --
 # but it says so by passing the keyword, and the classification reports which readings were made.
 CONFLICT_READINGS = ("registration", "links", "pointer")
+
+# Every value the promotion decides on, which must be READ INSIDE the promotion lock.
+#
+# This set exists because three review findings turned out to be one defect arriving three
+# times: the swap gate ran against the record loaded before the build, the rollback baseline
+# was captured before the build, and the classification read a pointer at the destination
+# rather than the one the record names and the swap replaces. A value read before the lock is
+# a value another run may have replaced in between, so a judgment made on it is a judgment
+# about a state that no longer exists.
+#
+# Declared rather than remembered, because the previous three got in exactly where nothing was
+# looking. The check reads this set, finds the promotion critical section, and fails any member
+# that is read there without having been assigned there.
+PROMOTION_FRESH = ("fresh", "previous_selection", "gate", "before", "pointer_read")
 UNUSABLE_REGISTRATIONS = tuple(dict.fromkeys(reading.UNUSABLE + (codexconfig.UNREADABLE,)))
 
 # register-mcp's own three answers, beside the ones those modules own. A partial application is
@@ -262,15 +276,21 @@ def pointer_conflict_of(read):
             + "), so the command a host reaches is not the one that was promoted"), None
 
 
-def pointer_state(destination, record, data):
+def pointer_state(pointer_path, record, data):
     """Read the owned pointer, and compare what it names with what the record selects.
+
+    Takes the pointer PATH rather than a destination, because those are not always the same
+    place: a record can name a pointer under an earlier destination, and a run invoked with a
+    different --dest then classified a link at the new destination while the promotion went on
+    to replace the recorded one. A judgment about a link that is not the link being replaced is
+    a judgment about the wrong thing.
 
     The question is deliberately about the pointer against the RECORD and not against whatever
     a run is about to promote. Before a swap the pointer still names the predecessor, which the
     record also selects, so the two agree; a pointer somebody repointed by hand disagrees at
     every moment. Asked the other way the cell would report a conflict during every update.
     """
-    path = pointer.pointer_path(destination)
+    path = Path(pointer_path)
     read = dict(pointer.read(path))
     read["pointer"] = str(path)
     read["agrees"] = None
@@ -901,7 +921,12 @@ def cmd_diagnose(args):
     # scope to read, and the caller says so by passing None rather than by omitting the
     # keyword: no conflict found and nobody looked are different answers.
     destination = getattr(args, "dest", None)
-    pointer_read = pointer_state(destination, record, data) if destination else None
+    # The recorded pointer first: that is the link this host actually reaches a runtime
+    # through, and a --dest supplied here only names where to look when nothing is recorded.
+    owned_pointer = ((record or {}).get("pointer") or {}).get("path")
+    if not owned_pointer and destination:
+        owned_pointer = str(pointer.pointer_path(destination))
+    pointer_read = pointer_state(owned_pointer, record, data) if owned_pointer else None
     try:
         classes = {
             c["component"]: classify_component(
@@ -2139,107 +2164,57 @@ def cmd_install(args):
                               or "the candidate was not exercised successfully"})
             return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
 
-        # OPS-4.4 decides whether a runtime may be replaced AT ALL, and it is read here:
-        # after the candidate is exercised, before anything owned moves. The daemon and the
-        # store are the outgoing runtime's, so they are asked of the selected relay where
-        # there is one; on a first install there is none and the candidate answers for a host
-        # that has neither. This command never starts or stops a service (OPS-4.1).
-        outgoing_relay = _selected_install(record, RELAY)
-        gate_relay = (outgoing_relay or {}).get("entryPoint") or str(environment / "bin" / RELAY)
-        gate_python = (outgoing_relay or {}).get("interpreterPath") or str(python)
-        gate = swapgate.decide({
-            "daemon": swapgate.daemon_cell(scope.relay(
-                ["service", "status"], executable=gate_relay, socket=args.socket,
-                state=args.state)),
-            "inFlight": swapgate.inflight_cell(scope.relay(
-                ["doctor"], executable=gate_relay, socket=args.socket, state=args.state)),
-            "storeTables": swapgate.tables_cell(
-                store_tables(gate_python, args.state, args.socket),
-                candidate_tables(python)),
-        })
-        if gate["verdict"] != swapgate.ALLOWED:
-            # The existing installation is kept exactly as it stands. A cell that could not be
-            # read keeps it for the same reason a refusal does.
-            performed.append({"step": "read whether it is safe to swap", "ok": False,
-                              "detail": json.dumps({"verdict": gate["verdict"],
-                                                    "blockedBy": gate["blockedBy"],
-                                                    "unreadable": gate["unreadable"]})})
-            return _install_failed(record_path, data["definitionVersion"], performed,
-                                   environment, owned, pointer_path=pointer_path,
-                                   failed_step="read whether it is safe to swap", gate=gate)
-        performed.append({"step": "read whether it is safe to swap", "ok": True,
-                          "detail": gate["verdict"]})
-
-        # The selection moves only to something this command's own classification calls own.
-        # Validated against the STAGED record, before the pointer changes, because recovery
-        # deliberately keeps a selected candidate: promoting first and checking afterwards
-        # would leave an invalid runtime selected and protected from cleanup.
-        staged = hostrecord.load(record_path, data["definitionVersion"])
-        if not staged.usable:
-            return _install_failed(record_path, data["definitionVersion"], performed,
-                                   environment, owned, failed_reading=staged)
-        # The conflict readings this promotion is decided against. Without them the command
-        # that moves the selection was blind to a conflict diagnose would have raised: an MCP
-        # registration naming a different bridge, or a foreign skill path. The registration is
-        # compared on the command this run is promoting and on nothing else, because install
-        # knows which entry point it installed and knows nothing about the arguments a host
-        # chose; an empty argument list would be an expectation, not the absence of one.
-        links = skill_links(codex_home)
-        # The registration names the owned POINTER, which is stable across updates, and not the
-        # environment underneath it, which changes every time the sources do. Compared against
-        # the environment, an installation registered by its predecessor read as a conflict and
-        # every later update refused to promote. The path comes from the record where one is
-        # recorded, because this comparison is string equality and a destination spelled
-        # differently on a later run is a different string for the same directory.
-        bridge_entry = str(pointer_path / "bin" / component_of(data, BRIDGE)["consoleScript"])
-        registration = registration_state(codex_home, bridge_entry, [], compare_args=False)
-        # A host installed before the pointer existed registers a CONCRETE entry point, and
-        # comparing it against the pointer reads as a conflict. It is not one: it is this
-        # command's own previous registration, recorded in the host record, and treating it as
-        # somebody else's would refuse every upgrade of exactly the installed base the pointer
-        # exists to unpin. Ownership is established positively from the record, never from the
-        # shape of the path.
-        inherited = _inherited_registration(registration, staged.value, data)
-        if inherited:
-            registration = dict(registration, outcome=codexconfig.LINKED,
-                                detail=inherited["detail"], inherited=inherited)
-        # And what the pointer itself names, which the registration stopped being able to say.
-        pointer_read = pointer_state(destination, staged.value, data)
-        verdicts = {}
-        for component in data["components"]:
-            name = component["component"]
-            verdicts[name] = classify_component(
-                component, record=staged.value,
-                entry_override=installs[name]["entryPoint"],
-                # The MCP registration is the bridge's, and says nothing about the relay.
-                registration=registration if name == MCP_NAME else None,
-                links=links,
-                pointer=pointer_read,
-                # Freshly observed by the measurement this promotion is about, so measurement,
-                # classification and promotion all speak about the same App Server.
-                app_server=measurement.get("appServer"))
-        unqualified = {n: {"class": v["class"], "reasons": v["reasons"]}
-                       for n, v in verdicts.items() if not ownership.reusable(v["class"])}
-        if unqualified:
-            # The pointer moves only to something this command would itself call reusable.
-            # The reasons travel with the refusal because the commonest one is not a fault in
-            # the installation at all: a checkout with uncommitted changes cannot be
-            # attributed to a revision, so what was installed from it is not reusable no
-            # matter how well the installation went.
-            performed.append({"step": "classify the candidate", "ok": False,
-                              "detail": "the candidate would not be reusable: "
-                                        + json.dumps(unqualified)})
-            return _install_failed(record_path, data["definitionVersion"], performed,
-                                   environment, owned)
-
-        # Promotion is ONE critical section. The record's selection and the pointer on disk
-        # are two truths, and between them lies the only window in which a runtime is selected
-        # and unreachable. Holding the pointer lock across both writes means no other run of
-        # this command can interleave, so the only thing that can land in that window is a
-        # kill -- and a kill there is exactly what the RESUME decision above repairs.
+        # PROMOTION IS ONE CRITICAL SECTION, AND EVERY JUDGMENT IN IT READS ITS OWN STATE.
+        #
+        # Three separate review findings were one defect wearing three hats: the swap gate ran
+        # against the record loaded before the build, the rollback baseline was captured before
+        # the build, and the classification read a pointer at the destination rather than the
+        # one the record names and this swap actually replaces. Each is the same shape -- a
+        # decision taken inside the critical section on a value read outside it, which another
+        # run may have replaced in between -- and fixing them one at a time would have left the
+        # fourth to arrive as another round.
+        #
+        # So the boundary moved rather than the instances: the lock opens first, the record is
+        # read inside it, and the gate, the baseline, the pointer reading and the classification
+        # are all decided on that reading. PROMOTION_FRESH declares the set and a check enforces
+        # it, because a rule nobody checks is how the previous three got in.
         landed = None
         try:
             with hostrecord.Locked(pointer_path):
+                fresh = hostrecord.load(record_path, data["definitionVersion"])
+                if not fresh.usable:
+                    return _install_failed(record_path, data["definitionVersion"], performed,
+                                           environment, owned, pointer_path=pointer_path,
+                                           failed_reading=fresh,
+                                           failed_step="read the host record for promotion")
+
+                # The selection this promotion replaces. It is the gate's subject AND the
+                # rollback baseline, and both were previously taken from a reading made before
+                # the build -- minutes earlier, and by then possibly somebody else's runtime.
+                previous_selection = dict(fresh.value.get("selected") or {})
+
+                # OPS-4.4 decides whether a runtime may be replaced at all. The daemon and the
+                # store belong to the runtime that is selected NOW, so the gate is asked of the
+                # relay this reading names; on a first install nothing is selected and the
+                # candidate answers for a host that has neither. Nothing here starts or stops a
+                # service (OPS-4.1).
+                gate = _swap_gate(data, fresh.value, environment=environment, python=python,
+                                  socket_path=args.socket, state=args.state)
+                if gate["verdict"] != swapgate.ALLOWED:
+                    # The existing installation is kept exactly as it stands. A cell that could
+                    # not be read keeps it for the same reason a refusal does.
+                    performed.append({"step": "read whether it is safe to swap", "ok": False,
+                                      "detail": json.dumps({"verdict": gate["verdict"],
+                                                            "blockedBy": gate["blockedBy"],
+                                                            "unreadable": gate["unreadable"]})})
+                    return _install_failed(record_path, data["definitionVersion"], performed,
+                                           environment, owned, pointer_path=pointer_path,
+                                           failed_step="read whether it is safe to swap",
+                                           gate=gate)
+                performed.append({"step": "read whether it is safe to swap", "ok": True,
+                                  "detail": gate["verdict"],
+                                  "selectionMovedWhileBuilding": previous_selection != previous})
+
                 # Read first, so a pointer this command may not replace refuses while nothing
                 # has moved. A real directory there belongs to somebody else, and a reading
                 # that failed established nothing; neither is placed over.
@@ -2254,17 +2229,73 @@ def cmd_install(args):
                 # succeeds whoever made it, so ownership is established from the record: a
                 # pointer this command placed is recorded when it is placed, and a link nobody
                 # recorded belongs to somebody else.
-                recorded_pointer = (staged.value.get("pointer") or {}).get("path")
+                recorded_pointer = (fresh.value.get("pointer") or {}).get("path")
                 if before["state"] == pointer.LINK and not recorded_pointer:
                     performed.append({"step": "establish the pointer is this command's",
                                       "ok": False,
-                                      "detail": "a symbolic link is already at " + str(pointer_path)
+                                      "detail": "a symbolic link is already at "
+                                                + str(pointer_path)
                                                 + " and this host record has never recorded"
                                                   " placing one there"})
                     return _install_failed(
                         record_path, data["definitionVersion"], performed, environment, owned,
                         pointer_path=pointer_path,
                         failed_step="establish the pointer is this command's")
+
+                # The selection moves only to something this command's own classification calls
+                # own, and the classification is decided on this reading for the same reason
+                # everything else here is.
+                links = skill_links(codex_home)
+                # The registration names the owned POINTER, which is stable across updates, and
+                # not the environment underneath it, which changes every time the sources do.
+                # The path comes from the record where one is recorded, because this comparison
+                # is string equality and a destination spelled differently on a later run is a
+                # different string for the same directory.
+                bridge_entry = str(pointer_path / "bin"
+                                   / component_of(data, BRIDGE)["consoleScript"])
+                registration = registration_state(codex_home, bridge_entry, [],
+                                                  compare_args=False)
+                # A host installed before the pointer existed registers a CONCRETE entry point,
+                # and comparing it against the pointer reads as a conflict. It is not one: it is
+                # this command's own previous registration, recorded in the host record, and
+                # treating it as somebody else's would refuse every upgrade of exactly the
+                # installed base the pointer exists to unpin.
+                inherited = _inherited_registration(registration, fresh.value, data)
+                if inherited:
+                    registration = dict(registration, outcome=codexconfig.LINKED,
+                                        detail=inherited["detail"], inherited=inherited)
+                # The link this swap will actually replace, not whichever one sits under the
+                # destination this run was invoked with. A record can name a pointer under an
+                # earlier destination, and classifying the wrong path reported NO_POINTER while
+                # the promotion below went on to overwrite the real one.
+                pointer_read = pointer_state(pointer_path, fresh.value, data)
+                verdicts = {}
+                for component in data["components"]:
+                    name = component["component"]
+                    verdicts[name] = classify_component(
+                        component, record=fresh.value,
+                        entry_override=installs[name]["entryPoint"],
+                        # The MCP registration is the bridge's, and says nothing about the relay.
+                        registration=registration if name == MCP_NAME else None,
+                        links=links,
+                        pointer=pointer_read,
+                        # Freshly observed by the measurement this promotion is about, so
+                        # measurement, classification and promotion all speak about the same
+                        # App Server.
+                        app_server=measurement.get("appServer"))
+                unqualified = {n: {"class": v["class"], "reasons": v["reasons"]}
+                               for n, v in verdicts.items() if not ownership.reusable(v["class"])}
+                if unqualified:
+                    # The reasons travel with the refusal because the commonest one is not a
+                    # fault in the installation at all: a checkout with uncommitted changes
+                    # cannot be attributed to a revision, so what was installed from it is not
+                    # reusable no matter how well the installation went.
+                    performed.append({"step": "classify the candidate", "ok": False,
+                                      "detail": "the candidate would not be reusable: "
+                                                + json.dumps(unqualified)})
+                    return _install_failed(record_path, data["definitionVersion"], performed,
+                                           environment, owned, pointer_path=pointer_path,
+                                           failed_step="classify the candidate")
 
                 # Only the components this run installed. A whole selection map would re-assert
                 # entries read before the installation as though they were current.
@@ -2285,35 +2316,46 @@ def cmd_install(args):
                                            pointer_path=pointer_path,
                                            failed_step="commit the selection")
                 record = promoted.value
-                pointer.place(pointer_path, environment)
-                landed = pointer.names(pointer_path, environment)
-        except OSError as error:
-            # The selection landed and the pointer did not, so the selection goes back where it
-            # was for the components this run moved and the record agrees with the disk again.
-            performed.append({"step": "replace the owned pointer", "ok": False,
-                              "detail": type(error).__name__ + ": " + error.__str__()})
-            return _install_failed(
-                record_path, data["definitionVersion"], performed, environment, owned,
-                pointer_path=pointer_path, failed_step="replace the owned pointer",
-                restored=_restore_selection(record_path, data["definitionVersion"], previous,
-                                            installs, pointer_path))
+                try:
+                    pointer.place(pointer_path, environment)
+                    landed = pointer.names(pointer_path, environment)
+                except OSError as error:
+                    # The selection landed and the pointer did not. The baseline this puts back
+                    # is the one read a few lines above, inside this lock, so it restores the
+                    # selection this promotion actually replaced rather than whatever was there
+                    # before the build.
+                    performed.append({"step": "replace the owned pointer", "ok": False,
+                                      "detail": type(error).__name__ + ": " + error.__str__()})
+                    return _install_failed(
+                        record_path, data["definitionVersion"], performed, environment, owned,
+                        pointer_path=pointer_path, failed_step="replace the owned pointer",
+                        restored=_restore_selection(record_path, data["definitionVersion"],
+                                                    previous_selection, installs))
 
-        # Read back rather than trusted. A swap reported as done that did not land is the one
-        # failure that would leave the record naming a runtime no host can reach.
-        if landed is not True:
-            performed.append({"step": "read the owned pointer back", "ok": False,
-                              "detail": pointer.read(pointer_path).get("detail")})
-            if before["state"] == pointer.LINK and before.get("target"):
-                with hostrecord.Locked(pointer_path):
-                    pointer.place(pointer_path, before["target"])
-            return _install_failed(
-                record_path, data["definitionVersion"], performed, environment, owned,
-                pointer_path=pointer_path, failed_step="read the owned pointer back",
-                restored=_restore_selection(record_path, data["definitionVersion"], previous,
-                                            installs, pointer_path))
-        performed.append({"step": "replace the owned pointer", "ok": True,
-                          "previousTarget": before.get("target"),
-                          "target": str(environment)})
+                # Read back rather than trusted. A swap reported as done that did not land is
+                # the one failure that would leave the record naming a runtime no host can
+                # reach.
+                if landed is not True:
+                    performed.append({"step": "read the owned pointer back", "ok": False,
+                                      "detail": pointer.read(pointer_path).get("detail")})
+                    if before["state"] == pointer.LINK and before.get("target"):
+                        pointer.place(pointer_path, before["target"])
+                    return _install_failed(
+                        record_path, data["definitionVersion"], performed, environment, owned,
+                        pointer_path=pointer_path, failed_step="read the owned pointer back",
+                        restored=_restore_selection(record_path, data["definitionVersion"],
+                                                    previous_selection, installs))
+                performed.append({"step": "replace the owned pointer", "ok": True,
+                                  "previousTarget": before.get("target"),
+                                  "target": str(environment)})
+        except reading.Refused:
+            raise
+        except OSError as error:
+            performed.append({"step": "promote under the pointer lock", "ok": False,
+                              "detail": type(error).__name__ + ": " + error.__str__()})
+            return _install_failed(record_path, data["definitionVersion"], performed,
+                                   environment, owned, pointer_path=pointer_path,
+                                   failed_step="promote under the pointer lock")
 
         # The claim settles last. It says this staging finished, and until the selection and the
         # pointer both name it there is nothing finished to say.
@@ -2334,7 +2376,8 @@ def cmd_install(args):
                                    " spawned goes on running the environment it started in."},
             "classification": {n: v["class"] for n, v in verdicts.items()},
             "selected": record.get("selected") or {},
-            "previousSelection": previous,
+            "previousSelection": previous_selection,
+            "selectionWhenThisRunStarted": previous,
             "note": (
                 "the pointer moves only after a qualifying point exists for the candidate"
                 " (OPS-2.4). A candidate that imports but fails its exercise stays unselected and"
@@ -2430,12 +2473,15 @@ def _inherited_registration(registration, record, data):
     registered = (registration.get("registered") or {}).get("command")
     if not registered:
         return None
-    recorded = []
-    for component in data["components"]:
-        entry = ((record or {}).get("components", {}).get(component["component"]) or {})
-        for install in entry.get("installs") or []:
-            if install.get("entryPoint"):
-                recorded.append(str(install["entryPoint"]))
+    # The bridge's entry points and nothing else. This exception exists for the bridge's
+    # pre-pointer registration, so a relay entry point that happens to sit in the same record
+    # is not evidence that [mcp_servers.<bridge>] naming it is this command's own registration.
+    # Widened to every component, a configuration registering the relay CLI as the bridge
+    # server read as inherited and the candidate promoted while Codex went on launching the
+    # wrong process.
+    entry = ((record or {}).get("components", {}).get(MCP_NAME) or {})
+    recorded = [str(install["entryPoint"]) for install in entry.get("installs") or []
+                if install.get("entryPoint")]
     if str(registered) not in recorded:
         return None
     return {
@@ -2472,6 +2518,30 @@ def _names_environment(record, environment, data):
         return False
 
 
+def _swap_gate(data, record, *, environment, python, socket_path=None, state=None):
+    """The OPS-4.4 reading, taken against the runtime THIS record selects.
+
+    Which relay owns the daemon and the store is decided by what is selected, so the record
+    handed in decides which runtime is asked. Handed a reading taken before a long build, it
+    answers about a runtime that may no longer be in use by the time anything moves, which is
+    why its caller reads the record inside the promotion lock and passes that one.
+
+    On a first install nothing is selected and the candidate answers for a host that has
+    neither a daemon nor a store. Nothing here starts or stops a service (OPS-4.1).
+    """
+    outgoing = _selected_install(record, RELAY)
+    executable = (outgoing or {}).get("entryPoint") or str(environment / "bin" / RELAY)
+    interpreter = (outgoing or {}).get("interpreterPath") or str(python)
+    return swapgate.decide({
+        "daemon": swapgate.daemon_cell(scope.relay(
+            ["service", "status"], executable=executable, socket=socket_path, state=state)),
+        "inFlight": swapgate.inflight_cell(scope.relay(
+            ["doctor"], executable=executable, socket=socket_path, state=state)),
+        "storeTables": swapgate.tables_cell(
+            store_tables(interpreter, state, socket_path), candidate_tables(python)),
+    })
+
+
 def _selected_install(record, name):
     """The install record for the runtime currently selected for this component, or None.
 
@@ -2487,7 +2557,7 @@ def _selected_install(record, name):
     return None
 
 
-def _restore_selection(record_path, definition_version, previous, installs, pointer_path):
+def _restore_selection(record_path, definition_version, previous, installs):
     """Put back the selection this run just moved, for the components it moved.
 
     Narrow on purpose. Re-asserting a whole selection map would carry back entries read before
@@ -2497,32 +2567,33 @@ def _restore_selection(record_path, definition_version, previous, installs, poin
     a delta, and saying so is better than reporting a restoration that did not happen.
     """
     missing = sorted(name for name in installs if not previous.get(name))
-    with hostrecord.Locked(pointer_path):
-        # Held under the promotion's own lock, and only for entries that still name what THIS
-        # run wrote. A blind put-back would undo a promotion another run committed in the
-        # meantime, which is the staleness the single-writer helper exists to prevent -- and
-        # rolling back on top of somebody else's success is a worse outcome than the failure
-        # being rolled back.
-        current = hostrecord.load(record_path, definition_version)
-        if not current.usable:
-            return {"selection": None, "restored": [], "withoutPrevious": missing,
-                    "detail": "the host record could not be read, so the previous selection"
-                              " could not be put back: " + str(current.detail)}
-        selected = (current.value.get("selected") or {})
-        back, moved_on = {}, []
-        for name, install in installs.items():
-            if selected.get(name) != install["location"]:
-                moved_on.append(name)
-                continue
-            if previous.get(name):
-                back[name] = previous[name]
-        if not back:
-            return {"selection": None, "restored": [], "withoutPrevious": missing,
-                    "movedOnByAnotherRun": sorted(moved_on),
-                    "detail": "there was nothing of this run's left to put back: either nothing"
-                              " was selected before it, or another run has since moved the"
-                              " selection on"}
-        written = hostrecord.update(record_path, definition_version, select=back)
+    # The caller holds the promotion lock; this does not take it again. 'previous' is the
+    # baseline that caller read INSIDE that lock, so what goes back is the selection this
+    # promotion actually replaced rather than whatever was there before the build began.
+    #
+    # Only entries that still name what THIS run wrote are put back. A blind restore would undo
+    # a promotion another run committed in the meantime, and rolling back on top of somebody
+    # else's success is a worse outcome than the failure being rolled back.
+    current = hostrecord.load(record_path, definition_version)
+    if not current.usable:
+        return {"selection": None, "restored": [], "withoutPrevious": missing,
+                "detail": "the host record could not be read, so the previous selection"
+                          " could not be put back: " + str(current.detail)}
+    selected = (current.value.get("selected") or {})
+    back, moved_on = {}, []
+    for name, install in installs.items():
+        if selected.get(name) != install["location"]:
+            moved_on.append(name)
+            continue
+        if previous.get(name):
+            back[name] = previous[name]
+    if not back:
+        return {"selection": None, "restored": [], "withoutPrevious": missing,
+                "movedOnByAnotherRun": sorted(moved_on),
+                "detail": "there was nothing of this run's left to put back: either nothing"
+                          " was selected before it, or another run has since moved the"
+                          " selection on"}
+    written = hostrecord.update(record_path, definition_version, select=back)
     return {"selection": back if written.usable else None,
             "restored": sorted(back) if written.usable else [],
             "withoutPrevious": missing, "movedOnByAnotherRun": sorted(moved_on),

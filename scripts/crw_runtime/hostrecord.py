@@ -114,6 +114,13 @@ def shape(record):
     owned = record.get("pointer")
     if owned is not None and not isinstance(owned, dict):
         raise TypeError("pointer is an object, found " + type(owned).__name__)
+    if isinstance(owned, dict) and "path" in owned and not isinstance(owned["path"], str):
+        # This field is handed straight to Path(), so its TYPE is part of the shape a consumer
+        # requires. Left unchecked, a hand-edited record carrying a list here raised TypeError
+        # out of the middle of install and was reported as a defect in this command rather than
+        # as a record that could not be read -- which is the one substitution the reading
+        # boundary exists to prevent.
+        raise TypeError("pointer.path is a string, found " + type(owned["path"]).__name__)
     return record
 
 

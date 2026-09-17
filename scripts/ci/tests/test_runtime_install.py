@@ -5592,7 +5592,7 @@ class UpdateRecoveryTests(unittest.TestCase):
     the same file with the same rows in it.
     """
 
-    def _run(self, host, *, breaking=None, gate=None):
+    def _run(self, host, *, breaking=None, gate=None, interpose=None, probes=None):
         import runtime_install
 
         emitted = []
@@ -5668,10 +5668,15 @@ class UpdateRecoveryTests(unittest.TestCase):
             mock.patch.object(runtime_install.definition, "ops12_digest",
                               side_effect=fake_digest),
             mock.patch.object(runtime_install, "measure_candidate",
-                              return_value={"qualifyingPoint": True, "points": [],
-                                            "appServer": "a-server"}),
+                              side_effect=lambda *a, **k: (
+                                  interpose() if interpose else None,
+                                  {"qualifyingPoint": True, "points": [],
+                                   "appServer": "a-server"})[1]),
             mock.patch.object(runtime_install.scope, "relay", side_effect=fake_relay),
-            mock.patch.object(runtime_install, "store_tables", return_value=tables),
+            mock.patch.object(runtime_install, "store_tables",
+                              side_effect=lambda interpreter, *a, **k: (
+                                  probes.append(str(interpreter)) if probes is not None else None,
+                                  tables)[1]),
             mock.patch.object(runtime_install, "candidate_tables",
                               return_value={"readable": True, "tables": candidate_declares}),
             mock.patch.object(runtime_install, "classify_component",
@@ -6298,14 +6303,12 @@ class RollbackRaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             record_path = Path(temporary) / "record.json"
             hostrecord.save(record_path, hostrecord.empty(1))
-            pointer_path = Path(temporary) / "current"
             previous = {"codex-session-relay": "/old/pkg"}
             installs = {"codex-session-relay": {"location": "/mine/pkg"}}
 
             # Another run has since promoted something else entirely.
             hostrecord.update(record_path, 1, select={"codex-session-relay": "/theirs/pkg"})
-            answer = runtime_install._restore_selection(record_path, 1, previous, installs,
-                                                        pointer_path)
+            answer = runtime_install._restore_selection(record_path, 1, previous, installs)
             after = hostrecord.load(record_path, 1).value["selected"]
 
         self.assertEqual(after, {"codex-session-relay": "/theirs/pkg"},
@@ -6320,13 +6323,11 @@ class RollbackRaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             record_path = Path(temporary) / "record.json"
             hostrecord.save(record_path, hostrecord.empty(1))
-            pointer_path = Path(temporary) / "current"
             previous = {"codex-session-relay": "/old/pkg"}
             installs = {"codex-session-relay": {"location": "/mine/pkg"}}
 
             hostrecord.update(record_path, 1, select={"codex-session-relay": "/mine/pkg"})
-            answer = runtime_install._restore_selection(record_path, 1, previous, installs,
-                                                        pointer_path)
+            answer = runtime_install._restore_selection(record_path, 1, previous, installs)
             after = hostrecord.load(record_path, 1).value["selected"]
 
         self.assertEqual(after, {"codex-session-relay": "/old/pkg"})
@@ -6421,6 +6422,263 @@ class PointerOwnershipTests(unittest.TestCase):
         self.assertEqual(still_theirs, str(host.previous),
                          "renaming over a link succeeds whoever made it, so ownership is"
                          " established from the record rather than from the shape of the path")
+
+
+
+# =========================================================================================
+# CRW-49 final round - a judgment inside the promotion reads its own state
+# =========================================================================================
+
+
+def _promotion_section(tree):
+    """The with-block guarding the promotion, found by the lock it takes rather than by line."""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == "cmd_install"):
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.With):
+                continue
+            for item in inner.items:
+                call = item.context_expr
+                if not isinstance(call, ast.Call):
+                    continue
+                called = call.func
+                name = (called.attr if isinstance(called, ast.Attribute)
+                        else getattr(called, "id", None))
+                if name == "Locked" and call.args:
+                    first = call.args[0]
+                    if isinstance(first, ast.Name) and first.id == "pointer_path":
+                        return inner
+    return None
+
+
+def _stale_promotion_reads(tree, declared):
+    """Declared members READ in the promotion section without being READ FRESH there first.
+
+    This is the check the previous three findings needed and did not have. Each of them was a
+    value assigned outside the critical section and decided on inside it, and each arrived as
+    its own review round because nothing looked at the class.
+    """
+    section = _promotion_section(tree)
+    if section is None:
+        return ["the promotion critical section was not found"]
+    stored, loaded = {}, {}
+    for node in ast.walk(section):
+        if not isinstance(node, ast.Name):
+            continue
+        where = stored if isinstance(node.ctx, ast.Store) else loaded
+        where[node.id] = min(where.get(node.id, node.lineno), node.lineno)
+    findings = []
+    for member in declared:
+        if member not in stored and member not in loaded:
+            findings.append(member + ": declared fresh and used nowhere in the promotion")
+        elif member not in stored:
+            findings.append(member + ": decided on inside the promotion, read outside it")
+        elif member in loaded and loaded[member] < stored[member]:
+            findings.append(member + ": read at line " + str(loaded[member])
+                            + " before it is read fresh at line " + str(stored[member]))
+    return findings
+
+
+class PromotionFreshnessTests(unittest.TestCase):
+    """One class, three instances, one boundary.
+
+    The swap gate ran against the record loaded before the build; the rollback baseline was
+    captured before the build; the classification read a pointer at the destination rather than
+    the one the record names and the swap replaces. Fixing those one at a time would have left
+    the fourth, so the rule is declared and checked instead.
+    """
+
+    def test_every_value_the_promotion_decides_on_is_read_inside_it(self):
+        import runtime_install
+
+        tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+        self.assertEqual(
+            _stale_promotion_reads(tree, runtime_install.PROMOTION_FRESH), [],
+            "a value read before the lock is one another run may have replaced, so a judgment"
+            " made on it is about a state that no longer exists")
+
+    def test_the_declared_set_is_not_empty_and_names_the_three_that_reopened(self):
+        import runtime_install
+
+        declared = set(runtime_install.PROMOTION_FRESH)
+        self.assertTrue({"gate", "previous_selection", "pointer_read"} <= declared,
+                        "the set has to name the three findings that were one defect")
+
+    def test_the_scan_sees_a_value_read_outside_and_judged_inside(self):
+        """Guards the checker: without this, an empty finding list proves nothing."""
+        source = (
+            "def cmd_install(args):\n"
+            "    gate = _swap_gate(data, record)\n"
+            "    with hostrecord.Locked(pointer_path):\n"
+            "        fresh = hostrecord.load(record_path, version)\n"
+            "        previous_selection = dict(fresh.value.get('selected') or {})\n"
+            "        before = pointer.read(pointer_path)\n"
+            "        pointer_read = pointer_state(pointer_path, fresh.value, data)\n"
+            "        if gate['verdict'] != ALLOWED:\n"
+            "            return 1\n")
+        findings = _stale_promotion_reads(ast.parse(source), ("gate", "fresh"))
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("gate", findings[0])
+        self.assertIn("read outside it", findings[0])
+
+    def test_the_scan_sees_a_member_read_before_it_is_refreshed(self):
+        source = (
+            "def cmd_install(args):\n"
+            "    with hostrecord.Locked(pointer_path):\n"
+            "        if gate['verdict'] != ALLOWED:\n"
+            "            return 1\n"
+            "        gate = _swap_gate(data, fresh.value)\n")
+        findings = _stale_promotion_reads(ast.parse(source), ("gate",))
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("before it is read fresh", findings[0])
+
+
+class OverlappingUpdateTests(unittest.TestCase):
+    """Two updates overlapping, exercised rather than asserted from source text.
+
+    The interleaving is committed at the exact seam it would occur at: while this run is
+    measuring its candidate, a competing run promotes something else. What follows has to be
+    decided on that, not on what was true when this run started.
+    """
+
+    def _competitor(self, host, name):
+        """A rival promotion: its own environment, its own relay interpreter, selected."""
+        rival = host.destination / ("env-" + name)
+        (rival / "bin").mkdir(parents=True)
+        site = rival / "site"
+        site.mkdir()
+        interpreter = str(rival / "bin" / "python")
+
+        def promote():
+            record = hostrecord.load(host.record_path,
+                                     host.data["definitionVersion"]).value
+            for component in host.data["components"]:
+                hostrecord.put_install(record, component["component"], {
+                    "location": str(site / component["module"]),
+                    "environment": str(rival),
+                    "entryPoint": str(rival / "bin" / component["consoleScript"]),
+                    "interpreterPath": interpreter})
+            record["selected"] = {c["component"]: str(site / c["module"])
+                                  for c in host.data["components"]}
+            hostrecord.save(host.record_path, record)
+
+        return promote, interpreter, {c["component"]: str(site / c["module"])
+                                      for c in host.data["components"]}
+
+    def test_the_gate_is_asked_about_the_runtime_that_is_selected_now(self):
+        """A rival promotes while this run builds. The daemon and the store belong to ITS
+        runtime by the time anything moves, so that is the one the gate has to ask."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            promote, rival_interpreter, _selected = self._competitor(host, "rival")
+            asked = []
+            code, payload = UpdateRecoveryTests()._run(host, interpose=promote, probes=asked)
+
+        self.assertEqual(code, 0, json.dumps(payload)[:900])
+        self.assertTrue(asked, "the store probe was never run")
+        self.assertEqual(asked[-1], rival_interpreter,
+                         "the gate asked the runtime this run saw at the start instead of the"
+                         " one selected by the time it promoted")
+
+    def test_the_rollback_restores_the_selection_the_promotion_replaced(self):
+        """Not the one that was there before the build. If a rival promoted in between, putting
+        back the pre-rival selection leaves the record and the pointer describing different
+        runtimes."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            promote, _interpreter, rival_selection = self._competitor(host, "rival")
+            started_with = host.snapshot()["selected"]
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="replace the owned pointer", interpose=promote)
+            after = host.snapshot()["selected"]
+
+        self.assertEqual(code, 1)
+        self.assertNotEqual(rival_selection, started_with, "the rival really did move it")
+        self.assertEqual(after, rival_selection,
+                         "the baseline is the selection read inside the promotion lock, so the"
+                         " rollback puts back what this promotion replaced")
+        self.assertEqual(payload["pointer"]["restored"]["restored"],
+                         sorted(rival_selection),
+                         "and the result names what it put back")
+
+    def test_the_run_reports_that_the_selection_moved_while_it_was_building(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            promote, _i, _s = self._competitor(host, "rival")
+            code, payload = UpdateRecoveryTests()._run(host, interpose=promote)
+            steps = {s["step"]: s for s in payload["steps"]}
+
+        self.assertEqual(code, 0)
+        self.assertTrue(steps["read whether it is safe to swap"]["selectionMovedWhileBuilding"],
+                        "a reader should be able to see that this was not the quiet case")
+
+
+class InheritedRegistrationScopeTests(unittest.TestCase):
+    def test_a_relay_entry_point_registered_as_the_bridge_stays_a_conflict(self):
+        """The exception exists for the BRIDGE's pre-pointer registration. A relay path that
+        happens to sit in the same record is not evidence that registering it as the bridge
+        server is this command's own doing."""
+        import runtime_install
+
+        data = definition.load()
+        record = hostrecord.empty(1)
+        hostrecord.put_install(record, runtime_install.RELAY,
+                               {"location": "/ours/relay", "environment": "/ours",
+                                "entryPoint": "/ours/bin/codex-session-relay"})
+        hostrecord.put_install(record, runtime_install.MCP_NAME,
+                               {"location": "/ours/bridge", "environment": "/ours",
+                                "entryPoint": "/ours/bin/codex-thread-bridge"})
+
+        relay_registered = {"outcome": codexconfig.CONFLICT, "detail": "differs",
+                            "registered": {"command": "/ours/bin/codex-session-relay"}}
+        self.assertIsNone(
+            runtime_install._inherited_registration(relay_registered, record, data),
+            "Codex would go on launching the relay CLI as the bridge server")
+
+        bridge_registered = {"outcome": codexconfig.CONFLICT, "detail": "differs",
+                             "registered": {"command": "/ours/bin/codex-thread-bridge"}}
+        self.assertIsNotNone(
+            runtime_install._inherited_registration(bridge_registered, record, data),
+            "the bridge's own earlier registration still qualifies")
+
+
+class PointerPathShapeTests(unittest.TestCase):
+    """CRW-13's property, applied to a field this change newly consumes as a path."""
+
+    def test_a_pointer_path_that_is_not_a_string_is_unreadable_not_a_crash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            path.write_text(json.dumps({"components": {}, "pointer": {"path": ["invalid"]}}),
+                            encoding="utf-8")
+            answer = hostrecord.load(path, 1)
+        self.assertFalse(answer.usable)
+        self.assertEqual(answer.state, reading.UNREADABLE)
+        self.assertIn("pointer.path is a string", str(answer.detail))
+
+    def test_install_refuses_such_a_record_rather_than_reporting_its_own_defect(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "dest"
+            record_path = Path(temporary) / "record.json"
+            record_path.write_text(
+                json.dumps({"components": {}, "pointer": {"path": ["invalid"]}}),
+                encoding="utf-8")
+            emitted = []
+            args = argparse.Namespace(dest=str(destination), apply=True,
+                                      record=str(record_path), python=sys.executable,
+                                      socket=None, state=None, issue="CRW-49",
+                                      codex_home=temporary)
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_install(args)
+
+        self.assertEqual(code, 1)
+        payload = emitted[-1]
+        self.assertIsNone(payload.get("internalError"),
+                          "a record that cannot be read is not a defect in this command")
+        self.assertEqual(payload["reading"]["state"], reading.UNREADABLE)
+        self.assertIn("pointer.path is a string", payload["refused"])
 
 
 if __name__ == "__main__":
