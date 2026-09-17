@@ -1925,8 +1925,9 @@ def cmd_hook(args):
         # value whose meaning needs both files: the adapter's wall clock lives in the settings
         # and the host's timeout lives in the registration, and only this command holds both.
         budget = completion.budget_complaints(args.guard_timeout, args.timeout)
-        if budget:
-            emit({"command": "hook", "adapter": adapter, "error": "; ".join(budget)})
+        refused = completion.registration_complaints(args.event) + budget
+        if refused:
+            emit({"command": "hook", "adapter": adapter, "error": "; ".join(refused)})
             return EXIT_USAGE
         try:
             wanted = completion.configuration(

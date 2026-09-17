@@ -1110,6 +1110,14 @@ malformed. The adapter's budget is checked against the registered timeout at the
 because that is the one value whose meaning needs both files: a budget the host's timeout does
 not exceed lets the host kill the adapter before it records why it did not answer.
 
+The event is checked the same way and for the same reason. This adapter implements the `Stop`
+contract and has a decision for no other event: elsewhere the payload means something else and
+the output schema carries no top-level decision, so a hook registered on another event would
+never see the turn it was installed to watch. Naming one is refused; another event still takes
+an explicit `--hook-command`. Settings, budget and event are three checks of one kind, and the
+kind is that an install must not succeed and leave a hook that is registered, inert and silent
+about it.
+
 The registered command is a command line, so its two words are joined with shell quoting and
 read back by the same rules. Concatenating them raw fails in two sizes: a path holding a space
 is delivered as more words than it is, and a path holding shell syntax is delivered as syntax

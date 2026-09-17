@@ -101,6 +101,26 @@ def budget_complaints(guard_timeout, registered_timeout):
                      " it records why it did not answer")
     return found
 
+
+def registration_complaints(event):
+    """Whether a registration this command is about to make is one this adapter can act on.
+
+    The third member of a class the first two arrived in separately: settings this command can
+    write but its own reader rejects, a budget the host's timeout does not exceed, and now an
+    event whose contract this adapter does not implement. Each one installs successfully and
+    leaves a hook that is registered, inert, and silent about it, so the check belongs to the
+    registration rather than to any one flag.
+
+    Stop is the only event this adapter has a decision for. The guard judges a turn ending, and
+    on every other event the payload means something else and the output schema has no
+    top-level decision to carry an answer, so a hook registered elsewhere could never see the
+    turn it was installed to watch.
+    """
+    if event is not None and event != EVENT:
+        return ["this adapter implements the " + EVENT + " contract and has no decision for "
+                + str(event) + "; register an explicit --hook-command for another event"]
+    return []
+
 # How the guard process ended. Four answers and none of them is inferred from the output: a
 # process that never started and one that started and said nothing are the same silence on
 # stdout and completely different repairs.

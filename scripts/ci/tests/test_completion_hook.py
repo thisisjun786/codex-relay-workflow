@@ -599,6 +599,30 @@ class TheWriterSatisfiesItsOwnReader(unittest.TestCase):
         self.assertTrue(completion.budget_complaints(True, 10))
         self.assertTrue(completion.budget_complaints("5", 10))
 
+    def test_an_event_this_adapter_has_no_decision_for_is_refused(self):
+        """The guard judges a turn ending. On any other event the payload means something else
+        and the output schema carries no top-level decision, so the hook would be registered,
+        inert, and silent about it."""
+        self.assertEqual(completion.registration_complaints(None), [])
+        self.assertEqual(completion.registration_complaints(completion.EVENT), [])
+        self.assertTrue(completion.registration_complaints("SessionStart"))
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event="SessionStart", hook_command=None,
+                adapter="completion", dest=None,
+                relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+            self.assertFalse((home / "hooks.json").exists())
+            self.assertFalse(completion.configuration_path(home).exists())
+        self.assertEqual(code, 2)
+        self.assertIn(completion.EVENT, emitted[0]["error"])
+
 
 class TheJournalPolicyReadsItsOwnField(unittest.TestCase):
     """faults_only was reading a key no record carries, so it recorded everything."""
