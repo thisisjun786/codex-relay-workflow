@@ -903,10 +903,14 @@ class RoundTripSymmetryTests(unittest.TestCase):
     """
 
     def test_every_generated_registration_round_trips_and_agrees_with_tomllib(self):
+        # The reader half runs everywhere, because the reader is meant to work on an
+        # interpreter with no tomllib -- that is the whole premise of the module. The oracle
+        # comparison runs where the oracle exists. Skipping the entire property on 3.10 would
+        # leave the interpreter this repository checks itself with exercising none of it.
         try:
             import tomllib
         except ImportError:
-            self.skipTest("tomllib is the oracle for this property")
+            tomllib = None
         failures = []
         for name in ADVERSARIAL_NAMES:
             for value in ADVERSARIAL_VALUES:
@@ -916,24 +920,38 @@ class RoundTripSymmetryTests(unittest.TestCase):
                 if not view.readable:
                     failures.append((name, value, "unreadable: " + "; ".join(view.unreadable)))
                     continue
-                try:
-                    parsed = tomllib.loads(text).get("mcp_servers", {})
-                except Exception as error:
-                    failures.append((name, value, "tomllib rejected: " + repr(error)))
+                mine = view.servers.get(name) or {}
+                if name not in view.servers:
+                    failures.append((name, value, "the name was lost: "
+                                     + repr(sorted(view.servers))))
                     continue
-                if set(parsed) != set(view.servers):
-                    failures.append((name, value, "names differ: " + repr(sorted(view.servers))
-                                     + " vs " + repr(sorted(parsed))))
+                if mine.get("command") != value:
+                    failures.append((name, value, "command differs: "
+                                     + repr(mine.get("command"))))
                     continue
-                mine, theirs = view.servers.get(name) or {}, parsed.get(name) or {}
-                if mine.get("command") != value or theirs.get("command") != value:
-                    failures.append((name, value, "command differs: " + repr(mine.get("command"))
-                                     + " vs " + repr(theirs.get("command"))))
+                if list(mine.get("args") or []) != args:
+                    failures.append((name, value, "args differ: " + repr(mine.get("args"))))
                     continue
-                if list(mine.get("args") or []) != args or list(theirs.get("args") or []) != args:
-                    failures.append((name, value, "args differ: " + repr(mine.get("args"))
-                                     + " vs " + repr(theirs.get("args"))))
-                    continue
+                if tomllib is not None:
+                    try:
+                        parsed = tomllib.loads(text).get("mcp_servers", {})
+                    except Exception as error:
+                        failures.append((name, value, "tomllib rejected: " + repr(error)))
+                        continue
+                    theirs = parsed.get(name) or {}
+                    if set(parsed) != set(view.servers):
+                        failures.append((name, value, "names differ: "
+                                         + repr(sorted(view.servers)) + " vs "
+                                         + repr(sorted(parsed))))
+                        continue
+                    if theirs.get("command") != value:
+                        failures.append((name, value, "the oracle read command "
+                                         + repr(theirs.get("command"))))
+                        continue
+                    if list(theirs.get("args") or []) != args:
+                        failures.append((name, value, "the oracle read args "
+                                         + repr(theirs.get("args"))))
+                        continue
                 _, outcome, detail = codexconfig.register(text, name, value, args)
                 if outcome != "LINKED":
                     failures.append((name, value, "rerun reported " + outcome + ": " + detail))
@@ -964,6 +982,12 @@ class RoundTripSymmetryTests(unittest.TestCase):
 
     def test_the_oracle_comparison_covers_arguments_as_well_as_the_command(self):
         # The comparison decides LINKED against CONFLICT, and arguments are half of that.
+        try:
+            import tomllib  # noqa: F401
+        except ImportError:
+            # cross_check has no oracle to disagree with on this interpreter, so it reports
+            # nothing by design. The 3.13 job is where this property is actually checked.
+            self.skipTest("tomllib is the oracle for this property")
         source = '[mcp_servers.one]\ncommand = "/x"\nargs = ["a"]\n'
         view = codexconfig.scan(source)
         view.servers["one"]["args"] = ["b"]
