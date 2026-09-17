@@ -319,7 +319,11 @@ and `re_review_needed`. Record an integration with:
       --mark merged --evidence '<what landed>' --actor <id> \
       --expected-event <the event you integrated>
 
-Naming a revision that is no longer current is refused rather than silently rebound.
+Naming a revision that is no longer current is refused rather than silently rebound, and so is a
+revision whose criteria set has moved since it was verified: the mark is refused with
+`criteria_set_changed` until the re-review below lands. The mark is about the revision rather
+than the wording, so once that re-review records `verified` an integration recorded earlier reads
+as the current mark again and does not have to be recorded twice.
 
 ## Re-reviewing after the criteria change
 
@@ -374,7 +378,23 @@ answer:
     does not announce this one;
   - the event is no longer the revision this generation stands on, because a newer revision
     arrived, the head is ambiguous, or the generation advanced;
-  - the relationship is paused, cancelled, archived or superseded.
+  - the relationship is not active. Both routes are closed here, and the second one stays closed
+    until the relationship comes back: `generation-open` requires an active relationship and
+    refuses a paused, cancelled or archived one with `relationship_not_active`.
+
+Bring the relationship back first in that last case. Reactivating is not a status flip, because
+`relationship-status` accepts only `paused`, `cancelled` and `archived`. It restates the
+generation and the scope being re-authorized, and a restatement that does not match is refused
+with nothing written:
+
+    codex-session-relay --state "$RELAY_STATE" relationship-resume --relationship <rel> \
+      --expect-generation <n> --expect-artifact-root <root> \
+      --expect-allowed-recipient <task id> --actor <id>
+
+A superseded relationship does not come back at all: its successor owns the issue. Cancelling or
+archiving RELEASES the issue, so one whose issue another child has since been registered for is
+refused with `duplicate_assignment` rather than resumed into a second owner; replacing that
+assignment is a deliberate act of its own.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 

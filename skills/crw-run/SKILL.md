@@ -407,9 +407,10 @@ newer revision arrived while the review was in progress, the older result is not
 completion: re-read the current revision and verify that one. Two competing
 revisions with no stated supersession are ambiguous, and an ambiguous head withholds
 rather than picking whichever arrived later. If the criteria changed after a review,
-that review certified wording nobody is judging by now, and re-review runs under a
-fresh execution generation rather than by re-deciding the settled event. See
-[codex-session-relay](references/relay.md).
+that review certified wording nobody is judging by now, and there are two routes
+back: judging the same revision again against the set now in force, or opening a
+fresh execution generation. Which one applies turns on whether the artifact itself
+has to change. See [codex-session-relay](references/relay.md).
 
 Use independent review when scope/risk warrants it, through the current CXC
 subagent protocol inside the appropriate checkout. A worker's self-report alone
