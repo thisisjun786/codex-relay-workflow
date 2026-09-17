@@ -5870,8 +5870,16 @@ class IdempotentRepeatTests(unittest.TestCase):
         self.assertEqual(after["pointerTarget"], before["pointerTarget"])
 
     def test_repeating_the_registration_appends_no_second_server(self):
+        """One registration, however many times it is run.
+
+        On an interpreter without tomllib the guarantee is kept by refusing rather than by
+        appending: this module will not approximate TOML, so it writes nothing at all. Both
+        outcomes are asserted, because the property is about never producing a second
+        registration and both interpreters have to satisfy it.
+        """
         import runtime_install
 
+        readable = codexconfig.scan('[mcp_servers.x]' + chr(10) + 'command = "/x"' + chr(10))
         with tempfile.TemporaryDirectory() as temporary:
             codex_home = Path(temporary)
             config = codex_home / "config.toml"
@@ -5882,9 +5890,16 @@ class IdempotentRepeatTests(unittest.TestCase):
             emitted = []
             with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
                 first = runtime_install.cmd_register_mcp(args)
-                after_first = config.read_bytes()
+                after_first = config.read_bytes() if config.exists() else None
                 second = runtime_install.cmd_register_mcp(args)
-                after_second = config.read_bytes()
+                after_second = config.read_bytes() if config.exists() else None
+
+        if not readable.readable:
+            self.assertEqual((first, second), (1, 1),
+                             "without tomllib every registration is refused rather than"
+                             " approximated")
+            self.assertIsNone(after_second, "and a refusal writes nothing at all")
+            return
 
         self.assertEqual((first, second), (0, 0))
         self.assertEqual(emitted[0]["outcome"], codexconfig.CREATED)
