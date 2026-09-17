@@ -258,6 +258,12 @@ The block is context for resuming work already authorized. It requests no new ap
 asks for no readiness-only turn spent confirming receipt, and re-opens nothing the
 assignment already settled.
 
+Where a relay holds the assignment there is no second channel to put it on: the
+needs-changes verdict is the correction, so the block travels in that verdict's own
+findings and notes. Check it is there before recording the verdict, because afterwards
+the generation has already opened and the only remaining routes are the ones this
+workflow forbids.
+
 ## Coordination record
 
 Use the project's linked canonical Linear coordination document as part of the

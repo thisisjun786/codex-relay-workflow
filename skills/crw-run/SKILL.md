@@ -456,7 +456,8 @@ in words invented for the report. Ordinary progress, waiting on input, a stop an
 request for verification are conditions the parent has to tell apart, and two contracts
 supply the words for different questions. What the child's turn did is a
 [turn disposition](references/hook-contract.md#turn-disposition): `in_progress`,
-`blocked_needs_input`, `interrupted`, `ready_for_review`. Where the delivery stands is
+`ready_for_review`, `blocked_needs_input`, `interrupted` or `failed`. Where the
+delivery stands is
 the [assignment state](references/relay.md#verify-the-current-revision) when a relay
 holds it. Report them separately; a child blocked on a person has a turn that stopped
 and a delivery that did not move, and one word cannot carry both. A condition neither
@@ -491,6 +492,13 @@ registered child, carrying the superseded event, its digest, and the per-criteri
 findings. Record findings with notes, because a correction with no findings is one
 nobody can act on. Do not create a task, a second relationship, or a parallel
 message path to deliver it. Without a relay, send the packet as described above.
+
+The restoration block rides inside that payload rather than beside it. The findings and
+their notes are what the relay actually delivers to the child, so that is where the
+block goes, and a verdict is not issued until it is there. Where the installed relay
+cannot carry it, that is a limitation recorded and reported on the assignment, and it
+is still not a reason to open the parallel path the sentence above forbids: a child
+that resumed without it is recovered on its own task, the way an unemitted receipt is.
 
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, workflow,
