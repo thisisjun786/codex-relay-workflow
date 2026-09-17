@@ -1160,6 +1160,14 @@ hook resolves such a path against each session's workspace, so no single file an
 and inspecting the one the diagnosis would resolve would report an unrelated file as the hook's
 own. Nothing downstream of those settings is read either.
 
+That judgment uses the same expansion the hook applies, so a `~` path is absolute here too;
+calling it relative would hide a working configuration and every cell below it.
+
+The interpreter the registration names is its own cell beside the script. A virtual environment
+that moved after installation leaves the script in place and the interpreter gone, and then the
+host cannot start the adapter at all: no decision, no journal entry, and a registration that
+still looks correct.
+
 A matcher is part of a registration. Installation only ever appends an unconditional group and
 the hook file's own installer treats only that group as already installed, so an identical
 command sitting under a matcher is a duplicate: appending would add a second registration beside

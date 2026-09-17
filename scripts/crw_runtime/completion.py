@@ -1034,10 +1034,18 @@ def write_configuration(path, wanted, *, apply=False):
     if outcome == CONFIG_DIFFERS:
         answer["detail"] = ("settings are already installed and say something else; this command"
                             " does not overwrite them")
-        answer["differingFields"] = sorted(
-            field for field in set(wanted) | set(found.value or {})
-            if (found.value or {}).get(field) != wanted.get(field)
-        )
+        if isinstance(found.value, dict):
+            answer["differingFields"] = sorted(
+                field for field in set(wanted) | set(found.value)
+                if found.value.get(field) != wanted.get(field))
+        else:
+            # A file holding valid JSON that is not an object has no fields to compare, and
+            # asking it for some is a traceback where a modelled refusal was promised. The
+            # refusal stands; what it cannot carry is a field list.
+            answer["differingFields"] = None
+            answer["detail"] = ("settings are already installed and hold a "
+                                + type(found.value).__name__ + " rather than an object; this"
+                                  " command does not overwrite them")
         return answer
     if not apply:
         answer["outcome"] = CONFIG_WOULD_CREATE
@@ -1225,7 +1233,11 @@ def status(codex_home=None, environ=None, event=EVENT):
     # that used an override embedded the resolved path in its command, and this command has no
     # reason to be running under the same environment.
     carried = [entry["settings"] for entry in (ours or []) if entry.get("settings")]
-    relative = [named for named in carried if not os.path.isabs(named)]
+    # Judged with the expansion the hook itself applies, because a ~ path is absolute once the
+    # hook opens it. Calling it relative here would hide a working configuration and every cell
+    # downstream of it.
+    relative = [named for named in carried
+                if not os.path.isabs(os.path.expanduser(named))]
     if relative:
         # Not settled here. A relative path in a registration is resolved by the hook against
         # each session's workspace, so there is no one file to inspect, and inspecting the one
@@ -1236,18 +1248,37 @@ def status(codex_home=None, environ=None, event=EVENT):
             + ", which the hook resolves against each session's workspace; no single file"
               " answers for it and none was read"), None
     else:
-        path = Path(carried[0]) if carried else configuration_path(home, environ)
+        path = _settled(carried[0]) if carried else configuration_path(home, environ)
         source = ("the registered command" if carried
                   else "this command's own resolution; no registration named one")
         config, failed, detail, found = read_configuration(path)
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
+    interpreter = _cell(NOT_READ, "no registration for this adapter was found to check")
     if ours:
         probes = [presence(entry["target"], "the adapter script") for entry in ours]
         worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
         target = _cell((worst or probes[0])["value"], (worst or probes[0])["evidence"],
                        commands=[entry["command"] for entry in ours],
                        probes=probes)
+        # Its own cell, because the script being there says nothing about the program that has
+        # to run it. A virtual environment that moved after installation leaves the script in
+        # place and the interpreter gone, and then the host cannot start the adapter at all: no
+        # decision, no journal entry, and a registration that still looks correct.
+        runners = [(registered_argv(entry["command"]) or [None])[0] for entry in ours]
+        named = [word for word in runners if word]
+        if named:
+            checks = [presence(word, "the registered interpreter") for word in named]
+            unusable = next((check for check in checks
+                             if check["value"] != reading.PRESENT), None)
+            if unusable is None:
+                unusable = next((_cell(reading.UNREADABLE,
+                                       "the registered interpreter is not executable",
+                                       path=word)
+                                 for word in named if not os.access(word, os.X_OK)), None)
+            interpreter = unusable or _cell(reading.PRESENT,
+                                            "the registered interpreter is there and executable",
+                                            interpreters=named)
 
     if failed is not None:
         settings = _cell(failed, detail or "", configuration=str(path),
@@ -1281,6 +1312,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         "event": event,
         "registration": registration,
         "registeredCommandTarget": target,
+        "registeredInterpreter": interpreter,
         "hostTrust": _cell(NOT_READ, "whether the host loads and trusts these identities is"
                                      " recorded in its own state and is not read here"),
         "configuration": settings,

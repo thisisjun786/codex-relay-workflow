@@ -828,6 +828,55 @@ class OneAdapterIsRegisteredOnce(unittest.TestCase):
         self.assertEqual(found["relayExecutable"]["value"], completion.NOT_READ,
                          "nothing downstream is read from settings that could not be located")
 
+    def test_a_tilde_settings_path_is_absolute_once_the_hook_opens_it(self):
+        """Calling it relative here would hide a working configuration and every cell below it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            document = completion.configuration(
+                relay=str(home / "codex-session-relay"), marker_root=str(home / "marker"),
+                journal_root=str(home / "journal"), codex_home=str(home), issue="CRW-37")
+            named = Path.home() / ".crw37-tilde-settings-test.json"
+            named.write_text(json.dumps(document), encoding="utf-8")
+            try:
+                command = (completion.command_for(sys.executable, str(ENTRY_POINT))
+                           + " '~/.crw37-tilde-settings-test.json'")
+                (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                    {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                    encoding="utf-8")
+                found = completion.status(codex_home=temporary, environ={})
+            finally:
+                named.unlink()
+        self.assertEqual(found["configuration"]["value"], reading.PRESENT)
+        self.assertEqual(found["relayExecutable"]["value"], reading.PRESENT,
+                         "and the cells below it were read rather than skipped")
+
+    def test_status_probes_the_interpreter_the_registration_names(self):
+        """A virtual environment that moved leaves the script in place and the interpreter gone:
+        the host cannot start the adapter at all, and the registration still looks correct."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            command = completion.command_for(str(home / "vanished-python"), str(ENTRY_POINT))
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredCommandTarget"]["value"], reading.PRESENT,
+                         "the script is there")
+        self.assertEqual(found["registeredInterpreter"]["value"], reading.ABSENT,
+                         "and the program that has to run it is not")
+
+    def test_a_working_registration_reports_both(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            command = completion.command_for(sys.executable, str(ENTRY_POINT))
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredCommandTarget"]["value"], reading.PRESENT)
+        self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT)
+
 
 class AnInterpreterHasToBeOne(unittest.TestCase):
     def test_an_executable_that_is_not_python_is_refused(self):
@@ -1089,6 +1138,20 @@ class TheWriterSatisfiesItsOwnReader(unittest.TestCase):
         self.assertFalse(answer["wrote"])
         self.assertFalse(path.exists())
         self.assertNotIn(completion.CONFIG_WOULD_NOT_BE_READABLE, completion.CONFIG_SETTLED)
+
+    def test_an_existing_file_that_is_not_an_object_refuses_rather_than_raising(self):
+        """A modelled refusal was promised for pre-existing settings; asking a list for its
+        fields is a traceback instead."""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / completion.CONFIG_NAME
+            path.write_text(json.dumps(["x"]), encoding="utf-8")
+            wanted = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
+                                              environ={})
+            answer = completion.write_configuration(path, wanted, apply=True)
+        self.assertEqual(answer["outcome"], completion.CONFIG_DIFFERS)
+        self.assertIsNone(answer["differingFields"])
+        self.assertIn("list", answer["detail"])
+        self.assertFalse(answer["wrote"])
 
     def test_a_write_that_could_not_be_read_back_does_not_settle(self):
         """The write landed; what is in the file now was not confirmed to be it. Registering a
