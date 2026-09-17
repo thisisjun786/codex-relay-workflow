@@ -1,0 +1,58 @@
+{
+  "_comment": "The one compatibility definition (OPS-1.1). Installation and diagnosis both read this file, and nothing else carries a copy. Every derivable field is re-derived by the verify-definition command, which CI runs. Host facts - installed locations, interpreters, measured points - are not here: they are a private receipt under OPS-3.2 and live in the host record outside this repository.",
+  "definitionVersion": 1,
+  "repositoryCommit": null,
+  "repositoryCommitNote": "Deliberately absent. A commit SHA recorded inside the commit it names is self-referential and instantly stale, so it is measured at run time into the host record instead.",
+  "components": [
+    {
+      "component": "codex-thread-bridge",
+      "module": "codex_thread_bridge",
+      "consoleScript": "codex-thread-bridge",
+      "subdirectory": "packages/codex-thread-bridge",
+      "packageLocation": "packages/codex-thread-bridge/src/codex_thread_bridge",
+      "subdirectoryTree": "907c2465003caa10e175a0665062fc39e544ba01",
+      "packageTree": "1af0985e2a2e41ec67276b85ceef6fa1889f046f",
+      "sourceDigest": "a4d6a5a9f078ce80a15abc856c6f15df0a040b6cde169ed9156484c418fbd95a",
+      "version": "0.1.0",
+      "requiresPython": ">=3.11",
+      "licencePath": "packages/codex-thread-bridge/LICENSE",
+      "exerciseScript": "packages/codex-thread-bridge/scripts/check_connection.py",
+      "upstream": {
+        "remote": "https://github.com/saidelike/codex-thread-bridge",
+        "revision": "bb684f35b4919a82b09d2290dc26623716803d62",
+        "tree": null,
+        "licence": "MIT",
+        "status": "recorded",
+        "note": "The import brought source, not history, so the upstream tree hash is not derivable in this checkout and stays unmeasured. The revision is recorded from the importing pull request and is required to appear in packages/README.md, which OPS-1.5 keeps as the retained provenance narrative."
+      },
+      "measuredPoints": [],
+      "status": "unmeasured",
+      "statusMeaning": "This repository has exercised no combination. A host reaches own only after the measure command records a point in the private host record."
+    },
+    {
+      "component": "codex-session-relay",
+      "module": "codex_session_relay",
+      "consoleScript": "codex-session-relay",
+      "subdirectory": "packages/codex-session-relay",
+      "packageLocation": "packages/codex-session-relay/src/codex_session_relay",
+      "subdirectoryTree": "9607ef166355e9af5b54087c3554b1cd735b9b7c",
+      "packageTree": "e4620b29fcfcb73b1c9e03ee1736fe7947f3f507",
+      "sourceDigest": "c616f83cb2f2653264cff07bd96e8ce4ca7401081e34e8e74c1555875db51726",
+      "version": "0.1.0",
+      "requiresPython": ">=3.11",
+      "licencePath": "LICENSE",
+      "exerciseCommand": "doctor",
+      "upstream": {
+        "remote": "none",
+        "revision": "d3394038c108022dc0ff48d48ec878094c67e6df",
+        "tree": null,
+        "licence": "MIT",
+        "status": "recorded",
+        "note": "No remote exists for the originating checkout, so its own revision is the provenance anchor under OPS-1.5. It carries no separate licence file: it is this repository own work under the root MIT licence."
+      },
+      "measuredPoints": [],
+      "status": "unmeasured",
+      "statusMeaning": "This repository has exercised no combination. A host reaches own only after the measure command records a point in the private host record."
+    }
+  ]
+}
