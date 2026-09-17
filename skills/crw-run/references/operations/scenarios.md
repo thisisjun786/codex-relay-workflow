@@ -533,7 +533,8 @@ and the separation between entering review, being merge ready, and reporting an 
 
 ## S24 Parent coordination finishes without a local implementation diff
 
-Observed: a default CRW parent has no CXC implementation FSM. Every child in its agreed
+Observed: a CRW Loop parent has a verified active coordination goal on a host with
+compatible goal/continuation hooks, and no CXC implementation FSM. Every child in its agreed
 scope has delivered verified results, required PRs have landed, and no owned work or
 receipt remains pending. Its own checkout is unchanged. Separately, another parent
 explicitly chose CXC and has a blocked FSM with no supported transition to CRW.
@@ -541,8 +542,9 @@ explicitly chose CXC and has a blocked FSM with no supported transition to CRW.
 Clauses: OPS-8.1, OPS-8.4, OPS-10.1; lifecycle decisions belong to
 [crw-loop](../../../crw-loop/SKILL.md).
 
-Action: the default CRW parent completes its coordination record on the verified scoped
-deliveries, without manufacturing a parent-local code change. Child completion alone is
+Action: the CRW Loop parent completes its coordination record and matching host goal
+on the verified scoped deliveries, then reads back completion, without manufacturing
+a parent-local code change. Child completion alone is
 insufficient if any required result, correction, receipt or integration remains unresolved.
 The explicit CXC parent retains its installed lifecycle and cannot start CRW execution
 while its transition is unsupported. Record the transition blocker and exact supported
@@ -550,3 +552,47 @@ resume requirement; do not reset the FSM, edit phases or report a new loop as ar
 
 Preserved: child identities and delivery evidence, the distinct parent completion boundary,
 and the existing CXC parent's binding, goalplan, pending obligations and recovery evidence.
+
+## S25 Run and Loop have different return boundaries
+
+Observed: the user submits Run with a project link and no automatic-continuation
+request. A and B are ready; C depends on A. In another run the user explicitly submits
+Loop for the agreed A/B/C scope and its goal/hook preflight passes.
+
+Clauses: OPS-8.1, OPS-9.2; operation selection belongs to
+[crw-run](../../../crw-run/SKILL.md) and goal ownership to
+[crw-loop](../../../crw-loop/SKILL.md).
+
+Action: Run records A/B as the current batch, executes them within capacity and
+verifies their authorized delivery, then reports C as the next action. It creates no
+parent goal and does not dispatch C by default. Loop reads/creates or reuses its
+matching parent goal and repeats Run; when A lands and capacity is available it can
+start C without waiting for B. A pass's return does not finish Loop. Dispatch-only
+Run can hand off pending children; neither that handoff nor status-only Run promises
+or requests future wake-ups. Explicitly wider delivery scope is still honored.
+
+Preserved: one project parent, existing issue children and PRs, requested batch/merge
+limits, child CXC defaults, and the difference between parent and child goal authority.
+
+## S26 Goal conflicts and unsupported continuation do not become new goals
+
+Observed: Loop is requested. Variants are: a matching active goal; a matching blocked
+goal without an exposed resume control; a different unfinished goal; unreadable goal
+state; explicit no-goal; and a fresh parent whose Stop hook routes all active native
+goals into CXC implementation phases. An active compatible Loop later encounters its
+first blocker, with another independent issue still ready.
+
+Clauses: OPS-8.1, OPS-8.2, OPS-8.4; goal decisions belong to
+[Parent goal lifecycle](../../../crw-loop/references/parent-goal.md).
+
+Action: reuse only the matching active goal. Preserve the blocked/different/unreadable
+goal and resolve its specific resume/conflict/read requirement; do not create over it.
+No-goal prevents activation, and Run is used only if separately covered by the request.
+The incompatible Stop hook blocks activation before goal creation or new worker dispatch;
+record the supported host fix, without disabling hooks or faking PABCD. In the compatible
+active run, continue independent ready work; do not mark the whole goal blocked on a
+first failure. Use the real host threshold and observations for any eventual blocked
+transition. A paused goal resumes only through authorized supported controls.
+
+Preserved: existing goal identity/status, all child ownership, explicit user limits,
+CXC state and guards, and the difference between a created goal and observed auto-resume.

@@ -1,6 +1,6 @@
 interface:
   display_name: "CRW Loop"
-  short_description: "한 프로젝트의 고정 부모로 병렬 배정·검증·머지를 끝까지 조율"
+  short_description: "프로젝트 부모 목표를 생성·복원하고 배정·검증·머지를 자동 반복"
   default_prompt: "$crw-loop [Linear 프로젝트 링크]"
 policy:
   allow_implicit_invocation: true
