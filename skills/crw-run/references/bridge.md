@@ -28,6 +28,19 @@ that method; it is never recorded as a capability absent everywhere, and it neve
 justifies falling back to a different action. Never report a bridge gap as a host
 gap, and never claim host support this bridge has not established.
 
+There is a third question, and it is the one a dated reference cannot answer: which
+build is actually installed. `exposure` describes the bridge whose `get_capabilities`
+you called. That is not necessarily the version described here, and not necessarily
+the version the host registered when it last started its MCP servers. A path this
+document describes can be missing from the running server simply because the installed
+build predates it, and from the caller's side that looks identical to a bridge
+withholding it on purpose. So read `exposure` from the live session rather than from
+this file, and when a path is unavailable separate the three causes before reporting
+one: not exposed by the installed build, not supported by the connected host, or
+exposed and supported but refused for this particular request. Which build is installed
+is its own claim with its own evidence, classified under
+[OPS-2.2](operations.md#ops-22-five-classes-and-their-rules).
+
 ## Reach a task that is already working
 
 A running peer is instructed, not waited out. Four actions stay distinct: a
@@ -177,6 +190,14 @@ the same request_id; a new id for the same intent is not a retry. A receipt reta
 before these arguments were required is reconciled with `get_operation`, which returns
 the same receipt bytes, rather than replayed through the tool or replaced.
 
+The refusal for an omitted pair is `execution_setting_missing`, and it is raised before
+any RPC is issued, so nothing was created and there is no ledger row to reconcile; that
+is why the same request_id stays usable rather than being burned. The retained-receipt
+rule has a sharper reason than tidiness. The replay lookup runs BEFORE that
+authorization, so invoking the tool again under a retained id returns the old receipt
+without re-checking the pair that receipt predates. Reconcile such a receipt; do not
+re-invoke it.
+
 Compare actual cwd, workspace roots, model, reasoningEffort, approvalPolicy, and
 the full sandbox/permission response. Do not infer OCX routing from a model ID
 or the generic modelProvider label. Missing served-provider proof stays unknown.
@@ -232,6 +253,13 @@ Do not recommend “empty creation, then resume” as a verified workflow.
 Choose one stable request_id per intended mutation and keep it across uncertainty.
 Persist the exact arguments privately if needed for replay. Reusing an ID with
 changed arguments is an error; a new ID is not a harmless retry.
+
+That ID is the only identifier that exists before the task does, which is what makes it
+the management marker the coordinator records. A creation that returns normally hands
+back the thread ID in the same receipt, so there is no separate acceptance ID to
+resolve afterwards. A creation whose response is lost is the case that matters: it can
+leave even the thread ID unknown, and the request_id is then the only route back to
+whatever was created.
 
 - `accepted`: requested API steps returned; the task may still be running.
 - `failed`: inspect the actual rejection and any retained worktree/task/turn IDs.

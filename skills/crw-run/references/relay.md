@@ -129,6 +129,16 @@ it is nested at `creation.thread.environments`, so read it from there. When the 
 the key a later resume is checked against. Never ask a worker to echo its own settings back, and
 never widen a task's permissions to make a later send connect.
 
+Carry that value WHOLE. The later check is object equality against what the resume reports, so a
+record holding only the profile's id can never match: the comparison sees an id-shaped object
+against the full one and reports `UNVERIFIABLE_PERMISSION_PROFILE` with both sides, on a task
+whose permissions never changed at all. Copy the object the response gave you, including fields
+that look like they carry nothing, because an absent `extends` and an `extends` that is null are
+different objects to an equality check. The bridge offers no help here and is not meant to: it
+passes the profile through without interpreting it and leaves it out of the settings it compares,
+so it arrives raw at `creation.activePermissionProfile` or `resumed.activePermissionProfile`, and
+inside `permissionReceipt` on the worktree path. Measured against the version named above.
+
 `--parent-settings` and `--child-settings` are optional. Leaving them off still registers the
 relationship, and either side can be recorded afterwards with
 `settings-record --task <id> --settings @file.json`. What is validated is the RECORD, so an

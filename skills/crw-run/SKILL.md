@@ -326,6 +326,20 @@ baseline SHA. For non-PR work include the permitted working location and input
 source revision; add the delivered output identity when the result exists. Do not put raw
 credentials or full private prompts in public project records.
 
+The request ID and the task ID are not two names for one thing, and the record keeps
+both because they become available at different moments. The request ID is chosen
+BEFORE the creation call, so it is the one handle that already exists while the task
+does not; it is the management marker, it travels in the same full work request as the
+assignment, and it is what identifies this creation afterwards. The task ID is the
+native identity that reuse, registration and every later mutation route on, and it
+exists only once creation has actually returned it. Join the two from the creation
+receipt. Where that receipt never arrived, resolve the marker through the transport's
+own operation lookup and adopt whatever it created, rather than issuing a second
+creation under a new marker: a lost response can leave even the task ID unknown, and
+the marker is then the only thing that can find it. Recovery under the same marker is
+the rule; [Bridge launch and recovery](references/bridge.md#receipts-and-safe-recovery)
+holds the mechanism for this transport.
+
 Where a relay holds the assignment, register the relationship with its authorized
 scope, record BOTH the parent's and the child's authorized execution settings from
 the actual creation receipts, and record the issue's criteria as the canonical set
@@ -373,6 +387,8 @@ Describe evidence separately:
 | Goal paused | The goal read back as paused; it does not establish that a running turn stopped |
 | Requested settings applied | Actual returned settings, not prompt text |
 | CXC Loop active | Child's active goal and current goalplan/FSM evidence |
+| Agreed workflow actually followed | That task's own recorded phases, plan and evidence for this assignment. A skill-loading line, an acceptance receipt, or the instruction quoted back is an indication of receipt, not of compliance |
+| Child reused its own existing goal | That task's current goal and goalplan read back under its own identity. A second goal opened for the same assignment is a duplicate, not a resume |
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
 | Pull request review handled by the child | Per-finding trail on that PR: the finding, the commit that addressed it, and the recheck |
 | Child reports normal completion | Required checks and reviews finished on the current head, blocking findings resolved; a missing mandatory review or check is blocked, not complete |
@@ -435,6 +451,15 @@ only after its required contracts/revisions are verified and available in its
 checkout and it belongs to the agreed project scope or explicit narrower assignment.
 This is the same rule in Run and Loop; a goal changes persistence, not scope.
 
+Name what the assignment is doing in the vocabulary its contract already defines,
+rather than in words invented for the report. Ordinary progress, waiting on input, a
+stop, and a request for verification are conditions the parent has to be able to tell
+apart, and the contract holding the assignment is what supplies the words: where a
+relay holds it, [assignment state](references/relay.md#verify-the-current-revision) is
+that vocabulary. A condition the contract has no state for is reported as a named
+blocker against the state it does have, never as an invented state and never folded
+into a neighbouring one, under [OPS-6.1](references/operations.md#ops-61-six-states-that-never-imply-one-another).
+
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's
 actual merge, intended repository/branch and landing revision. For legacy multi-PR
@@ -450,6 +475,13 @@ reviewed revision, expected and observed behavior, reproducer/evidence, required
 outcome, and focused verification. For missing proof, request that verification
 without prescribing an unsupported code change.
 
+Carry the [restoration block](references/task-packet.md#restoration-block) with every
+correction. A running task has been working for a while, may have been compacted, and
+is being addressed by a coordinator whose context it cannot see, so the facts it needs
+to resume correctly are stated again rather than assumed to have survived. That is the
+same reason the first request named the workflow: naming it once, at creation, is not
+the same as it still being in force ten turns later.
+
 Where a relay holds the assignment, the needs-changes verdict IS the correction: it
 opens the next execution generation and queues the revision request to the same
 registered child, carrying the superseded event, its digest, and the per-criterion
@@ -458,8 +490,10 @@ nobody can act on. Do not create a task, a second relationship, or a parallel
 message path to deliver it. Without a relay, send the packet as described above.
 
 Refresh the task's identity, ownership, current turn, checkout, and prior
-correction receipts before sending. Reuse its agreed model, effort, permissions,
-and delivery scope. Route by what the task is actually doing: an idle task takes the
+correction receipts before sending. Reuse its agreed model, effort, workflow,
+permissions, and delivery scope. Of those the workflow is the one only the message can
+carry, because a transport transmits model and effort as settings and has no field for
+it. Route by what the task is actually doing: an idle task takes the
 ordinary message path, and a task whose turn is running is steered into that turn
 using its verified thread and active turn id. A transport that refuses a message to
 an active task is protecting its turn, and that is a reason to steer rather than a
@@ -483,6 +517,15 @@ merge, and deployment under their existing authorization.
 On resume, read the coordination record and refresh its known task IDs before
 creating anything. Recover after uncertain delivery; do not duplicate a writer.
 Do not restart a stopped task merely to inspect it.
+
+A resume this task publishes into an existing child carries the same
+[restoration block](references/task-packet.md#restoration-block) a correction does,
+for the same reason: it is a message into a context this task cannot read. Two
+recoveries are easy to write as one event and are not. This coordinator recovering its
+own lost context is the paragraph above, done from the coordination record. A child
+recovering its own is that task's affair, handled by its own workflow from its own
+durable state; the coordinator supplies the pointers and the assignment facts it holds
+and does not reconstruct the child's plan on its behalf.
 
 A final update gives task links/IDs, requested and verified settings, actual
 progress, review outcome, and the next actionable dependency. Use the host's

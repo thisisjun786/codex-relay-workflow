@@ -64,6 +64,10 @@ Context:
 - Coordinator: [task ID; context only, never a CXC session binding]
 - Responsible child: [existing independent task/host ID, or newly created task from the launch receipt]
 - Assignment route: [reuse / create; current writer state and authorization source]
+- Management marker: [the stable creation request id this launch was issued under.
+  It is chosen before creation, so unlike the task id it exists even when the creation
+  response is lost; record it so an uncertain creation resolves back to this task
+  instead of producing a second one]
 - Relay assignment, when one holds this issue: [shared state directory, set as BOTH
   `--state` and `CODEX_SESSION_RELAY_STATE` on every process that reaches the socket,
   and the exact issue identity registration was given, not a display key that differs from it;
@@ -138,6 +142,10 @@ Execution:
   creation tool's supported skill field, and run this bounded objective under it and
   `cxc-pabcd` using your own session binding, host goal, and goalplan.
   If a required loop capability is absent, report the exact gap before starting.
+  On a correction or a resume that goal and goalplan already exist. Confirm your own
+  identity and current state first, then continue them. Opening a second goal for the
+  same assignment is a duplicate rather than a resume, and the coordinator reads it
+  as one.
 - [For an explicit non-Loop or no-goal alternative:] omit that invocation and keep
   the agreed workflow. Assignment alone does not create a goal or activate a Loop.
 - Apply the agreed permissions and delivery scope. Do not modify global model or
@@ -202,6 +210,43 @@ Relay, if used: [exact issue identity, scope reference, real coordinator/child I
   and digest under an authorized root; current generation/receipt outcome]
 Stop after this issue; do not start another issue or create an empty PR.
 ```
+
+## Restoration block
+
+Every message into a task that is already running carries this block: a needs-changes
+correction, a review fix, a resume the coordinator publishes after handling something
+on the task's behalf, and a restart after that task was compacted. The first work
+prompt stated the assignment once. Ten turns, one compaction and three review rounds
+later, none of it is reliably still in the task's context, and a correction that
+assumes otherwise is answered from whatever the task still happens to remember.
+
+Keep it short. It restates what the COORDINATOR holds and what the task cannot
+reconstruct alone:
+
+- The skills this task runs under, as pointers to the installed skill, not their text.
+  On context loss the task re-reads the owning skill from those pointers; it does not
+  reload every skill it once had, and an unrelated reference is not part of recovery.
+- The effective workflow, restated. A transport carries model and effort as settings
+  and has no field for the workflow, so a send that omits it has silently dropped it.
+- Assignment identity: the issue, this task's own id, and where a relay holds the
+  assignment its relationship id and current generation, read from the assignment
+  rather than copied from the coordinator's own state.
+- The delivery artifact as it stands now: pull request URL, base and head, and which
+  required checks and reviews are outstanding on that head.
+- The unresolved findings, each with what would settle it.
+- The single next action this message is asking for.
+
+What the block does NOT carry is the task's own plan, ledger, phase or goal state. That
+belongs to the task and to its own workflow skills, it is durable on that task's side,
+and this repository deliberately does not define its shape
+([OPS-10.3](operations.md#ops-103-where-the-packet-and-report-formats-are-defined)).
+The block points at it and asks the task to continue from it. A coordinator that
+reconstructs a child's plan for it has replaced the child's record with a guess, and
+the child will trust the guess.
+
+The block is context for resuming work already authorized. It requests no new approval,
+asks for no readiness-only turn spent confirming receipt, and re-opens nothing the
+assignment already settled.
 
 ## Coordination record
 
