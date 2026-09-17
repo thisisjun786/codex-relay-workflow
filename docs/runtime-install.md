@@ -526,6 +526,19 @@ proof; a file somebody else left is left alone.
 | A settled claim, and the environment is in use | Already installed. Reported, nothing rebuilt |
 | A settled claim, and nothing selects it any more | Kept. It is a runtime that was promoted once, and a process may still be running out of it |
 | An unsettled claim for an environment that IS selected | An interrupted promotion. Finished rather than rebuilt |
+| A lock held with no claim written | A run between taking the lock and writing its claim. Refused, nothing touched |
+
+A directory taken over with `rmdir` first has this command's own two files cleared from it, and
+only those two. A run whose claim write failed used to leave its lock file behind, and `rmdir`
+refuses a directory that still holds one — so the deterministic destination was blocked for ever,
+which is the failure this whole path exists to remove, arriving by a narrower door. Such a failure
+now releases the directory it created like any other.
+
+Finishing an interrupted promotion asks a narrower question about the link than an ordinary
+promotion does. It cannot ask for agreement, because a resume necessarily finds the pointer
+disagreeing with the selection — that IS the interruption it repairs. It asks instead whether the
+link still names a runtime this host record accounts for, and refuses one repointed by hand while
+the run was dead.
 
 Liveness is the lock and not the recorded process id, for the reason the relay already recorded
 about its own supervisor: inside a container sharing a kernel, the same process id under the same
@@ -555,8 +568,18 @@ reconciled. Three readings answer that, each filling only its own cell:
 | Cell | The reading that answers it |
 | --- | --- |
 | `daemon` | the relay's `service status`, whose `running` is decided by the lock a supervisor holds |
-| `inFlight` | the relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
+| `inFlight` | whether a store is there at all, then the relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
 | `storeTables` | the store's own table inventory, read read-only through the relay's `read_only_rows` |
+
+The in-flight cell reads twice, and the order is the point. The relay reports contents
+unavailable both for a store that is missing and for one it cannot read, and those are opposite
+answers here: an absent store has no open attempt, an unreadable one has an unknown number.
+Without the first reading the cell could not say "established absent", so a first install on a
+clean host refused for ever while the schema cell, which does look at the path, answered
+`NO_STORE` about the very same store. Two readings of one cell's own question is not a cell
+borrowing its neighbour's answer; it is the ordered observation the record reader already makes,
+where absence is settled by looking before anything is opened. Two readings that disagree are
+still no answer.
 
 The swap proceeds only when the daemon is established stopped, the open attempts are established
 zero, and the store's tables are established compatible. Any cell that could not be read decides
@@ -639,6 +662,16 @@ taken in the critical section on a value read outside it, and each was reported 
 because nothing was looking at the class. `PROMOTION_FRESH` names the set and a check fails any
 member read there without being read fresh there, so a fourth fails a test instead of arriving as
 another round.
+
+That lock is an advisory lock on one host-wide file beside the host record, and both halves of
+that are corrections. The lock this command uses for the short staging decision excludes by
+FILENAME on a path the caller derives, and decides validity by a 300-second modification time.
+Neither survives a promotion: two installs with different destinations derived different pointer
+paths, locked different files and never met, and a promotion that outstayed the window had its
+lock unlinked by a waiter while it was still working — because excluding by filename gives the
+holder's open descriptor no protection at all. Three reported defects, one set drawn wrong. The
+promotion lock is created once, never unlinked, and released by the operating system when its
+owner dies however it dies.
 
 Holding one lock across both writes is what keeps two runs of this command from interleaving there
 and finishing with the record selecting one runtime while the pointer reaches another. It is a lock
