@@ -5346,10 +5346,11 @@ class SwapGateTests(unittest.TestCase):
     """OPS-4.4 read as three cells. Two of the three verdicts keep the installation."""
 
     def _cells(self, *, running=False, open_attempts=0, store=None, candidate=None):
+        same = {"a": "CREATE TABLE a (x TEXT)", "b": "CREATE TABLE b (y TEXT)"}
         store = store if store is not None else {"readable": True, "present": True,
-                                                 "tables": ["a", "b"], "dbPath": "/d"}
+                                                 "tables": dict(same), "dbPath": "/d"}
         candidate = candidate if candidate is not None else {"readable": True,
-                                                             "tables": ["a", "b"]}
+                                                             "tables": dict(same)}
         return {
             "daemon": swapgate.daemon_cell(
                 {"ok": True, "payload": {"running": running}, "command": ["service", "status"]}),
@@ -5374,22 +5375,49 @@ class SwapGateTests(unittest.TestCase):
 
     def test_a_store_holding_tables_the_candidate_does_not_declare_blocks(self):
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": ["a", "b", "verdicts"]},
-                            candidate={"readable": True, "tables": ["a", "b"]})
+                                   "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                              "b": "CREATE TABLE b (y TEXT)",
+                                              "verdicts": "CREATE TABLE verdicts (v TEXT)"}},
+                            candidate={"readable": True,
+                                       "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                                  "b": "CREATE TABLE b (y TEXT)"}})
         answer = swapgate.decide(cells)
         self.assertEqual(cells["storeTables"]["answer"], swapgate.NARROWS)
         self.assertEqual(answer["verdict"], swapgate.BLOCKED)
         self.assertIn("verdicts", cells["storeTables"]["detail"],
                       "the refusal names the table that would be stranded")
 
-    def test_a_candidate_that_adds_tables_is_allowed_and_reported_as_its_own_answer(self):
+    def test_a_candidate_that_adds_tables_refuses_and_says_which_tables(self):
+        """Additive is still a schema change. The relay runs its whole DDL on every write-open,
+        so allowing this would have the new daemon perform the migration OPS-4.5 reserves for
+        its own issue with its own backup."""
         cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
-                                   "tables": ["a"]},
-                            candidate={"readable": True, "tables": ["a", "b"]})
+                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                            candidate={"readable": True,
+                                       "tables": {"a": "CREATE TABLE a (x TEXT)",
+                                                  "b": "CREATE TABLE b (y TEXT)"}})
         self.assertEqual(cells["storeTables"]["answer"], swapgate.EXTENDS)
-        self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.ALLOWED)
-        self.assertNotEqual(cells["storeTables"]["answer"], swapgate.AGREES,
-                            "the new one knowing more is not the same fact as nothing differing")
+        self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.BLOCKED)
+        self.assertIn("b", cells["storeTables"]["detail"])
+        self.assertNotEqual(cells["storeTables"]["answer"], swapgate.NARROWS,
+                            "adding is reported as its own answer, not as a downgrade")
+
+    def test_a_table_defined_differently_refuses_even_though_the_names_agree(self):
+        """Names alone agreed while a column differed, which is the schema change a name
+        comparison cannot see."""
+        cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
+                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                            candidate={"readable": True,
+                                       "tables": {"a": "CREATE TABLE a (x TEXT, y INT)"}})
+        self.assertEqual(cells["storeTables"]["answer"], swapgate.DIFFERS)
+        self.assertEqual(swapgate.decide(cells)["verdict"], swapgate.BLOCKED)
+
+    def test_whitespace_is_not_a_schema_change(self):
+        cells = self._cells(store={"readable": True, "present": True, "dbPath": "/d",
+                                   "tables": {"a": "CREATE TABLE a (x TEXT)"}},
+                            candidate={"readable": True,
+                                       "tables": {"a": "CREATE  TABLE   a (x TEXT)"}})
+        self.assertEqual(cells["storeTables"]["answer"], swapgate.AGREES)
 
     def test_no_store_is_absence_and_not_agreement(self):
         cells = self._cells(store={"readable": True, "present": False, "dbPath": "/d",
@@ -5405,9 +5433,10 @@ class SwapGateTests(unittest.TestCase):
                 {"ok": True, "payload": {"contents": {"available": False,
                                                       "detail": "not readable"}}})},
             "storeTables": {"storeTables": swapgate.tables_cell(
-                {"readable": False, "detail": "denied"}, {"readable": True, "tables": ["a"]})},
+                {"readable": False, "detail": "denied"},
+                {"readable": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}})},
             "candidate tables": {"storeTables": swapgate.tables_cell(
-                {"readable": True, "present": True, "tables": ["a"]},
+                {"readable": True, "present": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}},
                 {"readable": False, "detail": "the candidate could not be asked"})},
         }
         for label, override in unreadable.items():
@@ -5426,8 +5455,9 @@ class SwapGateTests(unittest.TestCase):
 
     def test_an_established_refusal_is_named_even_when_another_cell_was_unread(self):
         cells = dict(self._cells(running=True),
-                     storeTables=swapgate.tables_cell({"readable": False, "detail": "denied"},
-                                                      {"readable": True, "tables": ["a"]}))
+                     storeTables=swapgate.tables_cell(
+                         {"readable": False, "detail": "denied"},
+                         {"readable": True, "tables": {"a": "CREATE TABLE a (x TEXT)"}}))
         answer = swapgate.decide(cells)
         self.assertEqual(answer["verdict"], swapgate.BLOCKED)
         self.assertTrue(answer["blockedBy"], "the actionable blocker is still named")
@@ -5595,7 +5625,9 @@ class UpdateRecoveryTests(unittest.TestCase):
                         "payload": {"contents": {"available": True, "openAttempts": 0}}}
             return {"ok": True, "command": list(command), "payload": {"running": False}}
 
-        tables = {"readable": True, "present": True, "tables": ["relationships", "attempts"],
+        schema = {"relationships": "CREATE TABLE relationships (relationship_id TEXT PRIMARY KEY)",
+                  "attempts": "CREATE TABLE attempts (event_id TEXT)"}
+        tables = {"readable": True, "present": True, "tables": dict(schema),
                   "dbPath": str(host.store)}
         if gate == "running daemon":
             def fake_relay(command, **kwargs):                        # noqa: F811
@@ -5615,9 +5647,9 @@ class UpdateRecoveryTests(unittest.TestCase):
                     return {"ok": True, "command": list(command),
                             "payload": {"contents": {"available": True, "openAttempts": 0}}}
                 return {"ok": False, "command": list(command), "unreadable": "no such binary"}
-        candidate_declares = ["relationships", "attempts"]
+        candidate_declares = dict(schema)
         if gate == "store would be downgraded":
-            candidate_declares = ["relationships"]
+            candidate_declares = {"relationships": schema["relationships"]}
 
         patches = [
             mock.patch.object(runtime_install, "emit", side_effect=emitted.append),
@@ -5875,6 +5907,152 @@ class IdempotentRepeatTests(unittest.TestCase):
                          "the identity reported is the one that is there, not the next slot")
         self.assertEqual(after_first, after_second, "the second run wrote nothing")
         self.assertEqual(len(inventory), 1, "one hook identity, however many times it is run")
+
+
+
+class ClaimOwnershipTests(unittest.TestCase):
+    """The two defects an independent review found here were both about deleting things.
+
+    Both are the same shape: something that looked like proof of ownership was not. The lock was
+    taken on a file that was then replaced by rename, and the claim was any readable JSON.
+    """
+
+    def test_writing_the_claim_does_not_release_the_lock(self):
+        """The lock follows the inode, so locking a file that is later replaced by rename
+        unlocks it silently. That reported a live build as abandoned, and the next run deleted
+        the directory somebody was still building."""
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            environment.mkdir()
+            held = staging.Held(environment).take()
+            try:
+                self.assertEqual(staging.owner_liveness(environment)[0], staging.LIVE)
+                # Production order: take the lock, then write the claim.
+                staging.write_claim(environment, staging.STAGING, issue="CRW-49", run="1")
+                after, detail = staging.owner_liveness(environment)
+            finally:
+                held.__exit__()
+            self.assertEqual(after, staging.LIVE,
+                             "writing the claim must not hand the directory to a racing run: "
+                             + detail)
+            self.assertEqual(staging.owner_liveness(environment)[0], staging.DEAD,
+                             "and releasing it really does release it")
+
+    def test_the_lock_and_the_claim_are_separate_files(self):
+        self.assertNotEqual(staging.CLAIM_NAME, staging.LOCK_NAME,
+                            "the file that is rewritten cannot be the file that is locked")
+
+    def test_a_claim_this_command_did_not_write_is_not_permission_to_delete(self):
+        intruders = {
+            "an empty object": {},
+            "a state and nothing else": {"state": staging.STAGING},
+            "somebody else's writer": {"claimVersion": 1, "state": staging.STAGING,
+                                       "writtenBy": "some-other-tool"},
+            "an unknown state": {"claimVersion": 1, "writtenBy": staging.WRITTEN_BY,
+                                 "state": "HALFWAY"},
+            "a future claim version": {"claimVersion": 99, "writtenBy": staging.WRITTEN_BY,
+                                       "state": staging.STAGING},
+        }
+        for label, content in intruders.items():
+            with self.subTest(label):
+                with tempfile.TemporaryDirectory() as temporary:
+                    environment = Path(temporary) / "env"
+                    environment.mkdir()
+                    staging.claim_path(environment).write_text(
+                        json.dumps(content), encoding="utf-8")
+                    (environment / "somebody-elses-work").write_text("keep", encoding="utf-8")
+                    claim = staging.read_claim(environment)
+                    decision, why = staging.decide(
+                        claim, staging.DEAD,
+                        occupied=staging.directory_occupied(environment)[0], protected=False)
+                self.assertFalse(claim.usable, label)
+                self.assertNotIn(decision, staging.REMOVES,
+                                 label + ": a file at that path is not proof of ownership")
+
+    def test_a_promoted_environment_is_never_deleted_once_the_selection_moves_on(self):
+        """A finished environment is a runtime that was promoted. A process may still be
+        running out of it, which is the process liveness criterion 4 asks for."""
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            environment.mkdir()
+            staging.write_claim(environment, staging.COMPLETE, issue="CRW-49", run="1")
+            decision, why = staging.decide(
+                staging.read_claim(environment), staging.DEAD, occupied=True, protected=False)
+        self.assertEqual(decision, staging.KEEP, why)
+        self.assertNotIn(decision, staging.REMOVES)
+
+    def test_an_empty_directory_is_taken_over_rather_than_deleted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            environment.mkdir()
+            decision, why = staging.decide(
+                staging.read_claim(environment), staging.DEAD,
+                occupied=staging.directory_occupied(environment)[0], protected=False)
+        self.assertEqual(decision, staging.ADOPT, why)
+        self.assertNotIn(decision, staging.REMOVES,
+                         "nothing is removed for a directory that holds nothing")
+
+    def test_an_interrupted_promotion_is_resumed_rather_than_rebuilt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            environment.mkdir()
+            staging.write_claim(environment, staging.STAGING, issue="CRW-49", run="killed")
+            decision, why = staging.decide(
+                staging.read_claim(environment), staging.DEAD, occupied=True, protected=True)
+        self.assertEqual(decision, staging.RESUME, why)
+        self.assertNotIn(decision, staging.REMOVES)
+
+
+class InterruptedPromotionTests(unittest.TestCase):
+    """A kill inside the one window where a runtime is selected and unreachable."""
+
+    def test_a_run_killed_between_the_selection_and_the_pointer_is_finished_not_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # Exactly the state a kill in that window leaves: the record selects the candidate,
+            # the pointer still reaches the predecessor, and the claim never settled.
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self.assertEqual(pointer.read(host.pointer_path)["target"], str(host.previous),
+                             "the pointer is still on the predecessor")
+
+            before = host.snapshot()
+            code, payload = UpdateRecoveryTests()._run(host)
+            after = host.snapshot()
+            rebuilt = sorted(p.name for p in host.candidate.iterdir())
+            predecessor_survived = host.previous.is_dir()
+
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertTrue(payload["resumed"])
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the pointer is brought into agreement with the selection")
+        self.assertEqual(after["selected"], before["selected"],
+                         "and the selection it agrees with is the one already committed")
+        self.assertIn("site", rebuilt, "nothing was rebuilt")
+        self.assertEqual(after["storeRows"], before["storeRows"])
+        self.assertTrue(predecessor_survived, "and nothing was removed")
+
+    def test_the_promotion_holds_one_lock_across_both_writes(self):
+        """The two truths are written inside one critical section, so no other run of this
+        command can interleave and leave the record naming B while the pointer reaches A."""
+        # Read from the source text, not from an unparsed tree: the ORDER of the two writes
+        # inside one with-block is the property, and it is a property of the statements.
+        source = RUNTIME.read_text(encoding="utf-8")
+        promotion = source[source.index("        landed = None"):
+                           source.index("        # Read back rather than trusted.")]
+        lock = promotion.index("Locked(pointer_path)")
+        commit = promotion.index("hostrecord.update(")
+        place = promotion.index("pointer.place(")
+        self.assertLess(lock, commit, "the lock opens before the selection is committed")
+        self.assertLess(commit, place,
+                        "and the selection is committed before the pointer moves, because a"
+                        " pointer moved first can be deleted by recovery reading the other"
+                        " truth")
 
 
 if __name__ == "__main__":

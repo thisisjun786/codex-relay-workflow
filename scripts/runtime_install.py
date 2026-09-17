@@ -370,7 +370,7 @@ except OSError as error:
     raise SystemExit(0)
 answer = read_only_rows(
     selection,
-    "SELECT name FROM sqlite_master WHERE type = 'table'"
+    "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
     " AND name NOT LIKE 'sqlite_%' ORDER BY name",
 )
 if not answer["readable"] or answer["detail"]:
@@ -379,7 +379,8 @@ if not answer["readable"] or answer["detail"]:
                       "detail": answer["detail"] or "the store could not be read"}))
     raise SystemExit(0)
 print(json.dumps({"readable": True, "present": True, "dbPath": str(database),
-                  "tables": [row["name"] for row in answer["rows"]], "detail": None}))
+                  "tables": {row["name"]: row["sql"] for row in answer["rows"]},
+                  "detail": None}))
 """
 
 # The candidate's tables come from its own DDL applied to an in-memory database, so nothing is
@@ -391,10 +392,10 @@ from codex_session_relay import store
 database = sqlite3.connect(":memory:")
 database.executescript(store.DDL)
 rows = database.execute(
-    "SELECT name FROM sqlite_master WHERE type = 'table'"
+    "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
     " AND name NOT LIKE 'sqlite_%' ORDER BY name",
 ).fetchall()
-print(json.dumps({"readable": True, "tables": [row[0] for row in rows],
+print(json.dumps({"readable": True, "tables": {row[0]: row[1] for row in rows},
                   "schemaVersion": store.SCHEMA_VERSION, "detail": None}))
 """
 
@@ -1925,24 +1926,45 @@ def cmd_install(args):
             emit(dict(standing, alreadyInstalled=True, selected=record.get("selected") or {},
                       note="nothing was built and nothing was written."))
             return EXIT_OK
-        if decision not in staging.REMOVES:
+        if decision == staging.RESUME:
+            # A previous run committed this environment as selected and did not live to move
+            # the pointer. Rebuilding is the wrong repair: the runtime is built and is already
+            # selected, so the half that was never written is written instead.
+            return _finish_promotion(record_path, data, environment, pointer_path, standing,
+                                     issue=args.issue)
+        if decision == staging.ADOPT:
+            # rmdir, never rmtree. It succeeds only on an empty directory, so the operation
+            # itself is the proof that nothing was destroyed, and the exclusive mkdir below
+            # still establishes ownership the same way it always did.
+            try:
+                os.rmdir(str(environment))
+            except OSError as error:
+                emit(dict(standing, refused="the empty staging directory could not be taken"
+                                            " over: " + type(error).__name__ + ": " + str(error),
+                          residualPaths=[str(environment)]))
+                return EXIT_REFUSED
+            performed.append({"step": "take over an empty staging directory", "ok": True,
+                              "detail": why})
+        elif decision in staging.REMOVES:
+            try:
+                shutil.rmtree(str(environment))
+            except OSError as error:
+                emit(dict(standing, refused="the abandoned staging could not be removed: "
+                                            + type(error).__name__ + ": " + str(error),
+                          residualPaths=[str(environment)]))
+                return EXIT_REFUSED
+            if environment.exists():
+                emit(dict(standing, refused="the abandoned staging is still there after"
+                                            " removal", residualPaths=[str(environment)]))
+                return EXIT_REFUSED
+            performed.append({"step": "reclaim abandoned staging", "ok": True, "detail": why})
+        else:
             emit(dict(standing, refused=why,
-                      note="an existing environment is never overwritten, and only a directory"
-                           " carrying this command own claim whose owner is established gone is"
-                           " removed. Nothing was written to the host record."))
+                      note="an existing environment is never overwritten. Only a directory"
+                           " carrying a claim this command wrote, whose owner is established"
+                           " gone and which nothing is using, is removed. Nothing was written"
+                           " to the host record."))
             return EXIT_REFUSED
-        try:
-            shutil.rmtree(str(environment))
-        except OSError as error:
-            emit(dict(standing, refused="the abandoned staging could not be removed: "
-                                        + type(error).__name__ + ": " + str(error),
-                      residualPaths=[str(environment)]))
-            return EXIT_REFUSED
-        if environment.exists():
-            emit(dict(standing, refused="the abandoned staging is still there after removal",
-                      residualPaths=[str(environment)]))
-            return EXIT_REFUSED
-        performed.append({"step": "reclaim abandoned staging", "ok": True, "detail": why})
 
     # Exclusive: this fails if the directory exists, which is what proves the run owns it and
     # may therefore remove it on failure. An exists() test before a separate create does not.
@@ -1955,6 +1977,7 @@ def cmd_install(args):
                       " directory it created itself. Nothing was written to the host record."})
         return EXIT_REFUSED
     owned = environment
+    holder = None
 
     # Past the exclusive mkdir this run owns a directory, and owning it obliges it to release
     # it however the run ends. A returned failure and a raised one are the same obligation:
@@ -1966,7 +1989,7 @@ def cmd_install(args):
         # the destination for ever. The advisory lock is held for the RUN, and the operating
         # system releases it when this process ends however it ends, which is exactly the
         # question a later run asks.
-        staging.Held(environment).take()
+        holder = staging.Held(environment).take()
         staging.write_claim(environment, staging.STAGING, issue=args.issue,
                             run=str(os.getpid()))
         performed.append({"step": "claim the staging directory", "ok": True,
@@ -2148,37 +2171,46 @@ def cmd_install(args):
             return _install_failed(record_path, data["definitionVersion"], performed,
                                    environment, owned)
 
-        # The pointer is read BEFORE the selection is committed, so a pointer this command may
-        # not replace refuses while nothing has moved. A real directory there belongs to
-        # somebody else and a reading that failed established nothing; neither is placed over.
-        before = pointer.read(pointer_path)
-        if not pointer.usable(before["state"]):
-            performed.append({"step": "read the owned pointer", "ok": False,
-                              "detail": before["detail"]})
-            return _install_failed(record_path, data["definitionVersion"], performed,
-                                   environment, owned, pointer_path=pointer_path,
-                                   failed_step="read the owned pointer")
-
-        # Only the components this run installed. A whole selection map would re-assert entries
-        # read before the installation as though they were current.
-        #
-        # The selection is committed BEFORE the pointer moves, and that order is the safety
-        # argument. Reversed, a run can land the symlink, fail at the record, and have recovery
-        # read a selection that does not name this environment, remove it, and leave the
-        # registered command aimed at a directory that no longer exists. OPS-4.4 requires every
-        # state transition to be committed before its side effect.
-        promoted = hostrecord.update(
-            record_path, data["definitionVersion"],
-            select={name: install["location"] for name, install in installs.items()},
-            pointer={"path": str(pointer_path), "recordedAt": now(), "recordedBy": args.issue})
-        if not promoted.usable:
-            return _install_failed(record_path, data["definitionVersion"], performed, environment,
-                                   owned, failed_reading=promoted, pointer_path=pointer_path)
-        record = promoted.value
-
+        # Promotion is ONE critical section. The record's selection and the pointer on disk
+        # are two truths, and between them lies the only window in which a runtime is selected
+        # and unreachable. Holding the pointer lock across both writes means no other run of
+        # this command can interleave, so the only thing that can land in that window is a
+        # kill -- and a kill there is exactly what the RESUME decision above repairs.
+        landed = None
         try:
             with hostrecord.Locked(pointer_path):
+                # Read first, so a pointer this command may not replace refuses while nothing
+                # has moved. A real directory there belongs to somebody else, and a reading
+                # that failed established nothing; neither is placed over.
+                before = pointer.read(pointer_path)
+                if not pointer.usable(before["state"]):
+                    performed.append({"step": "read the owned pointer", "ok": False,
+                                      "detail": before["detail"]})
+                    return _install_failed(record_path, data["definitionVersion"], performed,
+                                           environment, owned, pointer_path=pointer_path,
+                                           failed_step="read the owned pointer")
+
+                # Only the components this run installed. A whole selection map would re-assert
+                # entries read before the installation as though they were current.
+                #
+                # The selection is committed BEFORE the pointer moves. Reversed, a run can land
+                # the symlink, fail at the record, and have recovery read a selection that does
+                # not name this environment, remove it, and leave the registered command aimed
+                # at a directory that no longer exists. OPS-4.4 requires every state transition
+                # to be committed before its side effect.
+                promoted = hostrecord.update(
+                    record_path, data["definitionVersion"],
+                    select={name: install["location"] for name, install in installs.items()},
+                    pointer={"path": str(pointer_path), "recordedAt": now(),
+                             "recordedBy": args.issue})
+                if not promoted.usable:
+                    return _install_failed(record_path, data["definitionVersion"], performed,
+                                           environment, owned, failed_reading=promoted,
+                                           pointer_path=pointer_path,
+                                           failed_step="commit the selection")
+                record = promoted.value
                 pointer.place(pointer_path, environment)
+                landed = pointer.names(pointer_path, environment)
         except OSError as error:
             # The selection landed and the pointer did not, so the selection goes back where it
             # was for the components this run moved and the record agrees with the disk again.
@@ -2189,13 +2221,10 @@ def cmd_install(args):
                 pointer_path=pointer_path, failed_step="replace the owned pointer",
                 restored=_restore_selection(record_path, data["definitionVersion"], previous,
                                             installs))
-        performed.append({"step": "replace the owned pointer", "ok": True,
-                          "previousTarget": before.get("target"),
-                          "target": str(environment)})
 
         # Read back rather than trusted. A swap reported as done that did not land is the one
         # failure that would leave the record naming a runtime no host can reach.
-        if pointer.names(pointer_path, environment) is not True:
+        if landed is not True:
             performed.append({"step": "read the owned pointer back", "ok": False,
                               "detail": pointer.read(pointer_path).get("detail")})
             if before["state"] == pointer.LINK and before.get("target"):
@@ -2206,6 +2235,9 @@ def cmd_install(args):
                 pointer_path=pointer_path, failed_step="read the owned pointer back",
                 restored=_restore_selection(record_path, data["definitionVersion"], previous,
                                             installs))
+        performed.append({"step": "replace the owned pointer", "ok": True,
+                          "previousTarget": before.get("target"),
+                          "target": str(environment)})
 
         # The claim settles last. It says this staging finished, and until the selection and the
         # pointer both name it there is nothing finished to say.
@@ -2245,6 +2277,49 @@ def cmd_install(args):
     except Exception as error:                                   # noqa: BLE001
         return _install_failed(record_path, data["definitionVersion"], performed, environment,
                                owned, failed_error=error)
+    finally:
+        # The lock's lifetime is this run's. The operating system releases it when the process
+        # ends however it ends, which is what makes a killed run readable as abandoned; a run
+        # that reaches an end of its own says so itself rather than leaving the answer to exit.
+        if holder is not None:
+            holder.__exit__()
+
+
+def _finish_promotion(record_path, data, environment, pointer_path, standing, *, issue):
+    """Write the half a killed run did not: the pointer, for a selection already committed.
+
+    The two truths are written one after the other inside one lock, so the only thing that can
+    land between them is the process dying. That leaves a runtime that is selected and
+    unreachable, and rebuilding would be the wrong repair: it is built, it is selected, and a
+    process may already be running out of it. So the pointer is brought into agreement with the
+    selection and the claim is settled. Nothing is rebuilt and nothing is removed.
+    """
+    with hostrecord.Locked(pointer_path):
+        before = pointer.read(pointer_path)
+        if not pointer.usable(before["state"]):
+            emit(dict(standing, refused="the interrupted promotion could not be finished: "
+                                        + str(before["detail"]),
+                      pointer={"path": str(pointer_path), "state": before["state"]}))
+            return EXIT_REFUSED
+        try:
+            pointer.place(pointer_path, environment)
+        except OSError as error:
+            emit(dict(standing, refused="the interrupted promotion could not be finished: "
+                                        + type(error).__name__ + ": " + str(error)))
+            return EXIT_REFUSED
+        landed = pointer.names(pointer_path, environment)
+    if landed is not True:
+        emit(dict(standing, refused="the pointer did not land on the environment the host"
+                                    " record already selects"))
+        return EXIT_REFUSED
+    staging.write_claim(environment, staging.COMPLETE, issue=issue, run=str(os.getpid()))
+    emit(dict(standing, applied=True, resumed=True,
+              pointer={"path": str(pointer_path), "previousTarget": before.get("target"),
+                       "target": str(environment)},
+              note="a previous run committed this environment as selected and did not live to"
+                   " move the pointer. Nothing was rebuilt and nothing was removed: the missing"
+                   " half of that promotion was written and the claim settled."))
+    return EXIT_OK
 
 
 def _selected_install(record, name):

@@ -32,13 +32,24 @@ VERDICTS = (ALLOWED, BLOCKED, UNESTABLISHED)
 AGREES = "AGREES"
 EXTENDS = "EXTENDS"
 NARROWS = "NARROWS"
+DIFFERS = "DIFFERS"
 NO_STORE = "NO_STORE"
-TABLE_ANSWERS = (AGREES, EXTENDS, NARROWS, NO_STORE)
+TABLE_ANSWERS = (AGREES, EXTENDS, NARROWS, DIFFERS, NO_STORE)
 
-# The answer that loses data: the store holds a table the candidate does not declare, so the
-# runtime being installed cannot preserve what is in it. This is the implicit downgrade the
-# issue forbids, and it is the only table answer that refuses.
-TABLES_BLOCKING = (NARROWS,)
+# Only an identical schema, or no store at all, lets a replacement through.
+#
+# NARROWS loses data outright: the store holds a table the candidate does not declare, so the
+# runtime being installed cannot preserve what is in it. That is the implicit downgrade the
+# issue forbids.
+#
+# EXTENDS and DIFFERS refuse for the contract's reason rather than for that one. The relay
+# opens its store read-write and runs its whole DDL script on every open, so a candidate whose
+# schema is not the store's schema APPLIES the difference the first time the new daemon starts.
+# OPS-4.5 says a change that needs a different schema is its own decision, in its own issue,
+# with a copied backup of the whole state directory taken first. Letting an update wave it
+# through is precisely the implicit migration that clause forbids, and an update is not the
+# place either direction is decided.
+TABLES_BLOCKING = (NARROWS, EXTENDS, DIFFERS)
 
 def _daemon_blocks(cell):
     """A supervisor is running, so the runtime under it is not replaced (OPS-4.4)."""
@@ -120,7 +131,11 @@ def inflight_cell(envelope):
 
 
 def tables_cell(store_answer, candidate_answer):
-    """Compare what the store holds with what the candidate declares.
+    """Compare the schema the store holds with the schema the candidate declares.
+
+    The comparison is over each table's CREATE statement and not merely its name. Names alone
+    agree while a column, a constraint or a default differs, which is a schema difference the
+    new runtime would apply on its first write-open, and it would have passed as agreement.
 
     Both sides are readings and either can fail. An absent store is established by looking at
     the path, never inferred from a failed open, because a permission failure and a locked
@@ -128,46 +143,72 @@ def tables_cell(store_answer, candidate_answer):
     """
     if not isinstance(store_answer, dict) or not isinstance(candidate_answer, dict):
         return _cell(reading.UNREADABLE, readable=False,
-                     detail="a table reading did not return an answer")
+                     detail="a schema reading did not return an answer")
     if not candidate_answer.get("readable"):
         return _cell(reading.UNREADABLE, readable=False,
                      command=candidate_answer.get("command"),
-                     detail="the candidate's declared tables could not be read: "
+                     detail="the candidate's declared schema could not be read: "
                             + str(candidate_answer.get("detail")))
     if not store_answer.get("readable"):
         return _cell(reading.UNREADABLE, readable=False, command=store_answer.get("command"),
-                     detail="the store's tables could not be read: "
+                     detail="the store's schema could not be read: "
                             + str(store_answer.get("detail")))
 
-    candidate = set(candidate_answer.get("tables") or [])
+    candidate = _schema(candidate_answer.get("tables"))
     if store_answer.get("present") is False:
         return _cell(NO_STORE, readable=True, command=store_answer.get("command"),
                      evidence={"dbPath": store_answer.get("dbPath")},
                      detail=("no store exists at the resolved selection, so there is nothing"
                              " whose schema could disagree. That is absence and not agreement"))
-    held = set(store_answer.get("tables") or [])
-    lost = sorted(held - candidate)
-    added = sorted(candidate - held)
+    held = _schema(store_answer.get("tables"))
+    lost = sorted(set(held) - set(candidate))
+    added = sorted(set(candidate) - set(held))
+    changed = sorted(name for name in set(held) & set(candidate)
+                     if _normalised(held[name]) != _normalised(candidate[name]))
     evidence = {"dbPath": store_answer.get("dbPath"), "onlyInStore": lost,
-                "onlyInCandidate": added}
+                "onlyInCandidate": added, "definedDifferently": changed}
+    backup = (" OPS-4.5 makes a schema change its own decision, in its own issue, with a copied"
+              " backup of the whole state directory taken first, so this update refuses rather"
+              " than letting the new runtime apply it on its first write-open.")
     if lost:
         return _cell(NARROWS, readable=True, command=store_answer.get("command"),
                      evidence=evidence,
                      detail=("the store holds tables this candidate does not declare, so"
                              " installing it would leave data no runtime can read: "
                              + ", ".join(lost)))
+    if changed:
+        return _cell(DIFFERS, readable=True, command=store_answer.get("command"),
+                     evidence=evidence,
+                     detail=("the store and the candidate define the same tables differently: "
+                             + ", ".join(changed) + "." + backup))
     if added:
         return _cell(EXTENDS, readable=True, command=store_answer.get("command"),
                      evidence=evidence,
                      detail=("the candidate declares tables the store does not hold: "
-                             + ", ".join(added) + ". Nothing in the store is lost, and this is"
-                             " reported as its own answer rather than as agreement, because a"
-                             " reader deciding whether to take a backup needs to see which"
-                             " one happened. Read strictly, OPS-4.5 makes any schema"
-                             " difference a migration with its own issue and its own copied"
-                             " backup; this gate refuses only the direction that loses data"))
+                             + ", ".join(added) + ". Nothing in the store would be lost, and"
+                             " that is why this is reported as its own answer rather than as a"
+                             " downgrade." + backup))
     return _cell(AGREES, readable=True, command=store_answer.get("command"), evidence=evidence,
-                 detail="the store and the candidate declare the same tables")
+                 detail="the store and the candidate declare the same tables identically")
+
+
+def _schema(tables):
+    """Table name -> its CREATE statement, from either side's reading.
+
+    A reading that reports only names still compares, on names alone; the missing statements
+    simply cannot disagree. That keeps an older probe readable instead of unreadable, without
+    letting it claim more than it saw.
+    """
+    if isinstance(tables, dict):
+        return {str(name): value for name, value in tables.items()}
+    return {str(name): None for name in (tables or [])}
+
+
+def _normalised(statement):
+    """A CREATE statement compared on its tokens, so whitespace is not a schema change."""
+    if statement is None:
+        return None
+    return " ".join(str(statement).split()).lower()
 
 
 def blocking(name, cell):

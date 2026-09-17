@@ -475,16 +475,29 @@ which is what proves a run owns it. That proof used to expire badly: a run kille
 the directory behind, and every retry of the same destination refused at the existence check for
 ever.
 
-A run now writes a claim inside the environment immediately after creating it, and holds an
-`flock` on that claim for its lifetime. A later run reads the claim and asks who owns it:
+A run now leaves two files in the directory, and they are two because they answer two questions.
+The **lock** answers whether anybody is still building, and it is created once and never
+replaced. The **claim** answers what that run said it was doing, and it is rewritten when the
+staging settles. Collapsing them is not a tidiness question: an advisory lock belongs to an inode
+rather than to a name, so locking the file that is later replaced by rename leaves the lock on an
+unlinked inode while the next reader opens the new one and finds it free. That reported a live
+build as abandoned, and the next run deleted a directory somebody was still building. It is two
+files because of that.
+
+Removing anything needs positive proof of ownership, so the claim has to carry this command own
+marker, its claim version, and a state from the declared set. Readable JSON at that path is not
+proof; a file somebody else left is left alone.
 
 | Observed | Answer |
 | --- | --- |
-| No claim, and the directory is not empty | Somebody else's directory. Refused, nothing touched |
-| A claim, the lock held | Another run is building it. Refused, nothing touched |
-| A claim, the lock free, the environment not selected | An abandoned staging this command created. Reclaimed |
+| No claim, and the directory holds files | Somebody else's. Refused, nothing touched |
+| No claim, and the directory is empty | Taken over as it stands with `rmdir`, which succeeds only on an empty directory, so the operation is its own proof that nothing was destroyed |
+| A claim of this command's, the lock held | Another run is building it. Refused, nothing touched |
+| A claim of this command's, the lock free, nothing using it | An abandoned staging. Reclaimed |
 | A claim, and whether anyone holds it could not be established | Kept, and reported as a residual path with what recovery needs |
-| A settled claim for an environment that is selected | Already installed. Reported, nothing rebuilt |
+| A settled claim, and the environment is in use | Already installed. Reported, nothing rebuilt |
+| A settled claim, and nothing selects it any more | Kept. It is a runtime that was promoted once, and a process may still be running out of it |
+| An unsettled claim for an environment that IS selected | An interrupted promotion. Finished rather than rebuilt |
 
 Liveness is the lock and not the recorded process id, for the reason the relay already recorded
 about its own supervisor: inside a container sharing a kernel, the same process id under the same
@@ -493,6 +506,10 @@ lock cannot lie about contention. Where `flock` is unavailable the answer is tha
 tell, and an owner nobody could establish is never read as an owner that is gone: deleting a live
 run's environment is the accident this exists to prevent. Such a directory is kept and named, so
 an orphan is findable and reportable rather than either silently accumulated or silently removed.
+
+The lock's lifetime is the run's. The operating system releases it when the process ends however
+it ends, which is what makes a killed run readable as abandoned, and a run that reaches an end of
+its own releases it rather than leaving the answer to exit.
 
 ### Reading whether it is safe to swap
 
@@ -514,32 +531,37 @@ because nobody could ask it.
 This command never starts or stops a daemon. OPS-4.1 gives the service to the scope operator, so a
 running daemon is a refusal here and not something to resolve.
 
-### Why the schema reading counts tables and not versions
+### Why the schema reading compares statements and not versions
 
 The obvious reading would compare the store's recorded schema version with the candidate's. It
 would also be worthless. The relay declares `SCHEMA_VERSION = 1`, has never raised it, writes it
 once with `INSERT OR IGNORE` when the database is created, and grows its schema through
 thirty-nine separate `CREATE TABLE IF NOT EXISTS` statements. Every store therefore agrees with
-every candidate at version one, and the comparison would detect neither a downgrade nor an
-upgrade while looking exactly like a check.
+every candidate at version one, and the comparison would detect neither a downgrade nor an upgrade
+while looking exactly like a check.
 
-So the cell compares what actually differs: the table names in the store's `sqlite_master`
-against the tables the candidate relay declares. It has four answers.
+So the cell compares what actually differs: each table's `CREATE` statement in the store's
+`sqlite_master` against the statements the candidate relay declares. Statements and not names,
+because names agree while a column, a constraint or a default differs, and that difference is a
+schema change the new runtime would apply the first time it opens the store for writing.
+Whitespace is normalised away; nothing else is.
 
 | Answer | Observed | Decision |
 | --- | --- | --- |
-| `ABSENT` | no store exists at the resolved selection | allowed, and reported as absence rather than as agreement |
-| `AGREES` | the same tables | allowed |
-| `EXTENDS` | the candidate declares tables the store does not hold | allowed, and reported as its own answer |
+| `NO_STORE` | no store exists at the resolved selection | allowed, and reported as absence rather than as agreement |
+| `AGREES` | the same tables, defined identically | allowed |
+| `EXTENDS` | the candidate declares tables the store does not hold | refused |
+| `DIFFERS` | a shared table is defined differently | refused |
 | `NARROWS` | the store holds tables the candidate does not declare | refused |
 
-`NARROWS` is the implicit downgrade criterion 4 forbids: a runtime that does not know a table
-cannot preserve what is in it. `EXTENDS` is the additive path every previous update has taken,
-and it is reported rather than folded into agreement, because "nothing differs" and "the new one
-knows more" are two facts and a reader deciding whether to take a backup needs to see which one
-happened. Read strictly, OPS-4.5 makes any schema difference a migration with its own issue and
-its own copied backup; this gate refuses the direction that loses data and names the other, and
-the report states both so the requirement and the current behaviour never read as one claim.
+`NARROWS` is the implicit downgrade the issue forbids: a runtime that does not know a table
+cannot preserve what is in it. The other two refuse for the contract's reason rather than that
+one. The relay opens its store read-write and runs its whole DDL script on every open, so a
+candidate whose schema is not the store's schema **applies** the difference the moment the new
+daemon first starts. OPS-4.5 reserves that for its own decision, in its own issue, with a copied
+backup of the whole state directory taken first, so letting an update wave it through is exactly
+the implicit migration the clause forbids. An update is not the place either direction is decided,
+and the refusal names the tables so the next step is obvious.
 
 The reading is the relay's own, run under the relay's own interpreter. A second copy of the rule
 here would be a restatement of something the relay owns, and the next change would move only one
@@ -552,9 +574,9 @@ the OPS-3.4 conflict rather than a clean host.
 
 ### The order a swap commits in
 
-The selection in the host record and the pointer on disk are two truths, and the order they are
-written in is the whole safety argument. The record's selection is committed first, and the
-pointer is replaced afterwards.
+The selection in the host record and the pointer on disk are two truths, and both the order they
+are written in and the lock they are written under are the safety argument. They are written
+inside **one** critical section, holding the pointer's lock, and the selection is committed first.
 
 The reverse order has a real failure: the symlink lands, the record write then fails or the
 process raises, recovery reads a selection that does not name this environment, concludes the
@@ -563,6 +585,14 @@ directory that no longer exists. OPS-4.4 requires every state transition to be c
 its side effect, and this is that rule applied to the two halves of one promotion. Recovery also
 refuses to remove an environment the pointer names, so neither truth alone can authorise deleting
 a runtime the other one is still using.
+
+Holding one lock across both writes is what keeps two runs of this command from interleaving there
+and finishing with the record selecting one runtime while the pointer reaches another. It cannot
+stop the process being killed, and a kill inside that window leaves a runtime that is selected and
+unreachable. That state is recognisable rather than fatal: the claim is unsettled and the
+environment is selected, so the next run finishes the promotion instead of rebuilding it.
+Rebuilding would be the wrong repair, because the runtime is built, it is already selected, and a
+process may be running out of it.
 
 Ownership of the pointer is established from the record before it is replaced. Renaming over an
 existing symlink succeeds whoever created it, so a `current` this command never recorded is left
@@ -577,12 +607,21 @@ file, so a working directory symlink would be reported as an unreadable record.
 A failed update leaves the previous runtime selected, the previous pointer target in place, the
 owned configuration untouched, and the store exactly as it was. The result says which step failed
 rather than only that something did: `failedStep` names the step and the boundary it was at, and
-`restored` names the pointer target that was put back or says the pointer never moved.
+`restored` names the selection that was put back or says there was none to put back.
 
 The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
 destination is retriable; removal that could not finish reports the residual path, what recovery
 needs, and the original failure alongside the cleanup failure rather than replaced by it. A
 candidate that is selected, or whose record could not be read, or that the pointer names, is kept.
+
+Two of the failure points the issue names do not exist in this command, and saying so is better
+than implying a rollback that has nothing to roll back. **Applying configuration** is
+`register-mcp`'s, not `install`'s, and with the pointer in place it happens once rather than on
+every update; its own failure contract is above, including the one case where a write lands and
+cannot be read back, which is reported as `APPLIED_UNVERIFIED` rather than as a refusal that wrote
+nothing. **Starting** does not happen here at all: OPS-4.1 gives the service to the scope operator,
+so this command refuses while a daemon runs and never starts one, and there is no start to fail or
+to undo.
 
 Nothing here removes, moves or recreates the store. Update failure and store loss are different
 accidents and the recovery for one must not cause the other.
