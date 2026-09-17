@@ -128,6 +128,68 @@ class Lifecycle(RelayTestCase):
                 RefusalReason.RELATIONSHIP_NOT_ACTIVE, self.registry.require_active, rid
             )
 
+    def test_an_inactive_relationship_opens_no_generation_until_it_is_resumed(self):
+        """The sequence skills/crw-run/references/relay.md prescribes, in order.
+
+        A criteria edit closes the same-event route while the relationship is down, and it
+        closes the other one too: opening a generation is not a way around a pause, so the
+        instructions send the reader through resume first. If that stopped being true the
+        documented procedure would fail at the first command.
+        """
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        for status in ("paused", "cancelled", "archived"):
+            self.registry.set_status(rid, status, actor="test")
+            self.assertRefused(
+                RefusalReason.RELATIONSHIP_NOT_ACTIVE,
+                lambda: self.registry.open_generation(
+                    rid, dispatch_request_id="after-the-edit",
+                    reason="needs_changes_revision",
+                    dispatch_turn_id="turn-after-the-edit",
+                ),
+            )
+            self.registry.resume(
+                rid, expect_generation=1, expect_artifact_roots=[self.root],
+                expect_allowed_recipients=[PARENT], actor="test",
+            )
+        opened = self.registry.open_generation(
+            rid, dispatch_request_id="after-the-edit", reason="needs_changes_revision",
+            dispatch_turn_id="turn-after-the-edit",
+        )
+        self.assertEqual(opened["executionGeneration"], 2)
+
+    def test_reactivating_is_not_a_status_flip(self):
+        """relationship-status takes deactivations only, which is why resume restates scope."""
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.registry.set_status(rid, "paused", actor="test")
+        self.assertRefused(
+            RefusalReason.RELATIONSHIP_NOT_ACTIVE,
+            self.registry.set_status, rid, "active", actor="test",
+        )
+
+    def test_a_restatement_names_every_registered_recipient(self):
+        """The scope is compared whole, which is why the instructions repeat the flag.
+
+        An ordinary registration authorizes both the parent and the child, so a resume that
+        names one of them is a different scope rather than a subset of the same one.
+        """
+        relationship = self.register(recipients=[PARENT, CHILD])
+        rid = relationship["relationshipId"]
+        self.registry.set_status(rid, "paused", actor="test")
+        self.assertRefused(
+            RefusalReason.RELATIONSHIP_NOT_ACTIVE,
+            lambda: self.registry.resume(
+                rid, expect_generation=1, expect_artifact_roots=[self.root],
+                expect_allowed_recipients=[PARENT], actor="test",
+            ),
+        )
+        resumed = self.registry.resume(
+            rid, expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT, CHILD], actor="test",
+        )
+        self.assertEqual(resumed["status"], "active")
+
     def test_resume_requires_restating_the_generation_and_the_scope(self):
         relationship = self.register()
         rid = relationship["relationshipId"]

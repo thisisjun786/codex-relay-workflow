@@ -319,12 +319,36 @@ and `re_review_needed`. Record an integration with:
       --mark merged --evidence '<what landed>' --actor <id> \
       --expected-event <the event you integrated>
 
-Naming a revision that is no longer current is refused rather than silently rebound.
+Naming a revision that is no longer current is refused rather than silently rebound, and so is a
+revision whose criteria set has moved since it was verified: the mark is refused with
+`criteria_set_changed` until the re-review below lands. The mark is about the revision rather
+than the wording, so once that re-review records `verified` an integration recorded earlier reads
+as the current mark again and does not have to be recorded twice.
 
 ## Re-reviewing after the criteria change
 
 Once the criteria change, `assignment-show` reports `re_review_needed` and asks the parent to
 verify again. There are two routes. Which one applies turns on whether the artifact has to change.
+
+An inactive relationship gates both routes rather than choosing between them. While it is paused,
+cancelled or archived, claiming cannot reopen the review and `generation-open` refuses with
+`relationship_not_active`. Bring the relationship back first and then pick a route on the ordinary
+grounds below. Reactivating is not a status flip, because `relationship-status` accepts only
+`paused`, `cancelled` and `archived`. Resume restates the generation and the scope being
+re-authorized, and the restatement is compared for exact equality, so repeat
+`--expect-artifact-root` and `--expect-allowed-recipient` once for every root and recipient the
+relationship was registered with:
+
+    codex-session-relay --state "$RELAY_STATE" relationship-resume --relationship <rel> \
+      --expect-generation <n> --expect-artifact-root /abs/path \
+      --expect-allowed-recipient <parent task id> \
+      --expect-allowed-recipient <child task id> --actor <id>
+
+A restatement that does not match is refused with nothing written. A superseded relationship does
+not come back at all: its successor owns the issue. Cancelling or archiving RELEASES the issue, so
+one whose issue another child has since been registered for is refused with
+`duplicate_assignment` rather than resumed into a second owner; replacing that assignment is a
+deliberate act of its own.
 
 ### Judging the same revision again
 
@@ -373,8 +397,7 @@ answer:
     `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
     does not announce this one;
   - the event is no longer the revision this generation stands on, because a newer revision
-    arrived, the head is ambiguous, or the generation advanced;
-  - the relationship is paused, cancelled, archived or superseded.
+    arrived, the head is ambiguous, or the generation advanced.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 
