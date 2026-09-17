@@ -286,7 +286,19 @@ class ExecutionPolicy:
                     exception,
                     "no exception with this id is declared in this host's execution policy",
                 )
-            if cwd is None or cwd not in entry["cwd"]:
+            if cwd is None:
+                # Named apart from the wrong-directory case: the caller supplied no directory at
+                # all, and on the resume path cwd is otherwise optional, so a message about which
+                # directories are covered would not tell it what to add.
+                raise ExecutionRefused(
+                    EXCEPTION_OUT_OF_SCOPE,
+                    "policy_exception",
+                    None,
+                    f"exception {exception!r} is bound to directories, so a request citing it "
+                    f"must also state its cwd; it covers {list(entry['cwd'])}",
+                    allowed=list(entry["cwd"]),
+                )
+            if cwd not in entry["cwd"]:
                 raise ExecutionRefused(
                     EXCEPTION_OUT_OF_SCOPE,
                     "policy_exception",

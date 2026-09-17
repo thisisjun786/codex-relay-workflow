@@ -160,6 +160,11 @@ or directory does not match is refused. That is why the allowlist lives in a fil
 than a tool argument: a caller has no parameter through which to widen its own allowance,
 and a caller that can approve itself has not been checked by anyone.
 
+Because the exception is bound to directories, a request citing one must state the directory it
+applies to. Creation always does. `send_message_to_thread` otherwise treats `cwd` as optional, so
+a send citing `policy_exception` must put `cwd` in its `expected_settings` too, and is refused
+before the thread is read when it does not.
+
 Refusals happen before any request is sent and before the ledger records anything, so a
 refused call consumes no `request_id`: fix the arguments and reuse the same one. A receipt
 retained from before these arguments were required cannot be replayed through the tools,

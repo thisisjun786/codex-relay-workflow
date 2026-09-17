@@ -573,3 +573,51 @@ async def test_a_caller_mutating_its_settings_cannot_split_identity_from_dispatc
             "hello",
             {"model": UNAPPROVED, "reasoning_effort": EFFORT},
         )
+
+
+async def test_an_exception_on_the_resume_path_must_state_its_directory(
+    configured_bridge, fake_server, tmp_path
+):
+    """cwd is optional on a send until an exception is cited, and then it is not.
+
+    An exception is bound to directories, so a send that names one without a cwd can never match.
+    The refusal says which argument is missing rather than only listing the covered directories.
+    """
+    fake, _ = fake_server
+    mapping = policy_for(tmp_path)
+    # The directory the exception itself declares, so the test and the policy cannot disagree.
+    covered = mapping["exceptions"]["one-task"]["cwd"][0]
+    bridge = configured_bridge(mapping)
+    created = await bridge.create_thread(
+        "c",
+        str(tmp_path),
+        model=UNAPPROVED,
+        reasoning_effort="high",
+        policy_exception="one-task",
+    )
+    settled = len(fake.calls)
+    with pytest.raises(ExecutionRefused) as raised:
+        await bridge.send_message_to_thread(
+            "no-cwd",
+            created["threadId"],
+            "hello",
+            {"model": UNAPPROVED, "reasoning_effort": "high"},
+            "one-task",
+        )
+    assert raised.value.code == "execution_exception_out_of_scope"
+    assert "must also state its cwd" in str(raised.value)
+    assert fake.calls[settled:] == []
+
+    delivered = await bridge.send_message_to_thread(
+        "with-cwd",
+        created["threadId"],
+        "hello",
+        {
+            "model": UNAPPROVED,
+            "reasoning_effort": "high",
+            "cwd": covered,
+        },
+        "one-task",
+    )
+    assert delivered["status"] == "accepted"
+    assert delivered["executionPolicy"]["exception"] == "one-task"

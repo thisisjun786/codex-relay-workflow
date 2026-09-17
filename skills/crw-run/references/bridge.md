@@ -167,6 +167,11 @@ exception is not approving one, and a request cannot carry its own allowance. As
 user to declare an exception rather than proposing a different model, and never widen a
 global setting to make a launch succeed.
 
+Because an exception is bound to directories, a request citing one must also state the cwd it
+applies to. Creation always does. On the resume path cwd is otherwise optional, so a send that
+cites `policy_exception` has to include `cwd` in `expected_settings` as well, or it is refused
+before the task is read.
+
 A refused request sends nothing and records nothing, so correct the arguments and reuse
 the same request_id; a new id for the same intent is not a retry. A receipt retained from
 before these arguments were required is reconciled with `get_operation`, which returns

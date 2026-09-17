@@ -172,7 +172,10 @@ def make_server(bridge: Bridge):
         an existing thread costs what a new one costs; it may also carry cwd, sandbox,
         expected_sandbox_policy and runtime_workspace_roots. The pair is authorized against this
         host's execution policy before the thread is even read, and policy_exception cites an
-        operator-declared exception by id. The resume carries the settings and is read as an
+        operator-declared exception by id; because such an exception is bound to directories,
+        expected_settings must also carry cwd whenever policy_exception is supplied, or the
+        request is refused before the thread is read. The resume carries the settings and is read
+        as an
         observation: this host reports a thread's real state rather than adopting an override, so
         a match confirms the thread is already in the requested state. An unrecognised key is
         rejected rather than ignored, because a discarded key is indistinguishable from a setting
