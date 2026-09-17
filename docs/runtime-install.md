@@ -1171,6 +1171,9 @@ still looks correct.
 A bare interpreter name is resolved on `PATH`, the way the host resolves it, so a working hook
 is not failed in diagnosis for not spelling a file path. A wrapper's own target is not followed,
 and the cell says so rather than implying the program behind it was checked.
+A relative spelling carrying a separator is reported as workspace-dependent instead: resolving it
+would answer about a program under whatever checkout the diagnosis ran from, not the one the host
+starts in a session's workspace.
 
 Whether the runtime offers `guard-evaluate` requires it to describe the subcommand, not merely
 to exit 0. A program that ignores its arguments and succeeds would otherwise be reported as
@@ -1185,6 +1188,8 @@ the host runs.
 Registrations naming different settings files are reported as ambiguous and nothing below them
 is read. Every one of them runs, so naming one would describe one hook while reporting the
 others' state as if it were that one's.
+A relative spelling counts as its own unresolved source there, because two of them name two
+files, and so do one relative and one absolute.
 
 A matcher is part of a registration. Installation only ever appends an unconditional group and
 the hook file's own installer treats only that group as already installed, so an identical

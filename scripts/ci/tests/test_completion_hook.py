@@ -904,6 +904,100 @@ class OneAdapterIsRegisteredOnce(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("registered 0 times", emitted[0]["error"])
 
+    def test_a_read_back_that_could_not_happen_is_refused_too(self):
+        """The promise is exactly one registration, and a read that did not happen cannot
+        establish it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                apply=True, isolation_asserted_by=None)
+            real = runtime_install.hooks.read
+            calls = []
+
+            def flaky(path):
+                calls.append(path)
+                if len(calls) > 2:  # the final read-back, after somebody chmodded the file
+                    return reading.Reading(state=reading.ACCESS_ERROR, source=path,
+                                           exception="PermissionError", at="hooks.py:1",
+                                           detail="the hook file could not be reached")
+                return real(path)
+
+            emitted = []
+            with mock.patch.object(runtime_install.hooks, "read", side_effect=flaky), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+        self.assertEqual(code, 1)
+        self.assertIsNone(emitted[0]["registrations"])
+        self.assertEqual(emitted[0]["reading"]["state"], reading.ACCESS_ERROR)
+        self.assertIn("could not be established", emitted[0]["error"])
+
+
+class ASpellingThisCommandCannotJudgeIsSaidSo(unittest.TestCase):
+    """which() resolves a spelling carrying a separator against the caller's own directory, so
+    probing it answers about a program under whatever checkout the diagnosis ran from."""
+
+    def test_a_relative_interpreter_path_is_reported_not_probed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            command = "venv/bin/python " + shlex.quote(str(ENTRY_POINT))
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredInterpreter"]["value"], completion.WORKSPACE_DEPENDENT)
+        self.assertIn("every workspace", found["registeredInterpreter"]["evidence"])
+
+    def test_a_bare_name_keeps_its_path_lookup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            command = "python3 " + shlex.quote(str(ENTRY_POINT))
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT,
+                         "a bare name is what the host looks up on PATH too")
+
+    def test_relative_settings_spellings_count_toward_ambiguity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            one = completion.command_for(sys.executable, str(ENTRY_POINT)) + " a.json"
+            two = completion.command_for(sys.executable, str(ENTRY_POINT)) + " b.json"
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": one, "timeout": 10}]},
+                {"hooks": [{"type": "command", "command": two, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS,
+                         "two relative spellings are two unresolved sources, not one")
+
+    def test_one_relative_beside_one_absolute_is_ambiguous(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            one = completion.command_for(sys.executable, str(ENTRY_POINT), home / "a.json")
+            two = completion.command_for(sys.executable, str(ENTRY_POINT)) + " b.json"
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": one, "timeout": 10}]},
+                {"hooks": [{"type": "command", "command": two, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS)
+
+    def test_a_single_relative_spelling_is_still_its_own_answer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            only = completion.command_for(sys.executable, str(ENTRY_POINT)) + " a.json"
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": only, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_RELATIVE)
+
     def test_a_registration_naming_relative_settings_is_reported_not_guessed_at(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

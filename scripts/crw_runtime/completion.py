@@ -269,6 +269,10 @@ GUARD_HELP_MARKER = "--marker-root"
 # workspace, so no single file answers for it and the one this process would resolve is not it.
 REGISTRATION_RELATIVE_TARGET = "registration_names_a_relative_adapter"
 
+# A spelling this command cannot judge from here: relative, with a separator, so it names one
+# program from the hook's workspace and another from wherever a diagnosis happens to run.
+WORKSPACE_DEPENDENT = "workspace_dependent_spelling"
+
 
 def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1231,7 +1235,22 @@ def _interpreter_cell(ours):
         first = (registered_argv(entry["command"]) or [None])[0]
         if not first:
             continue
-        resolved = shutil.which(first) or first
+        if os.sep in first or (os.altsep and os.altsep in first):
+            if not os.path.isabs(first):
+                # which() resolves a spelling carrying a separator against the CALLER's working
+                # directory, so probing it here answers about a program under whatever checkout
+                # this diagnosis was run from. The host starts the hook in each session's
+                # workspace, where that spelling names something else or nothing.
+                probe = _cell(WORKSPACE_DEPENDENT,
+                              "the registration names its interpreter with the relative path "
+                              + first + ", which resolves differently in every workspace; it"
+                              " was not probed here", path=first)
+                checked.append({"word": first, "resolved": first, "probe": probe})
+                continue
+            resolved = first
+        else:
+            # A bare name is looked up on PATH, which is what the host does with it too.
+            resolved = shutil.which(first) or first
         probe = presence(resolved, "the registered interpreter")
         if probe["value"] == reading.PRESENT and not os.access(str(resolved), os.X_OK):
             probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
@@ -1301,7 +1320,12 @@ def status(codex_home=None, environ=None, event=EVENT):
     # downstream of it.
     relative = [named for named in carried
                 if not os.path.isabs(os.path.expanduser(named))]
-    distinct = sorted({str(_settled(named)) for named in carried if named not in relative})
+    # Each relative spelling counts as its own unresolved source. Excluding them made two
+    # registrations naming different relative files, or one relative beside one absolute, look
+    # like a single source, and the reader then described one hook while suppressing another
+    # that may carry a different mode or relay.
+    distinct = sorted({str(_settled(named)) for named in carried if named not in relative}
+                      | set(relative))
     # A registration with no settings argument resolves its own path, which is not necessarily
     # the one its neighbour names. Counted as a separate answer for that reason: "one path and
     # one silence" is two different files just as surely as two paths are.
