@@ -1014,6 +1014,21 @@ def probe(selection: StateSelection) -> dict:
     return {"stateSelection": selection.to_record(), "store": store, "access": access}
 
 
+def _path_identity(db_path):
+    """Device, inode and name count of the file AT THIS PATH, or None if it cannot be stat'd.
+
+    Measured at the path rather than taken from an open connection, which is the whole of what
+    it can promise: two observations of a path catch a replacement that persists past a read,
+    and not one reverted inside the window, because both would then report the original inode.
+    Catching that needs the descriptor the connection holds, and `sqlite3` exposes none.
+    """
+    try:
+        info = os.stat(db_path)
+    except OSError:
+        return None
+    return {"device": info.st_dev, "inode": info.st_ino, "links": info.st_nlink}
+
+
 def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
     """Answer a question about the store without creating or migrating one.
 
@@ -1025,22 +1040,13 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
     The identity of the file AT THE PATH is measured here, before and after the read, and
     returned with the rows. A caller that stat'd the path earlier cannot otherwise tell that
     the rows arrived from a replacement: comparing the store id does not settle it, because
-    the id is minted once and travels with a copy of the bytes. Two observations of the path
-    catch a replacement that persists past the read, and not one reverted inside the window -
-    both stats would then report the original inode. Catching that would mean opening the
-    database through a held descriptor rather than by path.
+    the id is minted once and travels with a copy of the bytes. `_path_identity` states what
+    two observations of a path do and do not catch.
     """
     db_path = selection.db_path
 
-    def identity():
-        try:
-            info = os.stat(db_path)
-        except OSError:
-            return None
-        return {"device": info.st_dev, "inode": info.st_ino, "links": info.st_nlink}
-
     unknown = {"device": None, "inode": None, "links": None}
-    opened = identity()
+    opened = _path_identity(db_path)
     try:
         connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
     except (OSError, sqlite3.Error, ValueError) as error:
@@ -1054,7 +1060,7 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
         return {**unknown, "readable": True, "rows": [],
                 "detail": f"{type(error).__name__}: {error}"}
     connection.close()
-    closed = identity()
+    closed = _path_identity(db_path)
     if opened is None or closed is None:
         return {**unknown, "readable": True, "rows": [],
                 "detail": "the database could not be identified while it was being read"}
@@ -1072,12 +1078,21 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
 
 
 def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
-    """Look for a challenge nonce read-only, so a comparison never writes to the store."""
+    """Look for a challenge nonce read-only, so a comparison never writes to the store.
+
+    The identity of the file it read comes back with the answer, because this is the only
+    evidence `compare_store` grades as proof and it is obtained through a second open of the
+    path - after whatever stat'd it for the receipt. Without that identity, a nonce found in a
+    database that replaced the measured one satisfies the one proving mechanism there is, and
+    a copy carries the challenge row with the bytes, so the replacement need not be crafted.
+    """
     db_path = selection.db_path
+    unknown = {"device": None, "inode": None, "links": None}
+    opened = _path_identity(db_path)
     try:
         connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
     except (OSError, sqlite3.Error) as error:
-        return {"nonce": nonce, "found": False, "readable": False,
+        return {**unknown, "nonce": nonce, "found": False, "readable": False,
                 "detail": f"{type(error).__name__}: {error}"}
     try:
         connection.row_factory = sqlite3.Row
@@ -1088,13 +1103,28 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
         # NOT readable. A locked, malformed or momentarily unavailable database answers no
         # question, and calling it readable turns "we could not look" into "it is not there",
         # which compare_store then grades as a definite store mismatch.
-        return {"nonce": nonce, "found": False, "readable": False,
+        return {**unknown, "nonce": nonce, "found": False, "readable": False,
                 "detail": f"{type(error).__name__}: {error}"}
     finally:
         connection.close()
+    closed = _path_identity(db_path)
+    if opened is None or closed is None:
+        moved = "the database could not be identified while the nonce was being read"
+    elif (opened["device"], opened["inode"]) != (closed["device"], closed["inode"]):
+        moved = (
+            f"the database was replaced while the nonce was being read: device:inode"
+            f" {opened['device']}:{opened['inode']} became"
+            f" {closed['device']}:{closed['inode']}"
+        )
+    else:
+        moved = None
+    if moved is not None:
+        # Unreadable rather than absent, for the reason above: an answer that cannot be
+        # attributed to a file is not an answer about any store.
+        return {**unknown, "nonce": nonce, "found": False, "readable": False, "detail": moved}
     if row is None:
-        return {"nonce": nonce, "found": False, "readable": True, "detail": None}
-    return {"nonce": nonce, "found": True, "readable": True, "detail": None,
+        return {**closed, "nonce": nonce, "found": False, "readable": True, "detail": None}
+    return {**closed, "nonce": nonce, "found": True, "readable": True, "detail": None,
             "writtenBy": row["written_by"], "writtenAt": row["written_at"]}
 
 
@@ -1114,6 +1144,12 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     this side: the caller holds its own path and the peer's device and inode, and nothing that
     says which pathname the peer opened. A nonce is the only live evidence here - the peer's
     write is readable in the file being read - and it is what the contract designates as proof.
+
+    Being the only proof, it has to be evidence about THIS file. The answer carries the
+    identity of the file it was read from, because it comes from a second open of the path,
+    and a found nonce is graded as proof only when that matches the store being compared. An
+    answer that cannot be attributed is unproven rather than a mismatch: it says nothing about
+    whether two participants share a store, only that this reading is not about the one here.
 
     The name count is graded beside all of that rather than folded into any of it. It catches
     one concrete case and only one: `st_nlink` counts hardlink names, and a bind mount adds a
@@ -1151,7 +1187,17 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
             # truth is that this one merely could not look.
             reasons.append((UNPROVEN, f"the nonce could not be read here: {nonce.get('detail')}"))
         elif nonce.get("found"):
-            reasons.append((PROVEN, "a nonce written by another participant is readable here"))
+            read_from = (nonce.get("device"), nonce.get("inode"))
+            here = (store.get("device"), store.get("inode"))
+            if None in read_from or None in here or read_from != here:
+                reasons.append((UNPROVEN, (
+                    f"the nonce was read from device:inode {read_from[0]}:{read_from[1]}, and"
+                    f" this comparison is about {here[0]}:{here[1]}"
+                )))
+            else:
+                reasons.append((
+                    PROVEN, "a nonce written by another participant is readable here",
+                ))
         else:
             reasons.append((MISMATCH, "a nonce written by another participant is not here"))
 

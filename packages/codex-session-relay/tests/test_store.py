@@ -646,6 +646,49 @@ class Identity(unittest.TestCase):
         self.assertEqual(graded["sameStore"], "unproven", graded)
         self.assertIn("names", graded["detail"], graded)
 
+    def test_a_nonce_read_from_a_replacement_does_not_prove_the_measured_store(self):
+        """The only evidence graded as proof, bound to the file it was read from.
+
+        `nonce_lookup` opens the path itself, after whatever stat'd it for the receipt, so a
+        replacement between the two hands a comparison whose identity came from A an answer
+        that came from B. A copy carries the challenge row with the bytes - `copy_store` is
+        the same copy the identifier tests use - so the replacement does not even have to be
+        crafted to contain the nonce.
+
+        It matters more than it did: this class also stopped grading an agreeing device and
+        inode as proof, which leaves the nonce as the only proving mechanism. Unbound, it is
+        the whole grading rather than one voice in it.
+        """
+        mine = self.store.locate()
+        written = self.store.write_challenge(actor="parent")
+        # Closed first so the committed challenge row is in the main file and the copy below
+        # carries it; a live write-ahead log would leave the replacement without the nonce and
+        # this would pass because the answer was MISSING rather than because it was refused.
+        self.store.close()
+
+        replacement = self.copy_store(os.path.join(self.tmp, "replacement"))
+        os.replace(
+            os.path.join(replacement, "relay.sqlite3"),
+            os.path.join(self.a, "relay.sqlite3"),
+        )
+
+        answer = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+
+        # The defect first, so a failure says what it is: the identity under this comparison
+        # is the one measured from A, and the answer came out of B.
+        graded = compare_store(mine, nonce=answer)
+        self.assertNotEqual(
+            graded["sameStore"], "proven",
+            "a nonce read from a database that replaced the measured one proved it",
+        )
+        self.assertIn("read from", graded["detail"], graded)
+
+        # And the case is the one described rather than a read that simply failed.
+        self.assertTrue(answer["found"], answer)
+        self.assertNotEqual(
+            (answer["device"], answer["inode"]), (mine["device"], mine["inode"]),
+        )
+
     def test_a_store_with_no_identity_is_never_proven_equal(self):
         """Absence must not become agreement; an old store predates the identity rows."""
         self.assertEqual(
