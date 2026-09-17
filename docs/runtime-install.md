@@ -1078,6 +1078,62 @@ hash Codex recorded against each one stays attached. The file bytes do not: the 
 reserialized. The MCP registration is the one that preserves bytes, by appending and leaving the
 prior content as an exact prefix.
 
+## The completion hook
+
+`runtime_install.py hook --adapter completion` registers the Stop hook that catches a managed
+turn ending without the records a completion needs. It is the same install path as above, with the
+command derived from this checkout instead of typed, and it lands on `Stop` unless the caller
+names another event.
+
+The decision is not made in the hook. [The hook contract](../skills/crw-run/references/hook-contract.md)
+fixes the rules and the relay's `guard-evaluate` implements them, down to the exact Stop JSON to
+print. `scripts/completion_hook.py` is the piece between the host and that guard: it reads the
+delivered payload, asks the configured runtime, and prints only a block that runtime produced.
+
+It cannot cost a turn. The host reads exit 2 as the blocking code and takes stderr as the
+continuation prompt, and `argparse` exits 2 on any usage error, so the entry point parses no
+arguments, writes nothing to stderr, captures the subprocess's streams rather than inheriting
+them, and exits 0 on every path. A stale flag left in somebody's hook file is a hook that does
+nothing, not a hold on every ordinary turn.
+
+Its settings are its own file, `crw-completion-hook.json` beside the hook file, and they are
+written before the hook that reads them: a hook registered against settings that are not there
+answers `config_absent` on every Stop and releases, which is an installed hook that does
+nothing and says so nowhere. Settings that already say something else are refused rather than
+overwritten, because they carry the mode and a silent rewrite changes whether turns can be held
+at all. `observe` is what an install writes; holding depends on per-session write isolation this
+command cannot grant.
+
+The runtime is named through the owned pointer, `<dest>/current/bin/codex-session-relay`, and
+never through `PATH` or a checkout path. A host can carry a relay on `PATH` whose build
+predates the guard: the file is there, it runs, and it rejects the call. That the executable
+exists and that it offers `guard-evaluate` are two questions, and `hook-status` answers them
+as two cells for that reason.
+
+Failures keep their own names. A runtime that could not be run carries its `errno`, because a
+moved pointer and a file that cannot be executed are different repairs. An exit of 2 carrying the
+relay's own error record is the relay declining a request it understood; an exit of 2 carrying
+nothing is its argument parser refusing before any command ran. Every one of these releases the
+turn and is recorded.
+
+## Registration is not firing
+
+`runtime_install.py hook-status` reads and writes nothing. It answers registration, the host's
+trust state, whether the registered command's target still exists, the settings, the runtime,
+whether that runtime offers the subcommand, this hook's own record of its invocations, the
+guard's records, and the daemon, each as its own cell. `not_read` is used where a question was
+not asked and is never written as an absence.
+
+This hook records one entry per invocation by default, and the default is not frugality. The
+guard publishes an observation only when it selected an assignment, so on a host with no managed
+session it writes nothing at all, and an empty firing record would be indistinguishable from a
+hook that never runs. The count is always reported beside the policy that produced it.
+
+The daemon is not on this path. The guard reads the marker and a read-only database, so a stopped
+daemon is not observable from a Stop and is never inferred from one; `hook-status` answers it
+separately or says it did not look. Long retries and whole verification loops belong to the daemon
+and to the coordinating task, not to a hook with a five-second budget.
+
 ## What none of this establishes
 
 Running the entry point against a temporary destination proves what it did there. It is not
@@ -1085,6 +1141,11 @@ evidence about a host's real Codex home, its installed runtime, its MCP registra
 operational database. `installed`, `mcpExposed`, `connected`, `deliveryAccepted`,
 `verificationComplete` and `alwaysActive` are six separate facts under OPS-6.1, and `imported` and
 `settingsPreserved` are two more beside them. None of the eight is read from another.
+
+A registered completion hook is not a fired one, and a fired one is not a delivered hold. That a
+line is in the hook file says nothing about the host having run it, about the runtime it names
+being able to answer, or about any turn having been judged. Those claims need the host's own
+evidence, not this command's.
 
 A successful update is not one of them either. That the pointer moved, that the gate found the
 daemon stopped and no attempt open, and that the store's tables were compatible are three

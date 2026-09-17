@@ -27,8 +27,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
-                         pointer, reading, scope, staging, swapgate)
+from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
+                         ownership, pointer, reading, scope, staging, swapgate)
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
@@ -3407,10 +3407,10 @@ class DeclaredSetReferenceTests(unittest.TestCase):
         Comparing the reader with a hand-written expectation would only check that two things I
         wrote agree. The imported module is the outside truth here.
         """
-        modules = {"check": check, "codexconfig": codexconfig, "definition": definition,
-                   "hooks": hooks, "hostrecord": hostrecord, "ownership": ownership,
-                   "pointer": pointer, "reading": reading, "scope": scope,
-                   "staging": staging, "swapgate": swapgate}
+        modules = {"check": check, "codexconfig": codexconfig, "completion": completion,
+                   "definition": definition, "hooks": hooks, "hostrecord": hostrecord,
+                   "ownership": ownership, "pointer": pointer, "reading": reading,
+                   "scope": scope, "staging": staging, "swapgate": swapgate}
         trees = _runtime_trees()
         declared_by_module = _declared_by_module(trees)
         computed = set()
