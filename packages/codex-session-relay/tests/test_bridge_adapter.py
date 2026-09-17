@@ -1021,7 +1021,10 @@ class TransportIsolation(RelayTestCase):
 
     def test_a_withheld_send_classifies_as_busy_and_retry_safe(self):
         """Nothing was sent, so the delivery layer must be able to say that precisely."""
-        from codex_session_relay.transport import DEFERRED_BUSY, classify_operation_receipt
+        from codex_session_relay.transport import (
+            DEFERRED_BUSY, assert_attempt_invariants, attempt_record,
+            classify_operation_receipt,
+        )
 
         server = self.barrier_server()
         server.hold.add("thread-a")
@@ -1038,6 +1041,19 @@ class TransportIsolation(RelayTestCase):
         self.assertEqual(facts.delivery_state, DEFERRED_BUSY)
         self.assertEqual(facts.send_attempted, "no")
         self.assertTrue(facts.retry_safe, "a send that never happened must stay retryable")
+        # The bucket cannot carry the distinction and the schema will not let it: retrySafe is
+        # pinned to thread/read or thread/resume, so a locally withheld send shares the busy
+        # bucket with a host-reported one. What separates them is the error text, which is
+        # exactly what the diagnostics criterion asks not to be hidden behind a generic state.
+        self.assertEqual(facts.failed_operation, "thread/read")
+        self.assertIn("this relay", facts.error_text)
+        self.assertIn("without being sent", facts.error_text)
+        # And the record it produces is one the frozen attempt schema accepts.
+        assert_attempt_invariants(attempt_record(
+            facts, request_id="req-c2", event_id="ev-c", attempt_no=1,
+            recipient="01parent", status_before="unknown",
+            observed_at="2026-09-17T00:00:00Z",
+        ))
         thread.join(timeout=10)
 
     def test_the_worker_survives_an_abandoned_send_and_keeps_serving(self):
