@@ -11,6 +11,10 @@ CHECKS = (
      "skills/crw-run/references/hook-contract.md", ["replay"]),
     ("operations", "scripts/check_operations_contract.py",
      "skills/crw-run/references/operations.md", []),
+    # Re-derives the committed component identity from this checkout, so the one
+    # compatibility definition cannot drift away from the source it describes.
+    ("runtime", "scripts/runtime_install.py",
+     "scripts/crw_runtime/components.json", ["verify-definition"]),
 )
 
 
