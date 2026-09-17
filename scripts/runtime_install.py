@@ -244,17 +244,19 @@ def classify_component(component, *, record, entry_override=None, registration=N
         # through would drop the Codex CLI from the comparison entirely, and a point measured
         # under another CLI would then carry this component to 'own' (OPS-1.3, OPS-2.1).
         unreadable.append("the Codex CLI version")
-    elif record is not None and location and version:
+    if record is None:
+        # Which failure it was, not merely that there was one: a record that could not be
+        # reached and a record whose shape could not be read are different problems with
+        # different answers, and a classification that says only 'unreadable' hides that.
+        unreadable.append("the host record (" + str(record_state or reading.UNREADABLE) + ")")
+    elif codex_cli is not None and location and version:
+        # Each unreadable signal is recorded on its own. Reporting only the first would hide
+        # the others, and every one of them independently stops the classification.
         points = hostrecord.points_for(
             record, component["component"], location=location,
             interpreter=version, install_digest=current_digest,
             codex_cli=codex_cli, host=socket.gethostname(),
         )
-    elif record is None:
-        # Which failure it was, not merely that there was one: a record that could not be
-        # reached and a record whose shape could not be read are different problems with
-        # different answers, and a classification that says only 'unreadable' hides that.
-        unreadable.append("the host record (" + str(record_state or reading.UNREADABLE) + ")")
 
     conflict = None
     if registration and registration.get("outcome") == "CONFLICT":

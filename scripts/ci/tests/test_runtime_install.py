@@ -2365,6 +2365,26 @@ class UnreadableDimensionTests(unittest.TestCase):
         self.assertTrue(Path(resolved).is_absolute(),
                         "classification must describe the executable that would run")
 
+    def test_every_unreadable_signal_is_recorded_rather_than_only_the_first(self):
+        """Two signals failing at once must both be named.
+
+        Found the hard way: a host with no codex binary reported only the Codex version and
+        stopped, so an unreadable host record went unmentioned on exactly the machines that
+        have neither. One unreadable signal must not hide another.
+        """
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        with mock.patch.object(runtime_install, "codex_cli_version", return_value=None):
+            classified = runtime_install.classify_component(
+                component, record=None, record_state=reading.ACCESS_ERROR)
+        reasons = " ".join(classified["reasons"])
+        self.assertEqual(classified["class"], "unreadable")
+        self.assertIn("Codex CLI", reasons)
+        self.assertIn("host record", reasons)
+        self.assertIn(reading.ACCESS_ERROR, reasons,
+                      "and the record's failure keeps its own state")
+
 
 if __name__ == "__main__":
     unittest.main()
