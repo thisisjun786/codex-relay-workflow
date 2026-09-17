@@ -1265,6 +1265,10 @@ guard publishes an observation only when it selected an assignment, so on a host
 session it writes nothing at all, and an empty firing record would be indistinguishable from a
 hook that never runs. The count is always reported beside the policy that produced it.
 
+A record is whole or it is absent. A short write is finished rather than accepted, and a write
+that cannot finish removes what it left: a truncated record survives under a name nothing will
+reuse and would be counted as an invocation whose contents no longer read back.
+
 The settings are read before the payload is looked at, because the settings say where a record
 goes. Reading them second meant a payload the adapter could not parse was released with nothing
 written anywhere, which is the one class of invocation that most needs a record.

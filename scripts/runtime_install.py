@@ -2021,6 +2021,19 @@ def cmd_hook(args):
                               " this command does not do because removal renumbers later"
                               " identities.")})
             return EXIT_REFUSED
+        # And it is the registration this run meant to make. Counting one without reading it
+        # would accept somebody else's adapter entry as this command's own work.
+        survivor = landed[0]
+        if survivor["command"] != command or survivor["timeout"] != args.timeout:
+            emit({"command": "hook", "adapter": adapter, "settings": settings,
+                  "hookFile": str(path), "result": result,
+                  "registrations": [survivor["identity"]],
+                  "error": ("the one registration for " + event + " after the append is not the"
+                            " one this run made: it reads " + repr(survivor["command"])
+                            + " with timeout " + repr(survivor["timeout"])
+                            + ". The hook file changed under this run; reconcile it by hand,"
+                              " because removal renumbers later identities.")})
+            return EXIT_REFUSED
     emit({
         "command": "hook",
         "adapter": adapter,

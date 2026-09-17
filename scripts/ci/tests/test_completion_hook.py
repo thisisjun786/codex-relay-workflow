@@ -13,6 +13,7 @@ evidence the hook contract's packet and this repository's status command keep ap
 """
 
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
@@ -935,6 +936,85 @@ class OneAdapterIsRegisteredOnce(unittest.TestCase):
         self.assertIsNone(emitted[0]["registrations"])
         self.assertEqual(emitted[0]["reading"]["state"], reading.ACCESS_ERROR)
         self.assertIn("could not be established", emitted[0]["error"])
+
+    def test_a_registration_that_is_not_the_one_this_run_made_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                apply=True, isolation_asserted_by=None)
+            real = runtime_install.hooks.read
+            calls = []
+            impostor = completion.command_for("/usr/bin/python3", "/elsewhere/completion_hook.py")
+
+            def swapped(path):
+                calls.append(path)
+                if len(calls) > 2:  # somebody replaced the file between the append and this read
+                    return reading.Reading(value={"hooks": {completion.EVENT: [
+                        {"hooks": [{"type": "command", "command": impostor, "timeout": 10}]}]}},
+                        state=reading.PRESENT, source=path)
+                return real(path)
+
+            emitted = []
+            with mock.patch.object(runtime_install.hooks, "read", side_effect=swapped), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+        self.assertEqual(code, 1)
+        self.assertIn("not the one this run made", emitted[0]["error"])
+
+
+class AJournalRecordIsWholeOrAbsent(unittest.TestCase):
+    """A truncated record is worse than none: it survives under a name nothing will reuse and
+    is counted as an invocation whose contents no longer read back."""
+
+    def test_a_write_that_cannot_finish_leaves_nothing_behind(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            real_write = os.write
+
+            def truncating(handle, data):
+                real_write(handle, data[:5])
+                raise OSError(errno.ENOSPC, "no space left on device")
+
+            with mock.patch.object(completion.os, "write", side_effect=truncating):
+                completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
+                               environ={})
+            self.assertEqual(journalled(temporary), [],
+                             "the partial record was removed rather than left to be counted")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["firingJournal"]["value"], "0")
+
+    def test_a_short_write_is_finished_rather_than_accepted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            real_write = os.write
+
+            def one_byte_at_a_time(handle, data):
+                return real_write(handle, data[:1])
+
+            with mock.patch.object(completion.os, "write", side_effect=one_byte_at_a_time):
+                completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
+                               environ={})
+            records = journalled(temporary)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_ANSWERED)
+
+    def test_a_budget_that_is_not_a_finite_number_is_refused(self):
+        """1e999 parses as a valid JSON number and arrives as inf, which means no timeout."""
+        self.assertTrue(completion.budget_complaints(float("inf"), 10))
+        self.assertTrue(completion.budget_complaints(float("nan"), 10))
+        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
+                                            environ={})
+        document["timeoutSeconds"] = json.loads("1e999")
+        found = completion.complaints(document)
+        self.assertTrue(found)
+        self.assertIn("timeoutSeconds", found[0])
 
 
 class ASpellingThisCommandCannotJudgeIsSaidSo(unittest.TestCase):

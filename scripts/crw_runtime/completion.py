@@ -28,6 +28,7 @@ separate questions, answered separately by status().
 
 import errno
 import json
+import math
 import os
 import re
 import shlex
@@ -96,7 +97,7 @@ def budget_complaints(guard_timeout, registered_timeout):
     """
     found = []
     if isinstance(guard_timeout, bool) or not isinstance(guard_timeout, (int, float)) \
-            or guard_timeout <= 0:
+            or not math.isfinite(guard_timeout) or guard_timeout <= 0:
         found.append("the guard budget must be a positive number of seconds")
     elif (isinstance(registered_timeout, (int, float))
             and not isinstance(registered_timeout, bool)
@@ -374,7 +375,7 @@ def complaints(document):
         found.append("journalPolicy must be one of " + ", ".join(JOURNAL_POLICIES))
     budget = document.get("timeoutSeconds")
     if budget is not None and (isinstance(budget, bool) or not isinstance(budget, (int, float))
-                               or budget <= 0):
+                               or not math.isfinite(budget) or budget <= 0):
         found.append("timeoutSeconds must be a positive number")
     root = document.get("journalRoot")
     if root is not None and (not isinstance(root, str) or not root.strip()):
@@ -467,6 +468,10 @@ def invoke_guard(config, payload):
                 out, err = opened.communicate(timeout=remaining)
             except subprocess.TimeoutExpired:
                 out, err = b"", b""
+        # Reaped without waiting. The status is collected when it is already there, and when it
+        # is not this returns anyway: the entry point exits moments later and the child becomes
+        # init's to reap, which is a bounded cost, while blocking here is not.
+        opened.poll()
         return {"ending": TIMED_OUT, "argv": argv, "code": None, "signal": None,
                 "elapsedMs": round((time.monotonic() - started) * 1000),
                 "stdout": _text(out), "stderr": _text(err),
@@ -828,10 +833,21 @@ def journal(config, record):
         directory.mkdir(parents=True, exist_ok=True)
         handle = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
-            os.write(handle, (json.dumps(record, sort_keys=True, default=str) + "\n").encode("utf-8"))
+            # Written to completion, and removed if it cannot be. os.write may write fewer bytes
+            # than it was given, and a truncated record is worse than none: it survives under a
+            # name nothing will reuse and is counted as an invocation whose contents no longer
+            # read back.
+            payload = (json.dumps(record, sort_keys=True, default=str) + "\n").encode("utf-8")
+            written = 0
+            while written < len(payload):
+                written += os.write(handle, payload[written:])
         finally:
             os.close(handle)
     except (OSError, ValueError):
+        try:
+            os.unlink(str(target))
+        except OSError:
+            pass
         return None
     return str(target)
 
