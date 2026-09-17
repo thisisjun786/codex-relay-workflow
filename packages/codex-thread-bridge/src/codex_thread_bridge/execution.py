@@ -148,6 +148,21 @@ def _efforts(value, where: str) -> frozenset:
     return frozenset(_identifier(item, where) for item in value)
 
 
+def _no_duplicates(pairs):
+    """A repeated key would silently keep the last value and discard the first.
+
+    Everywhere else an unusable policy stops the server, and this file is the authorization
+    boundary: a hand-edited policy that lists "allowed" twice would enforce one of them while
+    reading as the other, which is the kind of difference nobody notices until it matters.
+    """
+    seen: dict = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ExecutionPolicyError(f"duplicate key {key!r} in the execution policy")
+        seen[key] = value
+    return seen
+
+
 class ExecutionPolicy:
     """What this host allows. Constructed before the first tool call and never mutated after."""
 
@@ -243,7 +258,9 @@ class ExecutionPolicy:
         except OSError as error:
             raise ExecutionPolicyError(f"cannot read {path}: {error}") from error
         try:
-            data = json.loads(raw)
+            data = json.loads(raw, object_pairs_hook=_no_duplicates)
+        except ExecutionPolicyError:
+            raise
         except ValueError as error:
             raise ExecutionPolicyError(f"{path} is not valid JSON: {error}") from error
         return cls.from_mapping(data, digest=hashlib.sha256(raw).hexdigest())

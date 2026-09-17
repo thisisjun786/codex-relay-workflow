@@ -195,6 +195,23 @@ def test_a_missing_or_malformed_file_stops_the_policy_from_loading(tmp_path):
         ExecutionPolicy.from_file(broken)
 
 
+def test_a_repeated_key_is_refused_rather_than_silently_overwritten(tmp_path):
+    """json keeps the last occurrence, so one of the two lists would be enforced invisibly."""
+    path = tmp_path / "duplicated.json"
+    path.write_text(
+        '{"allowed": [{"model": "a", "efforts": ["x"]}],'
+        ' "allowed": [{"model": "b", "efforts": ["y"]}]}'
+    )
+    with pytest.raises(ExecutionPolicyError, match="duplicate key 'allowed'"):
+        ExecutionPolicy.from_file(path)
+    nested = tmp_path / "nested.json"
+    nested.write_text(
+        '{"allowed": [{"model": "a", "efforts": ["x"], "model": "b"}]}'
+    )
+    with pytest.raises(ExecutionPolicyError, match="duplicate key 'model'"):
+        ExecutionPolicy.from_file(nested)
+
+
 def test_the_digest_identifies_the_file_without_disclosing_it(tmp_path):
     path = tmp_path / "policy.json"
     path.write_text(json.dumps(policy_for(tmp_path)))

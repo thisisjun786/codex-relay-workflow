@@ -145,7 +145,10 @@ permissions. Capability at creation is OPS-5.5 and delivery ownership is OPS-9 i
 
 ## Model and settings verification
 
-State the model and the reasoning effort on every mutation. Do not invent an argument
+State the model and the reasoning effort on every mutation that starts a turn:
+`create_thread`, `create_worktree_thread` and `send_message_to_thread`. `steer_thread` and
+`pause_goal` start no turn and select no model, so they accept neither argument and need no
+authorization. Do not invent an argument
 or change global configuration. For an explicit effort on an API with no override, use
 an already-permitted path or effective configuration that actually applies the requested
 values. If none does, report the concrete unsupported capability and settle it before

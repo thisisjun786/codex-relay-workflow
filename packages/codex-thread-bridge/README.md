@@ -121,8 +121,11 @@ request is sent. The failure this prevents is an omission, and a guard you can f
 enable is not a guard against forgetting.
 
 **Was the pair approved?** Only a host that configured a policy file can answer that, so
-the allowlist is compared only where one exists. `get_capabilities` and every mutation
-receipt report which of the two modes was in force, so nobody assumes the stronger one.
+the allowlist is compared only where one exists. `get_capabilities` reports which of the two
+modes is in force, and so does the receipt of every mutation that selects a model, so nobody
+assumes the stronger one. `steer_thread` and `pause_goal` select none: they put input into a
+turn that is already running, or change a goal's status, so they take no pair, authorize
+nothing, and carry no authorization record that might imply otherwise.
 
 Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
 
