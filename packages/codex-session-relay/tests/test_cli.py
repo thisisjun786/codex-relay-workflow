@@ -1349,15 +1349,29 @@ class ParticipantAccessReceipts(CliBase):
         mine = self.participant("doctor", state=state, pin=state)["accessReceipt"]
 
         elsewhere = os.path.join(self.tmp, "elsewhere")
+        # A real second database, not an empty directory. doctor constructs no Store, so
+        # pointing it at a path that does not exist yet returns null identity and null
+        # device/inode - which makes every inequality below pass for the wrong reason and
+        # turns the refusal into a test of an ABSENT store rather than a different one.
+        # store-identity opens one, which is what gives this test two stores to tell apart.
+        created = self.participant("store-identity", state=elsewhere, pin=elsewhere)
+        self.assertIsNotNone(created["store"]["storeId"], created)
         stray = self.participant("doctor", state=elsewhere, pin=elsewhere)["accessReceipt"]
 
+        for name, receipt in (("mine", mine), ("stray", stray)):
+            with self.subTest(receipt=name):
+                self.assertIsNotNone(receipt["storeId"], receipt)
+                self.assertIsNotNone(receipt["inode"], receipt)
+        self.assertNotEqual(stray["storeId"], mine["storeId"])
         self.assertNotEqual(
             (stray["device"], stray["inode"]), (mine["device"], mine["inode"]),
             "the two runs landed on one file, so this proves nothing",
         )
-        # And asked to prove it is the same store, it refuses instead of reporting health.
+        # And asked to prove it is the same store, a participant sitting on the other one
+        # refuses instead of reporting health - which is the failure the criterion names.
         refused = self.participant(
             "doctor", f"--expect-store={mine['storeId']}",
             state=elsewhere, pin=elsewhere, expect=2,
         )
         self.assertNotEqual(refused["sameStore"], "proven", refused)
+        self.assertEqual(refused["accessReceipt"]["storeId"], stray["storeId"], refused)
