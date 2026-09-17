@@ -323,7 +323,16 @@ real one: the adapter dispatches each submission as its own task and allows one 
 flight per recipient, so a call stalled on one recipient no longer blocks a call to another.
 What is still held back is a second send to the SAME recipient, and it is reported
 `thread_busy` without being sent rather than queued behind the first. An abandoned send goes
-on holding its own recipient until the transport's deadline of four times the RPC timeout.
+on holding its own recipient until the transport's deadline, which is one RPC timeout for
+each stage the bridge bounds separately. A send is three requests — `thread/read`,
+`thread/resume`, `turn/start` — and the client re-establishes the connection in front of any
+of them whose reader has finished, so each can also cost `unix_connect` and `initialize`.
+Two limits worth naming beside that
+guarantee. It begins at the connection — `AppServer._connect_lock` serialises establishment,
+so a stalled `connect()` is still shared by every recipient, reads included. And the deadline
+is there to make the worst case finite rather than to match a caller, who has already given
+up at the RPC timeout plus its slack; what the deadline decides is whether the bridge ledger
+ends up holding a real receipt for that request id or an uncertain one.
 
 **A stale event is stopped before the send.** A generation that has moved on invalidates
 every outcome of the previous one, whether or not the new generation has produced a revision
