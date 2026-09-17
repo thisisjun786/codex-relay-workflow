@@ -671,22 +671,47 @@ class ReceiptsAreBoundToTheRevisionTheyWereComputedOver(GuardTestCase):
         self.assertEqual(verdict["observation"], "declared_ready_receipted")
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
-    def test_an_unreadable_deliverable_is_never_reported_as_a_changed_one(self):
-        """Could-not-look and did-change are repaired in different places, so they answer apart.
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses the permission this depends on")
+    def test_an_unreadable_live_artifact_is_never_reported_as_a_changed_one(self):
+        """Driven through the real path, because the previous version of this test was not.
 
-        Folding them together would hold a child over a directory this process could not open, and
-        would point the repair at the child instead of at the permission that actually broke.
+        It raised PermissionError from verify_against_disk itself, which proves the wrapper handles
+        an exception it is handed and says nothing about whether one ever arrives. It does not:
+        scope turns EACCES into a refusal, verify_against_disk catches it per entry and returns it
+        as text, and the outer handler never ran. Injecting at the boundary you are testing only
+        ever tests the boundary.
+        """
+        relationship = self.managed()
+        path = self.artifact("locked/out.txt", "work")
+        self.accept(self.ready_payload(relationship, [path]))
+        self.dispose("ready_for_review")
+        locked = Path(self.root) / "locked"
+        # Registered before the chmod so it is undone even if the assertions fail, and before the
+        # temporary tree is removed, because cleanups run in reverse.
+        self.addCleanup(os.chmod, locked, 0o700)
+        os.chmod(locked, 0o000)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertIn("the receipt's artifacts", verdict["reason"])
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertTrue(verdict["recordedAs"].startswith("hook/"))
+
+    def test_an_exception_that_does_escape_is_still_classified(self):
+        """The boundary test, kept and labelled as one.
+
+        This injects at the boundary on purpose: it asserts what happens to an error that is raised
+        rather than returned. It is not evidence about the real call path, which is what the test
+        above is for.
         """
         self.ready()
         with mock.patch(
-            "codex_session_relay.guard.verify_against_disk",
+            "codex_session_relay.guard.verify_against_disk_detailed",
             side_effect=PermissionError(13, "the artifact root cannot be read"),
         ):
             verdict = self.evaluate()
         self.assertEqual(verdict["observation"], "state_unreadable")
         self.assertIn("the receipt's artifacts", verdict["reason"])
         self.assertEqual(verdict["decision"], guard.RELEASE)
-        self.assertTrue(verdict["recordedAs"].startswith("hook/"))
 
     def test_a_stored_receipt_that_is_not_json_is_reported_rather_than_trusted(self):
         relationship = self.ready()

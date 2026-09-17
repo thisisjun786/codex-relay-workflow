@@ -29,7 +29,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from codex_session_relay import guard, intent, marker
+from codex_session_relay import guard, intent, manifest, marker
 
 from .support import CHILD, DISPATCH_TURN
 from .test_guard import DISPATCH, LATER, NOW, GuardTestCase
@@ -1080,6 +1080,119 @@ class DecodeFailureInventory(unittest.TestCase):
         self.assertIsNone(value)
         self.assertEqual(state, marker.UNREADABLE)
         self.assertNotEqual(state, marker.ABSENT)
+
+
+# The helpers on the deliverable path that catch an error and hand it back as TEXT. Nothing in this
+# shape can reach the classification boundary, because the boundary converts exceptions and these
+# never raise one. Across the whole relay, 24 functions answer this description; only the two below
+# are reachable from guard.deliverable_state, and both now report which of their problems were
+# failures to read. The set is asserted rather than described, so a third one entering this path
+# fails here instead of being found by a reviewer.
+ERROR_TEXT_HELPERS_HANDLED = {"verify_against_disk_detailed", "verify_frozen_detailed"}
+
+
+class ErrorsReturnedAsTextAreAccountedFor(unittest.TestCase):
+    """Property extension E: an error returned as a string is invisible to an exception boundary.
+
+    Found twice, one layer below where the established property reaches: verify_frozen and then
+    verify_against_disk. Both were the same shape and the second was not counted when the first was
+    fixed. This counts the reachable set so the next one cannot be a discovery.
+    """
+
+    def text_returning(self):
+        """Functions in manifest.py that catch an error and put it in a returned collection."""
+        base = Path(__file__).resolve().parent.parent / "src" / "codex_session_relay"
+        tree = ast.parse((base / "manifest.py").read_text(encoding="utf-8"))
+        found = set()
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for handler in [n for n in ast.walk(function) if isinstance(n, ast.ExceptHandler)]:
+                if any(isinstance(n, ast.Raise) for n in ast.walk(handler)):
+                    continue
+                if ".append(" in ast.unparse(ast.Module(body=handler.body, type_ignores=[])):
+                    found.add(function.name)
+        return found
+
+    def reached_from_deliverable_state(self):
+        base = Path(__file__).resolve().parent.parent / "src" / "codex_session_relay"
+        tree = ast.parse((base / "guard.py").read_text(encoding="utf-8"))
+        function = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "deliverable_state"
+        )
+        return {
+            n.func.id for n in ast.walk(function)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+
+    def test_the_deliverable_path_reaches_exactly_the_helpers_that_report_their_access_failures(
+        self,
+    ):
+        reachable = self.text_returning() & self.reached_from_deliverable_state()
+        self.assertEqual(
+            reachable, ERROR_TEXT_HELPERS_HANDLED,
+            "a helper that returns its errors as text entered or left this path; it must report"
+            " which of them were failures to read, or the guard will call them a changed"
+            " deliverable",
+        )
+
+    def test_the_scan_sees_the_shape_in_the_module_it_scans(self):
+        """A scan that finds nothing proves nothing."""
+        self.assertTrue(ERROR_TEXT_HELPERS_HANDLED <= self.text_returning())
+
+    def test_each_handled_helper_actually_returns_the_breakdown(self):
+        """The set above is names; this is behaviour, so agreeing names cannot stand in for it."""
+        disk = manifest.verify_against_disk_detailed([], [])
+        frozen = manifest.verify_frozen_detailed("/nonexistent-frozen-copy")
+        for label, answer in (("verify_against_disk_detailed", disk), ("verify_frozen", frozen)):
+            with self.subTest(label):
+                self.assertEqual(len(answer), 3)
+                self.assertIsInstance(answer[-1], list)
+
+
+class StrayFilesDoNotDisableHoldAccounting(GuardTestCase):
+    """An uncountable budget releases, which is right. An ordinary file is not uncountable.
+
+    hold_counters walks the workspace for the per-session window, and it listed everything rather
+    than the assignment directories, so scanning a regular file raised NotADirectoryError, the
+    budget reported unreadable, and a holdable omission was released. One stray file switched
+    holding off for the workspace.
+    """
+
+    def test_a_stray_file_beside_the_assignments_does_not_release_a_holdable_omission(self):
+        self.managed()
+        (self.markers / marker.workspace_key(self.workspace) / "NOTES.txt").write_text(
+            "somebody left a file here", encoding="utf-8"
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_the_budget_is_still_counted_with_a_stray_file_present(self):
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (self.markers / marker.workspace_key(self.workspace) / "NOTES.txt").write_text(
+            "somebody left a file here", encoding="utf-8"
+        )
+        self.evaluate()
+        counters, malformed, unreadable = guard.hold_counters(
+            directory, session_id=CHILD, turn_id=DISPATCH_TURN, now=LATER,
+            workspace_root=directory.parent,
+        )
+        self.assertIsNone(unreadable)
+        self.assertIsNone(malformed)
+        self.assertEqual(counters["holdsThisSessionWindow"], 1)
+
+    def test_a_directory_that_cannot_be_read_is_still_reported(self):
+        """The control: the release on an uncountable budget is a real behaviour, not a bug."""
+        self.managed()
+        blocked = self.markers / marker.workspace_key(self.workspace) / "another-assignment"
+        blocked.mkdir()
+        (blocked / "hook").write_text("a file where the hook directory belongs", encoding="utf-8")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
 
 
 if __name__ == "__main__":

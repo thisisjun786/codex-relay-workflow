@@ -25,7 +25,12 @@ from pathlib import Path
 from . import intent as intents
 from .currency import AMBIGUOUS, head_revision
 from .errors import ScopeError
-from .manifest import Entry, revision_hash, verify_against_disk, verify_frozen_detailed
+from .manifest import (
+    Entry,
+    revision_hash,
+    verify_against_disk_detailed,
+    verify_frozen_detailed,
+)
 from .marker import (
     DIRECTORIES,
     PUBLISHED,
@@ -122,7 +127,7 @@ def deliverable_state(payload, manifest_ref, roots):
                 "the stored manifest hashes to " + recomputed + " but the receipt claims "
                 + str(claimed),
             )
-        problems, _bindings = verify_against_disk(entries, roots)
+        problems, _bindings, unreachable_live = verify_against_disk_detailed(entries, roots)
         if not problems:
             return DELIVERABLE_CURRENT, "live", None
         if manifest_ref:
@@ -141,6 +146,13 @@ def deliverable_state(payload, manifest_ref, roots):
                     "; ".join(unreachable[:3]),
                 )
             problems = problems + frozen
+        if unreachable_live:
+            # Checked after the frozen fallback, because a frozen copy that verifies answers for a
+            # receipt whose live files we could not read. Reached only when nothing rescued it, and
+            # then the honest answer is that the comparison did not happen. The same shape as the
+            # frozen case one line up: scope turns an unreadable component into a refusal, and
+            # verify_against_disk catches it and returns it as text, so no exception ever arrives.
+            return DELIVERABLE_UNVERIFIABLE, None, "; ".join(unreachable_live[:3])
         return DELIVERABLE_CHANGED, None, "; ".join(problems[:3])
     except (OSError, ScopeError) as error:
         # Could not look. Never folded into "changed".
@@ -360,7 +372,11 @@ def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
     if workspace_root is None:
         assignments, readable = [Path(directory)], True
     else:
-        assignments, readable = listing(Path(workspace_root))
+        # Directories only. A stray regular file beside the assignment directories is not an
+        # assignment, and handing one to _held_records made scanning it raise NotADirectoryError,
+        # which reported the budget as uncountable and released a holdable omission. An ordinary
+        # file must not be able to switch holding off for the workspace.
+        assignments, readable = listing(Path(workspace_root), only=DIRECTORIES)
     if not readable:
         return counters, None, "workspace"
     horizon = intents.moment(now)

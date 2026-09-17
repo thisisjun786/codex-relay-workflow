@@ -203,6 +203,38 @@ class Refusals(MarkerCli):
         )
         self.assertEqual(payload["error"], "usage")
 
+    def test_a_malformed_intent_stays_managed_in_the_explicit_view(self):
+        """The diagnostic view disagreed with the decision about the same marker.
+
+        Testing the SHAPE of the intent answered "unmanaged" for one that parsed into something
+        that is not an object, so an operator asking about a managed workspace by name was told it
+        was an ordinary one. Selection keeps that fact so it can be reported as malformed, and the
+        guard does report it; absence is the test, not shape.
+        """
+        declared = self.declare()
+        assignment = declared["assignmentId"]
+        directory = marker.assignment_dir(self.markers, self.root, assignment)
+        (directory / "intent.json").unlink()
+        (directory / "intent.json").write_text('"a string is not an intent"', encoding="utf-8")
+        shown = self.marker_cli(
+            "intent-show", "--marker-root", self.markers, "--workspace", self.root,
+            "--assignment", assignment,
+        )
+        self.assertTrue(shown["managed"])
+        self.assertEqual(shown["malformed"], "intent")
+
+    def test_an_absent_intent_is_still_unmanaged_in_the_explicit_view(self):
+        """The control: a directory with no intent at all is genuinely not selectable."""
+        declared = self.declare()
+        assignment = declared["assignmentId"]
+        directory = marker.assignment_dir(self.markers, self.root, assignment)
+        (directory / "intent.json").unlink()
+        shown = self.marker_cli(
+            "intent-show", "--marker-root", self.markers, "--workspace", self.root,
+            "--assignment", assignment,
+        )
+        self.assertFalse(shown["managed"])
+
     def test_a_stop_payload_file_that_is_not_utf8_is_a_usage_error(self):
         """A sibling of the marker decode fault, on the surface an operator types at.
 

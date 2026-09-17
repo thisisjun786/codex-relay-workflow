@@ -815,8 +815,20 @@ def publish_claim(
     contradicts its own location is not one to act on. Refused here rather than silently published,
     because a claim whose body disagrees with its path owns nothing and would only ever read as a
     competitor.
+
+    The dispatch request id is checked against the directory for the same reason register_relationship
+    checks it: an assignment id IS the hash of a dispatch request id, so the two are derivable from
+    each other and a claim naming a different dispatch belongs to a different assignment. A claim is
+    what the guard requires before it will hold a bound session, so a fact nobody correlated must not
+    be able to satisfy it.
     """
     session_id = _identity(session_id, "session id")
+    if assignment_id(dispatch_request_id) != assignment:
+        raise RegistrationError(
+            RefusalReason.RELATIONSHIP_CONFLICT,
+            "this claim names dispatch request id " + str(dispatch_request_id) + ", which does not "
+            "hash to assignment " + str(assignment) + ", so it claims a different assignment",
+        )
     directory = assignment_dir(root, workspace, _assignment(assignment))
     outcome = _publish_or_compare(
         directory / "claims" / session_id / "claim.json",

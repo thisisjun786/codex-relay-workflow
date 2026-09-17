@@ -470,5 +470,111 @@ class IntakeBehaviourIsUnchangedByTheAccessSplit(RelayTestCase):
         self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
 
 
+class LiveAccessIsNotLiveDisagreement(RelayTestCase):
+    """The same split on the live path, where scope reports through refusals rather than raising.
+
+    scope._walk_error names the four errnos it understands and falls through to a generic
+    SCOPE_ESCAPE for the rest. That fallthrough is not a scope decision; it is an open that did not
+    work. verify_against_disk then catches the refusal and returns it as text, so nothing ever
+    raises and an exception boundary cannot tell the two apart.
+    """
+
+    def declared(self, name, text="the delivered bytes"):
+        path = self.artifact(name, text)
+        entries, _ = manifest.build([path], [self.root])
+        return path, entries
+
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses the permission this depends on")
+    def test_a_component_that_cannot_be_opened_is_an_access_failure(self):
+        path, entries = self.declared("locked/deliver.txt")
+        locked = os.path.dirname(path)
+        self.addCleanup(os.chmod, locked, 0o700)
+        os.chmod(locked, 0o000)
+        problems, _bindings, unreadable = manifest.verify_against_disk_detailed(
+            entries, [self.root]
+        )
+        self.assertTrue(problems)
+        self.assertEqual(unreadable, problems)
+
+    def test_a_vanished_artifact_is_not_an_access_failure(self):
+        path, entries = self.declared("gone.txt")
+        os.remove(path)
+        problems, _bindings, unreadable = manifest.verify_against_disk_detailed(
+            entries, [self.root]
+        )
+        self.assertTrue(problems)
+        self.assertEqual(unreadable, [], "a file that is not there is a readable answer")
+
+    def test_changed_bytes_are_not_an_access_failure(self):
+        path, entries = self.declared("changed.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("a later revision")
+        problems, _bindings, unreadable = manifest.verify_against_disk_detailed(
+            entries, [self.root]
+        )
+        self.assertTrue(problems)
+        self.assertEqual(unreadable, [])
+
+    def test_a_path_outside_the_roots_is_not_an_access_failure(self):
+        """A scope decision is a decision. It was reached, so it is not a failure to look."""
+        path, entries = self.declared("outside.txt")
+        problems, _bindings, unreadable = manifest.verify_against_disk_detailed(
+            entries, [os.path.join(self.tmp, "elsewhere")]
+        )
+        self.assertTrue(problems, path)
+        self.assertEqual(unreadable, [])
+
+    def test_the_two_value_form_answers_exactly_what_it_always_did(self):
+        """The invariance the intake depends on, across every branch that produces a problem."""
+        cases = {}
+        good_path, good = self.declared("equiv-live-good.txt")
+        cases["a deliverable that verifies"] = (good, [self.root])
+        _gone_path, gone = self.declared("equiv-live-gone.txt")
+        os.remove(_gone_path)
+        cases["a vanished artifact"] = (gone, [self.root])
+        changed_path, changed = self.declared("equiv-live-changed.txt")
+        with open(changed_path, "w", encoding="utf-8") as handle:
+            handle.write("a later revision")
+        cases["changed bytes"] = (changed, [self.root])
+        cases["a path outside the roots"] = (good, [os.path.join(self.tmp, "elsewhere")])
+        cases["nothing declared at all"] = ([], [self.root])
+
+        for label, (entries, roots) in cases.items():
+            with self.subTest(label):
+                two = manifest.verify_against_disk(entries, roots)
+                detailed = manifest.verify_against_disk_detailed(entries, roots)
+                self.assertEqual(two, detailed[:2])
+
+
+class LiveIntakeBehaviourIsUnchangedByTheAccessSplit(RelayTestCase):
+    """The same invariance claim as the frozen split, held at the intake boundary."""
+
+    def test_a_verifying_deliverable_is_still_admitted(self):
+        relationship = self.register()
+        payload = self.ready_payload(relationship, [self.artifact("live-good.txt", "bytes")])
+        self.accept(payload)
+        self.assertIsNotNone(
+            self.store.one("SELECT 1 AS hit FROM events WHERE event_id = ?", (payload["eventId"],))
+        )
+
+    def test_a_changed_deliverable_is_still_refused_as_unverified(self):
+        relationship = self.register()
+        path = self.artifact("live-changed.txt", "bytes")
+        payload = self.ready_payload(relationship, [path])
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("a later revision")
+        self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
+
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses the permission this depends on")
+    def test_an_unreadable_deliverable_is_still_refused_as_unverified(self):
+        relationship = self.register()
+        path = self.artifact("locked-intake/live.txt", "bytes")
+        payload = self.ready_payload(relationship, [path])
+        locked = os.path.dirname(path)
+        self.addCleanup(os.chmod, locked, 0o700)
+        os.chmod(locked, 0o000)
+        self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
+
+
 if __name__ == "__main__":
     unittest.main()

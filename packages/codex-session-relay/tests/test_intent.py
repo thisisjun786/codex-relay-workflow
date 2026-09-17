@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 from codex_session_relay import intent, marker
-from codex_session_relay.errors import RefusalReason, RelayError
+from codex_session_relay.errors import RefusalReason, RegistrationError, RelayError
 from codex_session_relay.store import Store
 
 T0 = "2026-01-01T00:00:00+00:00"
@@ -304,11 +304,33 @@ class Claims(IntentTestCase):
         self.assertIsNone(intent.claimant(claim))
         self.assertEqual(len(self.facts()["claims"]), 1)
 
-    def test_correlation_requires_the_preimage_the_intent_hashed(self):
+    def test_a_claim_naming_another_dispatch_is_refused_where_it_is_published(self):
+        """An assignment id IS the hash of a dispatch request id, so the two are derivable.
+
+        A claim is what the guard requires before it will hold a session the coordinator bound, so
+        a claim nobody correlated must not be able to satisfy it. register_relationship has always
+        made this check; the claim path was its unmade sibling.
+        """
         self.declare()
-        self.claim(dispatch="not-the-dispatch-id")
-        self.assertFalse(intent.correlated(self.facts(), SESSION))
+        with self.assertRaises(RegistrationError) as caught:
+            self.claim(dispatch="not-the-dispatch-id")
+        self.assertIn("different assignment", str(caught.exception))
+        self.assertEqual(self.facts().get("claims", []), [])
+
+    def test_correlation_requires_the_preimage_the_intent_hashed(self):
+        """Defence in depth: the reader still checks, for a claim that did not come through the API.
+
+        The refusal above closes the publishing path. This one holds the property at the reading
+        end, where a file written by anything at all is what actually gets judged, so it publishes
+        the claim directly rather than through publish_claim.
+        """
+        self.declare()
         directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
+        marker.publish(
+            directory / "claims" / SESSION / "claim.json",
+            {"dispatchRequestId": "not-the-dispatch-id", "sessionId": SESSION, "at": T0},
+        )
+        self.assertFalse(intent.correlated(self.facts(), SESSION))
         marker.publish(
             directory / "claims" / "second" / "claim.json",
             {"dispatchRequestId": DISPATCH, "sessionId": "second", "at": T0},

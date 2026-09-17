@@ -1233,10 +1233,16 @@ def cmd_intent_show(services, args) -> dict:
     if args.assignment:
         directory = marker.assignment_dir(root, args.workspace, args.assignment)
         facts, unreadable = marker.read_assignment(directory)
-        if not unreadable and not isinstance(facts.get("intent"), dict):
+        if not unreadable and "intent" not in facts:
             # Selection treats an assignment with no published intent as not selectable, so an
             # explicit one has to read the same way. Reporting it managed and then deriving
             # intent_declared out of nothing told a coordinator a failed declaration had landed.
+            #
+            # Absence is the test, not shape. read_assignment omits the key when the fact is not
+            # there and keeps it when it parsed into something that is not an object, so asking
+            # about shape here answered "unmanaged" for a corrupt intent and told an operator that
+            # a managed workspace was an ordinary one. The malformed report below is what that case
+            # is for, and it is the same answer the guard gives.
             return {
                 "markerRoot": str(root),
                 "workspace": args.workspace,
