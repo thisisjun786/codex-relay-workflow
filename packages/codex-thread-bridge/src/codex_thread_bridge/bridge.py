@@ -3,7 +3,7 @@
 import asyncio
 from pathlib import Path
 
-from .execution import PRESENCE_ONLY
+from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
 from .ledger import Ledger
 from .rpc import AppServer, RpcError
 from .settings import SettingsContract, annotation
@@ -211,7 +211,7 @@ class Bridge:
         if expected_sandbox_policy is not None:
             params["expected_sandbox_policy"] = expected_sandbox_policy
         if policy_exception is not None:
-            nonempty(policy_exception, "policy_exception", 128)
+            nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
             params["policy_exception"] = policy_exception
         request_params = {**params, "prompt": prompt, "title": title}
         built = {}
@@ -356,7 +356,7 @@ class Bridge:
         # Only when supplied, so every retained receipt created before this argument existed keeps
         # its fingerprint and still replays.
         if policy_exception is not None:
-            nonempty(policy_exception, "policy_exception", 128)
+            nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
             params["policy_exception"] = policy_exception
 
         # Built inside validate_fresh, which _mutate runs only AFTER its ledger lookup. This tool
@@ -555,7 +555,7 @@ class Bridge:
         if expected_settings is not None:
             params["expected_settings"] = expected_settings
         if policy_exception is not None:
-            nonempty(policy_exception, "policy_exception", 128)
+            nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
             params["policy_exception"] = policy_exception
         built = {}
 

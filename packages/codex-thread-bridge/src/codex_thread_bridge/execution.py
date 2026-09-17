@@ -54,6 +54,11 @@ POLICY_UNREADABLE = "execution_policy_unreadable"
 # provider-qualified model id, short enough that a runaway string cannot travel as a setting.
 MAXIMUM = 500
 
+# An exception id is cited as a request argument, and the mutation boundary bounds that argument
+# at 128 characters. Declared here so the two limits are one value: a longer id would otherwise
+# load happily into a policy that no caller could ever cite.
+EXCEPTION_ID_MAXIMUM = 128
+
 LIMITS = (
     "This is what the bridge authorized and transmitted. A host reporting the same values has "
     "recorded the request; it is not evidence that a provider served this model or honoured this "
@@ -131,8 +136,8 @@ def _only(entry, keys: set, where: str) -> None:
         )
 
 
-def _identifier(value, where: str) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > MAXIMUM:
+def _identifier(value, where: str, maximum: int = MAXIMUM) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ExecutionPolicyError(f"{where} must be a non-empty string")
     return value
 
@@ -188,7 +193,7 @@ class ExecutionPolicy:
         exceptions: dict = {}
         declared = _object(data.get("exceptions", {}), "exceptions must be an object")
         for name, entry in declared.items():
-            _identifier(name, "an exception id")
+            _identifier(name, "an exception id", EXCEPTION_ID_MAXIMUM)
             entry = _object(entry, f"exception {name!r} must be an object")
             _only(entry, {"model", "reasoningEffort", "cwd", "reason"}, f"exception {name!r}")
             absent = sorted({"model", "reasoningEffort", "cwd"} - set(entry))
@@ -205,7 +210,16 @@ class ExecutionPolicy:
                 # destination Git already requires to be canonical, so an entry that is merely
                 # absolute would load cleanly and then match nothing. That reads to an operator
                 # as an unexplained refusal instead of the misconfiguration it is.
-                if not path.is_absolute() or str(path.resolve()) != root:
+                try:
+                    canonical = str(path.resolve())
+                except (OSError, RuntimeError, ValueError) as error:
+                    # An embedded null or a symlink loop makes resolution itself fail. Without
+                    # this it would leave the module as a bare traceback, and startup would stop
+                    # without ever naming the policy as the reason.
+                    raise ExecutionPolicyError(
+                        f"exception {name!r} cwd {root!r} cannot be resolved: {error}"
+                    ) from error
+                if not path.is_absolute() or canonical != root:
                     raise ExecutionPolicyError(
                         f"exception {name!r} cwd {root!r} must be canonical and absolute"
                     )

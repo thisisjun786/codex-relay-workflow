@@ -111,6 +111,30 @@ def test_an_exception_cannot_be_invented_where_none_was_written():
                     "e": {
                         "model": MODEL,
                         "reasoningEffort": EFFORT,
+                        "cwd": ["/srv/" + chr(0) + "/task"],
+                    }
+                }
+            },
+            "cannot be resolved",
+        ),
+        (
+            {
+                "exceptions": {
+                    "x" * 129: {
+                        "model": MODEL,
+                        "reasoningEffort": EFFORT,
+                        "cwd": ["/srv/task"],
+                    }
+                }
+            },
+            "an exception id must be a non-empty string",
+        ),
+        (
+            {
+                "exceptions": {
+                    "e": {
+                        "model": MODEL,
+                        "reasoningEffort": EFFORT,
                         "cwd": ["/tmp"],
                         "models": [UNAPPROVED],
                     }
