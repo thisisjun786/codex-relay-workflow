@@ -798,6 +798,36 @@ class OneAdapterIsRegisteredOnce(unittest.TestCase):
         self.assertTrue(found, "an identical entry among two does not make two acceptable")
         self.assertIn("more than once", found[0])
 
+    def test_an_identical_command_under_a_matcher_is_still_a_duplicate(self):
+        """Installation only ever appends an unconditional group, and hooks.install treats only
+        that group as already installed, so an identical command under a matcher would be
+        appended beside it and both would run on a matching Stop."""
+        command = completion.command_for("/usr/bin/python3", "/a/completion_hook.py")
+        document = {"hooks": {completion.EVENT: [
+            {"matcher": "something", "hooks": [{"type": "command", "command": command,
+                                                "timeout": 10}]}]}}
+        found = completion.duplicate_complaints(document, completion.EVENT, command, 10)
+        self.assertTrue(found)
+        self.assertIn("matcher", found[0])
+        unconditional = {"hooks": {completion.EVENT: [
+            {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}
+        self.assertEqual(
+            completion.duplicate_complaints(unconditional, completion.EVENT, command, 10), [])
+
+    def test_a_registration_naming_relative_settings_is_reported_not_guessed_at(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "crw-hook.json").write_text("{}", encoding="utf-8")
+            command = completion.command_for(sys.executable, str(ENTRY_POINT)) + " crw-hook.json"
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_RELATIVE)
+        self.assertIn("each session's workspace", found["configuration"]["evidence"])
+        self.assertEqual(found["relayExecutable"]["value"], completion.NOT_READ,
+                         "nothing downstream is read from settings that could not be located")
+
 
 class AnInterpreterHasToBeOne(unittest.TestCase):
     def test_an_executable_that_is_not_python_is_refused(self):

@@ -1155,6 +1155,16 @@ of the two it used. Recomputing it would answer about a file the hook may never 
 that used the override embedded the resolved path in its command, and a later diagnosis has no
 reason to be running under the same environment.
 
+A registration naming its settings with a relative path is reported rather than resolved. The
+hook resolves such a path against each session's workspace, so no single file answers for it,
+and inspecting the one the diagnosis would resolve would report an unrelated file as the hook's
+own. Nothing downstream of those settings is read either.
+
+A matcher is part of a registration. Installation only ever appends an unconditional group and
+the hook file's own installer treats only that group as already installed, so an identical
+command sitting under a matcher is a duplicate: appending would add a second registration beside
+it and both would run on a matching `Stop`.
+
 The interpreter in the registered command is settled the same way, and a bare name is looked up
 at install time, on the machine doing the install. That is the only moment the lookup means
 anything, because the hook runs later from each session's own workspace.

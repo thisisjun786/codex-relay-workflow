@@ -251,6 +251,12 @@ CONFIG_SETTLED = (CONFIG_CREATED, CONFIG_UNCHANGED, CONFIG_WOULD_CREATE)
 # What status() answers with when it did not ask. Distinct from an absence, which is an answer.
 NOT_READ = "not_read"
 
+# A registration this command can see and cannot act on: it names its settings with a relative
+# path, which the hook resolves against each session's workspace. There is no single file to
+# inspect, and inspecting the one this process would resolve would report on a file the hook
+# never opens.
+REGISTRATION_RELATIVE = "registration_names_a_relative_settings_path"
+
 
 def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -731,6 +737,11 @@ def adapter_entries(document, event):
                     "identity": hooks.identity(hooks.SOURCE, event, matcher_index, hook_index),
                     "command": command, "timeout": (entry or {}).get("timeout"),
                     "target": target,
+                    # Part of the registration, not decoration: the same command under a
+                    # different matcher fires on different turns, and hooks.install treats only
+                    # the unconditional group as already installed, so an identical command
+                    # under a matcher would be appended again and both would run.
+                    "matcher": (group or {}).get("matcher"),
                     # The settings this registration actually reads, taken from the command
                     # rather than recomputed. A reader that resolves its own path answers about
                     # a file the hook may never open.
@@ -759,8 +770,14 @@ def duplicate_complaints(document, event, command, timeout):
                   " later identities so this command does not perform one. Reduce it to one"
                   " registration first"]
     entry = already[0]
-    if entry["command"] == command and entry["timeout"] == timeout:
+    if (entry["command"] == command and entry["timeout"] == timeout
+            and entry["matcher"] == hooks.INSTALLED_MATCHER):
         return []
+    if entry["matcher"] != hooks.INSTALLED_MATCHER:
+        return ["this adapter is already registered for " + event + " as " + names
+                + " under a matcher, and installation only ever appends an unconditional group:"
+                  " appending would add a second registration beside it and both would run on a"
+                  " matching " + event + ". Edit or remove that registration first"]
     return ["this adapter is already registered for " + event + " as " + names
             + " with different settings; appending would run two copies on every " + event
             + ", and removal renumbers later identities so this command does not perform one."
@@ -1208,10 +1225,21 @@ def status(codex_home=None, environ=None, event=EVENT):
     # that used an override embedded the resolved path in its command, and this command has no
     # reason to be running under the same environment.
     carried = [entry["settings"] for entry in (ours or []) if entry.get("settings")]
-    path = Path(carried[0]) if carried else configuration_path(home, environ)
-    source = ("the registered command" if carried
-              else "this command's own resolution; no registration named one")
-    config, failed, detail, found = read_configuration(path)
+    relative = [named for named in carried if not os.path.isabs(named)]
+    if relative:
+        # Not settled here. A relative path in a registration is resolved by the hook against
+        # each session's workspace, so there is no one file to inspect, and inspecting the one
+        # THIS process would resolve would report an unrelated file as the hook's own.
+        path, source, config = Path(relative[0]), "the registered command", None
+        failed, detail, found = REGISTRATION_RELATIVE, (
+            "the registration names its settings with the relative path " + relative[0]
+            + ", which the hook resolves against each session's workspace; no single file"
+              " answers for it and none was read"), None
+    else:
+        path = Path(carried[0]) if carried else configuration_path(home, environ)
+        source = ("the registered command" if carried
+                  else "this command's own resolution; no registration named one")
+        config, failed, detail, found = read_configuration(path)
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     if ours:
