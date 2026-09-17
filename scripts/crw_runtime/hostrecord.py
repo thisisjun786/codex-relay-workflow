@@ -78,19 +78,27 @@ def shape(record):
     """
     if not isinstance(record, dict):
         raise TypeError("a host record is an object, found " + type(record).__name__)
+    # Present-and-null is not absence. An absent components has a defined meaning -- a record
+    # with nothing in it -- and is interpreted. A components that IS there and is not a table is
+    # a container this module's helpers cannot use, and accepting it here made the boundary
+    # answer a different question from the one its consumers ask: shape said the record was
+    # fine and put_install raised through the top as an internal error.
+    if "components" in record and not isinstance(record["components"], dict):
+        raise TypeError("components is an object, found "
+                        + type(record["components"]).__name__)
     components = record.get("components")
-    if components is not None and not isinstance(components, dict):
-        raise TypeError("components is an object, found " + type(components).__name__)
     for name, entry in (components or {}).items():
         if not isinstance(entry, dict):
             raise TypeError("component " + str(name) + " is an object, found "
                             + type(entry).__name__)
         for key in ("installs", "measuredPoints"):
-            value = entry.get(key)
-            if value is not None and not isinstance(value, list):
+            # Present-and-null is rejected here for the same reason components is: setdefault
+            # leaves an existing null alone, so a record this boundary called fine reached
+            # put_install and raised through the top instead of refusing.
+            if key in entry and not isinstance(entry[key], list):
                 raise TypeError(str(name) + "." + key + " is a list, found "
-                                + type(value).__name__)
-            for item in value or []:
+                                + type(entry[key]).__name__)
+            for item in entry.get(key) or []:
                 if not isinstance(item, dict):
                     raise TypeError("every entry in " + str(name) + "." + key
                                     + " is an object, found " + type(item).__name__)
@@ -128,9 +136,17 @@ def save(path, record):
 
 
 def component(record, name):
-    return record.setdefault("components", {}).setdefault(
-        name, {"installs": [], "measuredPoints": []}
-    )
+    """The component entry, with the two lists its callers require actually present.
+
+    setdefault on the name alone establishes those lists only for an entry this call creates.
+    An entry already in the record without them is returned as it stands, and the next line of
+    put_install subscripts a key nobody established. What shape accepts and what these helpers
+    require have to be one record, so the keys are settled here rather than assumed.
+    """
+    entry = record.setdefault("components", {}).setdefault(name, {})
+    entry.setdefault("installs", [])
+    entry.setdefault("measuredPoints", [])
+    return entry
 
 
 def put_install(record, name, install):

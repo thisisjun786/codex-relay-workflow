@@ -22,6 +22,46 @@ UNREADABLE = "unreadable"
 ANSWERS = CLASSES + (UNREADABLE,)
 
 
+class Judgement:
+    """Signal values, and the readings that could not be made, collected in one place.
+
+    A judgment cell carries the value its OWN question's reading produced, and nothing else. A
+    reading that did not answer leaves the cell empty and names itself unreadable; it is never
+    flattened into a boolean and never filled from a neighbouring question.
+
+    The flattening is the defect this exists to stop, and it is quiet. None compared with a
+    recorded string is False, so a git read nobody could perform arrived at classification as a
+    tree that disagrees, and an installation this command owns was reported as somebody's fork.
+    Writing the comparison out at each site is what let one of them answer correctly and the
+    next one, three lines away, not.
+    """
+
+    def __init__(self):
+        self.unreadable = []
+
+    def compare(self, observed, recorded, *, what):
+        """Whether an observation agrees with what the record names.
+
+        Returns None when the observation was not made, and records why. Absence of evidence is
+        not evidence of disagreement.
+        """
+        if observed is None:
+            self.unreadable.append(what)
+            return None
+        return observed == recorded
+
+    def answer(self, observed, *, what):
+        """A reading that IS the signal rather than one compared against a record."""
+        if observed is None:
+            self.unreadable.append(what)
+        return observed
+
+    def note(self, what):
+        """A signal that could not be read for a reason this collector did not observe."""
+        self.unreadable.append(what)
+        return None
+
+
 class Signals:
     """What was measured, and what could not be.
 

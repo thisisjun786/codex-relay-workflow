@@ -45,7 +45,55 @@ COMMAND_OVERRIDES = {BRIDGE: "bridge_command", RELAY: "relay_command"}
 # A registration outcome is either a reading state or a config outcome. So "there is a
 # registration" and "classification must stop" are unions of what those two modules answer,
 # rather than a respelling of some of their members here.
-REGISTERED_OUTCOMES = (codexconfig.LINKED, reading.PRESENT)
+# Two different answers, and only one of them carries a comparison. LINKED means the file
+# registers exactly the command this run asked about. PRESENT means a registration is there and
+# nothing was compared, because no expected command was supplied. Collapsed into one set, a
+# field whose evidence reads "the configuration registers this exact command" could be reported
+# for a host registering something else entirely.
+REGISTRATION_EXISTS = (codexconfig.LINKED, reading.PRESENT)
+REGISTRATION_COMPARED = (codexconfig.LINKED,)
+
+# What happens to each cell ownership.Signals decides on when the observation behind it does not
+# answer. Four outcomes, because they are genuinely different and one uniform rule would be
+# wrong about most of them: a reading that returns nothing reaches classification and has to
+# stop it; a reading that raises is a named refusal at the boundary; a cell can be legitimately
+# negative on absence; and some cells are answered by no observation this command makes.
+#
+# The check derives its cases from ownership.Signals itself and requires an entry for every
+# cell, so a signal added without saying which reading answers it fails the inventory instead of
+# quietly going untested.
+SIGNAL_UNREADABLE = "class-unreadable"
+SIGNAL_REFUSED = "refused"
+SIGNAL_NEGATIVE = "legitimate-negative"
+SIGNAL_NOT_A_READING = "not-a-reading"
+
+# Each observation is (module, attribute, only_for). One reader answers several questions --
+# definition.git reads the component tree, the repository commit and, through
+# working_tree_clean, the status -- so 'only_for' names the argument fragment that identifies
+# THIS cell's call. Without it a case cannot isolate one cell, and a check that cannot isolate
+# one cell cannot tell which reading the classification actually rested on.
+SIGNAL_READINGS = {
+    "tree_matches": (SIGNAL_UNREADABLE, (("definition", "git", "HEAD:"),)),
+    "working_tree_clean": (SIGNAL_UNREADABLE, (("definition", "working_tree_clean", None),)),
+    # Composite: a point is only looked up once every dimension of the combination answered.
+    "has_point": (SIGNAL_UNREADABLE, (("runtime_install", "codex_cli_version", None),
+                                      ("runtime_install", "interpreter_version", None),
+                                      ("runtime_install", "this_host", None),
+                                      ("runtime_install", "module_location", None))),
+    # The digest is read inside a region, so a filesystem failure is a named refusal rather
+    # than a classification. Only a returned None reaches the comparison.
+    "digest_matches": (SIGNAL_REFUSED, (("definition", "ops12_digest", None),)),
+    # An entry point that is not there really is absent; that is an answer, not a gap.
+    "entry_point_recorded": (SIGNAL_NEGATIVE, ()),
+    # Read and reported beside the tree, never used as the identity test (OPS-1.5).
+    "commit_matches": (SIGNAL_NOT_A_READING, ()),
+    # An outcome of registration_state, which answers with a state rather than with nothing.
+    "registration_conflict": (SIGNAL_NOT_A_READING, ()),
+    # The skill installer's reading, not this command's.
+    "link_conflict": (SIGNAL_NOT_A_READING, ()),
+    # The collector itself, not a cell.
+    "unreadable": (SIGNAL_NOT_A_READING, ()),
+}
 UNUSABLE_REGISTRATIONS = tuple(dict.fromkeys(reading.UNUSABLE + (codexconfig.UNREADABLE,)))
 
 # register-mcp's own three answers, beside the ones those modules own. A partial application is
@@ -317,7 +365,11 @@ def interpreter_for(record, name, entry_point):
 def classify_component(component, *, record, entry_override=None, registration=None,
                        record_state=None, app_server=None):
     """Gather the four OPS-2.1 signals and classify."""
-    unreadable = []
+    # Every signal below is filled by the reading its own question produced. A reading that did
+    # not answer leaves its cell empty and names itself here instead of being flattened into a
+    # boolean, which is how a git read nobody could perform reported a fork.
+    judged = ownership.Judgement()
+    unreadable = judged.unreadable
     entry = resolve_entry_point(component["consoleScript"], entry_override)
     resolved = entry.resolve() if entry and entry.exists() else None
 
@@ -336,7 +388,12 @@ def classify_component(component, *, record, entry_override=None, registration=N
 
     if python is None and resolved is None:
         python = sys.executable
-    version = interpreter_version(python) if python else None
+    # The interpreter version is a dimension every point is compared on, so an interpreter that
+    # did not answer is an unread signal. Left as None it skipped the point lookup instead,
+    # which reported 'unmeasured' -- a claim that nothing covers this run, from a reading that
+    # never happened.
+    version = judged.answer(interpreter_version(python),
+                            what="the interpreter version of " + str(python)) if python else None
     location, import_error, import_command = (None, "no interpreter to ask", None)
     if python:
         location, import_error, import_command = module_location(python, component["module"])
@@ -347,7 +404,9 @@ def classify_component(component, *, record, entry_override=None, registration=N
         with reading.region(location, "the installed bytes of " + component["component"],
                             field="importedLocation"):
             current_digest = definition.ops12_digest(location)
-        digest_matches = current_digest == component["sourceDigest"]
+        digest_matches = judged.compare(
+            current_digest, component["sourceDigest"],
+            what="the installed bytes of " + component["component"])
     elif resolved is not None:
         unreadable.append("the installed package location for " + component["component"])
 
@@ -357,40 +416,37 @@ def classify_component(component, *, record, entry_override=None, registration=N
     # informational: an unrelated commit must not turn an unchanged component into a fork.
     tree_matches = None
     if entry_recorded:
-        tree_matches = definition.git(
-            ["rev-parse", "HEAD:" + component["subdirectory"]], ROOT
-        ) == component["subdirectoryTree"]
+        tree_matches = judged.compare(
+            definition.git(["rev-parse", "HEAD:" + component["subdirectory"]], ROOT),
+            component["subdirectoryTree"],
+            what="the recorded subdirectory tree of " + component["component"])
     repository_commit = definition.git(["rev-parse", "HEAD"], ROOT)
     recorded_commit = ((record or {}).get("components", {}).get(component["component"]) or {}) \
         .get("repositoryCommit")
     commit_matches = None
-    clean = definition.working_tree_clean(ROOT) if entry_recorded else None
-    if entry_recorded and clean is None:
-        unreadable.append("the working tree cleanliness of " + str(ROOT))
+    clean = None
+    if entry_recorded:
+        clean = judged.answer(definition.working_tree_clean(ROOT),
+                              what="the working tree cleanliness of " + str(ROOT))
 
     points = []
-    codex_cli = codex_cli_version()
-    if codex_cli is None:
-        # A dimension that could not be read is not a dimension that agrees. Passing None
-        # through would drop the Codex CLI from the comparison entirely, and a point measured
-        # under another CLI would then carry this component to 'own' (OPS-1.3, OPS-2.1).
-        unreadable.append("the Codex CLI version")
-    if app_server is None:
-        # The App Server is a dimension of the combination a point describes, so a
-        # classification that never observed one cannot say a recorded run covers the run
-        # happening now. Reported as the unread signal it is rather than skipped, which is how
-        # a point measured against a different App Server used to carry a component to own.
-        unreadable.append("the App Server identity")
+    # A dimension that could not be read is not a dimension that agrees. Passing None through
+    # would drop it from the comparison entirely, and a point measured under another Codex CLI
+    # or another App Server would then carry this component to 'own' (OPS-1.3, OPS-2.1).
+    codex_cli = judged.answer(codex_cli_version(), what="the Codex CLI version")
+    host_name = judged.answer(this_host(), what="this host's name")
+    app_server = judged.answer(app_server, what="the App Server identity")
     if record is None:
         # Which failure it was, not merely that there was one.
         unreadable.append("the host record (" + str(record_state or reading.UNREADABLE) + ")")
-    elif codex_cli is not None and app_server is not None and location and version:
+    elif (codex_cli is not None and app_server is not None and host_name is not None
+          and location and version):
         # Each unreadable signal is recorded on its own. Reporting only the first would hide
         # the others, and every one of them independently stops the classification.
         points = hostrecord.points_for(
             record, component["component"], location=location,
             interpreter=version, install_digest=current_digest,
-            codex_cli=codex_cli, app_server=app_server, host=socket.gethostname(),
+            codex_cli=codex_cli, app_server=app_server, host=host_name,
         )
 
     conflict = None
@@ -432,7 +488,11 @@ def classify_component(component, *, record, entry_override=None, registration=N
         "repositoryCommit": repository_commit,
         "repositoryCommitRecordedAtInstall": recorded_commit,
         "repositoryCommitDrift": (
-            None if not recorded_commit else recorded_commit != repository_commit
+            # Unknown when either side is missing. A repository commit nobody could read is not
+            # a commit that differs, and reporting True for it is the same flattening as a tree
+            # comparison against an unmade reading.
+            None if not recorded_commit or repository_commit is None
+            else recorded_commit != repository_commit
         ),
         "repositoryCommitMeaning": (
             "reported, not used as the identity test. The component subdirectory tree decides"
@@ -591,8 +651,9 @@ def cmd_diagnose(args):
             "verified" if connect == "ok" else ("not_verified" if connect else "unknown"),
             "doctor actorReachability.socketConnect = " + repr(connect)
             + ". A socket file existing on disk does not establish this.",
-            command=json.dumps(((readings or {}).get("selected")
-                                or (readings or {}).get("discovery") or {}).get("command")),
+            # The command the summary's own scope came from. Deciding the provenance a second
+            # time here let this field name one reading while scopeAnsweredBy named another.
+            command=json.dumps((summary or {}).get("scopeCommand")),
             acting_process=acting_process(), measured_at=now() if connect else None,
         ),
         "deliveryAccepted": (
@@ -660,7 +721,8 @@ def _mcp_exposed(registration, observed):
     if registration["outcome"] == codexconfig.CONFLICT:
         return check.field("not_verified", "the configuration registers a different command: "
                           + registration["detail"], acting_process=acting_process(), measured_at=now())
-    registered = registration["outcome"] in REGISTERED_OUTCOMES
+    exists = registration["outcome"] in REGISTRATION_EXISTS
+    compared = registration["outcome"] in REGISTRATION_COMPARED
     identity_tool = _bridge_identity_tool()
     if observed and identity_tool not in observed:
         return check.field(
@@ -678,12 +740,25 @@ def _mcp_exposed(registration, observed):
             " this field. Supply --observed-tool from a session that lists them.",
             acting_process=acting_process(), measured_at=now(),
         )
-    if not registered:
+    if not exists:
         return check.field(
             "not_verified",
             "tools were observed (" + ", ".join(observed) + ") but the configuration does not"
             " register this exact command, so the observation does not cover the registration"
             " being diagnosed.",
+            acting_process=acting_process(), measured_at=now(),
+        )
+    if not compared:
+        # A registration exists and nothing compared it with the command being diagnosed,
+        # because none was supplied. Reporting verified here would put a comparison this run
+        # did not make into the evidence of a field that exists to be falsifiable.
+        return check.field(
+            "not_verified",
+            "a registration for " + MCP_NAME + " exists and these tools were listed ("
+            + ", ".join(observed) + "), but no expected command was supplied, so nothing"
+            " compared what is registered with what is being diagnosed. The configuration"
+            " registers " + repr((registration.get("registered") or {}).get("command"))
+            + ". Pass --bridge-command to make that comparison.",
             acting_process=acting_process(), measured_at=now(),
         )
     return check.field(
@@ -718,6 +793,18 @@ def observe_app_server(python, socket_path=None):
 
 def _bridge_identity_tool():
     return component_of(definition.load(), BRIDGE)["identityTool"]
+
+
+def this_host():
+    """This host's name, as a reading rather than a call that can raise into the top.
+
+    It is one of the dimensions a point is compared on, so a name that could not be read is an
+    unread signal like the others, not an exception escaping classification.
+    """
+    try:
+        return socket.gethostname() or None
+    except OSError:
+        return None
 
 
 def codex_cli_version():

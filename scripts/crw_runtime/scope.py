@@ -181,7 +181,28 @@ def summarise(readings, *, issue=None, env=None, service=None):
 
     discovery = usable("discovery")
     selected = usable("selected")
-    primary = selected or discovery
+    # Which question this summary answers, carried into the output beside the answer.
+    #
+    # 'selected' and 'discovery' are answers to different questions, and joining them with 'or'
+    # made a failed selected reading borrow the discovered store's. Every other command -- the
+    # service status, the assignment lookup, the trial -- acts on the selected store, so the
+    # summary would then name a path, a store id and a socketConnect belonging to a store
+    # nobody is using, which is precisely the conflict OPS-3.4 asks this reading to surface.
+    attempt = readings.get("selected")
+    attempted = bool(attempt) and not attempt.get("skipped")
+    if not attempted:
+        primary, answered_by = discovery, (
+            "discovery, because no store is explicitly selected")
+        answering = "discovery"
+    elif selected:
+        primary, answered_by = selected, "the explicitly selected store"
+        answering = "selected"
+    else:
+        primary, answered_by = {}, (
+            "nothing: a store is explicitly selected and its doctor did not answer, and the"
+            " discovered store is a different store. Every field below that describes an"
+            " operating scope is therefore empty rather than borrowed")
+        answering = None
     siblings = discovery.get("siblingStores") or {}
     reachability = primary.get("actorReachability") or {}
     contents = primary.get("contents") or {}
@@ -189,6 +210,10 @@ def summarise(readings, *, issue=None, env=None, service=None):
 
     return {
         "scopeId": scope_id(primary),
+        "scopeAnsweredBy": answered_by,
+        # The invocation the scope above came from, so a caller reporting a field derived from
+        # it names the same reading rather than deciding the provenance a second time.
+        "scopeCommand": (readings.get(answering) or {}).get("command") if answering else None,
         "scopeMeaning": "one host, one OS user, one App Server (OPS-3.1). Parents in different"
                         " repositories and different Linear projects share this one scope.",
         "stateDirectory": state_directory(primary),

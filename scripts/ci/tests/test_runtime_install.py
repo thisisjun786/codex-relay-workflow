@@ -532,14 +532,33 @@ class ReviewFixTests(unittest.TestCase):
                                                codex_cli="0.154.0", host="other"), [])
 
     def test_a_refusal_payload_does_not_replace_a_reading_that_answered(self):
+        """Two properties, and the second one changed.
+
+        A structured refusal still parses as JSON, so its payload must never be read as an
+        answer. That is unchanged. What changed is what happens next: an explicitly selected
+        store whose doctor refused does not fall back to the discovered store, because they are
+        answers to different questions and every other command is acting on the selected one.
+        """
         readings = {
             "discovery": {"ok": True, "payload": {"stateSelection": {"path": "/s/scope"},
                                                   "actorReachability": {"socketConnect": "ok"}}},
             "selected": {"ok": False, "payload": {"error": "refused", "stateDirectory": "/s/other"}},
         }
         summary = scope.summarise(readings, env={"XDG_STATE_HOME": "/nowhere"})
+        self.assertNotEqual(summary["stateDirectory"], "/s/other",
+                            "a refusal payload is not a reading")
+        self.assertIsNone(summary["stateDirectory"],
+                          "the selected store did not answer, so no scope is reported")
+        self.assertIsNone(summary["socketConnect"])
+        self.assertIn("did not answer", summary["scopeAnsweredBy"])
+
+        # With no explicit selection, discovery IS the answer to this question, and the skipped
+        # reading does not interfere.
+        readings["selected"] = {"ok": False, "skipped": "no store is explicitly selected"}
+        summary = scope.summarise(readings, env={"XDG_STATE_HOME": "/nowhere"})
         self.assertEqual(summary["stateDirectory"], "/s/scope")
         self.assertEqual(summary["socketConnect"], "ok")
+        self.assertIn("no store is explicitly selected", summary["scopeAnsweredBy"])
 
 
 RELAY_CLI = ROOT / "packages/codex-session-relay/src/codex_session_relay/cli.py"
@@ -4166,6 +4185,378 @@ class SpacedDestinationTests(unittest.TestCase):
         self.assertIsNotNone(classified["interpreter"],
                              "the interpreter for a spaced environment answered nothing")
         self.assertEqual(classified["interpreterFrom"], "recorded with the install")
+
+
+# =========================================================================================
+# Check 13 - a judgment cell is filled only by the reading its own question produced
+#
+# The failure this closes is quiet. definition.git answers None when it cannot read, None
+# compared with a recorded tree hash is False, and classification reads that False as a
+# disagreement: an installation this command owns was reported as somebody's fork, from a
+# reading nobody performed. The sibling three lines above, commit_matches, was already correct,
+# which is what writing the comparison out at each site buys you.
+#
+# The cells are ownership.Signals' own parameters, and every one has to say which observation
+# answers it and what happens when that observation does not. Four outcomes, not one: a reading
+# that returns nothing must stop the classification, a reading that raises is a named refusal at
+# the boundary, absence is sometimes a real "no", and some cells are answered by no observation
+# this command makes.
+# =========================================================================================
+
+def _signal_cells():
+    """The judgment cells, read from ownership.Signals rather than listed here."""
+    tree = ast.parse((ROOT / "scripts" / "crw_runtime" / "ownership.py")
+                     .read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "Signals":
+            for inner in node.body:
+                if isinstance(inner, ast.FunctionDef) and inner.name == "__init__":
+                    return [a.arg for a in inner.args.kwonlyargs]
+    return []
+
+
+class OwnReadingTests(unittest.TestCase):
+    def _fixture(self, temporary):
+        """A component that classifies as something other than unreadable, so the cases mean
+        something. The installed bytes are a stub, so the baseline is a fork."""
+        component = definition.load()["components"][0]
+        environment = Path(temporary) / "env"
+        (environment / "bin").mkdir(parents=True)
+        entry = environment / "bin" / component["consoleScript"]
+        entry.write_text("#!" + sys.executable + chr(10), encoding="utf-8")
+        entry.chmod(0o755)
+        stub = Path(temporary) / "site" / component["module"]
+        stub.mkdir(parents=True)
+        (stub / "__init__.py").write_text("", encoding="utf-8")
+        record = hostrecord.empty(1)
+        hostrecord.put_install(record, component["component"], {
+            "location": str(stub), "environment": str(environment),
+            "entryPoint": str(entry), "interpreterPath": sys.executable})
+        return component, entry, record, str(Path(temporary) / "site")
+
+    def _classify(self, component, entry, record, site, patches=()):
+        import runtime_install
+
+        with contextlib.ExitStack() as entered:
+            entered.enter_context(mock.patch.dict(
+                os.environ, dict(os.environ, PYTHONPATH=site), clear=True))
+            for patch in patches:
+                entered.enter_context(patch)
+            return runtime_install.classify_component(
+                component, record=record, entry_override=str(entry), app_server="a-server")
+
+    def _broken(self, where, name, only_for=None):
+        """Make one reading answer nothing, and only that one.
+
+        definition.git reads the component tree, the repository commit and, through
+        working_tree_clean, the status. Breaking the callable outright breaks all three, and a
+        case that cannot isolate one cell cannot say which reading the classification rested
+        on: the tree case would pass on the strength of the status being unread.
+        """
+        import runtime_install
+
+        target = runtime_install if where == "runtime_install" else getattr(runtime_install, where)
+        answer = (None, "no interpreter to ask", None) if name == "module_location" else None
+        if only_for is None:
+            return mock.patch.object(target, name, return_value=answer)
+        real = getattr(target, name)
+
+        def selective(*args, **kwargs):
+            if args and any(only_for in str(part) for part in (args[0] or [])):
+                return answer
+            return real(*args, **kwargs)
+
+        return mock.patch.object(target, name, side_effect=selective)
+
+    def test_every_declared_cell_says_which_reading_answers_it(self):
+        import runtime_install
+
+        cells = _signal_cells()
+        # Guards the reader: an empty list would make the comparison below vacuous.
+        self.assertIn("tree_matches", cells)
+        self.assertEqual(set(cells), set(runtime_install.SIGNAL_READINGS),
+                         "a signal without an entry is a cell nobody checks")
+        outcomes = {runtime_install.SIGNAL_UNREADABLE, runtime_install.SIGNAL_REFUSED,
+                    runtime_install.SIGNAL_NEGATIVE, runtime_install.SIGNAL_NOT_A_READING}
+        for cell, (outcome, observations) in runtime_install.SIGNAL_READINGS.items():
+            with self.subTest(cell):
+                self.assertIn(outcome, outcomes)
+                if outcome in (runtime_install.SIGNAL_UNREADABLE, runtime_install.SIGNAL_REFUSED):
+                    self.assertTrue(observations, cell + " names no observation")
+                else:
+                    self.assertEqual(observations, (), cell + " is not a reading of this command")
+                for observation in observations:
+                    self.assertEqual(len(observation), 3,
+                                     cell + ": an observation is (module, attribute, only_for)")
+
+    def test_the_baseline_is_not_unreadable_so_the_cases_mean_something(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            classified = self._classify(*self._fixture(temporary))
+        if classified["class"] == ownership.UNREADABLE:
+            self.skipTest("this checkout cannot be read, so nothing here would be distinguishable")
+        self.assertEqual(classified["class"], ownership.FORK, classified["reasons"])
+
+    def test_a_reading_that_does_not_answer_stops_the_classification(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = self._fixture(temporary)
+            if self._classify(*fixture)["class"] == ownership.UNREADABLE:
+                self.skipTest("this checkout cannot be read")
+            for cell, (outcome, observations) in sorted(runtime_install.SIGNAL_READINGS.items()):
+                if outcome != runtime_install.SIGNAL_UNREADABLE:
+                    continue
+                for where, name, only_for in observations:
+                    with self.subTest(cell=cell, reading=where + "." + name):
+                        classified = self._classify(
+                            *fixture, patches=(self._broken(where, name, only_for),))
+                        self.assertEqual(
+                            classified["class"], ownership.UNREADABLE,
+                            name + " answered nothing and the classification still decided: "
+                            + json.dumps(classified["reasons"]))
+
+    def test_a_reading_that_raises_is_a_named_refusal_not_a_classification(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = self._fixture(temporary)
+            for cell, (outcome, observations) in sorted(runtime_install.SIGNAL_READINGS.items()):
+                if outcome != runtime_install.SIGNAL_REFUSED:
+                    continue
+                for where, name, _only_for in observations:
+                    with self.subTest(cell=cell, reading=where + "." + name):
+                        broken = mock.patch.object(
+                            getattr(runtime_install, where), name,
+                            side_effect=OSError("cannot read"))
+                        with self.assertRaises(reading.Refused):
+                            self._classify(*fixture, patches=(broken,))
+
+    def test_a_repository_commit_nobody_read_is_not_a_commit_that_drifted(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            component, entry, record, site = self._fixture(temporary)
+            record["components"][component["component"]]["repositoryCommit"] = "recorded-commit"
+            classified = self._classify(
+                component, entry, record, site,
+                patches=(mock.patch.object(runtime_install.definition, "git",
+                                           return_value=None),))
+        self.assertIsNone(classified["repositoryCommitDrift"],
+                          "a commit that could not be read is not a commit that differs")
+
+
+# =========================================================================================
+# Check 14 - no cell is filled by joining two answers to different questions
+#
+# scope.summarise read primary = selected or discovery. They are two doctor invocations against
+# two different stores, and 'or' made a selected store that did not answer borrow the discovered
+# store's path, store id and socketConnect, while every other command kept acting on the
+# selected one. The scan below looks for that exact shape: two locals bound from the same reader
+# with different arguments, then joined.
+# =========================================================================================
+
+def _survey_reading_names():
+    """The names survey gives its readings, read from scope.survey rather than listed here."""
+    tree = ast.parse((ROOT / "scripts" / "crw_runtime" / "scope.py").read_text(encoding="utf-8"))
+    found = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == "survey"):
+            continue
+        for inner in ast.walk(node):
+            # The readings map itself, not every table inside it: a reading's own payload
+            # carries keys like ok and skipped, which name no question.
+            if (isinstance(inner, ast.Assign) and len(inner.targets) == 1
+                    and getattr(inner.targets[0], "id", None) == "readings"
+                    and isinstance(inner.value, ast.Dict)):
+                found |= {k.value for k in inner.value.keys
+                          if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            if isinstance(inner, ast.Subscript) and isinstance(inner.slice, ast.Constant) \
+                    and getattr(inner.value, "id", None) == "readings":
+                found.add(inner.slice.value)
+    return {name for name in found if not name.endswith("Via")}
+
+
+def _borrowed_answers(tree, names):
+    """Every place two answers to DIFFERENT reading questions are joined into one value.
+
+    The question is named by the key: readings["selected"] and readings["discovery"] are two
+    doctor invocations against two different stores. Joining them with or, or with a conditional,
+    lets one borrow the other's answer. Two field names of ONE payload are not this shape and
+    are left alone, which is why the names come from survey rather than from a guess about
+    receivers.
+    """
+    offenders = []
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        bound = {}
+        for node in ast.walk(function):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and isinstance(node.value, ast.Call) and node.value.args
+                    and isinstance(node.value.args[0], ast.Constant)
+                    and node.value.args[0].value in names):
+                bound[node.targets[0].id] = node.value.args[0].value
+        # A join is allowed when the code also records which question answered, the way
+        # interpreter_for carries its source. Named here so the exemption is visible.
+        carries = any(
+            isinstance(node, ast.Name) and (
+                node.id.endswith("answered_by") or node.id.endswith("_from")
+                or node.id == "answering")
+            for node in ast.walk(function))
+        for node in ast.walk(function):
+            if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+                operands = node.values
+            elif isinstance(node, ast.IfExp):
+                operands = [node.body, node.orelse]
+            else:
+                continue
+            asked = set()
+            for operand in operands:
+                for inner in ast.walk(operand):
+                    if isinstance(inner, ast.Constant) and inner.value in names:
+                        asked.add(inner.value)
+                    elif isinstance(inner, ast.Name) and inner.id in bound:
+                        asked.add(bound[inner.id])
+            if len(asked) > 1 and not carries:
+                offenders.append(function.name + ":" + str(node.lineno) + " joins "
+                                 + ", ".join(sorted(asked)))
+    return sorted(set(offenders))
+
+
+class BorrowedAnswerTests(unittest.TestCase):
+    def test_the_reading_names_come_from_survey(self):
+        names = _survey_reading_names()
+        self.assertIn("discovery", names)
+        self.assertIn("selected", names)
+
+    def test_no_module_joins_two_answers_to_different_questions(self):
+        names = _survey_reading_names()
+        for path in RUNTIME_MODULES:
+            with self.subTest(path.name):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                self.assertEqual(_borrowed_answers(tree, names), [])
+
+    def test_the_scan_sees_both_spellings_of_the_shape(self):
+        names = _survey_reading_names()
+        bound = ("def summarise(readings):\n"
+                 "    discovery = usable('discovery')\n"
+                 "    selected = usable('selected')\n"
+                 "    primary = selected or discovery\n"
+                 "    return primary\n")
+        inline = ("def cmd_diagnose(readings):\n"
+                  "    return (readings.get('selected') or readings.get('discovery') or {})\n")
+        conditional = bound.replace("selected or discovery",
+                                    "selected if selected else discovery")
+        for label, source in (("through locals", bound), ("inline", inline),
+                              ("conditional", conditional)):
+            with self.subTest(label):
+                self.assertTrue(_borrowed_answers(ast.parse(source), names),
+                                label + " must be seen")
+
+    def test_two_field_names_of_one_payload_are_not_this_shape(self):
+        names = _survey_reading_names()
+        source = ("def summarise(store):\n"
+                  "    return store.get('dbPath') or store.get('realPath')\n")
+        self.assertEqual(_borrowed_answers(ast.parse(source), names), [])
+
+    def test_a_join_that_says_which_question_answered_is_allowed(self):
+        names = _survey_reading_names()
+        source = ("def summarise(readings):\n"
+                  "    discovery = usable('discovery')\n"
+                  "    selected = usable('selected')\n"
+                  "    answered_by = 'selected' if selected else 'discovery'\n"
+                  "    primary = selected or discovery\n"
+                  "    return primary, answered_by\n")
+        self.assertEqual(_borrowed_answers(ast.parse(source), names), [])
+
+
+class ClaimedComparisonTests(unittest.TestCase):
+    """A field may not report a comparison this run did not make.
+
+    Without --bridge-command nothing is compared, deliberately: comparing an existing correct
+    registration against an empty string reports CONFLICT for a host registered exactly right.
+    What was wrong was the result built on top of that. PRESENT and LINKED were one set, so
+    mcpExposed reached verified and its evidence read "the configuration registers this exact
+    command" for a host registering something else entirely.
+    """
+
+    def _diagnose(self, command, *extra):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "codex"
+            home.mkdir()
+            (home / "config.toml").write_text(
+                "[mcp_servers.codex-thread-bridge]" + chr(10)
+                + 'command = "' + command + '"' + chr(10), encoding="utf-8")
+            done = run("diagnose", "--codex-home", str(home),
+                       "--record", str(Path(temporary) / "record.json"), "--temporary", *extra)
+            return json.loads(done.stdout)
+
+    @needs_reader
+    def test_an_uncompared_registration_never_reports_the_tools_as_exposed(self):
+        payload = self._diagnose("/somewhere/else/impostor",
+                                 "--observed-tool", _BRIDGE_TOOL,
+                                 "--observed-tool", "create_thread")
+        exposed = payload["checks"]["results"]["mcpExposed"]
+        self.assertEqual(exposed["value"], "not_verified")
+        self.assertNotIn("registers this exact command", exposed["evidence"],
+                         "no command was supplied, so nothing compared anything")
+        self.assertIn("no expected command was supplied", exposed["evidence"])
+        self.assertEqual(payload["mcpRegistration"]["outcome"], reading.PRESENT)
+
+    @needs_reader
+    def test_a_compared_registration_still_reports_exposure(self):
+        payload = self._diagnose("/opt/bridge/bin/codex-thread-bridge",
+                                 "--bridge-command", "/opt/bridge/bin/codex-thread-bridge",
+                                 "--observed-tool", _BRIDGE_TOOL)
+        exposed = payload["checks"]["results"]["mcpExposed"]
+        self.assertEqual(payload["mcpRegistration"]["outcome"], codexconfig.LINKED)
+        self.assertEqual(exposed["value"], "verified", exposed["evidence"])
+
+
+class RecordShapeTests(unittest.TestCase):
+    """What the boundary accepts and what the helpers require are one record.
+
+    shape validated the containers it was given and said nothing about the ones it was not, so a
+    record it accepted still raised through the top of put_install as an internal error rather
+    than as the named refusal this command documents.
+    """
+
+    def test_a_container_that_is_there_and_is_not_a_table_is_refused(self):
+        for label, record in (
+            ("components is null", {"recordVersion": 1, "components": None}),
+            ("installs is null",
+             {"recordVersion": 1, "components": {"codex-session-relay": {"installs": None}}}),
+            ("measuredPoints is null",
+             {"recordVersion": 1,
+              "components": {"codex-session-relay": {"measuredPoints": None}}}),
+        ):
+            with self.subTest(label):
+                with self.assertRaises(TypeError):
+                    hostrecord.shape(record)
+
+    def test_an_absent_container_keeps_its_defined_meaning(self):
+        record = hostrecord.shape({"recordVersion": 1})
+        self.assertEqual(hostrecord.component(record, "codex-session-relay"),
+                         {"installs": [], "measuredPoints": []})
+
+    def test_every_record_shape_accepts_can_be_used_by_the_helpers(self):
+        for label, record in (
+            ("no components", {"recordVersion": 1}),
+            ("an entry with neither list",
+             {"recordVersion": 1, "components": {"codex-session-relay": {}}}),
+            ("an entry with one list",
+             {"recordVersion": 1,
+              "components": {"codex-session-relay": {"installs": []}}}),
+        ):
+            with self.subTest(label):
+                accepted = hostrecord.shape(record)
+                hostrecord.put_install(accepted, "codex-session-relay", {"location": "/l"})
+                hostrecord.add_point(accepted, "codex-session-relay", {"exercised": True})
+                self.assertEqual(
+                    len(accepted["components"]["codex-session-relay"]["installs"]), 1)
+                self.assertEqual(
+                    len(accepted["components"]["codex-session-relay"]["measuredPoints"]), 1)
 
 
 if __name__ == "__main__":

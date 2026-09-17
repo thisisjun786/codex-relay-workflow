@@ -203,6 +203,49 @@ extend, and under `[[mcp_servers]]` an appended table attaches to the last array
 proposed content is read back **before** it is written, and it must carry the intended registration
 and leave every other one unchanged, or nothing is written.
 
+### A judgment cell is filled only by its own reading
+
+Every signal classification decides on carries the value its own question's reading produced,
+and nothing else. A reading that did not answer leaves its cell empty and names itself
+unreadable.
+
+The failure this replaces was quiet. `definition.git` answers nothing when it cannot read,
+nothing compared with a recorded tree hash is *false*, and false is what classification reads as
+a disagreement: an installation this command owns was reported as somebody's fork, from a read
+nobody performed. The sibling three lines above, the repository commit, was already correct.
+Writing the comparison out at each site is what let one of them be right and the next one wrong.
+
+`ownership.Judgement` is where the comparison lives now. `compare` returns nothing when the
+observation was not made and records why; `answer` does the same for a reading that IS the
+signal. The interpreter version, the host name, the Codex CLI, the App Server, the component
+tree and the checkout status all go through it, and a repository commit nobody could read is
+reported as unknown drift rather than as drift.
+
+Four outcomes are declared per cell, because one rule would be wrong about most of them: a
+reading that answers nothing has to stop the classification, a reading that raises is a named
+refusal at the boundary, absence is sometimes a real *no*, and some cells are answered by no
+observation this command makes. The cells come from `ownership.Signals` itself, so a signal
+added without saying which reading answers it fails the inventory.
+
+### One cell, one question
+
+Two readings that answer different questions are never joined into one value. `summarise`
+made three doctor invocations and then read `selected or discovery`, so a selected store that
+did not answer borrowed the discovered store's path, store id and socketConnect while the
+service status, the assignment lookup and the trial all kept acting on the selected one. That is
+the conflict OPS-3.4 asks this reading to surface, reported as agreement.
+
+The summary now says which question answered, in `scopeAnsweredBy`, and hands the caller the
+invocation it came from in `scopeCommand` so a field derived from that scope names the same
+reading instead of deciding the provenance a second time. An explicit selection that could not
+be read reports no scope at all; the discovered store is a different store.
+
+The same distinction reaches the registration. `LINKED` means the file registers exactly the
+command this run asked about; `PRESENT` means a registration is there and nothing was compared,
+because no expected command was supplied. Collapsed into one set, `mcpExposed` reported
+*verified* with evidence reading "the configuration registers this exact command" for a host
+registering something else entirely.
+
 ### One word, one declaration
 
 A partition belongs to the module that declares it, and a consumer asks that module rather than
