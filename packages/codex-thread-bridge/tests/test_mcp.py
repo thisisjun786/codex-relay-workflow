@@ -274,11 +274,19 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
             "list_threads",
             "wait_thread",
             "get_goal",
+            "get_active_turn",
+            "steer_thread",
+            "pause_goal",
             "get_operation",
         }
         caps = await session.call_tool("get_capabilities", {})
         assert not caps.isError
         assert caps.structuredContent["capabilities"]["desktopManagedWorktrees"] is False
+        # Exposure and host support are separate answers over MCP too: this bridge offers
+        # steering, withholds interrupt, and does not claim the connected host was tested.
+        assert caps.structuredContent["exposure"]["steerActiveTurn"] is True
+        assert caps.structuredContent["exposure"]["turnInterrupt"] is False
+        assert caps.structuredContent["hostSupport"]["state"] == "unknown_host_version"
         args = {
             "request_id": "mcp-create",
             "cwd": str(tmp_path),
@@ -319,9 +327,62 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
         assert len(history.structuredContent["turnsPage"]["data"]) == 2
         goal = await session.call_tool("get_goal", {"thread_id": receipt["threadId"]})
         assert goal.structuredContent["goal"] is None
+
+        # The whole running-peer path over MCP: an idle thread reports no steerable turn, and
+        # steering it is refused rather than quietly turned into a new turn.
+        idle = await session.call_tool("get_active_turn", {"thread_id": receipt["threadId"]})
+        assert idle.structuredContent["activeTurnId"] is None
+        assert idle.structuredContent["steerable"] is False
+        refused = await session.call_tool(
+            "steer_thread",
+            {
+                "request_id": "mcp-steer-idle",
+                "thread_id": receipt["threadId"],
+                "expected_turn_id": sent["turnId"],
+                "message": "SCOPE CHANGE",
+            },
+        )
+        assert refused.structuredContent["status"] == "failed"
+        assert refused.structuredContent["rpcError"]["code"] == "thread_idle"
+
+        # With a turn actually running, the same call is accepted against the guarded turn.
+        fake.complete_turns = False
+        started = await session.call_tool(
+            "send_message_to_thread",
+            {
+                "request_id": "mcp-running",
+                "thread_id": receipt["threadId"],
+                "message": "LONG WORK",
+                "expected_settings": dict(APPROVED),
+            },
+        )
+        assert not started.isError, started.content
+        running_turn = started.structuredContent["turnId"]
+        fake.threads[receipt["threadId"]]["status"] = {"type": "active", "activeFlags": []}
+        observed = await session.call_tool("get_active_turn", {"thread_id": receipt["threadId"]})
+        assert observed.structuredContent["activeTurnId"] == running_turn
+        steered = await session.call_tool(
+            "steer_thread",
+            {
+                "request_id": "mcp-steer",
+                "thread_id": receipt["threadId"],
+                "expected_turn_id": running_turn,
+                "message": "SCOPE CHANGE",
+            },
+        )
+        assert steered.structuredContent["status"] == "accepted"
+        assert steered.structuredContent["delivery"] == "accepted_not_applied"
+
+        # Pausing is a different action again, and it is refused when there is no goal.
+        paused = await session.call_tool(
+            "pause_goal", {"request_id": "mcp-pause", "thread_id": receipt["threadId"]}
+        )
+        assert paused.structuredContent["rpcError"]["code"] == "no_goal"
+
         invalid = await session.call_tool("create_thread", {**args, "sandbox": "invalid"})
         assert invalid.isError
-    assert fake.count("thread/start") == 1 and fake.count("turn/start") == 2
+    assert fake.count("thread/start") == 1 and fake.count("turn/start") == 3
+    assert fake.count("turn/steer") == 1 and fake.count("thread/goal/set") == 0
 
 
 async def test_mcp_socket_alias_restart_does_not_repeat_creation(fake_server, tmp_path):

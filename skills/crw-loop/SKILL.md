@@ -65,6 +65,12 @@ blocker, not permission to reset state, bypass a guard or claim the Loop is acti
    findings using `crw-run`. Send in-scope corrections to the existing child. For a
    relay-owned assignment, reconcile its actual receipt/ACK/verdict through the relay;
    observing a transcript is not delivery. Record remaining obligations explicitly.
+   Route a correction by what the child is doing rather than waiting for it to go idle:
+   an idle child takes the ordinary message path, and a child mid-turn is steered into
+   its verified active turn. Re-read and reclassify when the turn changes underneath.
+   An explicit stop is the supported goal pause followed by steering the observed turn
+   to finish safely; ordinary corrections neither interrupt a child nor change its goal.
+   Acceptance of an instruction is not a read, an effect, a receipt, an ACK or a verdict.
 4. **Integrate and advance.** Serialize authorized merges into each shared target,
    recheck candidate/base and verify landing. Update the coordination record and
    issue state within existing authority, then release newly ready successors. Each

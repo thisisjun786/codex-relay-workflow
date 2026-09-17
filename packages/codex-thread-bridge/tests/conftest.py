@@ -36,6 +36,11 @@ class FakeServer:
         self.pause_after = None
         self.paused = asyncio.Event()
         self.release = asyncio.Event()
+        # None means turn/steer echoes the guarded turn back, which is what the real host does
+        # on success. Set it to make the host answer with a different turn.
+        self.steer_turn_id = None
+        # Fields the host reports back after a goal/set, over and above the requested status.
+        self.goal_after_set = {}
 
     def cursor(self, offset):
         return f"{offset}:" + "x" * self.cursor_padding
@@ -175,6 +180,16 @@ class FakeServer:
                 }
             elif method == "thread/goal/get":
                 result = {"goal": self.goal}
+            elif method == "turn/steer":
+                self.threads[params["threadId"]]
+                result = {"turnId": self.steer_turn_id or params["expectedTurnId"]}
+            elif method == "thread/goal/set":
+                updated = dict(self.goal or {})
+                if params.get("status") is not None:
+                    updated["status"] = params["status"]
+                updated.update(self.goal_after_set)
+                self.goal = updated
+                result = {"goal": updated}
             elif method == "project/read":
                 result = {"project": {"id": params["projectId"]}}
             else:
