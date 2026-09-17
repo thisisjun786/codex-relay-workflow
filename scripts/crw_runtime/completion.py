@@ -81,6 +81,9 @@ JOURNAL_POLICIES = (EVERY_INVOCATION, FAULTS_ONLY, NO_JOURNAL)
 DEFAULT_TIMEOUT_SECONDS = 5
 REGISTERED_TIMEOUT_SECONDS = 10
 
+# The lowest Python this adapter is supported on, and the one the repository's checks run.
+SUPPORTED_PYTHON = (3, 10)
+
 
 def budget_complaints(guard_timeout, registered_timeout):
     """Whether the adapter's own budget can do what it is for, against the host's.
@@ -101,6 +104,18 @@ def budget_complaints(guard_timeout, registered_timeout):
         found.append("the guard budget must be under the registered hook timeout of "
                      + str(registered_timeout) + "s, or the host can kill this adapter before"
                      " it records why it did not answer")
+    if (isinstance(registered_timeout, (int, float))
+            and not isinstance(registered_timeout, bool)
+            and registered_timeout > REGISTERED_TIMEOUT_SECONDS):
+        # The host clamps an over-long timeout at discovery, so a large number here is not the
+        # deadline it looks like: the effective one can land under the guard budget and kill
+        # this adapter before it records anything. What the clamp is was not measured, so this
+        # declines to exceed the only registered timeout this repository has evidence for
+        # rather than guessing at a larger one that happens to survive.
+        found.append("the registered timeout must not exceed " + str(REGISTERED_TIMEOUT_SECONDS)
+                     + "s: the host clamps an over-long timeout at discovery, and the clamped"
+                     " value is not measured here, so a larger number is not the deadline it"
+                     " appears to be")
     return found
 
 
@@ -593,25 +608,31 @@ def command_for(interpreter, script):
     return shlex.join([str(interpreter), str(script)])
 
 
-def interpreter_for(python):
+def interpreter_for(python, *, run=True):
     """The interpreter this command will register, settled here rather than at every Stop.
 
     A bare name is looked up now, on the machine doing the install, because that is the only
     moment a lookup means anything: the hook runs later, from each session's own workspace, and
     a name resolved then could find a different interpreter or nothing at all. The same reason
     the runtime is named through the pointer instead of through PATH.
+
+    run=False resolves without executing the candidate, for a caller that is going to write
+    nothing. A plan should not run a program somebody named on the command line, and what it
+    did not check it does not claim.
     """
     if not python:
         raise ValueError("an interpreter is required")
     found = shutil.which(str(python))
     if found:
         settled = _settled(found)
-        _require_python(settled)
+        if run:
+            _require_python(settled)
         return settled
     settled = _settled(python)
     probe = presence(settled, "an interpreter")
     if probe["value"] == reading.PRESENT and os.access(str(settled), os.X_OK):
-        _require_python(settled)
+        if run:
+            _require_python(settled)
         return settled
     if probe["value"] == reading.PRESENT:
         raise ValueError(str(settled) + " is not executable; every Stop would fail before the"
@@ -628,17 +649,30 @@ def _require_python(candidate):
     Executable is not the question. /bin/true is executable, exits 0, and would be registered
     happily; every Stop would then succeed at running it and never reach the adapter, so there
     would be no guard decision and no journal entry, and the install would have reported success.
+
+    Nor is being a Python the whole question. A Python too old to run this adapter fails the same
+    way and looks the same from the hook file, so the version is read rather than the bare fact
+    that something answered.
     """
     try:
-        finished = subprocess.run([str(candidate), "-c", "import sys; print(sys.version_info[0])"],
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        finished = subprocess.run(
+            [str(candidate), "-c",
+             "import sys; print('%d.%d' % (sys.version_info[0], sys.version_info[1]))"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
     except (OSError, subprocess.SubprocessError) as error:
         raise ValueError(str(candidate) + " could not be run as an interpreter: "
                          + str(error)) from error
-    if finished.returncode != 0 or not (finished.stdout or b"").strip().isdigit():
+    said = (finished.stdout or b"").decode("utf-8", "replace").strip()
+    parts = said.split(".")
+    if finished.returncode != 0 or len(parts) != 2 or not all(p.isdigit() for p in parts):
         raise ValueError(str(candidate) + " is executable but does not run Python; every Stop"
                                           " would succeed at running it and never reach the"
                                           " adapter")
+    if (int(parts[0]), int(parts[1])) < SUPPORTED_PYTHON:
+        raise ValueError(str(candidate) + " runs Python " + said + ", below the supported "
+                         + ".".join(str(part) for part in SUPPORTED_PYTHON)
+                         + "; the adapter would fail on every Stop before evaluating or"
+                           " journalling anything")
 
 
 def registered_argv(command):
@@ -1012,7 +1046,7 @@ def presence(path, what, *, directory=False):
     wrong place. The four states come from the module that owns them.
     """
     try:
-        found = os.stat(str(path))
+        found = os.lstat(str(path))
     except FileNotFoundError:
         return _cell(reading.ABSENT, "nothing exists at " + str(path), path=str(path))
     except (OSError, ValueError) as error:
@@ -1020,6 +1054,21 @@ def presence(path, what, *, directory=False):
                      "whether anything exists at this path could not be established: "
                      + type(error).__name__ + ": " + str(error), path=str(path))
     import stat as stat_module
+    if stat_module.S_ISLNK(found.st_mode):
+        # A link IS something at this path. Reporting a dangling one as absent loses the only
+        # fact that would repair it, and says the component was never installed when what
+        # actually happened is that its target went away.
+        try:
+            found = os.stat(str(path))
+        except FileNotFoundError:
+            return _cell(reading.UNREADABLE,
+                         "a symbolic link whose target does not exist", path=str(path))
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                return _cell(reading.UNREADABLE, "a symbolic link that loops", path=str(path))
+            return _cell(reading.ACCESS_ERROR,
+                         "a symbolic link whose target could not be resolved: " + str(error),
+                         path=str(path))
     right = stat_module.S_ISDIR(found.st_mode) if directory else stat_module.S_ISREG(found.st_mode)
     if not right:
         return _cell(reading.UNREADABLE,

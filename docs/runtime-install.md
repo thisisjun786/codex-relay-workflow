@@ -1148,6 +1148,16 @@ The interpreter in the registered command is settled the same way, and a bare na
 at install time, on the machine doing the install. That is the only moment the lookup means
 anything, because the hook runs later from each session's own workspace.
 
+It also has to be a Python this adapter runs on. Executable is not the question: `/bin/true` is
+executable and exits 0, and a Python below the supported version fails the same way and looks
+identical from the hook file. Both are refused. The candidate is executed only when the command
+is going to write, because a plan that writes nothing should not run a program the caller named,
+and what it did not check it does not claim.
+
+The registered timeout is held to the one this repository has evidence for. The host clamps an
+over-long timeout at discovery and the clamped value was not measured, so a large number is not
+the deadline it appears to be and could land under the guard budget.
+
 The marker root follows the relay's own resolution, including
 `CODEX_SESSION_RELAY_MARKER_ROOT`. A default that skipped it would not be a default but a
 disagreement: the coordinator would publish its intents under one tree while this hook looked

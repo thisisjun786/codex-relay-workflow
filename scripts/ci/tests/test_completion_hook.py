@@ -738,7 +738,7 @@ class OneAdapterIsRegisteredOnce(unittest.TestCase):
                     return runtime_install.cmd_hook(args), emitted[0]
 
             install()
-            code, payload = install(timeout=20)
+            code, payload = install(timeout=8)
             document = json.loads((home / "hooks.json").read_text(encoding="utf-8"))
         self.assertEqual(code, 1)
         self.assertIsNone(payload["result"])
@@ -1057,6 +1057,74 @@ class TheWriterSatisfiesItsOwnReader(unittest.TestCase):
         self.assertTrue(completion.budget_complaints(-1, 10))
         self.assertTrue(completion.budget_complaints(True, 10))
         self.assertTrue(completion.budget_complaints("5", 10))
+
+    def test_a_registered_timeout_the_host_would_clamp_is_refused(self):
+        """The host clamps an over-long timeout at discovery, so a large number is not the
+        deadline it looks like, and the clamped value is not measured here."""
+        self.assertEqual(completion.budget_complaints(5, completion.REGISTERED_TIMEOUT_SECONDS),
+                         [])
+        found = completion.budget_complaints(5, 100000)
+        self.assertTrue(found)
+        self.assertIn("clamps", found[0])
+        self.assertTrue(completion.budget_complaints(99999, 100000),
+                        "a pair that is ordered but beyond the evidenced bound is still refused")
+
+
+class AnInterpreterHasToRunThisAdapter(unittest.TestCase):
+    def test_a_python_too_old_for_this_adapter_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            pretender = Path(temporary) / "old-python"
+            pretender.write_text("#!/bin/sh\necho '2.7'\n", encoding="utf-8")
+            pretender.chmod(0o755)
+            with self.assertRaises(ValueError) as raised:
+                completion.interpreter_for(str(pretender))
+        self.assertIn("2.7", str(raised.exception))
+        self.assertIn(".".join(str(p) for p in completion.SUPPORTED_PYTHON),
+                      str(raised.exception))
+
+    def test_a_plan_does_not_run_the_program_the_caller_named(self):
+        """A command that writes nothing should not execute a caller-supplied binary."""
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / "it-ran"
+            pretender = Path(temporary) / "loud"
+            pretender.write_text("#!/bin/sh\ntouch " + str(marker) + "\necho '3.12'\n",
+                                 encoding="utf-8")
+            pretender.chmod(0o755)
+            completion.interpreter_for(str(pretender), run=False)
+            self.assertFalse(marker.exists(), "planning executed it")
+            completion.interpreter_for(str(pretender), run=True)
+            self.assertTrue(marker.exists(), "applying checks it")
+
+
+class ADanglingLinkIsSomethingRatherThanNothing(unittest.TestCase):
+    """The repository's own four-state contract puts a link with an established-missing target
+    in UNREADABLE. Reported as ABSENT it says the component was never installed, when what
+    happened is that its target went away, and the fact that would repair it is gone."""
+
+    def test_a_broken_link_is_unreadable_and_not_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "dangling").symlink_to(home / "never-existed")
+            found = completion.presence(home / "dangling", "the configured runtime")
+        self.assertEqual(found["value"], reading.UNREADABLE)
+        self.assertIn("target does not exist", found["evidence"])
+
+    def test_a_live_link_is_present(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "real").write_text("", encoding="utf-8")
+            (home / "link").symlink_to(home / "real")
+            self.assertEqual(completion.presence(home / "link", "x")["value"], reading.PRESENT)
+
+    def test_status_reports_a_broken_pointer_as_broken(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "codex-session-relay").symlink_to(home / "gone")
+            settings(temporary)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["relayExecutable"]["value"], reading.UNREADABLE,
+                         "an update that moved the pointer is a different repair from a"
+                         " runtime that was never installed")
 
     def test_an_event_this_adapter_has_no_decision_for_is_refused(self):
         """The guard judges a turn ending. On any other event the payload means something else

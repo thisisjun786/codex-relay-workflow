@@ -1930,7 +1930,11 @@ def cmd_hook(args):
         interpreter = wanted = None
         if not refused:
             try:
-                interpreter = completion.interpreter_for(args.python or sys.executable)
+                # The candidate is only executed when this command is going to write. A plan
+                # that writes nothing should not run a program the caller named, and what it
+                # did not check it does not claim.
+                interpreter = completion.interpreter_for(args.python or sys.executable,
+                                                         run=args.apply)
                 wanted = completion.configuration(
                     destination=args.dest, relay=args.relay_command,
                     marker_root=args.marker_root, database=args.db_path, mode=args.mode,
