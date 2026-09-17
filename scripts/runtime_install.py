@@ -164,7 +164,16 @@ def resolve_entry_point(console_script, override=None):
 
 
 def interpreter_of(entry_point):
-    """The interpreter a console script is bound to, read from its shebang."""
+    """The interpreter named by a console script's first line.
+
+    This is the fallback, not the answer. A console script has more than one written shape: pip
+    emits a direct '#!<python>' shebang when the path allows it, and a '#!/bin/sh' trampoline
+    that execs the real interpreter on a following line when it does not, which is what a
+    destination containing a space produces. Reading the first line answers '/bin/sh' for the
+    second shape, and nothing can be asked of that. interpreter_for is the caller's entry point;
+    this stays for a script this command did not create, where there is no recorded environment
+    to ask instead.
+    """
     if entry_point is None:
         return None
     try:
@@ -226,6 +235,85 @@ def recorded_roots(record, name):
     return roots
 
 
+def recorded_install_for(record, name, entry_point):
+    """The install this command recorded for THIS entry point, or nothing rather than a guess.
+
+    Returns (install, ambiguity). The recorded entry point is matched first, because that is the
+    exact fact and it cannot be shared. Containment is the compatibility path for a record that
+    predates entryPoint, and it is not first-match: --dest is arbitrary, so one environment can
+    legally sit inside another's destination and an entry point under the inner one is contained
+    by both. The innermost environment is the one that owns it. Two installs recorded against
+    that same environment naming DIFFERENT interpreters own it equally, and choosing by order
+    would pick an interpreter that installed something else, so that is reported rather than
+    resolved.
+
+    Interpreting a recorded string as a path is a read of the record, so it sits inside the
+    boundary for the same reason recorded_roots does.
+    """
+    if not entry_point:
+        return None, None
+    with reading.region("the host record", "the environment an install recorded",
+                        field="components[].installs[].entryPoint|environment"):
+        candidate = Path(entry_point).resolve()
+        installs = ((record or {}).get("components", {}).get(name) or {}).get("installs", [])
+        for install in installs:
+            recorded_entry = install.get("entryPoint")
+            if recorded_entry and Path(recorded_entry).resolve() == candidate:
+                return install, None
+        containing = []
+        for install in installs:
+            environment = install.get("environment")
+            if environment:
+                resolved = Path(environment).resolve()
+                if within(candidate, resolved):
+                    containing.append((len(resolved.parts), str(resolved), install))
+    if not containing:
+        return None, None
+    deepest = max(depth for depth, _path, _install in containing)
+    innermost = [install for depth, _path, install in containing if depth == deepest]
+    named = {str(install.get("interpreterPath")) for install in innermost
+             if install.get("interpreterPath")}
+    if len(named) > 1:
+        return None, ("the host record names " + str(len(named)) + " different interpreters for "
+                      + str(entry_point) + ", so which one installed it cannot be established: "
+                      + ", ".join(sorted(named)))
+    return innermost[0], None
+
+
+def interpreter_for(record, name, entry_point):
+    """The interpreter a console script runs under, and where that answer came from.
+
+    An interpreter's identity is not one line of a script. Reading the shebang answered
+    '/bin/sh' for the trampoline pip writes when a destination contains a space, so
+    interpreter_version and module_location had nothing runnable to ask, the component
+    classified 'unreadable', and install deleted the environment it had just built as though it
+    belonged to somebody else.
+
+    For a script this command created the answer comes from the install record, written by the
+    run that used that interpreter, and it is confirmed by running it downstream: a value that
+    cannot report its version or locate the module still produces no classification. That is
+    independent of how the script happens to be written. The shebang stays the answer only
+    where there is no recorded environment to ask.
+
+    Returns (path, source). The source travels with it so the report says which evidence the
+    classification rested on, and an ambiguous record yields no interpreter at all rather than
+    whichever one came first.
+    """
+    install, ambiguous = recorded_install_for(record, name, entry_point)
+    if ambiguous:
+        return None, ambiguous
+    if install:
+        recorded = install.get("interpreterPath")
+        if recorded:
+            return str(recorded), "recorded with the install"
+        environment = install.get("environment")
+        if environment:
+            # Records written before interpreterPath existed still name the environment, and
+            # the interpreter of an environment this command built is the one it created there.
+            return str(Path(environment) / "bin" / "python"), "the recorded environment"
+    return interpreter_of(entry_point), "the script's first line"
+
+
 def classify_component(component, *, record, entry_override=None, registration=None,
                        record_state=None, app_server=None):
     """Gather the four OPS-2.1 signals and classify."""
@@ -235,14 +323,19 @@ def classify_component(component, *, record, entry_override=None, registration=N
 
     roots = recorded_roots(record, component["component"])
     entry_recorded = bool(resolved and any(within(resolved, r) for r in roots))
-    shebang = interpreter_of(resolved) if resolved else None
-    if resolved and not entry_recorded and shebang:
+    python, interpreter_from = (
+        interpreter_for(record, component["component"], resolved) if resolved else (None, None))
+    if resolved and python is None and interpreter_from:
+        # An ambiguous record is a signal that could not be read, not a reason to pick one.
+        unreadable.append(interpreter_from)
+    if resolved and not entry_recorded and python:
         with reading.region("the installed entry point", "the interpreter it names",
                             field="shebang"):
-            interpreter_path = Path(shebang).resolve()
+            interpreter_path = Path(python).resolve()
         entry_recorded = any(within(interpreter_path, r) for r in roots)
 
-    python = shebang or (sys.executable if resolved is None else shebang)
+    if python is None and resolved is None:
+        python = sys.executable
     version = interpreter_version(python) if python else None
     location, import_error, import_command = (None, "no interpreter to ask", None)
     if python:
@@ -329,6 +422,8 @@ def classify_component(component, *, record, entry_override=None, registration=N
         "entryPointResolves": str(resolved) if resolved else None,
         "entryPointInRecordedPath": entry_recorded,
         "interpreter": version,
+        "interpreterPath": python,
+        "interpreterFrom": interpreter_from,
         "importedLocation": location,
         "importError": import_error,
         "importCommand": import_command,
@@ -414,9 +509,9 @@ def cmd_diagnose(args):
     registration = registration_state(codex_home, args.bridge_command or "", args.bridge_arg or [])
     # One read-only observation, shared by every component's classification. Without it the
     # App Server dimension is unread and no recorded point can be said to cover this run.
+    bridge_entry = resolve_entry_point(bridge["consoleScript"], args.bridge_command)
     app_server = observe_app_server(
-        interpreter_of(resolve_entry_point(bridge["consoleScript"], args.bridge_command))
-        or sys.executable, args.socket)
+        interpreter_for(record, BRIDGE, bridge_entry)[0] or sys.executable, args.socket)
     try:
         classes = {
             c["component"]: classify_component(
@@ -504,7 +599,11 @@ def cmd_diagnose(args):
             check.not_applicable(
                 "no trial was requested. This field requires an attempt that recorded a returned"
                 " turn id, which means creating work, so it is only measured under --trial."
-            ) if not args.trial else _trial(args, relay_executable)
+            ) if not args.trial else _trial(
+                args, relay_executable,
+                # The relay's own interpreter, resolved the same way its classification resolved
+                # it, so the settings preflight asks the relay's code rather than this one's.
+                classes[RELAY].get("interpreterPath"))
         ),
         "verificationComplete": check.not_applicable(
             "OPS-6.4 is a property of a verdict at a head, not of an installation. This command"
@@ -646,6 +745,90 @@ TRIAL_EVENT = "<event>"
 REPLAY_FROM_LOOKUP = ("parentTaskId", "childTaskId", "issueKey")
 REPLAY_FROM_REGISTER = ("artifactRoots", "allowedRecipients", "parentHostId", "childHostId")
 REGISTER_REPLAY_FIELDS = REPLAY_FROM_LOOKUP + REPLAY_FROM_REGISTER
+
+# Every input the trial requires before its first mutating step, as argument name -> the flag
+# that supplies it. Declared rather than spelled out at the check, so a test can derive the set
+# and make each member unusable in turn: an input added without a preflight case fails that test
+# instead of being discovered at the relay after rows already exist.
+#
+# Split in two because the two halves are checked differently, and saying so here is what keeps
+# the check itself free of a literal naming one member of the set it is iterating.
+TRIAL_REQUIRED_INPUTS = {
+    "issue": "--issue", "parent_task": "--parent-task", "child_task": "--child-task",
+    "recipient": "--recipient", "artifact_root": "--artifact-root",
+    "turn_thread": "--turn-thread", "turn_id": "--turn-id", "artifact": "--artifact",
+    "dispatch_turn_id": "--dispatch-turn-id",
+}
+# Required too, but with an acknowledgement path and a usability question of its own.
+TRIAL_ACKNOWLEDGED_INPUTS = {"recipient_settings": "--recipient-settings"}
+TRIAL_PREFLIGHT_INPUTS = dict(TRIAL_REQUIRED_INPUTS, **TRIAL_ACKNOWLEDGED_INPUTS)
+
+# The two callables settings-record actually uses: the relay's reader for a JSON object or an
+# @path, and the predicate record_settings applies before it writes anything. Named here and
+# derived again from the relay's source by a check, so a relay that changes either one fails
+# that check rather than leaving this preflight enforcing a rule nobody applies any more.
+SETTINGS_READER = ("codex_session_relay.cli", "_settings_json")
+SETTINGS_PREDICATE = ("codex_session_relay.settings", "TaskSettings", "require_usable")
+
+
+def _settings_program():
+    """The read-only program that asks the relay's own code whether a settings value is usable.
+
+    Built from SETTINGS_READER and SETTINGS_PREDICATE rather than written out, so the names this
+    runs are the names those declarations carry.
+    """
+    reader_module, reader = SETTINGS_READER
+    predicate_module, predicate, method = SETTINGS_PREDICATE
+    return "\n".join([
+        "import json, sys",
+        "from " + reader_module + " import " + reader,
+        "from " + predicate_module + " import " + predicate,
+        "try:",
+        "    " + predicate + "(" + reader + "(sys.argv[1]))." + method + "()",
+        "except BaseException as error:",
+        "    print(json.dumps({'usable': False,",
+        "                      'detail': type(error).__name__ + ': ' + str(error)}))",
+        "else:",
+        "    print(json.dumps({'usable': True, 'detail': 'read, and complete'}))",
+        "",
+    ])
+
+
+def settings_usable(raw, interpreter):
+    """Whether settings-record would accept this value, asked of the relay's own code.
+
+    Not a second validator. The reader that turns '@path' or a JSON string into an object and
+    the predicate that decides completeness are the two settings-record itself uses, run
+    read-only in the relay's interpreter. Neither opens a store and neither writes. A copy of
+    those rules here would be a second statement of something that lives elsewhere, and the next
+    change would move only one of them.
+
+    Checked before the first mutating step because settings-record now runs after register: an
+    unreadable value discovered there would leave a relationship row behind, which is exactly
+    the property reordering register was meant to protect.
+    """
+    if not interpreter:
+        return {"usable": None, "detail": (
+            "the relay's interpreter could not be resolved, so the relay's own settings reader"
+            " and predicate could not be asked here. Pass --relay-command naming an installed"
+            " entry point, or record the install first.")}
+    try:
+        # -B because a check that claims to be read-only must not leave __pycache__ behind in
+        # somebody's installed runtime. Importing two modules is enough to write it.
+        done = subprocess.run([str(interpreter), "-B", "-c", _settings_program(), str(raw)],
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"usable": None,
+                "detail": "the check could not be run: " + type(error).__name__ + ": " + str(error)}
+    if done.returncode != 0 or not done.stdout.strip():
+        return {"usable": None, "detail": (
+            "the relay's settings check did not answer (exit " + str(done.returncode) + "): "
+            + ((done.stderr or done.stdout).strip()[-300:] or "no output"))}
+    try:
+        return json.loads(done.stdout)
+    except ValueError as error:
+        return {"usable": None,
+                "detail": "the check answered something unreadable: " + str(error)}
 
 
 def trial_request_id(issue, dispatch_turn):
@@ -801,7 +984,7 @@ def _unusable_artifacts(artifacts, root):
     return problems
 
 
-def _trial(args, relay_executable):
+def _trial(args, relay_executable, relay_interpreter=None):
     """Register, open the generation, emit, then a bounded deliver. Only this path creates work.
 
     The field's evidence is the delivery attempt's returned turn id. emit stores the receipt
@@ -814,15 +997,11 @@ def _trial(args, relay_executable):
     if not relay_executable:
         return check.field("not_verified", "trial requested but no relay executable was found",
                            acting_process=acting_process())
-    required = {"--issue": args.issue, "--parent-task": args.parent_task,
-                "--child-task": args.child_task, "--recipient": args.recipient,
-                "--artifact-root": args.artifact_root, "--turn-thread": args.turn_thread,
-                "--turn-id": args.turn_id,
-                # A reviewable receipt with an empty manifest is refused, and a generation
-                # with no anchor cannot be emitted against. Both were discovered at the
-                # relay, after the trial had already written rows.
-                "--artifact": args.artifact,
-                "--dispatch-turn-id": args.dispatch_turn_id}
+    # Driven from the declared set. A reviewable receipt with an empty manifest is refused and a
+    # generation with no anchor cannot be emitted against; both were discovered at the relay,
+    # after the trial had already written rows.
+    required = {flag: getattr(args, name, None)
+                for name, flag in TRIAL_REQUIRED_INPUTS.items()}
     missing = sorted(name for name, value in required.items() if not value)
     if missing:
         return check.field(
@@ -868,6 +1047,21 @@ def _trial(args, relay_executable):
             " no read-only way to check from here: every relay read constructs a store.",
             acting_process=acting_process(), measured_at=now(),
         )
+    if args.recipient_settings:
+        # Present is not usable. settings-record reads this value and applies its predicate, and
+        # it now runs after register, so a malformed object or an unreadable @path discovered
+        # there would leave a relationship row behind. Asked here with the relay's own reader
+        # and its own predicate, read-only.
+        settings = settings_usable(args.recipient_settings, relay_interpreter)
+        if not settings.get("usable"):
+            return check.field(
+                "not_verified",
+                "the recipient settings supplied as " + str(args.recipient_settings)
+                + " are not usable: " + str(settings.get("detail"))
+                + ". This is the relay's own reader and its own predicate, asked before the"
+                " first mutating step. No settings and no relationship row were written.",
+                acting_process=acting_process(), measured_at=now(),
+            )
 
     steps = trial_steps(
         issue=args.issue, parent_task=args.parent_task, child_task=args.child_task,
@@ -1225,6 +1419,10 @@ def cmd_install(args):
                 "entryPoint": str(environment / "bin" / component["consoleScript"]),
                 "environment": str(environment),
                 "interpreter": version,
+                # The interpreter this run actually installed with, recorded so a later
+                # classification asks the record rather than reading the console script's first
+                # line. Those lines have more than one shape and one of them names /bin/sh.
+                "interpreterPath": str(python),
                 "integrity": digest,
                 "digestMatchesDefinition": digest == component["sourceDigest"],
                 "reachedVia": "installed by runtime_install.py into " + str(destination),

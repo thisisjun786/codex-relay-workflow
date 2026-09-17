@@ -54,6 +54,19 @@ TRIAL_ARTIFACT = str(Path(TRIAL_ROOT) / "deliverable.txt")
 Path(TRIAL_ARTIFACT).write_text("a deliverable", encoding="utf-8")
 
 
+def usable_settings():
+    """Stub the relay's settings check for cases that are not about settings validity.
+
+    The real check runs the relay's own reader and its own predicate in the relay's interpreter,
+    and a case about step ordering or step gating has no relay to provide one. The cases that
+    ARE about settings validity use the real thing.
+    """
+    import runtime_install
+
+    return mock.patch.object(runtime_install, "settings_usable",
+                             return_value={"usable": True, "detail": "stubbed for this case"})
+
+
 def run(*args):
     return subprocess.run([sys.executable, str(RUNTIME), *args],
                           capture_output=True, text=True, timeout=180)
@@ -699,7 +712,8 @@ class TrialArgumentTests(unittest.TestCase):
         original = runtime_install.scope.relay
         runtime_install.scope.relay = fake_relay
         try:
-            result = runtime_install._trial(Args(), "/opt/relay")
+            with usable_settings():
+                result = runtime_install._trial(Args(), "/opt/relay")
         finally:
             runtime_install.scope.relay = original
 
@@ -785,7 +799,8 @@ class AuthorizedRepairTests(unittest.TestCase):
         original = runtime_install.scope.relay
         runtime_install.scope.relay = fake_relay
         try:
-            return runtime_install._trial(args, "/opt/relay"), sent
+            with usable_settings():
+                return runtime_install._trial(args, "/opt/relay"), sent
         finally:
             runtime_install.scope.relay = original
 
@@ -1916,7 +1931,8 @@ class TrialStepGatingTests(unittest.TestCase):
                         "payload": _trial_payload(name)}
 
             with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
-                result = runtime_install._trial(self._args(), "/usr/bin/relay")
+                with usable_settings():
+                    result = runtime_install._trial(self._args(), "/usr/bin/relay")
 
             self.assertEqual(result["value"], "not_verified", failing)
             self.assertEqual(
@@ -1939,7 +1955,8 @@ class TrialStepGatingTests(unittest.TestCase):
             return {"ok": True, "command": ["relay", *command], "exitCode": 0, "payload": payload}
 
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
-            result = runtime_install._trial(self._args(), "/usr/bin/relay")
+            with usable_settings():
+                result = runtime_install._trial(self._args(), "/usr/bin/relay")
         self.assertEqual(result["value"], "verified", result["evidence"][:400])
         self.assertEqual(performed, self._steps())
 
@@ -3618,7 +3635,8 @@ class DrawnSetTests(unittest.TestCase):
             recipient_settings="@/tmp/settings.json", settings_already_recorded=False,
             expect_relationship=None, socket=None, state=None)
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            with usable_settings():
+                result = runtime_install._trial(args, "/usr/bin/relay")
         self.assertEqual(result["value"], "verified", result["evidence"][:300])
         self.assertIn("settings-record", sent)
         self.assertLess(sent.index("register"), sent.index("settings-record"),
@@ -3701,6 +3719,453 @@ class DrawnSetTests(unittest.TestCase):
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
             result = runtime_install._trial(args, "/usr/bin/relay")
         self.assertEqual(result["value"], "verified", result["evidence"][:300])
+
+
+# =========================================================================================
+# Check 11 - the preflight asks the consumer's own predicate, over the declared input set
+#
+# register moved ahead of settings-record so a registration the relay refuses cannot leave
+# settings behind. That reordering made a NEW input class dangerous: a --recipient-settings
+# value that is present but unreadable used to fail before anything was written and now fails
+# after a relationship row exists. The preflight therefore asks whether the value is USABLE,
+# and it asks with the relay's own reader and the relay's own predicate rather than a second
+# copy of those rules.
+# =========================================================================================
+
+RELAY_SETTINGS_SOURCE = RELAY_SRC / "settings.py"
+
+
+def _settings_record_callables():
+    """What cmd_settings_record and record_settings actually call, read from the relay."""
+    cli = ast.parse((RELAY_SRC / "cli.py").read_text(encoding="utf-8"))
+    registry = ast.parse((RELAY_SRC / "registry.py").read_text(encoding="utf-8"))
+
+    def called(tree, name):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                found = set()
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.Call):
+                        func = inner.func
+                        if isinstance(func, ast.Name):
+                            found.add(func.id)
+                        elif isinstance(func, ast.Attribute):
+                            found.add(func.attr)
+                return found
+        return set()
+
+    return called(cli, "cmd_settings_record"), called(registry, "record_settings")
+
+
+class SettingsPreflightTests(unittest.TestCase):
+    def test_the_preflight_names_the_callables_settings_record_uses(self):
+        import runtime_install
+
+        by_cli, by_registry = _settings_record_callables()
+        # Guards the reader: empty sets would make both assertions below pass vacuously.
+        self.assertTrue(by_cli, "cmd_settings_record was not found in the relay source")
+        self.assertTrue(by_registry, "record_settings was not found in the relay source")
+        self.assertIn(runtime_install.SETTINGS_READER[1], by_cli,
+                      "the reader this preflight runs is not the one settings-record reads with")
+        self.assertIn(runtime_install.SETTINGS_PREDICATE[2], by_registry,
+                      "the predicate this preflight applies is not the one record_settings applies")
+        self.assertIn(runtime_install.SETTINGS_READER[1], by_registry | by_cli)
+        # And the predicate really is a method of the declared class in the declared module.
+        settings = ast.parse(RELAY_SETTINGS_SOURCE.read_text(encoding="utf-8"))
+        methods = {inner.name for node in ast.walk(settings)
+                   if isinstance(node, ast.ClassDef) and node.name == runtime_install.SETTINGS_PREDICATE[1]
+                   for inner in node.body if isinstance(inner, ast.FunctionDef)}
+        self.assertIn(runtime_install.SETTINGS_PREDICATE[2], methods)
+
+    def _stub_relay(self, temporary, complete):
+        """A stand-in relay package, so the real program text is executed on this interpreter.
+
+        The program, the subprocess, the argument passing and the JSON answer are all the real
+        ones. Only the package it imports is local, because CI has no installed relay and a
+        check that never runs the program proves nothing about it.
+        """
+        package = Path(temporary) / "codex_session_relay"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "cli.py").write_text(
+            "import json\n\n\n"
+            "def _settings_json(raw):\n"
+            "    if raw.startswith('@'):\n"
+            "        with open(raw[1:], encoding='utf-8') as handle:\n"
+            "            return json.load(handle)\n"
+            "    return json.loads(raw)\n",
+            encoding="utf-8")
+        (package / "settings.py").write_text(
+            "class TaskSettings:\n"
+            "    def __init__(self, data):\n"
+            "        self.data = data\n\n"
+            "    def require_usable(self):\n"
+            "        if not self.data.get('complete'):\n"
+            "            raise ValueError('missing sandbox, approvalPolicy')\n",
+            encoding="utf-8")
+        return package
+
+    def _ask(self, temporary, raw):
+        import runtime_install
+
+        environment = dict(os.environ, PYTHONPATH=str(temporary))
+        with mock.patch.dict(os.environ, environment, clear=True):
+            return runtime_install.settings_usable(raw, sys.executable)
+
+    def test_a_complete_value_is_usable_and_an_incomplete_one_is_not(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self._stub_relay(temporary, True)
+            good = Path(temporary) / "good.json"
+            good.write_text(json.dumps({"complete": True}), encoding="utf-8")
+            bad = Path(temporary) / "bad.json"
+            bad.write_text(json.dumps({"complete": False}), encoding="utf-8")
+
+            self.assertTrue(self._ask(temporary, "@" + str(good))["usable"])
+
+            for label, raw in (("an incomplete object", "@" + str(bad)),
+                               ("malformed JSON", '{"sandbox":'),
+                               ("a path that is not there",
+                                "@" + str(Path(temporary) / "absent.json"))):
+                with self.subTest(label):
+                    answer = self._ask(temporary, raw)
+                    self.assertFalse(answer["usable"], label + " must not read as usable")
+                    self.assertTrue(answer["detail"])
+
+    def test_without_an_interpreter_the_answer_is_unknown_rather_than_usable(self):
+        import runtime_install
+
+        answer = runtime_install.settings_usable("@/nowhere.json", None)
+        self.assertIsNone(answer["usable"])
+        self.assertIn("interpreter", answer["detail"])
+
+    def test_the_check_writes_no_bytecode_into_the_runtime_it_asks(self):
+        """Read-only has to mean it. Importing two modules writes __pycache__ without -B, and
+        this check runs inside somebody's installed runtime."""
+        import runtime_install
+
+        seen = {}
+
+        def fake_run(argv, **kwargs):
+            seen["argv"] = list(argv)
+            return type("R", (), {"returncode": 0, "stdout": '{"usable": true}', "stderr": ""})()
+
+        with mock.patch.object(runtime_install.subprocess, "run", side_effect=fake_run):
+            runtime_install.settings_usable("{}", "/some/python")
+        self.assertIn("-B", seen["argv"], "the probe may not leave bytecode behind")
+        self.assertLess(seen["argv"].index("-B"), seen["argv"].index("-c"))
+
+
+class PreflightInputSetTests(unittest.TestCase):
+    """Every declared input, made unusable one at a time, stops the trial before it mutates.
+
+    The set is the declaration, not a list here: an input added to the trial without a preflight
+    case fails this rather than being discovered at the relay once rows exist.
+    """
+
+    MUTATING = ("register", "settings-record", "generation-open", "generation-bind",
+                "admit-turn", "emit", "deliver")
+
+    def _args(self, settings_path, **overrides):
+        base = dict(issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+                    artifact_root=TRIAL_ROOT, artifact=[TRIAL_ARTIFACT], turn_thread="c",
+                    turn_id="t", dispatch_turn_id="d", turn_status="completed",
+                    recipient_settings="@" + str(settings_path),
+                    settings_already_recorded=False, expect_relationship=None,
+                    socket=None, state=None)
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def _run(self, args, settings_answer):
+        import runtime_install
+
+        sent = []
+
+        def relay(command, **kwargs):
+            sent.append(command[0])
+            return {"ok": True, "command": list(command),
+                    "payload": {"issueKey": "JUN-104", "assignments": [],
+                                "responsibleRelationship": None, "responsibleChild": None}
+                    if command[0] == "assignment-find" else _trial_payload(command[0])}
+
+        with mock.patch.object(runtime_install.scope, "relay", side_effect=relay), \
+             mock.patch.object(runtime_install, "settings_usable", return_value=settings_answer):
+            result = runtime_install._trial(args, "/usr/bin/relay", "/usr/bin/python")
+        return result, sent
+
+    def test_the_baseline_reaches_a_delivery_so_the_refusals_mean_something(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Path(temporary) / "s.json"
+            settings.write_text("{}", encoding="utf-8")
+            result, sent = self._run(self._args(settings), {"usable": True, "detail": "read"})
+        self.assertEqual(result["value"], "verified", result["evidence"][:200])
+        self.assertIn("deliver", sent)
+
+    def test_each_declared_input_made_unusable_stops_the_trial_before_it_mutates(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Path(temporary) / "s.json"
+            settings.write_text("{}", encoding="utf-8")
+            for name in sorted(runtime_install.TRIAL_PREFLIGHT_INPUTS):
+                with self.subTest(name):
+                    if name in runtime_install.TRIAL_ACKNOWLEDGED_INPUTS:
+                        # Present, and the consumer's predicate rejects it. That is the class
+                        # this round added: absence was already refused, unusability was not.
+                        args = self._args(settings)
+                        answer = {"usable": False, "detail": "missing sandbox"}
+                    else:
+                        args = self._args(settings, **{name: None})
+                        answer = {"usable": True, "detail": "read"}
+                    result, sent = self._run(args, answer)
+                    self.assertEqual(result["value"], "not_verified", name)
+                    self.assertEqual([step for step in sent if step in self.MUTATING], [],
+                                     name + ": the trial mutated before its inputs were usable")
+
+
+# =========================================================================================
+# Check 12 - an interpreter's identity is not one line of a script
+#
+# pip writes a direct '#!<python>' shebang when the destination allows it and a '#!/bin/sh'
+# trampoline that execs the interpreter on a following line when it does not, which is what a
+# path containing a space produces. Reading the first line answered '/bin/sh' for the second
+# shape, so nothing could be asked of the interpreter, the component classified 'unreadable',
+# and install deleted the environment it had just built.
+#
+# The forms are BUILT here rather than asserted about, because the premise is a fact about the
+# host's packaging tools and not about this repository.
+# =========================================================================================
+
+class InterpreterIdentityTests(unittest.TestCase):
+    @staticmethod
+    def _venv(root, name):
+        environment = Path(root) / name / "env"
+        environment.parent.mkdir(parents=True, exist_ok=True)
+        done = subprocess.run([sys.executable, "-m", "venv", str(environment)],
+                              capture_output=True, text=True, timeout=300)
+        return environment, done
+
+    def _record(self, environment, *, with_path):
+        install = {"location": str(environment), "environment": str(environment),
+                   "entryPoint": str(environment / "bin" / "pip")}
+        if with_path:
+            install["interpreterPath"] = str(environment / "bin" / "python")
+        record = hostrecord.empty(1)
+        hostrecord.put_install(record, "codex-session-relay", install)
+        return record
+
+    def test_both_console_script_shapes_resolve_to_a_runnable_interpreter(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            plain, made_plain = self._venv(temporary, "plain")
+            spaced, made_spaced = self._venv(temporary, "with space")
+            if made_plain.returncode != 0 or made_spaced.returncode != 0:
+                self.skipTest("this host cannot create a virtual environment here")
+            entries = {"plain": plain / "bin" / "pip", "spaced": spaced / "bin" / "pip"}
+            for label, entry in entries.items():
+                if not entry.exists():
+                    self.skipTest("this host's venv module installs no console script")
+
+            first = {label: runtime_install.interpreter_of(entry)
+                     for label, entry in entries.items()}
+            # The premise. If this host writes one shape for both paths there is nothing here to
+            # be wrong about, and the case would otherwise pass without testing anything.
+            if first["plain"] == first["spaced"]:
+                self.skipTest("this host writes one console-script shape for both paths")
+            self.assertTrue(interpreter_version_of(first["spaced"]) is None,
+                            "the premise is that the first line of the second shape names"
+                            " something that cannot answer as a Python interpreter")
+
+            for recorded in (True, False):
+                for label, entry in entries.items():
+                    with self.subTest(shape=label, interpreterPath=recorded):
+                        record = self._record(entries[label].parent.parent, with_path=recorded)
+                        found, source = runtime_install.interpreter_for(
+                            record, "codex-session-relay", entry)
+                        self.assertIsNotNone(found, label)
+                        self.assertIsNotNone(
+                            runtime_install.interpreter_version(found),
+                            label + ": the resolved interpreter did not answer its version")
+                        self.assertNotEqual(source, "the script's first line")
+
+    def test_a_script_outside_every_recorded_environment_still_uses_its_first_line(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            entry = Path(temporary) / "somebody-elses-script"
+            entry.write_text("#!" + sys.executable + chr(10), encoding="utf-8")
+            found, source = runtime_install.interpreter_for(
+                hostrecord.empty(1), "codex-session-relay", entry)
+        self.assertEqual(found, sys.executable)
+        self.assertEqual(source, "the script's first line")
+
+    def test_an_install_records_the_interpreter_it_installed_with(self):
+        # The producer keeps the promise the consumer now relies on.
+        source = RUNTIME.read_text(encoding="utf-8")
+        self.assertIn('"interpreterPath": str(python)', source)
+        tree = ast.parse(source)
+        recorded = [node for node in ast.walk(tree)
+                    if isinstance(node, ast.Dict)
+                    and any(isinstance(k, ast.Constant) and k.value == "interpreterPath"
+                            for k in node.keys)
+                    and any(isinstance(k, ast.Constant) and k.value == "environment"
+                            for k in node.keys)]
+        self.assertTrue(recorded, "the install record must carry interpreterPath beside environment")
+
+
+def interpreter_version_of(path):
+    import runtime_install
+
+    return runtime_install.interpreter_version(path) if path else None
+
+
+class RecordedEnvironmentBindingTests(unittest.TestCase):
+    """The record binds an entry point to ONE environment, or to none.
+
+    --dest is arbitrary, so an environment can legally sit inside another environment's
+    destination and an entry point under the inner one is contained by both. First match would
+    then answer with the outer interpreter, which installed something else.
+    """
+
+    def _record(self, *installs):
+        record = hostrecord.empty(1)
+        for install in installs:
+            hostrecord.put_install(record, "codex-session-relay", install)
+        return record
+
+    def test_the_recorded_entry_point_wins_over_any_containment(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            outer = Path(temporary) / "outer"
+            inner = outer / "nested" / "env"
+            inner.mkdir(parents=True)
+            entry = inner / "bin" / "codex-session-relay"
+            entry.parent.mkdir(parents=True)
+            entry.write_text("#!/bin/sh" + chr(10), encoding="utf-8")
+            record = self._record(
+                {"location": str(outer), "environment": str(outer),
+                 "entryPoint": str(outer / "bin" / "codex-session-relay"),
+                 "interpreterPath": "/outer/python"},
+                {"location": str(inner), "environment": str(inner),
+                 "entryPoint": str(entry), "interpreterPath": "/inner/python"},
+            )
+            found, source = runtime_install.interpreter_for(
+                record, "codex-session-relay", entry)
+        self.assertEqual(found, "/inner/python")
+        self.assertEqual(source, "recorded with the install")
+
+    def test_a_nested_environment_binds_to_the_innermost_one(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            outer = Path(temporary) / "outer"
+            inner = outer / "nested" / "env"
+            inner.mkdir(parents=True)
+            entry = inner / "bin" / "codex-session-relay"
+            entry.parent.mkdir(parents=True)
+            entry.write_text("#!/bin/sh" + chr(10), encoding="utf-8")
+            # Neither record carries entryPoint: this is the compatibility path.
+            record = self._record(
+                {"location": str(outer), "environment": str(outer)},
+                {"location": str(inner), "environment": str(inner)},
+            )
+            found, source = runtime_install.interpreter_for(
+                record, "codex-session-relay", entry)
+        self.assertEqual(found, str(inner / "bin" / "python"))
+        self.assertEqual(source, "the recorded environment")
+
+    def test_two_equally_specific_environments_answer_with_no_interpreter(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            one = Path(temporary) / "a" / "env"
+            two = Path(temporary) / "b" / "env"
+            for path in (one, two):
+                (path / "bin").mkdir(parents=True)
+            entry = one / "bin" / "codex-session-relay"
+            entry.write_text("#!/bin/sh" + chr(10), encoding="utf-8")
+            # Two installs recorded against the SAME environment naming different
+            # interpreters. Containment cannot separate them and order is not evidence.
+            record = self._record(
+                {"location": str(one), "environment": str(one), "interpreterPath": "/one/python"},
+                {"location": str(one) + "/.", "environment": str(one) + "/.",
+                 "interpreterPath": "/two/python"},
+            )
+            found, source = runtime_install.interpreter_for(
+                record, "codex-session-relay", entry)
+        self.assertIsNone(found)
+        self.assertIn("different interpreters", source)
+
+    def test_an_ambiguous_record_stops_classification_rather_than_choosing(self):
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            entry = environment / "bin" / component["consoleScript"]
+            entry.parent.mkdir(parents=True)
+            entry.write_text("#!/bin/sh" + chr(10), encoding="utf-8")
+            entry.chmod(0o755)
+            record = self._record(
+                {"location": str(environment), "environment": str(environment),
+                 "interpreterPath": "/one/python"},
+                {"location": str(environment) + "/.", "environment": str(environment) + "/.",
+                 "interpreterPath": "/two/python"},
+            )
+            record["components"][component["component"]] = record["components"].pop(
+                "codex-session-relay")
+            classified = runtime_install.classify_component(
+                component, record=record, entry_override=str(entry), app_server="a-server")
+        self.assertEqual(classified["class"], ownership.UNREADABLE)
+        self.assertTrue(any("different interpreters" in reason for reason in classified["reasons"]),
+                        classified["reasons"])
+
+
+class SpacedDestinationTests(unittest.TestCase):
+    """A destination containing a space reaches a runnable interpreter.
+
+    The full install-promote-classify-own path for such a destination is proved by running the
+    real command, which needs a network install of both packages and is too slow to belong
+    here. What this covers is the mechanism that broke it: the interpreter for a spaced
+    environment answered nothing, so the component could report no version and no module
+    location and classified unreadable.
+    """
+
+    def test_a_spaced_environment_reports_its_interpreter_version(self):
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "with space" / "env"
+            environment.parent.mkdir(parents=True)
+            made = subprocess.run([sys.executable, "-m", "venv", str(environment)],
+                                  capture_output=True, text=True, timeout=300)
+            if made.returncode != 0:
+                self.skipTest("this host cannot create a virtual environment here")
+            entry = environment / "bin" / component["consoleScript"]
+            template = environment / "bin" / "pip"
+            if not template.exists():
+                self.skipTest("this host's venv module installs no console script")
+            entry.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+            entry.chmod(0o755)
+
+            # The premise: this destination really did produce the shape whose first line names
+            # something that is not a Python interpreter.
+            self.assertIsNone(
+                runtime_install.interpreter_version(runtime_install.interpreter_of(entry)),
+                "this host wrote a directly executable shebang, so there is nothing to fix here")
+
+            record = hostrecord.empty(1)
+            hostrecord.put_install(record, component["component"], {
+                "location": str(environment), "environment": str(environment),
+                "entryPoint": str(entry),
+                "interpreterPath": str(environment / "bin" / "python")})
+            classified = runtime_install.classify_component(
+                component, record=record, entry_override=str(entry), app_server="a-server")
+        self.assertIsNotNone(classified["interpreter"],
+                             "the interpreter for a spaced environment answered nothing")
+        self.assertEqual(classified["interpreterFrom"], "recorded with the install")
 
 
 if __name__ == "__main__":

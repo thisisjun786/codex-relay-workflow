@@ -59,7 +59,7 @@ The host record at `${XDG_STATE_HOME:-~/.local/state}/codex-relay-workflow/host-
 other half of the definition and is never committed. It holds the repository commit and tree
 measured at run time, checkout cleanliness, one entry per install location
 (`location`, `installMode`, `entryPoint`, `environment`, `interpreter`,
-`integrity`, `reachedVia`) and the measured points.
+`interpreterPath`, `integrity`, `reachedVia`) and the measured points.
 
 This is what makes reuse reachable. Under OPS-1.3 a point means the combination was exercised, so
 no amount of reading bytes produces one, and a component whose bytes match but whose combination
@@ -82,6 +82,22 @@ one combination and the `sourceDigest` it was measured against, so it is evidenc
 it covers rather than an independently editable expectation. A point recorded against another
 interpreter is a different combination and does not satisfy this one. Points are appended, never
 replaced.
+
+### An interpreter's identity is not one line of a script
+
+`interpreterPath` is recorded because a console script has more than one written shape. pip emits a
+direct `#!<python>` shebang when the destination allows it, and a `#!/bin/sh` trampoline that execs
+the interpreter on a following line when it does not, which is what a path containing a space
+produces. Reading the first line answered `/bin/sh` for the second shape, so nothing could be
+asked of the interpreter: it reported no version and located no module, the component classified
+`unreadable`, the install never promoted, and recovery deleted the environment the run had just
+built as though it belonged to somebody else.
+
+So the interpreter for a script this command created comes from the install record, written by the
+run that used it, and is confirmed by running it. Records written before `interpreterPath` existed
+still name the `environment`, whose interpreter is the one that environment was built with. Reading
+the shebang stays the answer only for a script this command did not create, where there is no
+recorded environment to ask, and the classification reports which of the three it used.
 
 ## Reading a record, and what happens when it cannot be read
 
@@ -251,6 +267,17 @@ relationship's child task; and every `--artifact` is an absolute, already-normal
 regular file with no symbolic link at any component, readable, and inside `--artifact-root`, which
 is what the relay checks while building the manifest. The relay revalidates afterwards, because a
 path can change in between.
+
+The recipient's settings are checked for **usability**, not presence. `settings-record` now runs
+after `register`, so a value that is there but cannot be used - a malformed object, an `@path`
+that is not readable, a settings object missing a required field - would be discovered after a
+relationship row exists. The preflight therefore asks the relay's own reader and the relay's own
+predicate, run read-only in the relay's interpreter: neither opens a store and neither writes. A
+second copy of those rules here would be a restatement of something that lives in the relay, and
+the next change would move only one of them. When the relay's interpreter cannot be resolved the
+answer is *unknown* and the trial refuses, because a check that could not be made is not a check
+that passed.
+
 
 
 ## Installing the runtime
