@@ -1156,6 +1156,14 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     answer that cannot be attributed is unproven rather than a mismatch: it says nothing about
     whether two participants share a store, only that this reading is not about the one here.
 
+    And being live is not the same as being current. What a found nonce says is that the file
+    read here contains a write that was made to the writer's file at some earlier moment - a
+    copy taken AFTER the challenge was written carries it with the bytes, and stays stable for
+    a whole invocation, so nothing looking for a replacement or a second name sees anything
+    wrong. Whether it is still one file is what the physical identity answers. So proof takes
+    both: a found, attributed nonce AND an agreeing device and inode. Neither alone is graded
+    as proof, and each is unproven for its own reason.
+
     The name count is graded beside all of that rather than folded into any of it. It catches
     one concrete case and only one: `st_nlink` counts hardlink names, and a bind mount adds a
     pathname without changing it. So more than one name refuses, and one name is not evidence
@@ -1172,19 +1180,25 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     if expect_inode is not None:
         want = str(expect_inode).split(":")
         here = (store.get("device"), store.get("inode"))
+        physical = None
         if len(want) != 2 or None in here:
             reasons.append((UNPROVEN, "physical identity is not comparable here"))
         elif (str(here[0]), str(here[1])) != (want[0], want[1]):
+            physical = False
             reasons.append((
                 MISMATCH, f"device:inode {here[0]}:{here[1]} is not {expect_inode}",
             ))
         else:
+            physical = True
             # Agreement, not proof. Two pathnames for one inode agree here and still keep
             # separate write-ahead logs, and this side cannot see the second pathname.
             reasons.append((None, (
                 "device and inode match, which does not say both participants opened the"
                 " same pathname for that inode"
             )))
+    else:
+        # Not compared at all, which is not the same as compared and agreeing.
+        physical = None
     if nonce is not None:
         if nonce.get("readable") is False:
             # Not being able to read is not the same as the nonce being absent. Calling it a
@@ -1199,9 +1213,18 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
                     f"the nonce was read from device:inode {read_from[0]}:{read_from[1]}, and"
                     f" this comparison is about {here[0]}:{here[1]}"
                 )))
+            elif physical is not True:
+                reasons.append((UNPROVEN, (
+                    "a nonce written by another participant is readable here, which does not"
+                    " say the two are one file now: a copy taken after the challenge was"
+                    " written carries the nonce with the bytes. Supply the other"
+                    " participant's --expect-inode so the physical identity is compared too"
+                )))
             else:
                 reasons.append((
-                    PROVEN, "a nonce written by another participant is readable here",
+                    PROVEN,
+                    "a nonce written by another participant is readable here, in the file this"
+                    " comparison is about",
                 ))
         else:
             reasons.append((MISMATCH, "a nonce written by another participant is not here"))

@@ -747,8 +747,11 @@ def cmd_store_identity(services, args) -> dict:
 def cmd_store_challenge(services, args) -> dict:
     """Write a nonce here, or look for one another participant wrote.
 
-    This is the only evidence that survives a copied database: the identifier inside a copy is
-    identical, but a value written AFTER the copy exists in exactly one of the two files.
+    It is the only LIVE evidence here: the identifier inside a copy is identical, while a
+    value written after the copy was taken exists in exactly one of the two files. That
+    ordering is what nothing enforces, though - a copy taken after the write carries the nonce
+    too - so `compare_store` grades a found nonce as proof only alongside an agreeing device
+    and inode, and `doctor --expect-nonce` on its own is unproven.
     """
     if args.write:
         return services.store.write_challenge(actor=args.actor or "cli")
@@ -952,9 +955,10 @@ def _access_receipt(services, report) -> dict:
     different hosts can hold one pair while sharing nothing, and one inode can be reached at
     more than one pathname, which is what decides the write-ahead log. `links` is reported
     beside the pair because it catches one kind of second pathname, the hardlink; a bind mount
-    adds one without changing it, so a count of one settles nothing. `store-challenge` and
-    `doctor --expect-nonce` are what settle a shared store: a value one participant writes
-    and another reads back, however the paths and the mounts are arranged.
+    adds one without changing it, so a count of one settles nothing. What settles a shared
+    store is `store-challenge` and `doctor --expect-nonce` TOGETHER with the peer's
+    `--expect-inode`: the nonce is the live half, and since a copy taken after the challenge
+    carries it, the physical identity is the half that says the file is still the same one.
 
     The identity and the participants come out of ONE read for the same reason. Collected by
     two separate opens, an atomic replacement between them would pair one store's identity

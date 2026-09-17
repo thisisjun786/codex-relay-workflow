@@ -103,14 +103,19 @@ when it differs and insufficient when it agrees, because one inode can have more
 pathname - a hardlink name or a file bind mount - and SQLite derives the write-ahead log from
 the pathname a connection opens. Neither second pathname is visible to the participant doing
 the comparing: it holds its own path and the peer's device and inode, and nothing that says
-which pathname the peer opened. A nonce is the only live evidence, and it is the proof.
+which pathname the peer opened. A nonce is the only live evidence, and it is not proof on its
+own either: it says a write of the peer's reached the file being read, and a copy taken AFTER
+the challenge was written carries it with the bytes. Nothing in the protocol establishes that
+order. So proof takes both - a found nonce and an agreeing device and inode - and each alone
+is unproven for its own reason.
 
 | Evidence | Verdict |
 |---|---|
-| a nonce written by one participant is readable by the other | proven |
+| a nonce readable by the other participant AND an agreeing device/inode | proven |
+| a nonce readable by the other participant, with no physical identity compared | unproven - a copy taken after the challenge carries the nonce |
 | equal store id and equal device/inode, nothing live | unproven - a copy carries the id, and one inode can be reached at more than one pathname |
 | an inode with more than one name | unproven - the peer may have opened a different name |
-| a store that states no identity, or a nonce that could not be read | unproven - absence is not agreement |
+| a store that states no identity, or a nonce that could not be read, or a nonce read from another file | unproven - absence is not agreement, and an answer that cannot be attributed is not evidence about this store |
 | different store id, different device/inode, or the nonce absent | mismatch |
 
 Insufficient evidence is decided before agreeing evidence, so an inode with more than one
@@ -120,8 +125,8 @@ only one - `st_nlink` counts hardlink names, and a bind mount adds a pathname wi
 changing it - so one name is not evidence of one pathname either, which is why the row above
 it is unproven rather than proven. `compare_store` grades all of it.
 
-`doctor --expect-store <id>` exits non-zero on a mismatch. An unproven result is never
-reported as healthy.
+`doctor --expect-store <id>` exits non-zero on a mismatch, and `--expect-inode` alongside
+`--expect-nonce` is what reaches proven. An unproven result is never reported as healthy.
 
 Status: implemented. Unproven also exits non-zero, because a caller that asked whether this is
 the same store must not read exit 0 as yes. Each participant runs the check in its own sandbox;

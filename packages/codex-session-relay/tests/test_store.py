@@ -477,9 +477,62 @@ class Identity(unittest.TestCase):
         there = nonce_lookup(resolve_state_dir(b), written["nonce"])
         self.assertTrue(here["found"])
         self.assertFalse(there["found"])
-        self.assertEqual(compare_store(self.store.locate(), nonce=here)["sameStore"], "proven")
+        # Proof takes both: the nonce says a write of the peer's reached this file, and the
+        # physical identity says it is still the same file. The ordering this fixture relies
+        # on - challenge written after the copy - is what nothing in the protocol enforces,
+        # which is why the nonce alone is not proof. See
+        # test_a_nonce_copied_with_the_bytes_is_not_proof_of_a_shared_store.
+        mine = self.store.locate()
+        self.assertEqual(
+            compare_store(
+                mine, expect_inode=f"{mine['device']}:{mine['inode']}", nonce=here,
+            )["sameStore"],
+            "proven",
+        )
+        self.assertEqual(compare_store(mine, nonce=here)["sameStore"], "unproven")
         self.assertEqual(
             compare_store(probe(resolve_state_dir(b))["store"], nonce=there)["sameStore"],
+            "mismatch",
+        )
+
+    def test_a_nonce_copied_with_the_bytes_is_not_proof_of_a_shared_store(self):
+        """The order the protocol cannot enforce, and why a nonce alone is not proof.
+
+        The fixture above writes the challenge AFTER the copy, so the copy cannot contain it -
+        and that ordering is what made this look settled. Nothing in `store-challenge --write`
+        followed by `doctor --expect-nonce` establishes it. A copy taken after the write
+        carries the nonce, the store id and the bytes, and it stays stable for the whole
+        invocation, so every check for a replacement or a second name sees nothing wrong.
+
+        What a found nonce says is narrower than proof: the file I read contains a write that
+        was made to the writer's file at some earlier moment. Whether it is STILL one file is
+        what the physical identity says, which is why proof takes both.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        mine = probe(resolve_state_dir(self.a))["store"]
+
+        copied = self.copy_store(os.path.join(self.tmp, "copied-after"))
+        theirs = probe(resolve_state_dir(copied))["store"]
+        here = nonce_lookup(resolve_state_dir(copied), written["nonce"])
+
+        graded = compare_store(theirs, nonce=here)
+        self.assertNotEqual(
+            graded["sameStore"], "proven",
+            "a nonce that travelled with a copy of the bytes proved a shared store",
+        )
+        self.assertIn("copy", graded["detail"], graded)
+
+        # The case is the one described: the copy really carries both the nonce and the id.
+        self.assertTrue(here["found"], here)
+        self.assertEqual(theirs["storeId"], mine["storeId"])
+        self.assertNotEqual(theirs["inode"], mine["inode"])
+
+        # And the evidence that still separates them is the physical identity.
+        self.assertEqual(
+            compare_store(
+                theirs, expect_inode=f"{mine['device']}:{mine['inode']}", nonce=here,
+            )["sameStore"],
             "mismatch",
         )
 
@@ -530,7 +583,12 @@ class Identity(unittest.TestCase):
         written = self.store.write_challenge(actor="parent")
         found = nonce_lookup(resolve_state_dir(alias), written["nonce"])
         self.assertTrue(found["found"], "the alias reaches the same file")
-        self.assertEqual(compare_store(through_alias, nonce=found)["sameStore"], "proven")
+        self.assertEqual(
+            compare_store(
+                through_alias, expect_inode=f"{mine['device']}:{mine['inode']}", nonce=found,
+            )["sameStore"],
+            "proven",
+        )
 
     def test_an_agreeing_device_and_inode_is_never_proof_on_its_own(self):
         """One inode can be reached at more than one pathname, and the log follows the name.

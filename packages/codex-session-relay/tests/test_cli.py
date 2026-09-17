@@ -436,7 +436,14 @@ class Diagnosis(unittest.TestCase):
         self.assertIn("stateSelection", refused)
         self.assertIn("access", refused)
 
-    def test_a_nonce_proves_one_store_and_disproves_a_copy(self):
+    def test_a_nonce_and_the_physical_identity_prove_one_store_and_disprove_a_copy(self):
+        """Proof takes both, and either alone is refused rather than reported healthy.
+
+        A nonce says a write of the other participant's reached the file being read. A copy
+        taken AFTER the challenge was written carries it with the bytes, so that alone does
+        not say the two are one file now - the device and inode are what answer that. The copy
+        here is made BEFORE the write, which is why it lacks the nonce and is a mismatch.
+        """
         a, b = os.path.join(self.tmp, "a"), os.path.join(self.tmp, "b")
         mine = self.cli("store-identity", state=a)["store"]
         os.makedirs(b, exist_ok=True)
@@ -445,13 +452,22 @@ class Diagnosis(unittest.TestCase):
             if os.path.exists(source):
                 shutil.copy(source, os.path.join(b, f"relay.sqlite3{suffix}"))
         nonce = self.cli("store-challenge", "--write", "--actor", "parent", state=a)["nonce"]
+        pair = f"{mine['device']}:{mine['inode']}"
         proven = self.cli(
-            "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=a,
+            "doctor", "--expect-store", mine["storeId"], "--expect-inode", pair,
+            "--expect-nonce", nonce, state=a,
         )
         self.assertEqual(proven["sameStore"], "proven")
-        copied = self.cli(
-            "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=b,
+        # The nonce on its own is not proof, and unproven exits non-zero like a mismatch.
+        alone = self.cli(
+            "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=a,
             expect=2,
+        )
+        self.assertEqual(alone["sameStore"], "unproven")
+        self.assertIn("--expect-inode", alone["detail"])
+        copied = self.cli(
+            "doctor", "--expect-store", mine["storeId"], "--expect-inode", pair,
+            "--expect-nonce", nonce, state=b, expect=2,
         )
         self.assertEqual(copied["sameStore"], "mismatch")
         # Identifier alone cannot separate them, which is why it is graded unproven.
@@ -1157,8 +1173,10 @@ class ParticipantAccessReceipts(CliBase):
     one. It is namespace-local, so participants in separate mount namespaces or on different
     hosts can hold one pair while sharing nothing, and one inode can be reached at more than
     one pathname - a hardlink name or a file bind mount - each of which carries its own
-    write-ahead log. `store-challenge` with `doctor --expect-nonce` is what settles a shared
-    store, and `compare_store` (store.py) is where each of these is graded.
+    write-ahead log. What settles a shared store is `store-challenge` with
+    `doctor --expect-nonce` AND the peer's `--expect-inode`: a copy taken after the challenge
+    carries the nonce, so the live half and the physical half are each necessary.
+    `compare_store` (store.py) is where all of it is graded.
     """
 
     def probe_socket(self):
