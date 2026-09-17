@@ -344,8 +344,14 @@ mechanism here. Where it does not, and some permitted native creation tools do n
 marker is still worth recording for the coordination record but it is not a recovery
 key: an id that only travelled inside the prompt is indexed nowhere, and treating it as
 a handle leaves an uncertain creation filed forever as a writer nobody can find. There
-the reconciliation is the backend's own task listing, correlated on what the creation
-did carry, such as the workspace, the title and the time.
+the backend's own task listing is where the search starts, narrowed by what the creation
+did carry, such as the workspace, the title and the time. Narrowing is not identifying.
+Those fields are mutable and non-unique, two tasks can share all three, and adopting a
+candidate on that basis is how a coincident task gets registered or steered as somebody
+else's child. Bind it only on something that could not be true of another task, such as
+its own first user message being the packet that was dispatched, read from that task.
+Where nothing establishes that, the creation stays unresolved and is reported as such;
+an unidentified candidate is not the child, and identity stays on stable IDs.
 
 Neither path always settles. A response lost at the wrong moment leaves the outcome
 genuinely unresolved, and an unresolved outcome means a writer may exist. Treat it as
