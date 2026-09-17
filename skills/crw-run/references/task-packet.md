@@ -272,6 +272,15 @@ only remaining routes are the ones this workflow forbids, and write the generati
 verdict is about to open rather than the one still current as you write. Those two are
 never the same on a correction, and the child acts on the one it was given.
 
+Put it in the first finding, and then confirm it actually arrived by reading the
+delivered revision request rather than trusting where you put it. A renderer decides
+what of a verdict the child sees, it can carry fewer findings than the verdict holds,
+and it need not say that it dropped any; [codex-session-relay](relay.md#the-parent-verifies)
+records what the measured version does. Placement is the precaution and the readback
+is the evidence, because the block is only useful if the child received it, and which
+position survives is a property of whatever relay is installed rather than of this
+instruction.
+
 ## Coordination record
 
 Use the project's linked canonical Linear coordination document as part of the

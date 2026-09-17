@@ -306,6 +306,13 @@ A `needs_changes` verdict IS the correction: it opens the next generation and qu
 request to the same registered child, carrying the superseded event, its digest and the findings.
 Give every finding a note.
 
+What the child actually reads is the RENDERED revision request, which is not the whole verdict. On
+the version named above the renderer emits only the first ten findings and adds no notice that it
+dropped the rest, so a finding past that point is delivered nowhere and looks delivered from the
+parent's side. Anything the child must receive, the restoration block included, goes in the first
+finding, and the parent confirms it by reading the queued revision request rather than by trusting
+its own placement. Treat the limit as this version's behaviour rather than a constant.
+
 Queued is not sent. That revision request travels the same way a completion does, so the
 host-capable `deliver`, or a `daemon` already running, is what puts it in front of the child. A
 correction nobody delivered is not a correction the child can act on, and the answer is that step,
