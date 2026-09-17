@@ -143,6 +143,18 @@ def verify(root=None, definition=None):
         if not licence.is_file():
             findings.append(name + ": licence recorded at " + component["licencePath"] + " is absent")
 
+        tool = component.get("identityTool")
+        if tool:
+            server = root / component["serverModule"]
+            source = server.read_text(encoding="utf-8") if server.is_file() else None
+            if source is None:
+                findings.append(name + ": cannot read " + component["serverModule"])
+            elif ("def " + tool) not in source:
+                findings.append(
+                    name + ": identityTool " + tool + " is not defined in "
+                    + component["serverModule"]
+                )
+
         revision = component["upstream"]["revision"]
         if provenance_text is not None and revision not in provenance_text:
             findings.append(

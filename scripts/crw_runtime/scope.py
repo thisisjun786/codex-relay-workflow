@@ -90,9 +90,13 @@ def stores_seen(readings, env=None):
     """Every store this survey saw, with how it was found. None is adopted."""
     root = default_state_root(env)
     seen = []
-    discovery = (readings.get("discovery") or {}).get("payload") or {}
+    def usable(name):
+        reading = readings.get(name) or {}
+        return (reading.get("payload") or {}) if reading.get("ok") else {}
+
+    discovery = usable("discovery")
     siblings = discovery.get("siblingStores") or {}
-    selected = (readings.get("selected") or {}).get("payload") or {}
+    selected = usable("selected")
 
     for payload, how in ((discovery, "discovery"), (selected, "explicit --state")):
         path = state_directory(payload)
@@ -102,7 +106,7 @@ def stores_seen(readings, env=None):
         seen.append({"path": path, "foundBy": "discovery: records no socket"})
     for path in siblings.get("claimingThisSocket") or []:
         seen.append({"path": path, "foundBy": "discovery: claims this socket"})
-    if (readings.get("rootCandidate") or {}).get("payload"):
+    if usable("rootCandidate"):
         seen.append({"path": str(root),
                      "foundBy": "targeted: a database at the root of the state home,"
                                 " which discovery never enumerates"})
@@ -128,8 +132,14 @@ def stores_seen(readings, env=None):
 
 def summarise(readings, *, issue=None, env=None, service=None):
     """What the relay reported, kept honest about what was not checked."""
-    discovery = (readings.get("discovery") or {}).get("payload") or {}
-    selected = (readings.get("selected") or {}).get("payload") or {}
+    def usable(name):
+        reading = readings.get(name) or {}
+        # A structured refusal still parses as JSON. Preferring it would let a refusal hide
+        # a discovery reading that actually answered.
+        return (reading.get("payload") or {}) if reading.get("ok") else {}
+
+    discovery = usable("discovery")
+    selected = usable("selected")
     primary = selected or discovery
     siblings = discovery.get("siblingStores") or {}
     reachability = primary.get("actorReachability") or {}

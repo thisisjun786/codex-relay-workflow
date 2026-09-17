@@ -36,15 +36,23 @@ def read(path):
         return None, type(error).__name__ + ": " + error.__str__()
 
 
-def inventory(document):
-    """Every hook currently present, with the identity Codex knows it by."""
+def inventory(document, event=None):
+    """Every hook currently present, with the identity Codex knows it by.
+
+    Pass an event to restrict the inventory to it. Duplicate matching has to be
+    event-scoped: an identical command installed under another event is a different
+    registration, and treating it as the same one would report the requested event as
+    hooked while leaving it without a hook.
+    """
     found = []
-    for event, groups in (document.get("hooks") or {}).items():
+    for name, groups in (document.get("hooks") or {}).items():
+        if event is not None and name != event:
+            continue
         for matcher_index, group in enumerate(groups or []):
             for hook_index, hook in enumerate((group or {}).get("hooks") or []):
                 found.append({
-                    "identity": identity(SOURCE, event, matcher_index, hook_index),
-                    "event": event,
+                    "identity": identity(SOURCE, name, matcher_index, hook_index),
+                    "event": name,
                     "trustedHash": _hash(json.dumps(hook, sort_keys=True)),
                 })
     return found
@@ -72,8 +80,10 @@ def install(path, event, hook, *, issue, apply=False):
         return {"outcome": "UNREADABLE", "detail": error}
 
     existing = {entry["identity"]: entry["trustedHash"] for entry in inventory(document)}
+    in_event = {entry["identity"]: entry["trustedHash"]
+                for entry in inventory(document, event)}
     proposal = plan(document, event, hook)
-    already = [key for key, value in existing.items() if value == proposal["trustedHash"]]
+    already = [key for key, value in in_event.items() if value == proposal["trustedHash"]]
     if already:
         # The identity of the hook that is already there, not the next free slot: reporting
         # the slot this run would have used would name a hook that does not exist.

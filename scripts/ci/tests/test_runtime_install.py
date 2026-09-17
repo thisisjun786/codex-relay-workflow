@@ -283,10 +283,11 @@ class ScopeReadingTests(unittest.TestCase):
 
     def test_every_store_is_listed_once_and_none_is_adopted(self):
         readings = {
-            "discovery": {"payload": {"stateSelection": {"path": "/s/scope"}, "siblingStores": {
-                "checked": True, "withoutProvenance": ["/s/default"], "claimingThisSocket": []}}},
-            "selected": {"payload": {"stateSelection": {"path": "/s/scope"}}},
-            "rootCandidate": {"payload": {"store": {"exists": True}}},
+            "discovery": {"ok": True, "payload": {"stateSelection": {"path": "/s/scope"},
+                "siblingStores": {"checked": True, "withoutProvenance": ["/s/default"],
+                                  "claimingThisSocket": []}}},
+            "selected": {"ok": True, "payload": {"stateSelection": {"path": "/s/scope"}}},
+            "rootCandidate": {"ok": True, "payload": {"store": {"exists": True}}},
         }
         seen = scope.stores_seen(readings, env={"XDG_STATE_HOME": "/s"})
         paths = [entry["path"] for entry in seen]
@@ -316,7 +317,8 @@ class ScopeReadingTests(unittest.TestCase):
             self.assertTrue(all("listed" in entry["foundBy"] for entry in listed))
 
             # A relay that reports nothing must still not produce an empty inventory.
-            seen = scope.stores_seen({"discovery": {"payload": {"stateDirectory": str(root)}}}, env)
+            seen = scope.stores_seen(
+                {"discovery": {"ok": True, "payload": {"stateDirectory": str(root)}}}, env)
             self.assertIn(str(root / "default" / "relay.sqlite3"),
                           [entry.get("database") for entry in seen])
 
@@ -373,16 +375,107 @@ class EntryPointTests(unittest.TestCase):
             self.assertEqual(results["alwaysActive"]["value"], "not_verified")
             self.assertEqual(results["verificationComplete"]["value"], "not_applicable")
 
-    def test_install_refuses_to_overwrite_an_existing_environment(self):
+    def test_install_plans_before_it_applies_and_never_overwrites_an_environment(self):
         with tempfile.TemporaryDirectory() as temporary:
-            done = run("install", "--dest", temporary)
-            self.assertIn(done.returncode, (0, 1))
+            done = run("install", "--dest", temporary, "--record",
+                       str(Path(temporary) / "record.json"))
             payload = json.loads(done.stdout)
-            self.assertIn("plan", payload)
+            if "refused" in payload and "interpreter" in payload["refused"]:
+                # A host with no interpreter satisfying requires-python refuses and names
+                # the requirement. The controller never selects itself for a newer runtime.
+                self.assertEqual(done.returncode, 1)
+                self.assertIn("requiresPython", payload)
+                return
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertFalse(payload["applied"])
             steps = [step["step"] for step in payload["plan"]]
             self.assertLess(steps.index("measure the candidate"),
                             steps.index("promote the recorded pointer"),
                             "promotion must follow the qualifying measurement")
+
+
+class ReviewFixTests(unittest.TestCase):
+    """Behaviour corrected after the first review round, each kept covered."""
+
+    def test_an_installation_recorded_on_this_host_counts_as_a_recorded_root(self):
+        # Without this, a runtime installed outside the checkout classifies foreign for
+        # ever and nothing the installer produces could ever be reused.
+        import runtime_install
+
+        record = hostrecord.empty(1)
+        hostrecord.put_install(record, "codex-session-relay",
+                               {"location": "/opt/env/lib/codex_session_relay",
+                                "environment": "/opt/env"})
+        roots = [str(r) for r in runtime_install.recorded_roots(record, "codex-session-relay")]
+        self.assertIn("/opt/env", roots)
+        self.assertIn("/opt/env/lib/codex_session_relay", roots)
+        self.assertEqual(runtime_install.recorded_roots(record, "codex-thread-bridge"),
+                         [ROOT.resolve()])
+
+    def test_diagnosis_without_an_expected_command_compares_nothing(self):
+        # Comparing a correct registration against an invented empty command reported
+        # CONFLICT for a host that was registered exactly right.
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "config.toml").write_text(
+                '[mcp_servers.codex-thread-bridge]\ncommand = "/opt/bridge"\n', encoding="utf-8")
+            state = runtime_install.registration_state(home, None, [])
+            self.assertEqual(state["outcome"], "PRESENT")
+            self.assertFalse(state["wouldWrite"])
+            self.assertEqual(state["registered"]["command"], "/opt/bridge")
+
+            absent = runtime_install.registration_state(Path(temporary) / "empty", None, [])
+            self.assertEqual(absent["outcome"], "ABSENT")
+
+    def test_an_unrelated_tool_list_does_not_prove_this_bridge_is_exposed(self):
+        import runtime_install
+
+        registration = {"outcome": "LINKED", "detail": "", "wouldWrite": False}
+        unrelated = runtime_install._mcp_exposed(registration, ["some_other_tool"])
+        self.assertEqual(unrelated["value"], "not_verified")
+        self.assertIn("get_capabilities", unrelated["evidence"])
+
+        real = runtime_install._mcp_exposed(registration, ["get_capabilities", "create_thread"])
+        self.assertEqual(real["value"], "verified")
+
+    def test_an_identical_hook_under_another_event_does_not_satisfy_this_one(self):
+        hook = {"type": "command", "command": "crw", "timeout": 10}
+        document = {"hooks": {"Stop": [{"hooks": [hook]}]}}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "hooks.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            result = hooks.install(path, "SessionStart", hook, issue="JUN-104", apply=True)
+            self.assertEqual(result["outcome"], "CREATED")
+            self.assertEqual(result["identity"], "user:SessionStart:0:0")
+            written = json.loads(path.read_text(encoding="utf-8"))
+            self.assertIn("SessionStart", written["hooks"])
+            self.assertEqual(len(written["hooks"]["Stop"]), 1, "the other event is untouched")
+
+    def test_a_point_from_another_codex_or_host_does_not_authorize_reuse(self):
+        record = hostrecord.empty(1)
+        hostrecord.add_point(record, "codex-session-relay", {
+            "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
+            "definitionDigest": "abc", "codexCli": "0.154.0", "host": "one",
+        })
+        asked = dict(location="/env/pkg", interpreter="3.13.1", source_digest="abc")
+        self.assertEqual(len(hostrecord.points_for(record, "codex-session-relay", **asked,
+                                                   codex_cli="0.154.0", host="one")), 1)
+        self.assertEqual(hostrecord.points_for(record, "codex-session-relay", **asked,
+                                               codex_cli="0.200.0", host="one"), [])
+        self.assertEqual(hostrecord.points_for(record, "codex-session-relay", **asked,
+                                               codex_cli="0.154.0", host="other"), [])
+
+    def test_a_refusal_payload_does_not_replace_a_reading_that_answered(self):
+        readings = {
+            "discovery": {"ok": True, "payload": {"stateSelection": {"path": "/s/scope"},
+                                                  "actorReachability": {"socketConnect": "ok"}}},
+            "selected": {"ok": False, "payload": {"error": "refused", "stateDirectory": "/s/other"}},
+        }
+        summary = scope.summarise(readings, env={"XDG_STATE_HOME": "/nowhere"})
+        self.assertEqual(summary["stateDirectory"], "/s/scope")
+        self.assertEqual(summary["socketConnect"], "ok")
 
 
 if __name__ == "__main__":

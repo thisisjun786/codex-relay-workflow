@@ -88,7 +88,8 @@ def add_point(record, name, point):
     return point
 
 
-def points_for(record, name, *, location, interpreter, source_digest):
+def points_for(record, name, *, location, interpreter, source_digest,
+               codex_cli=None, app_server=None, host=None):
     """Points that actually cover this install, this interpreter and these bytes.
 
     All three have to match. A point recorded for another interpreter is a different
@@ -105,6 +106,13 @@ def points_for(record, name, *, location, interpreter, source_digest):
             continue
         if point.get("definitionDigest") != source_digest:
             continue
-        found.append(point)
+        # The rest of the combination counts too. A point recorded against another Codex
+        # CLI, another App Server or another host describes a run that is not this one,
+        # and reusing it would authorize an installation nobody exercised here (OPS-1.3).
+        for field, wanted in (("codexCli", codex_cli), ("appServer", app_server), ("host", host)):
+            if wanted is not None and point.get(field) != wanted:
+                break
+        else:
+            found.append(point)
     return found
 

@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -116,13 +117,33 @@ def module_location(python, module):
     only honest answer comes from the interpreter itself (OPS-1.1).
     """
     code = "import " + module + " as m, os; print(os.path.dirname(m.__file__))"
+    argv = [str(python), "-c", code]
     try:
-        done = subprocess.run([str(python), "-c", code], capture_output=True, text=True, timeout=60)
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as error:
-        return None, type(error).__name__ + ": " + error.__str__()
+        return None, type(error).__name__ + ": " + error.__str__(), argv
     if done.returncode != 0:
-        return None, (done.stderr.strip().splitlines() or ["import failed"])[-1]
-    return done.stdout.strip(), None
+        return None, (done.stderr.strip().splitlines() or ["import failed"])[-1], argv
+    return done.stdout.strip(), None, argv
+
+
+def recorded_roots(record, name):
+    """Paths the definition or this host's record already accounts for.
+
+    The source checkout is one of them, but an installation this command produced lives
+    wherever its destination was, which is normally outside the checkout. Treating only
+    the checkout as recorded would classify every runtime it installs as foreign for
+    ever, and nothing would ever become reusable. Source-checkout identity and
+    installed-runtime identity stay separate readings; this only decides which paths are
+    accounted for.
+    """
+    roots = [ROOT.resolve()]
+    for install in ((record or {}).get("components", {}).get(name) or {}).get("installs", []):
+        for key in ("environment", "location"):
+            value = install.get(key)
+            if value:
+                roots.append(Path(value).resolve())
+    return roots
 
 
 def classify_component(component, *, record, entry_override=None, registration=None):
@@ -131,19 +152,19 @@ def classify_component(component, *, record, entry_override=None, registration=N
     entry = resolve_entry_point(component["consoleScript"], entry_override)
     resolved = entry.resolve() if entry and entry.exists() else None
 
-    recorded_roots = [ROOT.resolve()]
+    roots = recorded_roots(record, component["component"])
     entry_recorded = bool(resolved and any(
-        str(resolved).startswith(str(r)) for r in recorded_roots
+        str(resolved).startswith(str(r)) for r in roots
     ))
     shebang = interpreter_of(resolved) if resolved else None
     if resolved and not entry_recorded and shebang:
-        entry_recorded = any(str(Path(shebang).resolve()).startswith(str(r)) for r in recorded_roots)
+        entry_recorded = any(str(Path(shebang).resolve()).startswith(str(r)) for r in roots)
 
     python = shebang or (sys.executable if resolved is None else shebang)
     version = interpreter_version(python) if python else None
-    location, import_error = (None, "no interpreter to ask")
+    location, import_error, import_command = (None, "no interpreter to ask", None)
     if python:
-        location, import_error = module_location(python, component["module"])
+        location, import_error, import_command = module_location(python, component["module"])
 
     digest_matches = None
     if location and Path(location).is_dir():
@@ -165,6 +186,7 @@ def classify_component(component, *, record, entry_override=None, registration=N
         points = hostrecord.points_for(
             record, component["component"], location=location,
             interpreter=version, source_digest=component["sourceDigest"],
+            codex_cli=codex_cli_version(), host=socket.gethostname(),
         )
     elif record is None:
         unreadable.append("the host record")
@@ -196,6 +218,7 @@ def classify_component(component, *, record, entry_override=None, registration=N
         "interpreter": version,
         "importedLocation": location,
         "importError": import_error,
+        "importCommand": import_command,
         "digestMatches": digest_matches,
         "measuredPoints": len(points),
         "reusable": ownership.reusable(classification),
@@ -209,10 +232,34 @@ def read_config(codex_home):
     return path, (path.read_text(encoding="utf-8") if path.is_file() else "")
 
 
-def registration_state(codex_home, command, args):
+def registration_state(codex_home, command, args, name=MCP_NAME):
+    """What the configuration registers, and only compared when a command was supplied.
+
+    Diagnosis with no expected command must not invent one. Comparing an existing, correct
+    registration against an empty string reports CONFLICT for a host that is registered
+    exactly right, and that false conflict then drags the component and the installed
+    result down with it.
+    """
     path, text = read_config(codex_home)
-    new_text, outcome, detail = codexconfig.register(text, MCP_NAME, command, args)
-    return {"path": str(path), "outcome": outcome, "detail": detail, "wouldWrite": new_text != text}
+    view = codexconfig.scan(text)
+    if not view.readable:
+        return {"path": str(path), "outcome": "UNREADABLE",
+                "detail": "; ".join(view.unreadable), "wouldWrite": False,
+                "registered": None}
+    registered = view.servers.get(name)
+    if not command:
+        return {
+            "path": str(path),
+            "outcome": "PRESENT" if registered else "ABSENT",
+            "detail": ("the configuration registers " + repr((registered or {}).get("command"))
+                       + "; no expected command was supplied, so nothing was compared")
+                      if registered else "no registration for " + name,
+            "wouldWrite": False,
+            "registered": registered,
+        }
+    new_text, outcome, detail = codexconfig.register(text, name, command, args)
+    return {"path": str(path), "outcome": outcome, "detail": detail,
+            "wouldWrite": new_text != text, "registered": registered}
 
 
 def cmd_diagnose(args):
@@ -263,7 +310,7 @@ def cmd_diagnose(args):
             "verified" if imported_ok else "not_verified",
             "resolved locations: " + json.dumps({k: v["importedLocation"] for k, v in classes.items()})
             + ". Read from the interpreter, so an import satisfied by another copy is visible.",
-            command="python -c 'import <module>; print(__file__)'",
+            command=json.dumps({k: v.get("importCommand") for k, v in classes.items()}),
             acting_process=acting_process(), measured_at=now(),
         ),
         "mcpExposed": _mcp_exposed(registration, args.observed_tool),
@@ -271,7 +318,8 @@ def cmd_diagnose(args):
             "verified" if connect == "ok" else ("not_verified" if connect else "unknown"),
             "doctor actorReachability.socketConnect = " + repr(connect)
             + ". A socket file existing on disk does not establish this.",
-            command="codex-session-relay --socket <sock> doctor",
+            command=json.dumps(((readings or {}).get("selected")
+                                or (readings or {}).get("discovery") or {}).get("command")),
             acting_process=acting_process(), measured_at=now() if connect else None,
         ),
         "deliveryAccepted": (
@@ -328,7 +376,16 @@ def _mcp_exposed(registration, observed):
     if registration["outcome"] == "CONFLICT":
         return check.field("not_verified", "the configuration registers a different command: "
                           + registration["detail"], acting_process=acting_process(), measured_at=now())
-    registered = registration["outcome"] == "LINKED"
+    registered = registration["outcome"] in ("LINKED", "PRESENT")
+    identity_tool = _bridge_identity_tool()
+    if observed and identity_tool not in observed:
+        return check.field(
+            "not_verified",
+            "the observed tools " + ", ".join(observed) + " do not include " + identity_tool
+            + ", which this bridge defines, so they do not establish that THIS server is the"
+            " one exposed.",
+            acting_process=acting_process(), measured_at=now(),
+        )
     if not observed:
         return check.field(
             "not_verified",
@@ -353,18 +410,100 @@ def _mcp_exposed(registration, observed):
     )
 
 
+def _bridge_identity_tool():
+    bridge = next(c for c in definition.load()["components"]
+                  if c["component"] == "codex-thread-bridge")
+    return bridge["identityTool"]
+
+
+def codex_cli_version():
+    try:
+        done = subprocess.run(["codex", "--version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() or None if done.returncode == 0 else None
+
+
 def _trial(args, relay_executable):
+    """Register, emit, then a bounded deliver. Only this path creates work.
+
+    The field's evidence is the delivery attempt's returned turn id. emit stores the receipt
+    and enqueues it; the attempt itself happens in deliver, so an emitted receipt's own turn
+    id never satisfies deliveryAccepted (OPS-6.1).
+    """
     if not relay_executable:
         return check.field("not_verified", "trial requested but no relay executable was found",
                            acting_process=acting_process())
+    required = {"--issue": args.issue, "--parent-task": args.parent_task,
+                "--child-task": args.child_task, "--recipient": args.recipient,
+                "--artifact-root": args.artifact_root, "--turn-thread": args.turn_thread,
+                "--turn-id": args.turn_id}
+    missing = sorted(name for name, value in required.items() if not value)
+    if missing:
+        return check.field(
+            "not_verified",
+            "trial requested but these inputs were not supplied: " + ", ".join(missing)
+            + ". The trial registers a relationship and sends, so it names its recipient"
+            " rather than inventing one.",
+            acting_process=acting_process(), measured_at=now(),
+        )
+
+    host = socket.gethostname()
+    steps = []
+
+    def call(command):
+        reading = scope.relay(command, executable=relay_executable, socket=args.socket,
+                              state=args.state)
+        steps.append({"command": reading.get("command"), "ok": reading.get("ok"),
+                      "exitCode": reading.get("exitCode")})
+        return reading
+
+    registered = call([
+        "register", "--parent-task", args.parent_task, "--parent-host", host,
+        "--child-task", args.child_task, "--child-host", host, "--issue", args.issue,
+        "--artifact-root", args.artifact_root, "--allowed-recipient", args.recipient,
+        "--dispatch-request-id", "jun104-trial-" + args.issue,
+    ])
+    if not registered.get("ok"):
+        return check.field("not_verified", "the relationship could not be registered: "
+                           + str(registered.get("stderr") or registered.get("unreadable")),
+                           command=steps[-1]["command"], acting_process=acting_process(),
+                           measured_at=now())
+    relationship = ((registered.get("payload") or {}).get("relationship") or {}).get("id") \
+        or (registered.get("payload") or {}).get("relationshipId")
+
+    opened = call(["generation-open", "--relationship", str(relationship)])
+    generation = ((opened.get("payload") or {}).get("generation") or {}).get("id") \
+        or (opened.get("payload") or {}).get("generationId")
+
+    emitted = call([
+        "emit", "--relationship", str(relationship), "--generation", str(generation),
+        "--outcome", "ready_for_review", "--turn-thread", args.turn_thread,
+        "--turn-id", args.turn_id,
+    ])
+    event = ((emitted.get("payload") or {}).get("receipt") or {}).get("eventId") \
+        or (emitted.get("payload") or {}).get("eventId")
+    if not emitted.get("ok") or not event:
+        return check.field("not_verified", "the receipt was not accepted, so nothing could be"
+                           " delivered: " + str(emitted.get("stderr") or emitted.get("unreadable")),
+                           command=steps[-1]["command"], acting_process=acting_process(),
+                           measured_at=now())
+
+    delivered = call(["deliver", "--event", str(event)])
+    attempt = (delivered.get("payload") or {}).get("attempt") or {}
+    turn = attempt.get("turnId") or (attempt.get("turn") or {}).get("id")
+    if delivered.get("ok") and turn:
+        return check.field(
+            "verified",
+            "the delivery attempt returned turn id " + str(turn) + " for event " + str(event)
+            + ". Recipient " + args.recipient + "; steps: " + json.dumps(steps),
+            command=steps[-1]["command"], acting_process=acting_process(), measured_at=now(),
+        )
     return check.field(
         "not_verified",
-        "trial mode requires an authorized recipient, a registered relationship and a bounded"
-        " deliver for one event; emit alone only stores the receipt and enqueues it, so an"
-        " emitted receipt's own turn id never satisfies this field. Supply --issue,"
-        " --recipient and a reachable App Server.",
-        command="codex-session-relay ... register, emit, then deliver --event <id>",
-        acting_process=acting_process(), measured_at=now(),
+        "the delivery attempt recorded no returned turn id. A dispatch, a staged receipt or an"
+        " absent error does not establish this field. Attempt: " + json.dumps(attempt)[:400],
+        command=steps[-1]["command"], acting_process=acting_process(), measured_at=now(),
     )
 
 
@@ -409,12 +548,19 @@ def cmd_install(args):
     destination = Path(args.dest).expanduser().absolute()
     environment = destination / ("env-" + str(data["definitionVersion"]) + "-"
                                  + data["components"][0]["sourceDigest"][:12])
-    steps = [
+    record_path = Path(args.record) if args.record else hostrecord.record_path()
+    record = hostrecord.load(record_path, data["definitionVersion"])
+    if record is None:
+        emit({"command": "install", "refused": "the host record exists but could not be read",
+              "hostRecord": str(record_path),
+              "note": "it is never replaced silently: it holds the only evidence of what was run here"})
+        return EXIT_REFUSED
+
+    plan = [
         {"step": "verify-definition", "outcome": "passed"},
         {"step": "resolve interpreter", "outcome": str(interpreter),
          "version": interpreter_version(interpreter)},
-        {"step": "create environment", "target": str(environment),
-         "outcome": "exists already, refused" if environment.exists() else "would create a new directory"},
+        {"step": "create environment", "target": str(environment)},
         {"step": "install packages", "from": [c["subdirectory"] for c in data["components"]]},
         {"step": "read imported locations back from the interpreter"},
         {"step": "measure the candidate", "note": "a qualifying OPS-1.3 point is required"},
@@ -424,19 +570,100 @@ def cmd_install(args):
     ]
     if environment.exists():
         emit({"command": "install", "refused": "the environment directory already exists",
-              "environment": str(environment), "plan": steps,
+              "environment": str(environment), "plan": plan,
               "note": "an existing environment is never overwritten"})
         return EXIT_REFUSED
     if not args.apply:
-        emit({"command": "install", "applied": False, "plan": steps, "environment": str(environment),
+        emit({"command": "install", "applied": False, "plan": plan, "environment": str(environment),
               "note": "nothing was written. Rerun with --apply to stage the installation."})
         return EXIT_OK
 
-    emit({"command": "install", "applied": False, "plan": steps, "environment": str(environment),
-          "refused": "applying an installation needs network access to resolve the bridge's"
-                     " own dependencies, and this run is not authorized to change an installed"
-                     " runtime. The staged plan above is what it would do.",
-          "note": "store is never removed, moved or recreated by an install or a failed one"})
+    previous = dict(record.get("selected") or {})
+    performed = []
+
+    def perform(name, argv, timeout=900):
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as error:
+            performed.append({"step": name, "command": argv, "ok": False,
+                              "detail": type(error).__name__ + ": " + error.__str__()})
+            return False
+        performed.append({"step": name, "command": argv, "ok": done.returncode == 0,
+                          "exitCode": done.returncode,
+                          "detail": (done.stderr or done.stdout).strip()[-600:] or None})
+        return done.returncode == 0
+
+    destination.mkdir(parents=True, exist_ok=True)
+    if not perform("create environment", [str(interpreter), "-m", "venv", str(environment)]):
+        return _install_failed(record_path, record, previous, performed, environment)
+
+    python = environment / "bin" / "python"
+    packages = [str(ROOT / c["subdirectory"]) for c in data["components"]]
+    if not perform("install packages", [str(python), "-m", "pip", "install", "--quiet", *packages]):
+        return _install_failed(record_path, record, previous, performed, environment)
+
+    version = interpreter_version(python)
+    installs = {}
+    for component in data["components"]:
+        location, error, _argv = module_location(python, component["module"])
+        if not location:
+            performed.append({"step": "read imported location", "component": component["component"],
+                              "ok": False, "detail": error})
+            return _install_failed(record_path, record, previous, performed, environment)
+        digest = definition.ops12_digest(location)
+        install = {
+            "location": location,
+            # Read back from the interpreter: an editable install leaves nothing under
+            # site-packages and a copied one does, so the mode follows the location.
+            "installMode": "copied" if str(environment) in location else "editable",
+            "entryPoint": str(environment / "bin" / component["consoleScript"]),
+            "environment": str(environment),
+            "interpreter": version,
+            "integrity": digest,
+            "digestMatchesDefinition": digest == component["sourceDigest"],
+            "reachedVia": "installed by runtime_install.py into " + str(destination),
+        }
+        hostrecord.put_install(record, component["component"], install)
+        installs[component["component"]] = install
+        performed.append({"step": "read imported location", "component": component["component"],
+                          "ok": True, "location": location,
+                          "digestMatchesDefinition": install["digestMatchesDefinition"]})
+
+    hostrecord.save(record_path, record)
+    measurement = measure_candidate(data, record, python=python, environment=environment,
+                                    socket_path=args.socket, state=args.state,
+                                    relay_command=str(environment / "bin" / "codex-session-relay"),
+                                    measured_by=args.issue)
+    if measurement["qualifyingPoint"]:
+        record.setdefault("selected", {})
+        for name, install in installs.items():
+            record["selected"][name] = install["location"]
+        hostrecord.save(record_path, record)
+
+    emit({
+        "command": "install", "applied": True, "environment": str(environment),
+        "hostRecord": str(record_path), "steps": performed, "installs": installs,
+        "measurement": measurement,
+        "promoted": bool(measurement["qualifyingPoint"]),
+        "selected": record.get("selected") or {},
+        "previousSelection": previous,
+        "note": (
+            "the pointer moves only after a qualifying point exists for the candidate"
+            " (OPS-2.4). A candidate that imports but fails its exercise stays unselected and"
+            " the previous runtime remains selected. Nothing here removes, moves or recreates"
+            " the store."
+        ),
+    })
+    return EXIT_OK if measurement["qualifyingPoint"] else EXIT_REFUSED
+
+
+def _install_failed(record_path, record, previous, performed, environment):
+    record["selected"] = previous
+    hostrecord.save(record_path, record)
+    emit({"command": "install", "applied": False, "steps": performed,
+          "environment": str(environment), "selected": previous,
+          "refused": "a step failed; the previously selected runtime remains selected",
+          "note": "the store is never removed, moved or recreated by a failed install"})
     return EXIT_REFUSED
 
 
@@ -457,51 +684,112 @@ def _find_interpreter(data):
 
 # ------------------------------------------------------------------------- measure
 
-def cmd_measure(args):
-    data = definition.load()
+def measure_candidate(data, record, *, python, environment, socket_path, state,
+                      relay_command, measured_by=None):
+    """Exercise both components and record a point only if both actually ran.
+
+    A point means the combination was exercised (OPS-1.3). Starting a process is not that:
+    the bridge's entry point starts a stdio server and never contacts the App Server, so a
+    startup-based recipe would record success against an unreachable host. The relay is
+    exercised by a doctor whose socketConnect is a real connect, and the bridge by its own
+    read-only smoke check, which starts the MCP server, lists its tools and calls
+    get_capabilities. Any connection, protocol or tool-call failure records no point.
+    """
+    bridge = next(c for c in data["components"] if c["component"] == "codex-thread-bridge")
     relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
-    executable = args.relay_command or shutil.which(relay_component["consoleScript"])
     operations = []
 
-    if not executable:
-        operations.append({"component": "codex-session-relay", "exercised": False,
-                           "detail": "no relay executable was found"})
-    else:
-        reading = scope.relay(["doctor"], executable=executable, socket=args.socket, state=args.state)
-        payload = reading.get("payload") or {}
-        connect = ((payload.get("actorReachability") or {}).get("socketConnect"))
-        operations.append({
-            "component": "codex-session-relay", "command": reading.get("command"),
-            "exercised": connect == "ok",
-            "detail": "actorReachability.socketConnect = " + repr(connect)
-                      + "; a real connect is what makes this an exercise rather than a file read",
-        })
-
-    bridge_component = next(
-        c for c in data["components"] if c["component"] == "codex-thread-bridge"
-    )
-    script = ROOT / bridge_component["exerciseScript"]
+    reading = scope.relay(["doctor"], executable=relay_command, socket=socket_path, state=state)
+    connect = ((reading.get("payload") or {}).get("actorReachability") or {}).get("socketConnect")
     operations.append({
-        "component": "codex-thread-bridge", "command": [str(args.python or sys.executable), str(script),
-                                                        "--socket", str(args.socket or "")],
-        "exercised": False,
-        "detail": "the package's own read-only smoke check starts the MCP server, lists its tools"
-                  " and calls get_capabilities, an App Server round trip. It was not run here"
-                  " because this command is not authorized to exercise the installed runtime.",
+        "component": relay_component["component"], "command": reading.get("command"),
+        "exercised": connect == "ok",
+        "detail": "actorReachability.socketConnect = " + repr(connect)
+                  + "; a real connect is what makes this an exercise rather than a file read",
+    })
+
+    script = ROOT / bridge["exerciseScript"]
+    argv = [str(python), str(script)]
+    if socket_path:
+        argv += ["--socket", str(socket_path)]
+    tools_listed, app_server = [], None
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=180)
+        payload = json.loads(done.stdout) if done.stdout.strip() else {}
+        tools_listed = payload.get("tools") or []
+        app_server = json.dumps(payload.get("connection")) if payload.get("connection") else None
+        exercised = done.returncode == 0 and bridge["identityTool"] in tools_listed
+        detail = ("listed " + str(len(tools_listed)) + " tools and called "
+                  + bridge["identityTool"]) if exercised else (
+            (done.stderr or done.stdout).strip()[-500:] or "the smoke check did not succeed")
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        exercised, detail = False, type(error).__name__ + ": " + error.__str__()
+    operations.append({
+        "component": bridge["component"], "command": argv, "exercised": exercised,
+        "toolsListed": tools_listed, "detail": detail,
     })
 
     qualifying = all(op["exercised"] for op in operations)
+    if qualifying:
+        for component in data["components"]:
+            install = next(
+                (i for i in (record.get("components", {}).get(component["component"]) or {})
+                 .get("installs", []) if i.get("environment") == str(environment)), None)
+            if install is None:
+                qualifying = False
+                continue
+            hostrecord.add_point(record, component["component"], {
+                "interpreter": install.get("interpreter"),
+                "codexCli": codex_cli_version(),
+                "appServer": app_server,
+                "host": socket.gethostname(),
+                "date": now(),
+                "measuredBy": measured_by or "JUN-104",
+                "method": "; ".join(
+                    " ".join(str(part) for part in (op.get("command") or [])) for op in operations
+                ),
+                "exercised": True,
+                "install": install.get("location"),
+                "definitionDigest": component["sourceDigest"],
+            })
+    return {"operations": operations, "qualifyingPoint": qualifying,
+            "appServer": app_server, "toolsListed": tools_listed}
+
+
+def cmd_measure(args):
+    data = definition.load()
+    record_path = Path(args.record) if args.record else hostrecord.record_path()
+    record = hostrecord.load(record_path, data["definitionVersion"])
+    if record is None:
+        emit({"command": "measure", "refused": "the host record exists but could not be read",
+              "hostRecord": str(record_path)})
+        return EXIT_REFUSED
+
+    relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
+    relay_command = args.relay_command or shutil.which(relay_component["consoleScript"])
+    python = args.python or sys.executable
+    environment = args.environment or str(Path(python).resolve().parent.parent)
+
+    if not relay_command:
+        emit({"command": "measure", "refused": "no relay executable was found"})
+        return EXIT_REFUSED
+
+    measurement = measure_candidate(data, record, python=python, environment=environment,
+                                    socket_path=args.socket, state=args.state,
+                                    relay_command=relay_command, measured_by=args.issue)
+    if measurement["qualifyingPoint"]:
+        hostrecord.save(record_path, record)
     emit({
-        "command": "measure",
-        "operations": operations,
-        "qualifyingPoint": qualifying,
+        "command": "measure", "hostRecord": str(record_path),
+        "recorded": bool(measurement["qualifyingPoint"]),
+        **measurement,
         "note": (
-            "A point requires the combination to be EXERCISED (OPS-1.3). Starting a process is"
-            " not enough: the bridge's entry point starts a stdio server and never contacts the"
-            " App Server. A connection, protocol or tool-call failure records no point."
+            "A point requires the combination to be EXERCISED (OPS-1.3). A connection,"
+            " protocol or tool-call failure records no point, and reading bytes never"
+            " produces one."
         ),
     })
-    return EXIT_OK if qualifying else EXIT_REFUSED
+    return EXIT_OK if measurement["qualifyingPoint"] else EXIT_REFUSED
 
 
 # ------------------------------------------------------------------------- register-mcp
@@ -568,6 +856,12 @@ def build_parser():
                           help="a tool name actually listed in a live session")
     diagnose.add_argument("--trial", action="store_true",
                           help="the only mode that creates work; never implied by another flag")
+    diagnose.add_argument("--parent-task", help="trial input: the registering parent task")
+    diagnose.add_argument("--child-task", help="trial input: the child task")
+    diagnose.add_argument("--recipient", help="trial input: the authorized recipient")
+    diagnose.add_argument("--artifact-root", help="trial input: the artifact root")
+    diagnose.add_argument("--turn-thread", help="trial input: the observed turn thread")
+    diagnose.add_argument("--turn-id", help="trial input: the observed turn id")
     diagnose.add_argument("--temporary", action="store_true",
                           help="record that this destination is temporary, not a host")
     diagnose.set_defaults(handler=cmd_diagnose)
@@ -575,6 +869,10 @@ def build_parser():
     install = sub.add_parser("install")
     install.add_argument("--dest", required=True)
     install.add_argument("--python")
+    install.add_argument("--record")
+    install.add_argument("--socket")
+    install.add_argument("--state")
+    install.add_argument("--issue", default="JUN-104")
     install.add_argument("--apply", action="store_true")
     install.set_defaults(handler=cmd_install)
 
@@ -583,6 +881,9 @@ def build_parser():
     measure.add_argument("--state")
     measure.add_argument("--relay-command")
     measure.add_argument("--python")
+    measure.add_argument("--environment")
+    measure.add_argument("--record")
+    measure.add_argument("--issue", default="JUN-104")
     measure.set_defaults(handler=cmd_measure)
 
     register = sub.add_parser("register-mcp")

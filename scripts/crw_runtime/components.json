@@ -27,7 +27,10 @@
       },
       "measuredPoints": [],
       "status": "unmeasured",
-      "statusMeaning": "This repository has exercised no combination. A host reaches own only after the measure command records a point in the private host record."
+      "statusMeaning": "This repository has exercised no combination. A host reaches own only after the measure command records a point in the private host record.",
+      "identityTool": "get_capabilities",
+      "identityToolNote": "The tool this bridge defines. An observed tool list that does not contain it is not evidence that THIS server is the one exposed. Re-derived from the server source by verify-definition.",
+      "serverModule": "packages/codex-thread-bridge/src/codex_thread_bridge/server.py"
     },
     {
       "component": "codex-session-relay",
