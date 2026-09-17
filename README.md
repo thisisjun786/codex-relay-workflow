@@ -20,7 +20,7 @@ compatibility.
 | [crw-define](skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
 | [crw-plan](skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
 | [crw-run](skills/crw-run/SKILL.md) | Delegate ready work to independent Codex tasks and verify CXC execution and delivery |
-| [crw-loop](skills/crw-loop/SKILL.md) | Keep a fixed project parent scheduling, observing, verifying and integrating scoped deliveries |
+| [crw-loop](skills/crw-loop/SKILL.md) | Create/restore a parent goal and automatically repeat execution through the agreed scope |
 | [crw-check](skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
 | [crw-logic](skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
 
@@ -191,19 +191,24 @@ $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾
 
 These are invocation examples, not requests to execute while reading this file.
 
-A submitted `$crw-run <Linear project link>` execution request defaults to
-fixed-parent designation and CRW Loop over the agreed project scope, including
-child reuse/creation, verification and authorized integration. No expanded prompt
-is needed; [operation selection](skills/crw-run/SKILL.md#determine-the-requested-operation)
-owns the meaning and its narrower-request and host-rule limits.
-The parent actively finds independent ready work and fills available capacity
-without waiting for an entire batch; shared-target merges remain serial.
-The parent records coordination progress and completes on verified scoped deliveries;
-it does not need a local implementation diff or CXC phases. Each child keeps its own
-issue goal and implementation workflow. `$crw-loop` also enters that same parent lifecycle;
-it does not provide a daemon or guarantee automatic wake-ups. Before dispatch, choose a compatible observation
-and delivery mode under [parent continuation](skills/crw-run/SKILL.md#keep-a-project-run-moving).
-Explicit first-batch-only requests still stop at that batch's delivery boundary.
+A submitted `$crw-run <Linear project link>` performs a current execution pass:
+restore the fixed parent, select the ready batch, reuse/create its children and
+verify/integrate within the requested delivery boundary. It does not create a parent
+goal or automatically take on successor batches. Status-only requests remain read-only.
+
+Use `$crw-loop <Linear project link>` to explicitly request a parent goal and automatic
+continuation through the agreed scope. Loop creates or restores that goal and repeats
+Run; independent ready work fills available capacity and shared-target merges remain
+serial. A Run pass inside Loop returns to the same owner. Children keep their own issue
+goals and CXC implementation workflow. Parent completion uses verified scoped deliveries,
+without requiring a parent-local diff or CXC implementation phases.
+
+Goal activation requires the [parent goal preflight](skills/crw-loop/references/parent-goal.md),
+including compatible goal/Stop hooks and a supported observation/continuation path.
+A hook that forces every active goal into CXC phases blocks activation even in a fresh
+parent. This skill does not install a wake service or silently migrate existing goals.
+An explicit no-goal limit prevents Loop activation; goal-free Run remains a separately
+authorized option. Keep narrower scope, pause and delivery limits in either mode.
 
 `crw-run` keeps implementation in the responsible independent child task for
 one issue, including that issue’s worktree and PR repairs. Each parent orchestrates
