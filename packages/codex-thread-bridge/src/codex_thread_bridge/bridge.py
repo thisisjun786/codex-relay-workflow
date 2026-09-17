@@ -1,9 +1,11 @@
 """Tool behavior, independent of MCP transport and the installed client."""
 
 import asyncio
+import copy
 import re
 from pathlib import Path
 
+from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
 from .ledger import Ledger
 from .rpc import AppServer, RpcError
 from .settings import SettingsContract, annotation
@@ -20,6 +22,19 @@ def absolute_directory(cwd: str):
     if not path.is_absolute() or not path.is_dir():
         raise ValueError("cwd must be an existing absolute directory on the App Server host")
     return str(path.resolve())
+
+
+def snapshot(value):
+    """Freeze a caller-owned argument at the boundary, before anything can await.
+
+    The ledger serialises params only after the mutation lock is acquired, while authorization
+    and the settings contract read their own copy. Holding the caller's object in params meant a
+    caller that mutated it during that wait could leave the recorded request identity describing
+    a different request than the one that was authorized and dispatched: the real arguments would
+    then be refused as different, and the mutated ones would replay a dispatch never made under
+    them. One snapshot answers both questions.
+    """
+    return copy.deepcopy(value)
 
 
 DISPLAY_FIELDS = frozenset({"text", "preview", "summary", "objective", "aggregatedOutput"})
@@ -118,9 +133,12 @@ def clipped(value, limit: int, *, display_text: bool = False):
 
 
 class Bridge:
-    def __init__(self, rpc: AppServer, ledger: Ledger):
+    def __init__(self, rpc: AppServer, ledger: Ledger, *, policy=None):
         self.rpc = rpc
         self.ledger = ledger
+        # Keyword-only, and never mutated after construction. The allowlist reaches this object
+        # from the server's own environment; no request can supply, widen or replace one.
+        self.policy = policy or PRESENCE_ONLY
         self._mutation_lock = asyncio.Lock()
 
     async def _annotate_dispatch(self, receipt, contract):
@@ -171,6 +189,9 @@ class Bridge:
                 "desktopProjectRegistry": False,
                 "clientSideToolsAndApprovals": False,
             },
+            # Readable before creating anything, so a caller learns whether an allowlist is in
+            # force instead of discovering it in a refusal or assuming one that does not exist.
+            "executionPolicy": self.policy.summary(),
             # What THIS bridge offers. A tool missing here says nothing about the host: the
             # protocol has turn/interrupt and a turn queue, and this bridge withholds both.
             "exposure": {
@@ -203,14 +224,16 @@ class Bridge:
         }
 
     async def _mutate(
-        self, request_id, method, params, action, *, validate_fresh=None, legacy_params=None
+        self, request_id, method, params, action, *, validate_fresh, legacy_params=None
     ):
         async with self._mutation_lock:
             retained = self.ledger.lookup(request_id, method, params, legacy_params=legacy_params)
             if retained is not None:
                 return {**retained, "replayed": True}
-            if validate_fresh is not None:
-                validate_fresh()
+            # Required rather than optional, so a mutation added later cannot quietly dispatch
+            # without being authorized. It runs after the replay lookup and before any ledger row
+            # exists, which is what lets a refused request be corrected under the same id.
+            validate_fresh()
             fresh, receipt = self.ledger.begin(
                 request_id, method, params, legacy_params=legacy_params
             )
@@ -242,30 +265,25 @@ class Bridge:
         reasoning_effort: str | None = None,
         runtime_workspace_roots: list[str] | None = None,
         expected_sandbox_policy: dict | None = None,
+        policy_exception: str | None = None,
     ):
         nonempty(cwd, "cwd")
         if not Path(cwd).is_absolute():
             raise ValueError("cwd must be an existing absolute directory on the App Server host")
         if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
             raise ValueError("Unsupported sandbox")
-        for name, value in [
-            ("prompt", prompt),
-            ("title", title),
-            ("model", model),
-            ("reasoning_effort", reasoning_effort),
-        ]:
+        # model and reasoning_effort are deliberately absent here: the execution policy owns both
+        # their presence and their shape, so an omitted one and a blank one get the same
+        # structured refusal instead of one of them landing as a generic argument error.
+        for name, value in [("prompt", prompt), ("title", title)]:
             if value is not None:
                 nonempty(value, name, 100_000 if name == "prompt" else 500)
+        # Snapshotted before the first await, so identity and behaviour cannot describe
+        # different requests.
+        expected_sandbox_policy = snapshot(expected_sandbox_policy)
+        runtime_workspace_roots = snapshot(runtime_workspace_roots)
         if expected_sandbox_policy is not None:
             validate_sandbox_policy(expected_sandbox_policy)
-        contract = SettingsContract(
-            cwd=cwd,
-            sandbox=sandbox,
-            expected_sandbox_policy=expected_sandbox_policy,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            runtime_workspace_roots=runtime_workspace_roots,
-        )
         params = {"cwd": cwd, "sandbox": sandbox, "approvalPolicy": "never", "ephemeral": False}
         if model is not None:
             params["model"] = model
@@ -280,39 +298,59 @@ class Bridge:
             params["runtime_workspace_roots"] = list(runtime_workspace_roots)
         if expected_sandbox_policy is not None:
             params["expected_sandbox_policy"] = expected_sandbox_policy
-
-        launch_params = dict(params)
-        for key in ("reasoning_effort", "runtime_workspace_roots", "expected_sandbox_policy"):
-            launch_params.pop(key, None)
-        launch_params.update(contract.start_params())
-        launch_params["cwd"] = cwd
-        launch_params["sandbox"] = sandbox
+        if policy_exception is not None:
+            nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
+            params["policy_exception"] = policy_exception
         request_params = {**params, "prompt": prompt, "title": title}
+        built = {}
 
         def legacy_params():
             # Old receipts hashed a resolved cwd; only legacy lookups may use this form.
             return {**request_params, "cwd": str(Path(cwd).resolve())}
 
         def validate_fresh():
-            # The fingerprint uses the supplied path, not mutable symlink resolution.
-            launch_params["cwd"] = absolute_directory(cwd)
+            # The fingerprint uses the supplied path, not mutable symlink resolution. Everything
+            # else uses the resolved one: it is what the host is asked for and what an exception
+            # is bound against, so a symlinked cwd cannot aim a request at a directory the
+            # exception never covered.
+            resolved = absolute_directory(cwd)
+            execution = self.policy.authorize(
+                model, reasoning_effort, cwd=resolved, exception=policy_exception
+            )
+            contract = SettingsContract(
+                cwd=resolved,
+                sandbox=sandbox,
+                expected_sandbox_policy=expected_sandbox_policy,
+                model=execution.model,
+                reasoning_effort=execution.reasoning_effort,
+                runtime_workspace_roots=runtime_workspace_roots,
+            )
+            launch = {
+                "cwd": resolved,
+                "sandbox": sandbox,
+                "approvalPolicy": "never",
+                "ephemeral": False,
+                **contract.start_params(),
+            }
+            if app_server_project_id is not None:
+                launch["projectId"] = app_server_project_id
+            built.update(execution=execution, contract=contract, launch=launch)
 
         async def action(receipt):
+            contract = built["contract"]
+            # Recorded before the first call, because it is the decision that permitted the call.
+            # No receipt exists while validate_fresh runs; this is the first moment there is one.
+            receipt["executionPolicy"] = dict(built["execution"].receipt)
+            self.ledger.save(receipt)
             if app_server_project_id is not None:
                 await self.rpc.call("project/read", {"projectId": app_server_project_id})
-            created = await self.rpc.call("thread/start", launch_params)
+            created = await self.rpc.call("thread/start", built["launch"])
             thread_id = created["thread"]["id"]
             receipt.update(threadId=thread_id, creation=created)
             self.ledger.save(receipt)  # Retain the ID even if naming or the first turn fails.
-            checked = SettingsContract(
-                cwd=launch_params["cwd"],
-                sandbox=sandbox,
-                expected_sandbox_policy=expected_sandbox_policy,
-                model=model,
-                reasoning_effort=reasoning_effort,
-                runtime_workspace_roots=runtime_workspace_roots,
-            )
-            receipt["settings"] = checked.receipt(created, at="creation")
+            # The contract that produced the launch parameters is the one that judges the answer,
+            # so the comparison cannot be made against a different pair than the one transmitted.
+            receipt["settings"] = contract.receipt(created, at="creation")
             self.ledger.save(receipt)
             findings = receipt["settings"]["findings"]
             if findings:
@@ -349,7 +387,7 @@ class Bridge:
             validate_fresh=validate_fresh,
             legacy_params=legacy_params,
         )
-        return await self._annotate_dispatch(receipt, contract)
+        return await self._annotate_dispatch(receipt, built.get("contract"))
 
     async def create_worktree_thread(
         self,
@@ -365,9 +403,13 @@ class Bridge:
         model: str | None = None,
         reasoning_effort: str | None = None,
         app_server_project_id: str | None = None,
+        policy_exception: str | None = None,
     ):
         if worktree_mode != "bridge-managed-retained":
             raise ValueError("Explicit bridge-managed-retained worktree ownership is required")
+        # Snapshotted before it is validated, so the object that was checked is the object that
+        # is transmitted, compared and fingerprinted.
+        expected_sandbox_policy = snapshot(expected_sandbox_policy)
         validate_sandbox_policy(expected_sandbox_policy)
         sandbox_types = {
             "read-only": "readOnly",
@@ -385,8 +427,6 @@ class Bridge:
             ("destination", destination),
             ("prompt", prompt),
             ("title", title),
-            ("model", model),
-            ("reasoning_effort", reasoning_effort),
             ("app_server_project_id", app_server_project_id),
         ]:
             if value is not None:
@@ -404,6 +444,11 @@ class Bridge:
             "reasoning_effort": reasoning_effort,
             "app_server_project_id": app_server_project_id,
         }
+        # Only when supplied, so every retained receipt created before this argument existed keeps
+        # its fingerprint and still replays.
+        if policy_exception is not None:
+            nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
+            params["policy_exception"] = policy_exception
 
         # Built inside validate_fresh, which _mutate runs only AFTER its ledger lookup. This tool
         # predates the transmittability check, so a receipt may be retained for a policy the check
@@ -414,15 +459,21 @@ class Bridge:
         built = {}
 
         def validate_fresh():
+            # Bound against the destination string, which Worktree.validate already requires to be
+            # canonical and which becomes the thread's cwd. Nothing exists on disk yet, and
+            # nothing needs to: an exception names directories, not directories that exist.
+            built["execution"] = self.policy.authorize(
+                model, reasoning_effort, cwd=destination, exception=policy_exception
+            )
             built["contract"] = SettingsContract(
                 sandbox=sandbox,
                 expected_sandbox_policy=expected_sandbox_policy,
-                model=model,
-                reasoning_effort=reasoning_effort,
+                model=built["execution"].model,
+                reasoning_effort=built["execution"].reasoning_effort,
             )
 
         async def action(receipt):
-            contract = built["contract"]
+            contract, execution = built["contract"], built["execution"]
 
             def checkpoint(phase, **fields):
                 receipt.update(phase=phase, **fields)
@@ -430,6 +481,7 @@ class Bridge:
 
             checkpoint(
                 "validating",
+                executionPolicy=dict(execution.receipt),
                 recoveryRequired=True,
                 recovery="Inspect this receipt, the destination and Git worktree list, and "
                 "backend/Desktop tasks before manual recovery. Retain all artifacts; do not "
@@ -467,8 +519,7 @@ class Bridge:
                 "ephemeral": False,
                 "runtimeWorkspaceRoots": [str(worktree.destination)],
             }
-            if model is not None:
-                launch["model"] = model
+            launch["model"] = execution.model
             # Carries the effort AND every transmittable sandbox policy field; the mode string
             # alone cannot express writable roots or the network flag.
             config = contract.config()
@@ -482,8 +533,8 @@ class Bridge:
                 cwd=str(worktree.destination),
                 sandbox=sandbox,
                 expected_sandbox_policy=expected_sandbox_policy,
-                model=model,
-                reasoning_effort=reasoning_effort,
+                model=execution.model,
+                reasoning_effort=execution.reasoning_effort,
                 runtime_workspace_roots=[str(worktree.destination)],
             )
             checkpoint(
@@ -567,12 +618,13 @@ class Bridge:
         thread_id: str,
         message: str,
         expected_settings: dict | None = None,
+        policy_exception: str | None = None,
     ):
         nonempty(thread_id, "thread_id", 128)
         nonempty(message, "message")
         if expected_settings is not None and not isinstance(expected_settings, dict):
             raise ValueError("expected_settings must be an object")
-        supplied = dict(expected_settings or {})
+        supplied = snapshot(dict(expected_settings or {}))
         # An unrecognised key is refused, never ignored. The MCP schema admits any object, so a
         # caller who writes reasoningEffort instead of reasoning_effort would otherwise request
         # nothing at all: the resume would carry no effort, nothing would be compared, and the
@@ -587,23 +639,42 @@ class Bridge:
             )
         if supplied.get("expected_sandbox_policy") is not None:
             validate_sandbox_policy(supplied["expected_sandbox_policy"])
-        contract = SettingsContract(
-            cwd=supplied.get("cwd"),
-            sandbox=supplied.get("sandbox"),
-            expected_sandbox_policy=supplied.get("expected_sandbox_policy"),
-            model=supplied.get("model"),
-            reasoning_effort=supplied.get("reasoning_effort"),
-            runtime_workspace_roots=supplied.get("runtime_workspace_roots"),
-        )
         params = {"threadId": thread_id, "message": message}
         # Only when supplied, so an existing caller's fingerprint is unchanged. When it IS
         # supplied it belongs to the request identity: retrying the same id with different
         # settings is a different request and the ledger must reject it.
         if expected_settings is not None:
-            params["expected_settings"] = expected_settings
+            params["expected_settings"] = supplied
+        if policy_exception is not None:
+            nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
+            params["policy_exception"] = policy_exception
+        built = {}
+
+        def validate_fresh():
+            # A turn on an existing thread costs exactly what a new one does, so the resume path
+            # asks the same question as creation: which pair, and who approved it. Omitting
+            # expected_settings entirely is refused here rather than resuming under whatever the
+            # thread happens to carry.
+            execution = self.policy.authorize(
+                supplied.get("model"),
+                supplied.get("reasoning_effort"),
+                cwd=supplied.get("cwd"),
+                exception=policy_exception,
+            )
+            built["execution"] = execution
+            built["contract"] = SettingsContract(
+                cwd=supplied.get("cwd"),
+                sandbox=supplied.get("sandbox"),
+                expected_sandbox_policy=supplied.get("expected_sandbox_policy"),
+                model=execution.model,
+                reasoning_effort=execution.reasoning_effort,
+                runtime_workspace_roots=supplied.get("runtime_workspace_roots"),
+            )
 
         async def action(receipt):
+            contract = built["contract"]
             receipt["threadId"] = thread_id
+            receipt["executionPolicy"] = dict(built["execution"].receipt)
             self.ledger.save(receipt)
             state = await self.rpc.call("thread/read", {"threadId": thread_id})
             if state["thread"].get("status", {}).get("type") == "active":
@@ -649,8 +720,10 @@ class Bridge:
             )
             receipt["turnId"] = turn["turn"]["id"]
 
-        receipt = await self._mutate(request_id, "send_message_to_thread", params, action)
-        return await self._annotate_dispatch(receipt, contract)
+        receipt = await self._mutate(
+            request_id, "send_message_to_thread", params, action, validate_fresh=validate_fresh
+        )
+        return await self._annotate_dispatch(receipt, built.get("contract"))
 
     async def get_goal(self, thread_id: str):
         nonempty(thread_id, "thread_id", 128)
@@ -763,7 +836,13 @@ class Bridge:
                 "read it, and it does not say the peer acted on it."
             )
 
-        return await self._mutate(request_id, "steer_thread", params, action)
+        # Nothing to authorize: a steer selects no model and starts no turn. It puts input into a
+        # turn the host is already running, which some earlier creation already paid for and
+        # already had its pair checked. Stated rather than omitted, because _mutate makes the
+        # callback mandatory so that a new mutation has to answer this question out loud.
+        return await self._mutate(
+            request_id, "steer_thread", params, action, validate_fresh=lambda: None
+        )
 
     async def pause_goal(self, request_id: str, thread_id: str):
         nonempty(thread_id, "thread_id", 128)
@@ -849,7 +928,11 @@ class Bridge:
                 "the observed turn to finish safely, and keep the two claims separate."
             )
 
-        return await self._mutate(request_id, "pause_goal", params, action)
+        # Nothing to authorize, for the same reason: a pause changes goal status and selects no
+        # model. It starts no turn and does not stop one.
+        return await self._mutate(
+            request_id, "pause_goal", params, action, validate_fresh=lambda: None
+        )
 
     async def list_threads(self, cwd=None, limit=20, cursor=None):
         if not 1 <= limit <= 100:

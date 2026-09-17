@@ -1,8 +1,207 @@
+import asyncio
 import json
+import os
 import sys
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+APPROVED = {"model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"}
+POLICY = {"allowed": [{"model": APPROVED["model"], "efforts": [APPROVED["reasoning_effort"]]}]}
+
+
+def server_parameters(socket, state, environment=None):
+    return StdioServerParameters(
+        command=sys.executable,
+        args=[
+            "-m",
+            "codex_thread_bridge.server",
+            "--socket",
+            str(socket),
+            "--state-dir",
+            str(state),
+        ],
+        env={**os.environ, **(environment or {})},
+    )
+
+
+async def test_the_schema_itself_refuses_a_mutation_that_states_no_pair(fake_server, tmp_path):
+    """The strongest signal available to a caller that forgets: the call is not accepted."""
+    fake, socket = fake_server
+    params = server_parameters(socket, tmp_path / "state")
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        schemas = {tool.name: tool.inputSchema for tool in (await session.list_tools()).tools}
+        assert {"model", "reasoning_effort"} <= set(schemas["create_thread"]["required"])
+        assert {"model", "reasoning_effort"} <= set(schemas["create_worktree_thread"]["required"])
+        assert "expected_settings" in schemas["send_message_to_thread"]["required"]
+        incomplete = [
+            ("create_thread", {"request_id": "a", "cwd": str(tmp_path)}),
+            (
+                "create_thread",
+                {"request_id": "b", "cwd": str(tmp_path), "model": APPROVED["model"]},
+            ),
+            ("send_message_to_thread", {"request_id": "d", "thread_id": "t", "message": "x"}),
+            (
+                "create_worktree_thread",
+                {
+                    "request_id": "e",
+                    "source_repository": str(tmp_path),
+                    "starting_revision": "0" * 40,
+                    "destination": str(tmp_path / "new"),
+                    "worktree_mode": "bridge-managed-retained",
+                    "sandbox": "read-only",
+                    "expected_sandbox_policy": {"type": "readOnly", "networkAccess": False},
+                },
+            ),
+        ]
+        for tool, arguments in incomplete:
+            result = await session.call_tool(tool, arguments)
+            assert result.isError, (tool, arguments)
+    assert not any(
+        method in {"thread/start", "thread/resume", "turn/start"} for method, _ in fake.calls
+    )
+
+
+async def test_an_argument_a_caller_invents_grants_it_nothing(fake_server, tmp_path):
+    """Measured, not assumed: this tool framework DISCARDS an argument the schema does not define.
+
+    That is worth pinning, because discarding is only safe while nothing about authorization can
+    be expressed that way. Both halves are checked here. An invented approval flag alongside an
+    unapproved pair changes nothing, and a MISSPELLED policy_exception is dropped rather than
+    honoured, so the request falls back to the host's own allowlist and is refused. The failure
+    direction is refusal, never admission.
+    """
+    fake, socket = fake_server
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                **POLICY,
+                "exceptions": {
+                    "one-task": {
+                        "model": "openai/gpt-6-astra",
+                        "reasoningEffort": "high",
+                        "cwd": [str(tmp_path.resolve())],
+                    }
+                },
+            }
+        )
+    )
+    params = server_parameters(
+        socket, tmp_path / "state", {"CODEX_THREAD_BRIDGE_EXECUTION_POLICY": str(policy)}
+    )
+    unapproved = {"model": "openai/gpt-6-astra", "reasoning_effort": "high"}
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        for request, invented in (
+            ("self-approved", {"approved": True}),
+            ("self-allowlisted", {"allowed_models": ["openai/gpt-6-astra"]}),
+            ("misspelled-exception", {"policy_exceptions": "one-task"}),
+        ):
+            result = await session.call_tool(
+                "create_thread",
+                {**unapproved, "request_id": request, "cwd": str(tmp_path), **invented},
+            )
+            assert result.isError, request
+            assert "execution_not_allowed" in str(result.content), request
+        # The same pair, with the exception cited under its real name, is the one that passes.
+        allowed = await session.call_tool(
+            "create_thread",
+            {
+                **unapproved,
+                "request_id": "cited",
+                "cwd": str(tmp_path),
+                "policy_exception": "one-task",
+            },
+        )
+        assert not allowed.isError, allowed.content
+    assert fake.count("thread/start") == 1
+    assert fake.count("turn/start") == 0
+
+
+async def test_an_unconfigured_host_accepts_a_stated_pair_and_says_so(fake_server, tmp_path):
+    fake, socket = fake_server
+    params = server_parameters(socket, tmp_path / "state")
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        capabilities = await session.call_tool("get_capabilities", {})
+        assert capabilities.structuredContent["executionPolicy"] == {
+            "mode": "presence_only",
+            "digest": None,
+        }
+        created = await session.call_tool(
+            "create_thread",
+            {**APPROVED, "request_id": "unconfigured", "cwd": str(tmp_path), "prompt": "READY"},
+        )
+        assert not created.isError, created.content
+        assert created.structuredContent["executionPolicy"]["mode"] == "presence_only"
+    assert fake.count("thread/start") == 1
+
+
+async def test_a_configured_host_admits_the_approved_pair_and_refuses_the_rest(
+    fake_server, tmp_path
+):
+    """Both directions on ONE configured file: a deny-all wiring fails the first half of this."""
+    fake, socket = fake_server
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(POLICY))
+    params = server_parameters(
+        socket,
+        tmp_path / "state",
+        {"CODEX_THREAD_BRIDGE_EXECUTION_POLICY": str(policy)},
+    )
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        capabilities = await session.call_tool("get_capabilities", {})
+        reported = capabilities.structuredContent["executionPolicy"]
+        assert reported["mode"] == "allowlist" and len(reported["digest"]) == 64
+        approved = await session.call_tool(
+            "create_thread",
+            {**APPROVED, "request_id": "approved", "cwd": str(tmp_path), "prompt": "READY"},
+        )
+        assert not approved.isError, approved.content
+        assert approved.structuredContent["executionPolicy"]["digest"] == reported["digest"]
+        assert fake.count("thread/start") == 1
+        refused = await session.call_tool(
+            "create_thread",
+            {
+                "request_id": "refused",
+                "cwd": str(tmp_path),
+                "prompt": "READY",
+                "model": "openai/gpt-6-astra",
+                "reasoning_effort": "high",
+            },
+        )
+        assert refused.isError
+        assert "execution_not_allowed" in str(refused.content)
+    assert fake.count("thread/start") == 1 and fake.count("turn/start") == 1
+
+
+async def test_a_configured_policy_that_cannot_be_used_stops_the_server(fake_server, tmp_path):
+    """Degrading to presence-only here would be the one failure an operator never notices."""
+    fake, socket = fake_server
+    broken = tmp_path / "broken.json"
+    broken.write_text("{ not json")
+    state = tmp_path / "state"
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "codex_thread_bridge.server",
+        "--socket",
+        str(socket),
+        "--state-dir",
+        str(state),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "CODEX_THREAD_BRIDGE_EXECUTION_POLICY": str(broken)},
+    )
+    _, errors = await asyncio.wait_for(process.communicate(), timeout=60)
+    assert process.returncode != 0
+    assert "execution_policy_unreadable" in errors.decode()
+    assert not state.exists(), "the server stopped before it opened any durable state"
+    assert fake.calls == []
 
 
 async def test_mcp_forwards_json_shaped_pagination_cursors(fake_server, tmp_path):
@@ -88,7 +287,13 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
         assert caps.structuredContent["exposure"]["steerActiveTurn"] is True
         assert caps.structuredContent["exposure"]["turnInterrupt"] is False
         assert caps.structuredContent["hostSupport"]["state"] == "unknown_host_version"
-        args = {"request_id": "mcp-create", "cwd": str(tmp_path), "prompt": "READY"}
+        args = {
+            "request_id": "mcp-create",
+            "cwd": str(tmp_path),
+            "prompt": "READY",
+            "model": "anthropic/claude-opus-5",
+            "reasoning_effort": "xhigh",
+        }
         result = await session.call_tool("create_thread", args)
         assert not result.isError
         receipt = result.structuredContent
@@ -101,6 +306,10 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
                 "request_id": "mcp-send",
                 "thread_id": receipt["threadId"],
                 "message": "FOLLOWUP",
+                "expected_settings": {
+                    "model": "anthropic/claude-opus-5",
+                    "reasoning_effort": "xhigh",
+                },
             },
         )
         sent = followup.structuredContent
@@ -144,8 +353,10 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
                 "request_id": "mcp-running",
                 "thread_id": receipt["threadId"],
                 "message": "LONG WORK",
+                "expected_settings": dict(APPROVED),
             },
         )
+        assert not started.isError, started.content
         running_turn = started.structuredContent["turnId"]
         fake.threads[receipt["threadId"]]["status"] = {"type": "active", "activeFlags": []}
         observed = await session.call_tool("get_active_turn", {"thread_id": receipt["threadId"]})
@@ -199,6 +410,8 @@ async def test_mcp_socket_alias_restart_does_not_repeat_creation(fake_server, tm
                     "request_id": "stable-create",
                     "cwd": str(tmp_path),
                     "prompt": "READY",
+                    "model": "anthropic/claude-opus-5",
+                    "reasoning_effort": "xhigh",
                 },
             )
             assert not result.isError
