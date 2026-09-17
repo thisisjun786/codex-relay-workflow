@@ -615,29 +615,26 @@ Inventing a state for it and filing it under the nearest existing one fail the s
 produce a record that reads as something a contract can act on when nothing in it can.
 
 Keep them in separate fields, so that a reader does not have to guess which vocabulary a word came
-from: what the turn did, where the delivery stands, and the blocker where one applies. The shape is
-written out here rather than described, because a shape that is only described is a shape somebody
-invents at the moment they need it. Note that three vocabularies reach this record and not two: the
-managed hook already writes `assignmentState` for the creation and identity lifecycle, with values
-like `relationship_registered`, so the relay's delivery lifecycle takes a key of its own rather
-than overwriting it. Illustrative values, not a measured record: a child that has stopped to ask a
-person something, on an assignment the relay still shows as awaiting its revision.
+from: what the turn did, where the delivery stands, and the blocker where one applies. What decides
+the field is the contract the value came from, and there are four of them rather than the two this
+clause started by naming. Each already owns a field, so a report uses that field rather than a name
+chosen for the occasion. Two rounds of review found that every convenient key was already taken.
 
-```json
-{"turnDisposition": "blocked_needs_input",
- "deliveryState": "needs_changes",
- "assignmentState": "relationship_registered",
- "blocker": "child asked which of two migration orders to take; no answer yet"}
-```
+| Fact | Owner and its field | Example value |
+|---|---|---|
+| What this turn did | [Turn disposition](hook-contract.md#turn-disposition) | `blocked_needs_input` |
+| Whether the relationship is registered and bound | the managed hook's own `assignmentState` | `relationship_registered` |
+| Where the delivery stands | `assignment-show`'s `state`, in [relay usage](relay.md#verify-the-current-revision) | `needs_changes` |
+| What one transport attempt did | the delivery attempt's `deliveryState` | `dispatched` |
+| What a person is being asked | no contract has a word for it, so prose | free text |
 
-Four fields because these are four different facts, each from the contract that owns it. The turn
-stopped, which `turnDisposition` carries. The delivery did not move, which `deliveryState` carries,
-read from the assignment rather than chosen to match the turn. The relationship itself is
-registered and bound, which is what the hook's own `assignmentState` already means and must not be
-overwritten to say something about delivery. And what is wanted from a human is prose, because no
-contract here has a word for it. Writing `blocked_needs_input` into any of the state fields is the
-specific error this clause exists to stop: it reads as a state some contract defines, none of them
-does, and a parent acting on it waits for a transition that cannot arrive.
+A child that stopped to ask someone a question is `blocked_needs_input` on its turn, on an
+assignment whose `state` is still whatever it was, with the question itself written out. Four
+different facts, four fields, and the last one in prose precisely because nothing defines it.
+Putting `needs_changes` in `deliveryState`, or `blocked_needs_input` in either state field, is the
+error this clause exists to stop: it reads as a value some contract defines, that contract defines
+something else by it, and a consumer either rejects the record or acts on the wrong fact. This
+contract does not mint a record shape of its own for these; OPS-10.3 is why.
 
 ### OPS-6.3 Installing a Linear hook
 
