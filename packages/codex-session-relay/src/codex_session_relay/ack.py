@@ -150,10 +150,19 @@ class AckService:
         """Has the criteria set moved out from under a review already decided against it?
 
         One condition for both entry points - claiming and ruling - so the two can never
-        disagree about whether a re-review is open. It is the state AssignmentView already
-        reports as re_review_needed, read from the same records: the set in force differs from
-        the one this review was decided against, the event is still the revision this generation
-        stands on, and any ruling already recorded for it is a verified one.
+        disagree about whether a re-review is open. What differs is the digest each one hands
+        in: claiming passes the set the review is BOUND to, ruling passes the set the recorded
+        ruling was DECIDED on. Everything else is shared: the set in force differs from that
+        one, the event is still the revision this generation stands on, and any ruling already
+        recorded for it is a verified one.
+
+        Where a verified ruling exists, that is exactly the state AssignmentView reports as
+        re_review_needed. Where a review was claimed but never ruled, the view still says
+        verifying, because nothing has been certified to re-review; what has happened is only
+        that its binding no longer matches, and its ruling stays refused with
+        criteria_set_changed until the review is claimed again. The two cases are one condition
+        because the remedy is one thing - claim it again - not because the view names them
+        alike.
 
         needs_changes is excluded because it already moved the assignment to a new generation,
         whose revision arrives as its own event with its own claim; aborted ends the assignment.
