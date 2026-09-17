@@ -1836,3 +1836,200 @@ class SupervisedWorker(ServiceTestCase):
         with self.assertRaises(PayloadExit) as caught:
             self.adopt(service, lock_fd=lock)
         self.assertEqual(caught.exception.payload["reason"], "supervisor_already_gone")
+
+
+FOUR_HOURS = 4 * 60 * 60
+
+
+class ScriptedClock:
+    """Monotonic time that moves only when something says it spent time.
+
+    Real elapsed hours are the one input a test cannot have. This makes the supervisor's own
+    arithmetic observable instead: a worker that runs its whole granted segment advances the
+    clock by that segment, a restart delay advances it by the delay, and nothing else moves
+    it at all.
+    """
+
+    START = 1000.0
+
+    def __init__(self):
+        self.now = self.START
+        self.spent = []
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+        self.spent.append(seconds)
+
+    @property
+    def elapsed(self):
+        return self.now - self.START
+
+
+class FourHourBoundary(ServiceTestCase):
+    """An assignment that outlives the limit on any single process.
+
+    WHAT THESE PROVE. The supervisor's own boundary behaviour, driven past four hours of
+    scripted monotonic time: that it goes on replacing bounded workers, that the store
+    identity and the generations under it are untouched across every replacement, that one
+    lock, one scope claim and one token are inherited by all of them, and that a stop or a
+    disable written part-way through is honoured at the next worker boundary rather than at
+    the end. The socket these run against does not exist, which is the point of the last
+    assertion in the first test: the crossing needs no host contact and no parent at all.
+
+    WHAT THEY DO NOT PROVE, and no scripted clock can. Nothing here observes four hours of
+    real elapsed time, so nothing here says anything about what accumulates during them:
+    process memory, sqlite WAL growth, file-descriptor or socket drift, or an App Server that
+    answers differently after hours of uptime. A FakeWorker that exits in microseconds is
+    also not a worker that ran for half an hour - only the supervisor's view of it is
+    reproduced, never the worker's own. Those are properties of a real long run and need one
+    to observe. This is the boundary logic, and the distinction is written here so that a
+    later reader cannot take one for the other.
+    """
+
+    def assignment(self, service):
+        """A real registered assignment in the store this supervisor holds."""
+        from codex_session_relay.clock import FakeClock
+        from codex_session_relay.models import Endpoint
+        from codex_session_relay.registry import Registry
+
+        store = Store(Path(service.selection.path) / "relay.sqlite3")
+        self.addCleanup(store.close)
+        relationship = Registry(store, FakeClock()).register(
+            parent=Endpoint("01parent-task", "host-a", cwd="/parent"),
+            child=Endpoint("01child-task", "host-a", cwd=self.tmp),
+            issue_key="REL-9",
+            artifact_roots=[self.tmp],
+            allowed_recipients=["01parent-task"],
+            dispatch_request_id="dispatch-9",
+            dispatch_turn_id="turn-dispatch-9",
+        )
+        return store, relationship["relationshipId"]
+
+    def generations(self, store, relationship_id):
+        return [dict(row) for row in store.all(
+            "SELECT * FROM generations WHERE relationship_id = ?"
+            " ORDER BY execution_generation",
+            (relationship_id,),
+        )]
+
+    def crossing(self, service, *, segment_seconds, segments, deadline=None, on_segment=None):
+        """Run the supervisor over workers that each spend their whole granted segment."""
+        clock = ScriptedClock()
+        launches = []
+
+        def spawn(**call):
+            launches.append(call)
+            # The worker running is the only reason time passes here, so the clock moves by
+            # what this worker was actually granted rather than by what was asked for - which
+            # is what makes the deadline clamp observable at the end of a bounded run.
+            clock.advance(call["segment_seconds"])
+            if on_segment is not None:
+                on_segment(len(launches))
+            return FakeWorker(0)
+
+        outcome = service.supervise(
+            allow_isolated=True, spawn=spawn, sleeper=clock.advance,
+            segment_seconds=segment_seconds, max_segments=segments, deadline=deadline,
+            monotonic=clock,
+        )
+        return outcome, launches, clock
+
+    def test_an_assignment_crosses_four_hours_on_the_same_store_and_generation(self):
+        service = self.service("a")
+        service.enable(actor="test")
+        store, relationship_id = self.assignment(service)
+        before_id = service.store_id
+        before_generations = self.generations(store, relationship_id)
+        self.assertTrue(before_generations, "the fixture registered no generation to carry")
+
+        # Half-hour segments, so nine of them is the first count that clears four hours.
+        outcome, launches, clock = self.crossing(
+            service, segment_seconds=30 * 60, segments=9,
+        )
+
+        self.assertGreater(
+            clock.elapsed, FOUR_HOURS,
+            "the run stopped short of the boundary it exists to cross",
+        )
+        self.assertEqual(len(launches), 9)
+        self.assertEqual(outcome["segments"], [0] * 9)
+        self.assertEqual(service.store_id, before_id, "the store changed under the assignment")
+        self.assertEqual(
+            self.generations(store, relationship_id), before_generations,
+            "the generation did not survive the crossing intact",
+        )
+        # One lock, one claim, one token, on both sides of the boundary.
+        self.assertEqual(len({call["lock_fd"] for call in launches}), 1)
+        self.assertEqual(len({call["scope_fd"] for call in launches}), 1)
+        self.assertEqual(len({call["token"] for call in launches}), 1)
+        # And none of it asked anything of a host or a parent: SOCKET does not exist.
+        self.assertFalse(
+            os.path.exists(SOCKET),
+            "this assertion is only meaningful while the socket really is absent",
+        )
+
+    def test_a_stop_past_the_boundary_ends_it_at_the_next_worker(self):
+        service = self.service("a")
+        service.enable(actor="test")
+
+        def stop_after_the_boundary(count):
+            if count == 9:
+                service.request_stop()
+
+        _outcome, launches, clock = self.crossing(
+            service, segment_seconds=30 * 60, segments=40,
+            on_segment=stop_after_the_boundary,
+        )
+
+        self.assertGreater(clock.elapsed, FOUR_HOURS)
+        self.assertEqual(
+            len(launches), 9,
+            "the supervisor spawned another worker after the owner asked it to stop",
+        )
+
+    def test_a_disable_past_the_boundary_is_obeyed_and_left_as_the_owner_wrote_it(self):
+        service = self.service("a")
+        service.enable(actor="test")
+
+        def disable_after_the_boundary(count):
+            if count == 9:
+                service.intent.write(enabled=False, actor="owner")
+
+        _outcome, launches, clock = self.crossing(
+            service, segment_seconds=30 * 60, segments=40,
+            on_segment=disable_after_the_boundary,
+        )
+
+        self.assertGreater(clock.elapsed, FOUR_HOURS)
+        self.assertEqual(len(launches), 9, "a disabled service was given another worker")
+        intent = service.intent.read()
+        self.assertFalse(intent["enabled"], "the supervisor rewrote the owner's intent")
+        self.assertEqual(intent["changedBy"], "owner")
+
+    def test_a_bound_past_four_hours_clamps_the_worker_that_would_outlive_it(self):
+        """The last segment is shortened rather than allowed to run past the bound.
+
+        A worker started just before a deadline outlives it by a whole segment otherwise, and
+        at these durations that is half an hour of a service its owner asked to end.
+        """
+        service = self.service("a")
+        service.enable(actor="test")
+        bound = FOUR_HOURS + 15 * 60
+
+        outcome, launches, clock = self.crossing(
+            service, segment_seconds=30 * 60, segments=40, deadline=bound,
+        )
+
+        granted = [call["segment_seconds"] for call in launches]
+        self.assertEqual(granted[:-1], [30 * 60] * (len(granted) - 1))
+        # Shorter than a full segment, but not by the round fifteen minutes the arithmetic
+        # suggests: the restart delay between each pair of workers is spent from the same
+        # bound, so the remainder is fifteen minutes minus whatever the delays already took.
+        self.assertLess(granted[-1], 30 * 60)
+        self.assertAlmostEqual(granted[-1], 15 * 60 - sum(clock.spent[1::2]), places=6)
+        # The bound is what it is measured against, and it lands on it exactly.
+        self.assertAlmostEqual(clock.elapsed, bound, places=6)
+        self.assertEqual(outcome["segments"], [0] * len(granted))

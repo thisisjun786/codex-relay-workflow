@@ -327,12 +327,23 @@ on holding its own recipient until the transport's deadline, which is one RPC ti
 each stage the bridge bounds separately. A send is three requests — `thread/read`,
 `thread/resume`, `turn/start` — and the client re-establishes the connection in front of any
 of them whose reader has finished, so each can also cost `unix_connect` and `initialize`.
-Two limits worth naming beside that
-guarantee. It begins at the connection — `AppServer._connect_lock` serialises establishment,
-so a stalled `connect()` is still shared by every recipient, reads included. And the deadline
-is there to make the worst case finite rather than to match a caller, who has already given
-up at the RPC timeout plus its slack; what the deadline decides is whether the bridge ledger
-ends up holding a real receipt for that request id or an uncertain one.
+Two limits worth naming beside that guarantee, because neither is visible from the sentence
+above it.
+
+The isolation begins at the connection. `AppServer._connect_lock` serialises establishment,
+so a stalled `connect()` is still shared by every recipient, reads included, and only what
+happens after a connection exists is isolated per recipient.
+
+And the deadline buys finiteness, not sufficiency. It is not an upper bound on a send that is
+still making progress and cannot be turned into one by choosing a larger multiple: the same
+timer also covers the time this send spends waiting on that shared connect lock while a
+DIFFERENT recipient rebuilds, and a queue of rebuilds ahead of it has no constant bound. So
+the deadline can fire on a healthy send. When it does, nothing is lost and nothing is sent
+twice — the caller gave up at the RPC timeout plus its slack long before, and the ledger's
+request-id idempotency covers the retry — but what it decides is whether the bridge ledger
+ends up holding a real receipt for that request id or an uncertain one, which is what
+reconciliation reads later. Read it as a backstop against a write that never drains, not as a
+promise about how long a working send may take.
 
 **A stale event is stopped before the send.** A generation that has moved on invalidates
 every outcome of the previous one, whether or not the new generation has produced a revision

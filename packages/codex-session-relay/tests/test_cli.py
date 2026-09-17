@@ -914,10 +914,11 @@ class ContestedSocket(CliBase):
     def test_a_pin_that_only_spells_the_same_directory_differently_is_not_a_candidate(self):
         """Offering a candidate has to mean offering a different store.
 
-        resolve_state_dir expands ~ and makes the path absolute before choosing, so
-        `~/pinned` and `/home/.../pinned` are one directory. Compared as raw text they look
-        like two, and the extra line resolves straight back to the store that caused the
-        refusal - a dead end wearing the label of an alternative.
+        Two spellings reach the same directory and neither is exotic: `~/pinned` because
+        selection expands it, and `.../x/../pinned` because the filesystem does. Compared as
+        written they look like separate candidates, and the line each would add resolves
+        straight back to the store that caused the refusal - a dead end wearing the label of
+        an alternative.
         """
         from pathlib import Path
 
@@ -932,28 +933,36 @@ class ContestedSocket(CliBase):
             socket_path=os.path.join(self.tmp, "tilde-other.sock"),
         ).close()
 
-        environment = dict(
-            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
-            # The same directory the flag names, spelled through the home shortcut.
-            CODEX_SESSION_RELAY_STATE="~/pinned",
-        )
-        environment.pop("XDG_STATE_HOME", None)
-        completed = subprocess.run(
-            [sys.executable, "-m", "codex_session_relay.cli", f"--state={pinned}",
-             f"--socket={wanted}", "status"],
-            capture_output=True, text=True, env=environment, timeout=60,
-        )
-        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
-        refused = json.loads(completed.stdout)
-        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+        # Each spelling names exactly the directory --state names, by a different route.
+        spellings = {
+            "the home shortcut": "~/pinned",
+            "a dot segment": os.path.join(home, "pinned", "..", "pinned"),
+        }
+        for label, spelling in spellings.items():
+            with self.subTest(spelling=label):
+                environment = dict(
+                    os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
+                    CODEX_SESSION_RELAY_STATE=spelling,
+                )
+                environment.pop("XDG_STATE_HOME", None)
+                completed = subprocess.run(
+                    [sys.executable, "-m", "codex_session_relay.cli", f"--state={pinned}",
+                     f"--socket={wanted}", "status"],
+                    capture_output=True, text=True, env=environment, timeout=60,
+                )
+                self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+                refused = json.loads(completed.stdout)
+                self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
 
-        commands = [line for line in refused["recover"] if not line.startswith("  ")]
-        pinning = [c for c in commands if "--state=" in c]
-        self.assertEqual(
-            len(pinning), 1,
-            f"the refusing store was offered back as its own alternative: {refused['recover']}",
-        )
-        self.assertNotIn("~/pinned", " ".join(commands))
+                commands = [
+                    line for line in refused["recover"] if not line.startswith("  ")
+                ]
+                pinning = [c for c in commands if "--state=" in c]
+                self.assertEqual(
+                    len(pinning), 1,
+                    f"the refusing store came back as its own alternative: {refused['recover']}",
+                )
+                self.assertNotIn(spelling, " ".join(commands))
 
     def test_an_unexpandable_pin_does_not_replace_the_refusal_with_a_host_error(self):
         """The refusal payload is everything the operator has, so it has to survive.
@@ -1107,3 +1116,183 @@ class ContestedSocket(CliBase):
         answer = self.run_in_home(home, "--state", chosen, "--socket", socket, "status")
 
         self.assertEqual(answer["deliveries"], [])
+
+
+class ParticipantAccessReceipts(CliBase):
+    """Parent, child and daemon on one database, each proving its own access to it.
+
+    The criterion asks for two things a single healthy-looking report cannot give. Whether the
+    participants share a store is a question about THREE observations, not one; and whether
+    each sandbox permits what that participant needs is a question about what it can actually
+    do, not about what its configuration says. So every participant emits a receipt and the
+    receipts are compared.
+
+    Isolation, because this touches the same machinery a real installation uses: a temporary
+    HOME and CODEX_HOME, a socket bound here and closed here, an explicit temporary --state,
+    and CODEX_SESSION_RELAY_STATE pinned to that same directory. The pin matters on its own -
+    the adapter reads it, and setting only --state lets the store and the ledger diverge. The
+    real state directory under the user's home is never selected by any of these runs.
+
+    WHAT THIS DOES NOT COVER. The participants here are three processes with three
+    environments, not three genuinely different sandboxes: this host runs them all under the
+    same kernel policy, so the receipts prove the store is shared and that each process really
+    could read and write it, not that a restrictive sandbox would have been reported
+    correctly. The recorded sandbox each receipt carries is the settings the adapter would
+    send with, which is the value a denial would have to be explained against.
+    """
+
+    def probe_socket(self):
+        """A socket that really accepts, so reachability is observed rather than assumed."""
+        import socket
+
+        path = os.path.join(self.tmp, "probe-app-server.sock")
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(path)
+        listener.listen(1)
+        self.addCleanup(listener.close)
+        return path
+
+    def participant(self, *args, state=None, pin=None, cwd=None, expect=0):
+        """Run one participant's own doctor, in its own environment."""
+        home = os.path.join(self.tmp, "participant-home")
+        os.makedirs(home, exist_ok=True)
+        environment = dict(
+            os.environ,
+            PYTHONPATH=os.path.join(REPO, "src"),
+            HOME=home,
+            CODEX_HOME=os.path.join(self.tmp, "codex-home"),
+        )
+        environment.pop("XDG_STATE_HOME", None)
+        if pin is None:
+            environment.pop("CODEX_SESSION_RELAY_STATE", None)
+        else:
+            environment["CODEX_SESSION_RELAY_STATE"] = pin
+        argv = [sys.executable, "-m", "codex_session_relay.cli"]
+        if state is not None:
+            argv.append(f"--state={state}")
+        argv += list(args)
+        completed = subprocess.run(
+            argv, capture_output=True, text=True, env=environment, timeout=60,
+            cwd=cwd or self.tmp,
+        )
+        self.assertEqual(
+            completed.returncode, expect,
+            f"exit {completed.returncode}: {completed.stdout}{completed.stderr}",
+        )
+        return json.loads(completed.stdout)
+
+    def settings(self, cwd):
+        """Shaped like the creation result the host reports, which is what gets recorded."""
+        return {
+            "sandbox": {"type": "workspaceWrite", "writableRoots": [cwd],
+                        "networkAccess": False, "excludeTmpdirEnvVar": False,
+                        "excludeSlashTmp": False},
+            "approvalPolicy": "never",
+            "cwd": cwd,
+            "runtimeWorkspaceRoots": [cwd],
+            "model": "anthropic/claude-opus-5",
+            "reasoningEffort": "xhigh",
+            "environments": [{"environmentId": "local", "cwd": cwd,
+                              "runtimeWorkspaceRoots": [cwd]}],
+        }
+
+    def seeded(self):
+        """A store with an assignment in it, and settings recorded for both participants.
+
+        Recorded through register's own --parent-settings/--child-settings, which is the path
+        a creation result really takes, so the sandbox in the receipt is the one a send would
+        carry rather than something this test wrote by hand into the table.
+        """
+        parent_cwd = os.path.join(self.tmp, "parent")
+        os.makedirs(parent_cwd, exist_ok=True)
+        recorded = self.run_cli(
+            "register", "--parent-task", PARENT, "--parent-host", HOST,
+            "--child-task", CHILD, "--child-host", HOST, "--issue", ISSUE,
+            "--artifact-root", self.root, "--allowed-recipient", PARENT,
+            "--dispatch-request-id", "dispatch-1", "--dispatch-turn-id", DISPATCH_TURN,
+            "--parent-settings", json.dumps(self.settings(parent_cwd)),
+            "--child-settings", json.dumps(self.settings(self.root)),
+        )
+        self.assertEqual(
+            recorded["authorizedSettings"], {PARENT: "recorded", CHILD: "recorded"},
+        )
+        return self.tmp
+
+    def test_three_participants_reach_one_store_by_three_different_routes(self):
+        state = self.seeded()
+        socket_path = self.probe_socket()
+
+        # Deliberately not the same route to the same place: if only one rule were exercised
+        # this would prove nothing about participants that reach the store differently.
+        parent = self.participant(
+            "--socket", socket_path, "doctor", state=state, pin=state,
+            cwd=os.path.join(self.tmp, "parent"),
+        )["accessReceipt"]
+        child = self.participant(
+            "--socket", socket_path, "doctor", pin=state, cwd=self.root,
+        )["accessReceipt"]
+        daemon = self.participant(
+            "--socket", socket_path, "doctor", state=state, pin=state,
+        )["accessReceipt"]
+        receipts = {"parent": parent, "child": child, "daemon": daemon}
+
+        self.assertEqual(
+            {name: r["selectedBy"]["source"] for name, r in receipts.items()},
+            {"parent": "flag", "child": "env", "daemon": "flag"},
+            "the routes collapsed, so this no longer tests what it claims to",
+        )
+        # The path is not the assertion. Two spellings can be one file and one spelling can be
+        # two files, so identity is settled on the store id and the device/inode pair.
+        for name, receipt in receipts.items():
+            with self.subTest(participant=name):
+                self.assertIsNotNone(receipt["storeId"], receipt)
+                self.assertEqual(receipt["storeId"], parent["storeId"])
+                self.assertEqual(
+                    (receipt["device"], receipt["inode"]),
+                    (parent["device"], parent["inode"]),
+                    "this participant is on a different file",
+                )
+                # Measured, not inferred from a permission bit.
+                self.assertTrue(receipt["observedAccess"]["read"], receipt)
+                self.assertTrue(receipt["observedAccess"]["write"], receipt)
+                self.assertIsNone(receipt["observedAccess"]["detail"], receipt)
+
+    def test_each_receipt_carries_the_sandbox_a_denial_would_be_explained_against(self):
+        state = self.seeded()
+        receipt = self.participant("doctor", state=state, pin=state)["accessReceipt"]
+
+        recorded = receipt["recordedSandbox"]
+        self.assertTrue(recorded["available"], recorded)
+        self.assertEqual(sorted(recorded["participants"]), sorted([PARENT, CHILD]))
+        for task in (PARENT, CHILD):
+            with self.subTest(task=task):
+                sandbox = recorded["participants"][task]
+                self.assertTrue(sandbox["readable"], sandbox)
+                # The value the adapter would actually send with, not a policy file.
+                self.assertEqual(sandbox["mode"], "workspaceWrite")
+                self.assertIsInstance(sandbox["writableRoots"], list)
+                self.assertIs(sandbox["networkAccess"], False)
+                self.assertEqual(sandbox["recordedFrom"], "creation_result")
+        self.assertEqual(
+            recorded["participants"][CHILD]["cwd"], self.root,
+            "the child's recorded cwd is not the workspace it actually runs in",
+        )
+
+    def test_a_participant_on_another_store_is_refused_rather_than_called_healthy(self):
+        """The failure this criterion is really about: agreeing while looking at two stores."""
+        state = self.seeded()
+        mine = self.participant("doctor", state=state, pin=state)["accessReceipt"]
+
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        stray = self.participant("doctor", state=elsewhere, pin=elsewhere)["accessReceipt"]
+
+        self.assertNotEqual(
+            (stray["device"], stray["inode"]), (mine["device"], mine["inode"]),
+            "the two runs landed on one file, so this proves nothing",
+        )
+        # And asked to prove it is the same store, it refuses instead of reporting health.
+        refused = self.participant(
+            "doctor", f"--expect-store={mine['storeId']}",
+            state=elsewhere, pin=elsewhere, expect=2,
+        )
+        self.assertNotEqual(refused["sameStore"], "proven", refused)

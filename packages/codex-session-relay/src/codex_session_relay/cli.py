@@ -771,6 +771,86 @@ def _ledger_location(services) -> dict:
     }
 
 
+def _sandbox_summary(row) -> dict:
+    """The sandbox the adapter would actually carry for one participant.
+
+    Read from the authorized settings the creation result reported, because that is what a
+    send actually sends. A policy file on disk may describe something else entirely, and the
+    question here is what this installation would really do, not what it is configured to do.
+    """
+    import json
+
+    try:
+        settings = json.loads(row["settings"])
+    except (TypeError, ValueError):
+        return {"readable": False, "detail": "the recorded settings could not be parsed"}
+    sandbox = settings.get("sandbox") or {}
+    return {
+        "readable": True,
+        "mode": sandbox.get("type"),
+        "writableRoots": list(sandbox.get("writableRoots") or []),
+        "networkAccess": sandbox.get("networkAccess"),
+        "cwd": settings.get("cwd"),
+        "recordedFrom": row["source"],
+        "recordedAt": row["recorded_at"],
+    }
+
+
+def _access_receipt(services, report) -> dict:
+    """One participant's observed answer to: which store is this, and may I use it?
+
+    Every field is measured rather than declared. The identity and the device/inode pair come
+    from the probe's own stat; the read and write answers come from a real read-only
+    connection and a real rolled-back write transaction, not from a permission bit; and the
+    sandbox comes from the settings the adapter would carry rather than from configuration.
+
+    It exists to be COMPARED. Two participants put their receipts side by side to find out
+    whether they are on one database or two, and a matching path does not settle that: two
+    spellings can be one file, and one spelling can be two files on different mounts or in
+    different sandboxes. The device and inode are what actually answer it, which is why they
+    are here beside the path rather than instead of it.
+    """
+    from .store import read_only_rows
+
+    store, access = report["store"], report["access"]
+    recorded = {"available": False, "participants": {}, "detail": None}
+    if access["dbReadable"]:
+        # Read-only, through the same door the probe used. Opening a Store here would create
+        # and migrate one, which is the side effect doctor promises not to have.
+        rows = read_only_rows(
+            services.selection,
+            "SELECT task_id, settings, source, recorded_at FROM authorized_settings"
+            " ORDER BY task_id",
+        )
+        if rows["readable"] and not rows["detail"]:
+            recorded["available"] = True
+            recorded["participants"] = {
+                row["task_id"]: _sandbox_summary(row) for row in rows["rows"]
+            }
+        else:
+            recorded["detail"] = (
+                rows["detail"] or "the authorized settings could not be read"
+            )
+    return {
+        "storeId": store["storeId"],
+        "dbPath": store["dbPath"],
+        "realPath": store["realPath"],
+        "device": store["device"],
+        "inode": store["inode"],
+        "selectedBy": {
+            "source": services.selection.source,
+            "detail": services.selection.detail,
+        },
+        "observedAccess": {
+            "read": access["dbReadable"],
+            "write": access["dbWritable"],
+            "directoryWritable": access["directoryWritable"],
+            "detail": access["detail"],
+        },
+        "recordedSandbox": recorded,
+    }
+
+
 def _contents(services, report) -> dict:
     """Counts, but only when the store can actually be opened for them."""
     from .store import read_only_rows
@@ -847,6 +927,9 @@ def cmd_doctor(services, args) -> dict:
     report["actorReachability"] = _reachability(services, report)
     report["contents"] = _contents(services, report)
     report["siblingStores"] = _sibling_stores(services)
+    # Emitted by every participant, so parent, child and daemon receipts can be compared
+    # against each other rather than each being read as healthy on its own.
+    report["accessReceipt"] = _access_receipt(services, report)
 
     nonce = nonce_lookup(services.selection, args.expect_nonce) if args.expect_nonce else None
     report["nonce"] = nonce
@@ -1546,8 +1629,13 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
     # straight back to the store that caused the refusal: a dead end wearing the label of an
     # alternative. Printed resolved for the same reason - quoting ~ stops the shell expanding
     # it, so the pasted command would not mean what it reads.
+    #
+    # resolve() rather than absolute(), because absolute() keeps dot segments: /x/a/../store
+    # and /x/store are one directory and one database, and comparing the spellings called
+    # them two. The question being asked here is whether this is the same STORE, not whether
+    # it is the same string.
     try:
-        resolved = Path(pinned).expanduser().absolute()
+        resolved = Path(pinned).expanduser().resolve()
     except RuntimeError:
         # ~someone whose home this host cannot resolve. The variable is never validated at
         # startup when --state overrides it, so this is the first thing that touches it - and
@@ -1558,7 +1646,7 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
             " resolve on this host, so it is not offered as a candidate"
         )
         return lines
-    if resolved != Path(selection.path).expanduser().absolute():
+    if resolved != Path(selection.path).expanduser().resolve():
         lines.append(
             f"{_program()} --state={_quote(resolved)} --socket={_quote(wanted)} doctor"
         )

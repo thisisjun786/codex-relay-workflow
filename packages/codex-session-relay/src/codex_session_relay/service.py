@@ -1252,7 +1252,8 @@ class RelayService:
             )
 
     def supervise(self, *, allow_isolated=False, segment_seconds=None, max_segments=None,
-                  deadline=None, spawn=None, policy=None, sleeper=None, on_start=None) -> dict:
+                  deadline=None, spawn=None, policy=None, sleeper=None, on_start=None,
+                  monotonic=None) -> dict:
         """Replace bounded workers for as long as the owner wants this service running.
 
         RelayDaemon.run stays bounded by construction; continuation is a supervisor OVER
@@ -1260,12 +1261,22 @@ class RelayService:
         here and inherited by every worker, so the store, the generations and the scope claim
         are untouched across a worker boundary - which is what carries an assignment past any
         single process lifetime without asking the parent model anything.
+
+        `monotonic` is the clock this loop measures its bound with, defaulting to the real
+        one. It is a parameter because the behaviour that matters here only appears after
+        hours of it: an assignment outliving the host's own limit crosses many worker
+        boundaries, and waiting for that in real time is not a test anyone runs. A scripted
+        clock advanced by the injected `sleeper` and by the workers themselves reproduces the
+        crossing deterministically. What that proves is the loop's own arithmetic and its
+        intent re-reads; what it does not prove is anything about hours of real elapsed time.
+        The distinction is written out in tests/test_service.py rather than implied.
         """
         from .daemon import SingleInstance
         from .policy import RetryPolicy
 
         policy = policy or RetryPolicy()
         sleeper = sleeper or time.sleep
+        monotonic = monotonic or time.monotonic
         spawn = spawn or self.spawn_worker
         segment_seconds = segment_seconds or policy.segment_seconds
 
@@ -1308,7 +1319,7 @@ class RelayService:
                 # Recovery can make real App Server calls for unresolved attempts, and timing
                 # only the loop let --deadline N spend an arbitrary startup interval first and
                 # then run for another N - even spawning a worker past the requested bound.
-                started = time.monotonic()
+                started = monotonic()
                 if on_start is not None:
                     on_start()
                 # Only now is this service serving. Recovery runs before any worker can send,
@@ -1318,13 +1329,13 @@ class RelayService:
                 # And not at all if the bound was spent getting ready: the loop below exits
                 # immediately in that case, so publishing readiness here would let a waiting
                 # start() report a service that is already on its way out.
-                expired = deadline is not None and time.monotonic() - started >= deadline
+                expired = deadline is not None and monotonic() - started >= deadline
                 if not expired:
                     self._note(readyAt=_now())
                 while True:
                     if max_segments is not None and len(segments) >= max_segments:
                         break
-                    if deadline is not None and time.monotonic() - started >= deadline:
+                    if deadline is not None and monotonic() - started >= deadline:
                         break
                     if self.stop_requested():
                         break
@@ -1339,7 +1350,7 @@ class RelayService:
                         segment_seconds=(
                             segment_seconds if deadline is None else
                             max(0.1, min(segment_seconds,
-                                         deadline - (time.monotonic() - started)))
+                                         deadline - (monotonic() - started)))
                         ),
                         allow_isolated=allow_isolated,
                     )
@@ -1367,14 +1378,14 @@ class RelayService:
                         # backoff cap, which after repeated failures is five minutes, before
                         # returning. There is nothing left to wait for.
                         break
-                    if deadline is not None and time.monotonic() - started >= deadline:
+                    if deadline is not None and monotonic() - started >= deadline:
                         break
                     wait = policy.restart_delay_for(failures)
                     if deadline is not None:
                         # Clamped the same way a worker segment is. An unclamped delay - up to
                         # five minutes after repeated failures - outlives the supervisor's own
                         # bound, so a short deadline took minutes to return.
-                        wait = max(0.0, min(wait, deadline - (time.monotonic() - started)))
+                        wait = max(0.0, min(wait, deadline - (monotonic() - started)))
                     self._note(nextRestartAt=time.time() + wait)
                     sleeper(wait)
             finally:
