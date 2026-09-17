@@ -1546,7 +1546,18 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
     # straight back to the store that caused the refusal: a dead end wearing the label of an
     # alternative. Printed resolved for the same reason - quoting ~ stops the shell expanding
     # it, so the pasted command would not mean what it reads.
-    resolved = Path(pinned).expanduser().absolute()
+    try:
+        resolved = Path(pinned).expanduser().absolute()
+    except RuntimeError:
+        # ~someone whose home this host cannot resolve. The variable is never validated at
+        # startup when --state overrides it, so this is the first thing that touches it - and
+        # a refusal payload that becomes a traceback leaves the operator with nothing at all.
+        # Said rather than dropped: it is the value they set, and it is not usable.
+        lines.append(
+            f"  {STATE_ENV} is set to {pinned!r}, which names a home directory that does not"
+            " resolve on this host, so it is not offered as a candidate"
+        )
+        return lines
     if resolved != Path(selection.path).expanduser().absolute():
         lines.append(
             f"{_program()} --state={_quote(resolved)} --socket={_quote(wanted)} doctor"

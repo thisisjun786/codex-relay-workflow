@@ -955,6 +955,48 @@ class ContestedSocket(CliBase):
         )
         self.assertNotIn("~/pinned", " ".join(commands))
 
+    def test_an_unexpandable_pin_does_not_replace_the_refusal_with_a_host_error(self):
+        """The refusal payload is everything the operator has, so it has to survive.
+
+        An explicit --state overrides the variable, so nothing validates the variable's value
+        at startup and building the recovery list is the first thing that touches it.
+        Path.expanduser() raises RuntimeError for a ~user whose home cannot be resolved. The
+        top-level handler catches it, so this is not a traceback - it is worse in a quieter
+        way: exit 3 with a generic {"error": "host"} and none of the recorded socket, the
+        requested socket or the recovery commands the operator needed.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "badpin-state")
+        wanted = os.path.join(self.tmp, "badpin-wanted.sock")
+        Store(
+            Path(state) / "relay.sqlite3",
+            socket_path=os.path.join(self.tmp, "badpin-other.sock"),
+        ).close()
+
+        environment = dict(
+            os.environ, PYTHONPATH=os.path.join(REPO, "src"),
+            CODEX_SESSION_RELAY_STATE="~no-such-user-for-this-test/store",
+        )
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", f"--state={state}",
+             f"--socket={wanted}", "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+
+        self.assertEqual(
+            completed.returncode, 2,
+            f"the refusal did not survive: {completed.stdout}{completed.stderr}",
+        )
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        self.assertEqual(len(commands), 2, refused["recover"])
+        # And the unusable value is reported rather than silently dropped.
+        self.assertIn("does not resolve", " ".join(refused["recover"]))
+
     def test_a_socket_path_beginning_with_a_dash_still_produces_runnable_commands(self):
         """A relative socket path may legitimately begin with a dash.
 
