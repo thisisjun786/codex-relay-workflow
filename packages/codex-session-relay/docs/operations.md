@@ -33,6 +33,61 @@ the flag splits the relay store from the ledger that carries send idempotency. S
 Status: implemented. `resolve_state_dir` returns the winning rule and `doctor` reports it with
 the resolved database and the measured access.
 
+### When the rules cannot pick a store
+
+The precedence table decides which directory a participant uses. It does not decide what
+happens when the directory it lands on is ambiguous, and the answer there is that the relay
+refuses rather than guesses. Creating a store on a guess is the one outcome that cannot be
+undone by a later command: once a canonical database exists it wins every later resolution,
+and the assignments in whatever it hid become unreachable without knowing they exist.
+
+Three refusals cover it. All three are decided before the command runs, so a command that
+opens no store — `service status`, for instance — is refused on the same evidence as one
+that would create a database.
+
+| Reason | When | What it means |
+|---|---|---|
+| `ambiguous_state_directory` | default discovery would select a new database and two or more stores record this socket | either could be the right one, and choosing by sort order would serve one set of assignments today and the other after a rename |
+| `unidentified_state_directory` | default discovery would select a new database and a sibling store records no socket at all | its directory hash cannot be inverted, so it cannot be ruled out as this socket's. "Records no socket" also covers a store whose metadata is unreadable or malformed |
+| `state_directory_serves_another_socket` | the selected existing database records a different socket than the one requested | the service would claim and serve the new socket while the database went on attributing itself to the old one |
+
+The first two are reached only after the canonical and legacy-spelling shortcuts have both
+failed to find a store, which is why an installation that is simply running never sees them.
+The third applies to any explicitly selected store, from `--state` or from
+`CODEX_SESSION_RELAY_STATE`, because choosing a directory is not choosing what is already
+inside it.
+
+To recover, inspect before adopting. `doctor` names the candidates:
+
+    codex-session-relay --socket <socket> doctor
+
+then read each candidate, carrying the same socket so the comparison is like for like:
+
+    codex-session-relay --state <candidate> --socket <socket> doctor
+    codex-session-relay --state <candidate> --socket <socket> service status
+
+`service status` groups by project, so the candidate holding the assignments you expect is
+the one to keep. Neither command records provenance; only opening a store with a socket does
+that, so inspection is safe to repeat.
+
+Two things this recovery does not do. Selecting one of two claiming stores does not remove
+the ambiguity — both still record the socket, so the next invocation that relies on default
+discovery is refused again, and every participant of that assignment has to pass the same
+explicit `--state` until one of the stores is retired. And the different-socket refusal
+prints no recovery list, because there is nothing to adopt: the store's recorded socket is
+not rewritten by using it, so the fix is to point the command at the store that belongs to
+the socket, or at the socket that belongs to the store.
+
+`doctor` and `ack-proof` are exempt from these three guards, for opposite reasons: `doctor`
+is how the candidates are found in the first place, and `ack-proof` derives a value from its
+own two arguments and opens no store. Exempt from these guards is not the same as never
+refusing — `doctor` still exits non-zero when a same-store comparison it was asked to make
+comes back unproven or mismatched.
+
+Status: implemented. `resolve_state_dir` carries the candidates on the selection and the
+command line refuses on them, naming the candidates and the database it would otherwise have
+created.
+
 ## Proving two participants share one store
 
 A path string is not proof: symlinks, bind mounts and per-sandbox mounts all make equal
@@ -100,6 +155,23 @@ them to each worker, which adopts them rather than taking a second lock. A worke
 authenticated by a token recorded in `daemon.json` plus a device/inode check on each
 descriptor, arms `PR_SET_PDEATHSIG` in its own bootstrap and immediately re-checks its
 parent, and refuses to serve if the supervisor has already gone.
+
+A lifecycle command that cannot establish who owns the directory refuses rather than acting,
+and the reason says which kind of uncertainty it hit. The distinction matters because the
+operator's next step differs.
+
+| Reason | Evidence behind it | What to do |
+|---|---|---|
+| `not_ours` | a definite mismatch — the record names another installation, another store, or a different boot | nothing here is yours to stop. Find the installation that owns it |
+| `ownership_unverifiable` | evidence is insufficient rather than contrary — no start time for the pid, no boot id on a host that has one, or the lock held by something that has published no record | re-read `service status`; a supervisor mid-start resolves on its own. A record that stays unverifiable names a process that cannot be identified, and signalling it on a pid match alone is how an unrelated process gets killed |
+| `replaced_by_new_launch` | the daemon lock could not be taken after both recorded processes were confirmed gone, or a new record appeared during the stop | the service is **not** stopped, and the launch this command started from may already have been terminated. Re-inspect ownership before doing anything else; do not read the failure as "nothing happened" |
+| `supervised_store_mismatch` | a worker's own store does not match the `storeId` its supervisor recorded | the database moved or was replaced under a running service. Reconcile which store was intended before restarting — a restart does not repair this, and the check permits a record that carries no store id at all and cannot detect a copy that kept one |
+
+Status: implemented. Each refusal is returned before the command takes its action, so a
+refused stop leaves the supervisor untouched and a refused disable leaves the shared intent
+as the owner wrote it. The windows this does not close - a lock probe that cannot
+open the file, an intent write during a holder handoff, a start confirmed from a record and a
+separate probe - are recorded under "Recorded limits" in [invariants.md](invariants.md).
 
 ## One service, several projects
 
