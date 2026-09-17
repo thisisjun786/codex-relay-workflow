@@ -194,6 +194,25 @@ An emitted receipt's own turn id never satisfies it. The authorized recipient an
 settings are recorded before the send, and the settings the host reported back are recorded with the
 result.
 
+Getting that far takes more than three commands, and each of the extra ones exists because the relay
+refuses the send without it. Measured against a running App Server, the sequence is:
+
+| Step | Why the send needs it |
+| --- | --- |
+| `settings-record` | A send is withheld until the recipient's authorized settings are on record, because preserving them is what the delivery checks against |
+| `register` | Creates the relationship and opens its first generation |
+| `generation-open` | Replays that same dispatch request id to read the generation number back; it opens no second generation |
+| `generation-bind` | The generation `register` opened is unbound, and an unbound generation cannot be emitted against |
+| `admit-turn` | Only the anchor turn is admitted by default; a turn the child actually ran is a continuation |
+| `emit` | Stores the receipt and enqueues it. It carries an artifact, because a reviewable receipt with an empty manifest is refused |
+| `deliver` | The attempt itself, and the only step that can return the turn id this field needs |
+
+Those invocations are built as data rather than inline, so a test can compare them against the
+required arguments the relay's own parser declares without performing a delivery. That check reads
+the parser statically, because the relay declares a newer Python than this repository runs its own
+checks with, and it covers every command the trial can send rather than the ones a fixture happened
+to build.
+
 ## One shared service and one store
 
 OPS-3.1 puts one relay service and one durable store behind an entire operating scope, which is one
@@ -259,6 +278,11 @@ The command records the identity, the trusted hash, the hook file path with its 
 issue that installed it, then reads the registration back. Installed, enabled and observed to have
 fired are three separate claims and are reported as three. Installation is not activation: this
 command never enables a daemon, and `alwaysActive` is a separate field with separate evidence.
+
+What survives a hook installation is every existing identity and its hook content, so the trusted
+hash Codex recorded against each one stays attached. The file bytes do not: the document is
+reserialized. The MCP registration is the one that preserves bytes, by appending and leaving the
+prior content as an exact prefix.
 
 ## What none of this establishes
 
