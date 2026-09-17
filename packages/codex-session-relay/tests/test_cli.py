@@ -911,6 +911,50 @@ class ContestedSocket(CliBase):
             "the offered candidate reported a database that does not exist",
         )
 
+    def test_a_pin_that_only_spells_the_same_directory_differently_is_not_a_candidate(self):
+        """Offering a candidate has to mean offering a different store.
+
+        resolve_state_dir expands ~ and makes the path absolute before choosing, so
+        `~/pinned` and `/home/.../pinned` are one directory. Compared as raw text they look
+        like two, and the extra line resolves straight back to the store that caused the
+        refusal - a dead end wearing the label of an alternative.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "tilde-home")
+        pinned = os.path.join(home, "pinned")
+        os.makedirs(home)
+        wanted = os.path.join(self.tmp, "tilde-wanted.sock")
+        Store(
+            Path(pinned) / "relay.sqlite3",
+            socket_path=os.path.join(self.tmp, "tilde-other.sock"),
+        ).close()
+
+        environment = dict(
+            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
+            # The same directory the flag names, spelled through the home shortcut.
+            CODEX_SESSION_RELAY_STATE="~/pinned",
+        )
+        environment.pop("XDG_STATE_HOME", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", f"--state={pinned}",
+             f"--socket={wanted}", "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        pinning = [c for c in commands if "--state=" in c]
+        self.assertEqual(
+            len(pinning), 1,
+            f"the refusing store was offered back as its own alternative: {refused['recover']}",
+        )
+        self.assertNotIn("~/pinned", " ".join(commands))
+
     def test_a_socket_path_beginning_with_a_dash_still_produces_runnable_commands(self):
         """A relative socket path may legitimately begin with a dash.
 

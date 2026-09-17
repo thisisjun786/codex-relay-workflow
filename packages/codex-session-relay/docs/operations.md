@@ -324,8 +324,10 @@ flight per recipient, so a call stalled on one recipient no longer blocks a call
 What is still held back is a second send to the SAME recipient, and it is reported
 `thread_busy` without being sent rather than queued behind the first. An abandoned send goes
 on holding its own recipient until the transport's deadline, which is one RPC timeout for
-each stage the bridge bounds separately: `unix_connect` and `initialize` inside `connect()`,
-then `thread/read`, `thread/resume` and `turn/start`. Two limits worth naming beside that
+each stage the bridge bounds separately. A send is three requests — `thread/read`,
+`thread/resume`, `turn/start` — and the client re-establishes the connection in front of any
+of them whose reader has finished, so each can also cost `unix_connect` and `initialize`.
+Two limits worth naming beside that
 guarantee. It begins at the connection — `AppServer._connect_lock` serialises establishment,
 so a stalled `connect()` is still shared by every recipient, reads included. And the deadline
 is there to make the worst case finite rather than to match a caller, who has already given

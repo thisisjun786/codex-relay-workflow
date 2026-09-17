@@ -1526,6 +1526,7 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
     reads both; nothing here assumes which one is right.
     """
     import os
+    from pathlib import Path
 
     from .store import STATE_ENV
 
@@ -1537,9 +1538,18 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
         "  discovers by socket alone, ignoring any pinned directory",
     ]
     pinned = os.environ.get(STATE_ENV)
-    if pinned and pinned != str(selection.path):
+    if not pinned:
+        return lines
+    # Normalised the way resolve_state_dir normalises it, because that is what decides
+    # whether these are the same directory at all. Compared as raw text, ~/relay-state and
+    # /home/alice/relay-state look like two candidates, and the line this would add resolves
+    # straight back to the store that caused the refusal: a dead end wearing the label of an
+    # alternative. Printed resolved for the same reason - quoting ~ stops the shell expanding
+    # it, so the pasted command would not mean what it reads.
+    resolved = Path(pinned).expanduser().absolute()
+    if resolved != Path(selection.path).expanduser().absolute():
         lines.append(
-            f"{_program()} --state={_quote(pinned)} --socket={_quote(wanted)} doctor"
+            f"{_program()} --state={_quote(resolved)} --socket={_quote(wanted)} doctor"
         )
         lines.append(
             f"  reads the directory {STATE_ENV} names, which --state overrode on this run"

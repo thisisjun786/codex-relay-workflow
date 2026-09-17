@@ -279,18 +279,23 @@ class _Transport:
     """
 
     POLL_SECONDS = 0.005
-    # Every stage of one send that the bridge bounds separately. Counted rather than guessed,
-    # because the deadline below is a multiple of it and the first version of that multiple
-    # said four while the chain was already five:
-    #   unix_connect    AppServer.connect, bounded by open_timeout=self.timeout
-    #   initialize      AppServer.connect, a _request bounded by self.timeout
-    #   thread/read     _guarded_send
-    #   thread/resume   _guarded_send
-    #   turn/start      _guarded_send
-    # A send that already holds a live connection spends only the last three. A send that has
-    # to establish or re-establish one spends all five, and that is the case the bound has to
-    # leave room for.
-    RPC_STAGES_PER_SEND = 5
+    # Every stage of one send that the bridge bounds separately, counted rather than guessed.
+    # Two earlier versions of this number were wrong in the same direction - four, then five -
+    # because both assumed a connection is established at most once per send. It is not:
+    # AppServer.call awaits connect() before EVERY request, and connect() rebuilds the socket
+    # whenever its reader task has finished. A connection that drops mid-send is therefore
+    # re-established in front of the NEXT request rather than once at the start.
+    #
+    #   per request:  unix_connect   bounded by open_timeout=self.timeout, only on reconnect
+    #                 initialize     a _request bounded by self.timeout, only on reconnect
+    #                 the request    thread/read, thread/resume or turn/start
+    RPC_STAGES_PER_REQUEST = 3
+    # _guarded_send makes exactly these three: thread/read, thread/resume, turn/start.
+    RPC_REQUESTS_PER_SEND = 3
+    # The worst case a legitimately progressing send can reach. A send holding a live
+    # connection throughout spends only three of these; the bound exists for the one that
+    # does not.
+    RPC_STAGES_PER_SEND = RPC_STAGES_PER_REQUEST * RPC_REQUESTS_PER_SEND
     # How long in-flight work gets to finish on the way out before it is cancelled.
     DRAIN_SECONDS = 5.0
     # How much longer than the RPC timeout a caller waits before giving up. It was written
