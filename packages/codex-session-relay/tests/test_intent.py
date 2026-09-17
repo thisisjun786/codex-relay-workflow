@@ -36,11 +36,36 @@ class IntentTestCase(unittest.TestCase):
         self.store = Store(str(Path(self.tmp) / "state" / "relay.sqlite3"))
         self.addCleanup(self.store.close)
 
-    def open_generation(self, relationship_id="rel-0123456789abcdef", dispatch=DISPATCH):
+    def open_generation(
+        self, relationship_id="rel-0123456789abcdef", dispatch=DISPATCH, *, generation=1,
+        current=None,
+    ):
+        """A generation of a relationship, as the relay actually stores it.
+
+        Both rows, because a generation without its relationship is not a state the relay can be
+        in, and registration now asks whether the generation this dispatch opened is still the
+        relationship's current one. Pass current= to move the relationship on and leave this
+        dispatch behind, which is the stale case.
+        """
+        self.store.db.execute(
+            "INSERT OR IGNORE INTO relationships (relationship_id, issue_key, status,"
+            " parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation,"
+            " artifact_roots, allowed_recipients, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                relationship_id, "REL-1", "active", "01parent-task", "host-a", "01child-task",
+                "host-a", generation if current is None else current, "[]", "[]", T0, T0,
+            ),
+        )
+        if current is not None:
+            self.store.db.execute(
+                "UPDATE relationships SET execution_generation = ? WHERE relationship_id = ?",
+                (current, relationship_id),
+            )
         self.store.db.execute(
             "INSERT OR IGNORE INTO generations (relationship_id, execution_generation,"
             " dispatch_request_id, anchor_state, opened_at) VALUES (?,?,?,?,?)",
-            (relationship_id, 1, dispatch, "bound", T0),
+            (relationship_id, generation, dispatch, "bound", T0),
         )
 
     # ------------------------------------------------------------- helpers
@@ -81,9 +106,12 @@ class IntentTestCase(unittest.TestCase):
             session_id=session, task_id=task, at=at,
         )
 
-    def register(self, relationship_id="rel-0123456789abcdef", dispatch=DISPATCH, opened=True):
+    def register(self, relationship_id="rel-0123456789abcdef", dispatch=DISPATCH, opened=True,
+                 *, generation=1, current=None):
         if opened:
-            self.open_generation(relationship_id, dispatch)
+            self.open_generation(
+                relationship_id, dispatch, generation=generation, current=current
+            )
         return intent.register_relationship(
             self.root, workspace=self.workspace, assignment=self.assignment,
             relationship_id=relationship_id, dispatch_request_id=dispatch, at=T0,
@@ -238,6 +266,40 @@ class Registration(IntentTestCase):
             self.register(relationship_id="rel-ffffffffffffffff", opened=False)
         self.assertEqual(caught.exception.reason, RefusalReason.RELATIONSHIP_CONFLICT)
         self.assertNotIn("relationship", self.facts())
+
+    def test_a_dispatch_whose_generation_has_advanced_is_refused_as_stale(self):
+        """Finding the row proves SOME generation used this dispatch, not the live one.
+
+        generations keeps one row per generation, so a relationship that has moved on still carries
+        the older dispatch. lookup_receipt computes the head over the relationship's current
+        execution_generation, so registering the stale assignment anyway would let its guard release
+        turns on the strength of work belonging to a later generation.
+        """
+        self.declare()
+        self.bind()
+        with self.assertRaises(RelayError) as caught:
+            self.register(generation=1, current=2)
+        self.assertEqual(caught.exception.reason, RefusalReason.STALE_GENERATION)
+        self.assertNotIn("relationship", self.facts())
+
+    def test_stale_is_a_different_answer_from_never_opened(self):
+        """The contract asks for an old generation to be distinguished, not folded into absent."""
+        self.declare()
+        self.bind()
+        with self.assertRaises(RelayError) as stale:
+            self.register(generation=1, current=2)
+        self.assertEqual(stale.exception.reason, RefusalReason.STALE_GENERATION)
+        with self.assertRaises(RelayError) as absent:
+            self.register(relationship_id="rel-ffffffffffffffff", opened=False)
+        self.assertEqual(absent.exception.reason, RefusalReason.RELATIONSHIP_CONFLICT)
+        self.assertNotEqual(stale.exception.reason, absent.exception.reason)
+
+    def test_the_current_generation_still_registers(self):
+        """The control: the ordinary case must still pass the comparison it now makes."""
+        self.declare()
+        self.bind()
+        self.register()
+        self.assertIn("relationship", self.facts())
 
     def test_registration_is_refused_when_the_relay_cannot_be_read(self):
         """Refusing to claim, rather than taking the caller's word, is the conservative side."""

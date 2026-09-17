@@ -1195,5 +1195,98 @@ class StrayFilesDoNotDisableHoldAccounting(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
 
+# Inventory G: the identity fields the guard's DECISION path reads, and how each is guarded.
+#
+# An identity that names nothing must never stand in for one. Two guards do that work: named(),
+# which gates on presence, and same_identity(), which fails closed because a blank never equals
+# anything. The decision path gates on exactly two fields with named(); everything else reaches a
+# decision through same_identity and cannot be bought with a blank. The pair below is asserted, so a
+# third gating identity appearing without its check fails here.
+DECISION_PATH = ("observe_state", "classify_declaration", "receipt_matches")
+
+NAMED_GATES = {("observe_state", "sessionId"), ("observe_state", "relationshipId")}
+
+IDENTITY_READ_ALLOWED = {
+    ("classify_declaration", "outcome"): "a name collision rather than an identity: outcome is"
+                                         " declared under attempts, and this read is the"
+                                         " disposition's vocabulary value, compared against a"
+                                         " fixed set rather than used to name anybody",
+}
+
+
+class IdentityFieldsAreGuardedOrFailClosed(unittest.TestCase):
+    """Property extension G, as the counting method rather than a list of line numbers."""
+
+    def reads(self):
+        base = Path(__file__).resolve().parent.parent / "src" / "codex_session_relay"
+        tree = ast.parse((base / "guard.py").read_text(encoding="utf-8"))
+        fields = {f for values in intent.IDENTITY_FIELDS.values() for f in values}
+        found = []
+        for function in ast.walk(tree):
+            if not isinstance(function, ast.FunctionDef) or function.name not in DECISION_PATH:
+                continue
+            for node in ast.walk(function):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                if not (isinstance(func, ast.Attribute) and func.attr == "get"):
+                    continue
+                if not (node.args and isinstance(node.args[0], ast.Constant)):
+                    continue
+                key = node.args[0].value
+                if key not in fields:
+                    continue
+                found.append((function.name, key, node.lineno, self._guard(function, node)))
+        return found
+
+    @staticmethod
+    def _guard(scope, node):
+        holder = []
+
+        def walk(parent):
+            for child in ast.iter_child_nodes(parent):
+                if child is node and isinstance(parent, ast.Call):
+                    holder.append(parent)
+                walk(child)
+
+        walk(scope)
+        if not holder:
+            return None
+        func = holder[0].func
+        return func.id if isinstance(func, ast.Name) else None
+
+    def test_every_identity_read_is_guarded_or_justified(self):
+        unguarded = [
+            read for read in self.reads()
+            if read[3] not in ("named", "same_identity")
+            and (read[0], read[1]) not in IDENTITY_READ_ALLOWED
+        ]
+        self.assertEqual(
+            unguarded, [],
+            "these read a declared identity field without named() or same_identity(), so a blank"
+            " could stand in for an identity; guard it or name it in IDENTITY_READ_ALLOWED",
+        )
+
+    def test_the_decision_path_gates_on_exactly_two_identities(self):
+        gates = {(read[0], read[1]) for read in self.reads() if read[3] == "named"}
+        self.assertEqual(
+            gates, NAMED_GATES,
+            "the set of identities gated with named() changed; a new one needs its own case and"
+            " this count updated, and a removed one means something now accepts a blank",
+        )
+
+    def test_the_scan_sees_the_reads_it_is_counting(self):
+        """A scan that finds nothing proves nothing."""
+        self.assertGreaterEqual(len(self.reads()), 6)
+
+    def test_a_blank_never_equals_an_identity(self):
+        """Why the reads guarded by same_identity need no separate check."""
+        for blank in ("", "   ", None, 0, [], {}):
+            with self.subTest(repr(blank)):
+                self.assertFalse(marker.named(blank))
+                self.assertFalse(marker.same_identity(blank, blank))
+                self.assertFalse(marker.same_identity(blank, "a-real-identity"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -584,7 +584,12 @@ def observe_state(observation):
             "The coordinator bound this session, but it has not claimed this assignment. Released "
             "and recorded; a hold needs the child's own claim, not only the coordinator's bind."
         )
-    if not marker.get("relationship"):
+    if not named((marker.get("relationship") or {}).get("relationshipId")):
+        # The identity, not the object. A relationship fact that exists but names nothing has
+        # registered nothing, and truthiness on the record read it as registered: lookup_receipt
+        # then refuses the unnamed id immediately, the turn lands on receipt_missing, and the child
+        # is told to emit a receipt that no receipt could satisfy. This is the same check the bind
+        # record gets a few lines up, which was made and this one was not.
         return "managed_unregistered", (
             "This workspace is managed but its relationship is not registered. Register it, or "
             "record a disposition explaining why it cannot be."

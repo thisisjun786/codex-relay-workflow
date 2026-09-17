@@ -495,29 +495,60 @@ def read_only_connection(db_path):
     return connection
 
 
-def dispatch_is_registered(db_path, relationship_id: str, dispatch_request_id: str):
-    """Does the relay agree that this relationship carries this dispatch request id?
+# What the relay says about the generation a dispatch request id opened.
+DISPATCH_CURRENT = "current"
+DISPATCH_STALE = "stale"
+DISPATCH_ABSENT = "absent"
 
-    Returns (registered, readable). The marker cannot answer it: an assignment id is the hash of a
-    dispatch request id, so a caller pairing an unrelated relationship with the RIGHT dispatch id
-    satisfies every check the filesystem can make. The relay's generations table is the only place
-    that knows which relationship a dispatch actually opened, and it is unique on the pair.
+
+def dispatch_generation_state(db_path, relationship_id: str, dispatch_request_id: str):
+    """Which generation did this dispatch open, and is it still the current one? (state, readable).
+
+    The marker cannot answer any of it: an assignment id is the hash of a dispatch request id, so a
+    caller pairing an unrelated relationship with the RIGHT dispatch id satisfies every check the
+    filesystem can make. The relay's generations table is the only place that knows which
+    relationship a dispatch actually opened, and it is unique on the pair.
+
+    Finding the row is not enough. generations keeps one row per generation, so a relationship that
+    has moved on still has the older dispatch's row, and asking only whether one exists proves that
+    SOME generation used this dispatch rather than the live one. lookup_receipt computes the head
+    over the relationship's current execution_generation, so a stale assignment registered that way
+    would release turns on the strength of work belonging to a later generation. Stale is therefore
+    a separate answer from absent, which is what the contract asks for: an old generation is one of
+    the states that has to be distinguished rather than folded into "not registered".
     """
     import sqlite3
 
     connection = read_only_connection(db_path)
     if connection is None:
-        return False, False
+        return DISPATCH_ABSENT, False
     try:
         row = connection.execute(
-            "SELECT 1 FROM generations WHERE relationship_id = ? AND dispatch_request_id = ?",
+            "SELECT g.execution_generation AS opened, r.execution_generation AS current"
+            "  FROM generations g"
+            "  JOIN relationships r ON r.relationship_id = g.relationship_id"
+            " WHERE g.relationship_id = ? AND g.dispatch_request_id = ?",
             (relationship_id, dispatch_request_id),
         ).fetchone()
     except sqlite3.Error:
-        return False, False
+        return DISPATCH_ABSENT, False
     finally:
         connection.close()
-    return row is not None, True
+    if row is None:
+        return DISPATCH_ABSENT, True
+    if row["opened"] != row["current"]:
+        return DISPATCH_STALE, True
+    return DISPATCH_CURRENT, True
+
+
+def dispatch_is_registered(db_path, relationship_id: str, dispatch_request_id: str):
+    """Does the relay agree that this relationship carries this dispatch request id, right now?
+
+    Returns (registered, readable): the detailed answer with stale and absent collapsed, for a
+    caller that only needs to know whether to proceed.
+    """
+    state, readable = dispatch_generation_state(db_path, relationship_id, dispatch_request_id)
+    return state == DISPATCH_CURRENT, readable
 
 
 def _read_published(target):
@@ -755,7 +786,7 @@ def register_relationship(
     # The hash check above only proves the CALLER restated the right dispatch id. Pairing an
     # unrelated relationship with that id passes it, and its receipts would then satisfy this
     # assignment's guard. Only the relay knows which relationship a dispatch actually opened.
-    registered, readable = dispatch_is_registered(db_path, relationship_id, dispatch_request_id)
+    state, readable = dispatch_generation_state(db_path, relationship_id, dispatch_request_id)
     if not readable:
         raise RegistrationError(
             RefusalReason.UNREGISTERED_RELATIONSHIP,
@@ -763,7 +794,18 @@ def register_relationship(
             + relationship_id + " belongs to this assignment; registration is refused rather than "
             "taken on the caller's word",
         )
-    if not registered:
+    if state == DISPATCH_STALE:
+        # Separated from absent on purpose. The relay HAS this dispatch, under a generation the
+        # relationship has since moved past, and registering it anyway would let this assignment's
+        # guard answer with receipts earned by the live generation. An old generation is one of the
+        # states the contract requires to be told apart, not a variant of not being registered.
+        raise RegistrationError(
+            RefusalReason.STALE_GENERATION,
+            "this assignment's dispatch request id opened an earlier generation of relationship "
+            + relationship_id + ", which has since advanced, so registering it would attribute the "
+            "current generation's receipts to a superseded assignment",
+        )
+    if state == DISPATCH_ABSENT:
         raise RegistrationError(
             RefusalReason.RELATIONSHIP_CONFLICT,
             "the relay has no generation of relationship " + relationship_id + " opened under this "

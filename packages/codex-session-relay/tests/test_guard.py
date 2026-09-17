@@ -895,5 +895,53 @@ class DecodeAndFrozenAccessKeepTheirOwnAnswers(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
 
+class AFactThatNamesNothingHasRegisteredNothing(GuardTestCase):
+    """The identity, not the object.
+
+    observe_state guards the bind record with named(bound.get("sessionId")) so a fact that exists
+    but names nobody cannot stand in for an identity. The relationship fact had only truthiness on
+    the record, so a published relationship.json carrying a blank or missing relationshipId read as
+    registered, and the turn landed on receipt_missing: an instruction to emit a receipt that no
+    receipt could satisfy while the marker names nothing.
+    """
+
+    def publish_relationship(self, value):
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "relationship.json").unlink()
+        marker.publish(directory / "relationship.json", value, root=self.markers)
+        return directory
+
+    def test_a_blank_relationship_id_is_unregistered_rather_than_receipt_missing(self):
+        self.publish_relationship({"relationshipId": "", "at": NOW})
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "managed_unregistered")
+        self.assertIn("not registered", verdict["reason"])
+
+    def test_a_relationship_fact_with_no_id_at_all_is_unregistered(self):
+        self.publish_relationship({"at": NOW})
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "managed_unregistered")
+
+    def test_the_instruction_it_gives_is_one_the_child_can_act_on(self):
+        """The defect was not the hold, it was telling a child to do something impossible."""
+        self.publish_relationship({"relationshipId": "   ", "at": NOW})
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertNotEqual(verdict["observation"], "receipt_missing")
+        self.assertNotIn("Emit the receipt", verdict["reason"])
+
+    def test_a_named_relationship_still_registers_and_releases(self):
+        """The control: an ordinary receipted readiness is untouched."""
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+
 if __name__ == "__main__":
     unittest.main()
