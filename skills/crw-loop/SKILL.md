@@ -18,7 +18,7 @@ same parent, not a request to start another coordinator or recursively invoke sk
 
 A submitted `$crw-loop <Linear project link>` execution request explicitly requests
 a parent coordination goal and automatic execution of the agreed scope. Designate or
-restore the fixed parent using [Project parent binding](../crw-plan/references/project-binding.md),
+restore the fixed parent using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding),
 then follow [Parent goal lifecycle](references/parent-goal.md) before dispatch. Run alone
 already advances through in-scope successors; Loop adds the goal and automatic host
 continuation. A Loop may also own an explicitly

@@ -608,7 +608,7 @@ binding, another active parent, and a temporary question about a different proje
 An installation still has an old Focus entry after updating the checkout.
 
 Clauses: OPS-2.3, OPS-7.1, OPS-7.2, OPS-8.1; binding decisions belong to
-[Project parent binding](../../../crw-plan/references/project-binding.md).
+[Project parent binding](../../../crw-plan/references/integrations.md#project-parent-binding).
 
 Action: reuse and verify the same parent binding and suitable coordination document.
 Apply supported title/pin changes only within the designation request. Do not create

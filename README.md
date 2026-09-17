@@ -107,7 +107,7 @@ Edits in this checkout are visible through the installed paths immediately. Alre
 ### Retired skill migration
 
 The former `linear-*` entrypoints use CRW names. `crw-focus` is now retired:
-Run and Loop perform [project binding](skills/crw-plan/references/project-binding.md)
+Run and Loop perform [project binding](skills/crw-plan/references/integrations.md#project-parent-binding)
 as shared setup. A request to connect or restore the parent without execution still
 does only that setup. Existing project/task IDs and coordination records remain valid.
 
@@ -244,7 +244,7 @@ intent. The submitted project-run shorthand above does express that intent.
 Host restrictions and explicit current-task, read-only, or no-create limits still
 apply. See [Independent implementation tasks](skills/crw-run/SKILL.md#independent-implementation-tasks).
 
-Run and Loop use the shared [project binding procedure](skills/crw-plan/references/project-binding.md)
+Run and Loop use the shared [project binding procedure](skills/crw-plan/references/integrations.md#project-parent-binding)
 to record project/task IDs in Linear, set the task title and sidebar pin when
 supported, and restore context. Management titles use a concise project summary;
 the binding uses the stable project ID regardless of names or initiative membership.

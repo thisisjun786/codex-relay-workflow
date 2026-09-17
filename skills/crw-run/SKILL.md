@@ -31,7 +31,7 @@ needs a refreshed briefing. Route roadmap authoring to
 ## Determine the requested operation
 
 A submitted `$crw-run <Linear project link>` execution request designates or restores
-this task as the fixed parent using [Project parent binding](../crw-plan/references/project-binding.md)
+this task as the fixed parent using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
 and executes the agreed project scope. Record that scope and delivery boundary,
 including its known blocked successors, rather than equating scope with today's ready
 batch. Reconcile existing work, reuse/create responsible children, verify and integrate
@@ -53,7 +53,7 @@ unsubmitted UI prompt does not activate this shorthand. Host and tool restrictio
 still govern each action, including task creation and goal activation.
 
 - **Plan/prompts:** inspect project state and prepare task packets; do not launch.
-- **Bind/restore only:** apply [Project parent binding](../crw-plan/references/project-binding.md)
+- **Bind/restore only:** apply [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
   and report the connection; do not dispatch children or create a goal.
 - **Dispatch a named batch:** reuse prior authorization and settings, refresh its
   prerequisites, then launch only that batch.
@@ -76,7 +76,7 @@ conversation below; never override host requirements. Apply the shared [delivery
 and inherit existing authorization for coordination records and recovery. Release
 publication, deployment, issue closure, and unrelated messages need scope covering
 those actions. When the user designates this as the fixed management task,
-use [Project parent binding](../crw-plan/references/project-binding.md) for its recorded project link,
+use [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding) for its recorded project link,
 title, and sidebar pin, then continue the authorized execution here.
 
 ## Keep a project run moving
