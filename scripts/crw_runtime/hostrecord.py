@@ -21,10 +21,28 @@ from . import reading
 
 RECORD_NAME = "host-record.json"
 
-# Dimensions a point must carry and a caller must supply. Optional dimensions may be absent
-# on either side; these may not, because an absent one compared as "no constraint" is how a
-# point recorded under an unknown Codex CLI came to match every Codex CLI.
-MANDATORY_DIMENSIONS = ("codexCli", "host")
+# Every dimension a point is compared on, as point field -> caller argument, with the presence
+# policy that decides what an ABSENT value means. The comparison loop is driven from this map
+# and the checks derive their coverage from it, so a dimension added without an entry is not
+# silently uncompared -- it fails the inventory instead.
+#
+# "mandatory" means a value has to be present on both sides: two absences are not agreement,
+# because a point that recorded nothing about the Codex CLI would otherwise match every one.
+# "symmetric" means two absences ARE agreement but one is not: a caller that observed no App
+# Server does not match a point that observed one, which is how a point measured against a
+# different App Server used to be accepted.
+DIMENSIONS = {
+    "install": ("location", "mandatory"),
+    "interpreter": ("interpreter", "mandatory"),
+    "installDigest": ("install_digest", "mandatory"),
+    "codexCli": ("codex_cli", "mandatory"),
+    "host": ("host", "mandatory"),
+    "appServer": ("app_server", "symmetric"),
+}
+
+# Read off a point but not compared as dimensions: these decide whether the point counts at
+# all. Declared so the inventory can tell a gate from a dimension rather than guessing.
+GATES = ("exercised", "digestMatchesDefinition")
 
 
 def state_home(env=None):
@@ -130,46 +148,37 @@ def points_for(record, name, *, location, interpreter, install_digest,
                codex_cli=None, app_server=None, host=None):
     """Points that actually cover this install, this interpreter and these bytes.
 
-    All three have to match. A point recorded for another interpreter is a different
-    combination (OPS-1.3), and a point recorded against different bytes says nothing about
-    the ones installed now.
+    Every dimension in DIMENSIONS has to agree, and what "agree" means when a value is missing
+    is the dimension's declared policy rather than a default. The old default was "a missing
+    value is no constraint", which gave the widest possible answer from the least possible
+    evidence: a caller that could not observe the App Server matched a point measured against
+    a different one, and a point that recorded no Codex CLI matched every CLI.
     """
+    supplied = {"location": location, "interpreter": interpreter,
+                "install_digest": install_digest, "codex_cli": codex_cli,
+                "app_server": app_server, "host": host}
     found = []
     for point in component(record, name).get("measuredPoints", []):
         if not point.get("exercised"):
             continue
-        if point.get("install") != location:
-            continue
-        if point.get("interpreter") != interpreter:
-            continue
-        # The digest of the bytes that were actually exercised, measured at that time.
-        # A point written before this existed carries none and can never qualify, because
-        # nothing in it says which bytes the run covered.
-        if not point.get("installDigest") or point.get("installDigest") != install_digest:
-            continue
-        # Bytes that disagree with the definition are the ones classification calls a fork,
-        # so a point measured against them can never authorize reuse. Recorded as "not
-        # false" rather than "true" so a point written before this field existed stays
-        # readable as the non-qualifying evidence it already was.
+        # Bytes that disagree with the definition are the ones classification calls a fork, so
+        # a point measured against them can never authorize reuse. "Not false" rather than
+        # "true" so a point written before this field existed stays readable as the
+        # non-qualifying evidence it already was.
         if point.get("digestMatchesDefinition") is False:
             continue
-        # The rest of the combination counts too. A point recorded against another Codex
-        # CLI, another App Server or another host describes a run that is not this one,
-        # and reusing it would authorize an installation nobody exercised here (OPS-1.3).
-        #
-        # MANDATORY dimensions have to be readable on BOTH sides. A null on either side used
-        # to mean "do not compare", so a point that recorded nothing about the Codex CLI
-        # matched every CLI instead of none -- the widest possible answer from the least
-        # possible evidence.
-        for field in MANDATORY_DIMENSIONS:
-            wanted = {"codexCli": codex_cli, "host": host}[field]
-            if wanted is None or point.get(field) is None or point.get(field) != wanted:
+        for field, (argument, policy) in DIMENSIONS.items():
+            recorded, wanted = point.get(field), supplied[argument]
+            if recorded is None and wanted is None:
+                if policy == "mandatory":
+                    break
+                continue
+            if recorded is None or wanted is None or recorded != wanted:
                 break
         else:
-            if app_server is not None and point.get("appServer") != app_server:
-                continue
             found.append(point)
     return found
+
 
 # --------------------------------------------------------------- shared safe writing
 

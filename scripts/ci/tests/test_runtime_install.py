@@ -1186,6 +1186,56 @@ class IdentityComparisonTests(unittest.TestCase):
         self.assertIn("responsible relationship", result["evidence"])
 
 
+    def test_an_issue_owned_by_another_child_stops_the_trial_before_any_write(self):
+        import runtime_install
+
+        payload = {"issueKey": "JUN-104", "responsibleRelationship": "rel-old",
+                   "responsibleChild": "some-other-child"}
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root=TRIAL_ROOT, turn_thread="c", turn_id="ti", artifact=[TRIAL_ARTIFACT],
+            dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
+            settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
+        sent = []
+
+        def relay(command, **kwargs):
+            sent.append(command[0])
+            return {"ok": True, "command": list(command), "payload": payload}
+
+        with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "not_verified")
+        self.assertIn("already belongs to child", result["evidence"])
+        self.assertEqual(sent, ["assignment-find"],
+                         "the lookup is the pre-mutation check, so nothing runs after it")
+
+    def test_an_ordinary_repeat_by_the_same_child_still_proceeds(self):
+        # Replay is the identity the trial would register, not an optional flag. Gating on the
+        # flag would have broken the repeat case this branch already established.
+        import runtime_install
+
+        payload = {"issueKey": "JUN-104", "responsibleRelationship": "rel-1",
+                   "responsibleChild": "c"}
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root=TRIAL_ROOT, turn_thread="c", turn_id="ti", artifact=[TRIAL_ARTIFACT],
+            dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
+            settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
+        sent = []
+
+        def relay(command, **kwargs):
+            sent.append(command[0])
+            return {"ok": True, "command": list(command),
+                    "payload": payload if command[0] == "assignment-find"
+                    else _trial_payload(command[0])}
+
+        with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "verified", result["evidence"][:300])
+        self.assertIn("deliver", sent)
+
+
+
 # =========================================================================================
 # Check 3 - every write to a host-owned file happens under the lock that guards it
 # =========================================================================================
@@ -2753,6 +2803,309 @@ class WriteSidePromiseTests(unittest.TestCase):
                              "the directory is still there, so the next install refuses")
             self.assertEqual(result["residualPaths"], [str(owned)])
             self.assertTrue(result["recoveryRequires"])
+
+
+
+
+# =========================================================================================
+# Check 9 - the predicate is applied to the SET, and the set comes from the source
+# =========================================================================================
+
+RELAY_SRC = ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
+
+
+def _point_accesses(tree):
+    """Every access to a point inside points_for, classified or reported as a violation.
+
+    A key is acceptable when it is a string literal, or when it is the variable a loop over the
+    declared DIMENSIONS map binds - that second form IS the derivation, and forbidding it would
+    forbid the only implementation that cannot drift. Any other dynamic key, a point handed to
+    a helper, a comprehension over it, or an unmodelled method is a violation, because each
+    would let a comparison exist that this scan cannot see.
+
+    Appending the whole point to the result is not a comparison and is exempt by name.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "points_for":
+            function = node
+            break
+    else:
+        return ["points_for was not found"], []
+
+    # Names bound by iterating the declared map. A key taken from one of these is the map
+    # driving the comparison, which is the closed form this check exists to require.
+    derived = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.For):
+            iterated = node.iter
+            if isinstance(iterated, ast.Call) and isinstance(iterated.func, ast.Attribute):
+                iterated = iterated.func.value
+            if getattr(iterated, "id", None) == "DIMENSIONS":
+                target = node.target
+                names = target.elts if isinstance(target, ast.Tuple) else [target]
+                for name in names:
+                    if isinstance(name, ast.Name):
+                        derived.add(name.id)
+
+    keys, violations = [], []
+    for node in ast.walk(function):
+        if isinstance(node, ast.Subscript) and getattr(node.value, "id", None) == "point":
+            index = node.slice
+            if isinstance(index, ast.Constant) and isinstance(index.value, str):
+                keys.append(index.value)
+            elif not (isinstance(index, ast.Name) and index.id in derived):
+                violations.append("a point key that is neither a literal nor taken from the"
+                                  " declared map, at line " + str(node.lineno))
+        if isinstance(node, ast.Call):
+            called = node.func
+            if isinstance(called, ast.Attribute) and getattr(called.value, "id", None) == "point":
+                if called.attr != "get":
+                    violations.append("an unmodelled point method at line " + str(node.lineno))
+                elif node.args and isinstance(node.args[0], ast.Constant) \
+                        and isinstance(node.args[0].value, str):
+                    keys.append(node.args[0].value)
+                elif not (node.args and isinstance(node.args[0], ast.Name)
+                          and node.args[0].id in derived):
+                    violations.append("a point key that is neither a literal nor taken from the"
+                                      " declared map, at line " + str(node.lineno))
+            accumulating = (isinstance(called, ast.Attribute) and called.attr == "append")
+            for argument in list(node.args) + [k.value for k in node.keywords]:
+                if getattr(argument, "id", None) == "point" and not accumulating:
+                    violations.append("point passed to a call at line " + str(node.lineno))
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            for generator in node.generators:
+                if getattr(generator.iter, "id", None) == "point":
+                    violations.append("a comprehension over point at line " + str(node.lineno))
+    return violations, keys
+
+
+def _relay_normalization_rules():
+    """The refusal predicates normalize_declared_path enforces, read from the relay's source.
+
+    Derived rather than listed, so a rule the relay adds shows up with no fixture and fails the
+    check instead of quietly not being checked.
+    """
+    tree = ast.parse((RELAY_SRC / "scope.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "normalize_declared_path":
+            return [ast.unparse(branch.test) for branch in ast.walk(node)
+                    if isinstance(branch, ast.If)]
+    return []
+
+
+def _relay_state_selectors():
+    """The explicit store selections the relay resolves, read from its own resolver."""
+    source = (RELAY_SRC / "store.py").read_text(encoding="utf-8")
+    found = set()
+    if "STATE_ENV" in source:
+        found.add("environment")
+    if "explicit" in source:
+        found.add("flag")
+    return found
+
+
+class DimensionCoverageTests(unittest.TestCase):
+    """Every dimension, mutated on its own, must stop a point matching.
+
+    The defect this closes is not a wrong value - every dimension already rejected a mismatch.
+    It is PRESENCE. A caller that observed no App Server matched a point that had observed one,
+    because a missing value was read as "no constraint": the widest possible answer from the
+    least possible evidence.
+    """
+
+    def _point(self):
+        return {"exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
+                "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+                "appServer": "a-server"}
+
+    def _asked(self):
+        return {"location": "/env/pkg", "interpreter": "3.13.1", "install_digest": "abc",
+                "codex_cli": "0.1.0", "host": "a-host", "app_server": "a-server"}
+
+    def _match(self, point, asked):
+        record = hostrecord.empty(1)
+        hostrecord.add_point(record, "codex-session-relay", point)
+        return hostrecord.points_for(record, "codex-session-relay", **asked)
+
+    def test_the_inventory_is_the_comparison_itself(self):
+        violations, keys = _point_accesses(
+            ast.parse((ROOT / "scripts" / "crw_runtime" / "hostrecord.py")
+                      .read_text(encoding="utf-8")))
+        self.assertEqual(violations, [])
+        declared = set(hostrecord.DIMENSIONS) | set(hostrecord.GATES)
+        self.assertEqual(set(keys) - declared, set(),
+                         "a field compared here and declared in neither map")
+
+    def test_the_baseline_matches_so_the_mutations_mean_something(self):
+        self.assertEqual(len(self._match(self._point(), self._asked())), 1)
+
+    def test_every_dimension_mutated_alone_stops_the_match(self):
+        for field, (argument, policy) in hostrecord.DIMENSIONS.items():
+            with self.subTest(field + " differs"):
+                asked = self._asked()
+                asked[argument] = "something-else"
+                self.assertEqual(self._match(self._point(), asked), [], field)
+
+            with self.subTest(field + " missing from the caller"):
+                asked = self._asked()
+                asked[argument] = None
+                self.assertEqual(self._match(self._point(), asked), [],
+                                 field + ": a caller who observed nothing must match nothing")
+
+            with self.subTest(field + " missing from the point"):
+                point = self._point()
+                point.pop(field)
+                self.assertEqual(self._match(point, self._asked()), [],
+                                 field + ": a point that recorded nothing must match nothing")
+
+            with self.subTest(field + " missing from both"):
+                point, asked = self._point(), self._asked()
+                point.pop(field)
+                asked[argument] = None
+                found = self._match(point, asked)
+                if policy == "mandatory":
+                    self.assertEqual(found, [],
+                                     field + " is mandatory: two absences are not agreement")
+                else:
+                    self.assertEqual(len(found), 1,
+                                     field + " is symmetric: two absences agree")
+
+    def test_a_gate_is_not_mutated_as_if_it_were_a_dimension(self):
+        for gate in ("exercised", "digestMatchesDefinition"):
+            with self.subTest(gate):
+                point = self._point()
+                point[gate] = False
+                self.assertEqual(self._match(point, self._asked()), [])
+
+    def test_the_access_scanner_sees_each_violation_form(self):
+        forms = {
+            "a dynamic key": "def points_for(a):\n    key = 'x'\n    return point[key]\n",
+            "a dynamic get": "def points_for(a):\n    key = 'x'\n    return point.get(key)\n",
+            "a key from an undeclared map":
+                "def points_for(a):\n    for f in OTHER:\n        point.get(f)\n",
+            "delegation": "def points_for(a):\n    return helper(point)\n",
+            "a comprehension over point": "def points_for(a):\n    return [k for k in point]\n",
+            "an unmodelled method": "def points_for(a):\n    return point.items()\n",
+        }
+        for label, source in forms.items():
+            with self.subTest(label):
+                violations, _ = _point_accesses(ast.parse(source))
+                self.assertTrue(violations, label + " must be seen")
+        clean = "def points_for(a):\n    return point.get('host') == a and point['install']\n"
+        violations, keys = _point_accesses(ast.parse(clean))
+        self.assertEqual(violations, [])
+        self.assertEqual(sorted(keys), ["host", "install"])
+
+        # The derivation itself must not be a violation, or the only drift-free implementation
+        # would be the one the check forbids.
+        derived = ("def points_for(a):\n    found = []\n"
+                   "    for field, (argument, policy) in DIMENSIONS.items():\n"
+                   "        recorded = point.get(field)\n"
+                   "    found.append(point)\n")
+        violations, _ = _point_accesses(ast.parse(derived))
+        self.assertEqual(violations, [])
+
+
+class RelayRuleCoverageTests(unittest.TestCase):
+    """The preflight asks the relay's question instead of re-deriving the answer.
+
+    Re-deriving is what drifted: a path written with a parent segment compares equal to its own
+    string, so the normalization check passed something the relay rejects.
+    """
+
+    def test_the_rule_set_comes_from_the_relays_own_normalizer(self):
+        rules = _relay_normalization_rules()
+        self.assertTrue(rules, "the relay's normalizer must be readable to derive from")
+        joined = " ".join(rules)
+        for expected in ("isinstance", "startswith", "normpath", "endswith"):
+            self.assertIn(expected, joined,
+                          "a rule the relay enforces that this derivation missed")
+
+    def test_every_derived_rule_has_a_case_the_preflight_refuses(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            root.mkdir()
+            real = root / "result.txt"
+            real.write_text("done", encoding="utf-8")
+            link = root / "link.txt"
+            link.symlink_to(real)
+            cases = {
+                "empty": "",
+                "a NUL": str(root) + "/a\x00b.txt",
+                "relative": "result.txt",
+                "a tilde": "~/result.txt",
+                "not normalized": str(root) + "/../root/result.txt",
+                "a trailing slash": str(root) + "//",
+                "not a regular file": str(root),
+                "a symlink": str(link),
+                "outside the root": str(Path(temporary) / "elsewhere.txt"),
+                "missing": str(root / "gone.txt"),
+            }
+            for label, path in cases.items():
+                with self.subTest(label):
+                    self.assertTrue(runtime_install._unusable_artifacts([path], str(root)),
+                                    label + " must be refused before anything is written")
+            self.assertEqual(runtime_install._unusable_artifacts([str(real)], str(root)), [],
+                             "and a real artifact is not refused")
+
+
+class SelectorCoverageTests(unittest.TestCase):
+    """Both explicit store selections the relay resolves are surveyed.
+
+    A store chosen by the environment used to be skipped entirely, so the summary described
+    whichever store discovery picked while service status, the assignment lookup and the trial
+    all acted on the other one.
+    """
+
+    def test_the_selector_set_comes_from_the_relays_own_resolver(self):
+        self.assertEqual(_relay_state_selectors(), {"flag", "environment"})
+        self.assertEqual(scope.STATE_ENV, "CODEX_SESSION_RELAY_STATE",
+                         "and the name is the relay's, not one written here")
+
+    def test_each_selector_produces_a_selected_reading(self):
+        """Asserted on the argv the reading was made with, not on the key existing.
+
+        The first version of this test asked whether "selected" was present, and it always is:
+        the skipped case is a dict too. A check that cannot fail is the same mistake as a
+        scanner that returns an empty list.
+        """
+        def fake(argv, **kwargs):
+            return {"ok": True, "command": ["relay", *argv], "state": kwargs.get("state"),
+                    "payload": {"store": {"dbPath": "/db"}}}
+
+        for label, flag, environment, expected, via in (
+            ("flag only", "/from/flag", {}, "/from/flag", "flag"),
+            ("environment only", None, {scope.STATE_ENV: "/from/env"}, "/from/env",
+             "environment"),
+            ("both, the flag wins", "/from/flag", {scope.STATE_ENV: "/from/env"},
+             "/from/flag", "flag"),
+        ):
+            with self.subTest(label):
+                with mock.patch.object(scope, "relay", side_effect=fake):
+                    readings = scope.survey(executable="/bin/relay", socket=None, state=flag,
+                                            env=dict(environment))
+                selected = readings["selected"]
+                self.assertNotIn("skipped", selected,
+                                 label + ": the selected store must actually be read")
+                self.assertEqual(selected["state"], expected,
+                                 label + ": and read at the store that was selected")
+                self.assertEqual(readings["selectedVia"], via)
+
+    def test_no_selection_at_all_is_reported_as_such_rather_than_invented(self):
+        def fake(argv, **kwargs):
+            return {"ok": True, "command": list(argv), "payload": {}}
+
+        with mock.patch.object(scope, "relay", side_effect=fake):
+            readings = scope.survey(executable="/bin/relay", socket=None, state=None, env={})
+        self.assertIn("skipped", readings["selected"])
+        self.assertIsNone(readings["selectedVia"])
+
+    def test_discovery_passes_no_explicit_selection(self):
+        answer = scope.relay(["--version"], executable=sys.executable, discovery=True,
+                             env={**os.environ, scope.STATE_ENV: "/from/env"})
+        self.assertNotIn("--state", answer["command"])
 
 
 if __name__ == "__main__":

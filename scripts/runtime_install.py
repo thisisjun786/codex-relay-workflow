@@ -130,6 +130,8 @@ def resolve_entry_point(console_script, override=None):
 
 def interpreter_of(entry_point):
     """The interpreter a console script is bound to, read from its shebang."""
+    if entry_point is None:
+        return None
     try:
         first = Path(entry_point).read_text(encoding="utf-8", errors="replace").splitlines()[0]
     except (OSError, IndexError):
@@ -190,7 +192,7 @@ def recorded_roots(record, name):
 
 
 def classify_component(component, *, record, entry_override=None, registration=None,
-                       record_state=None):
+                       record_state=None, app_server=None):
     """Gather the four OPS-2.1 signals and classify."""
     unreadable = []
     entry = resolve_entry_point(component["consoleScript"], entry_override)
@@ -245,18 +247,22 @@ def classify_component(component, *, record, entry_override=None, registration=N
         # through would drop the Codex CLI from the comparison entirely, and a point measured
         # under another CLI would then carry this component to 'own' (OPS-1.3, OPS-2.1).
         unreadable.append("the Codex CLI version")
+    if app_server is None:
+        # The App Server is a dimension of the combination a point describes, so a
+        # classification that never observed one cannot say a recorded run covers the run
+        # happening now. Reported as the unread signal it is rather than skipped, which is how
+        # a point measured against a different App Server used to carry a component to own.
+        unreadable.append("the App Server identity")
     if record is None:
-        # Which failure it was, not merely that there was one: a record that could not be
-        # reached and a record whose shape could not be read are different problems with
-        # different answers, and a classification that says only 'unreadable' hides that.
+        # Which failure it was, not merely that there was one.
         unreadable.append("the host record (" + str(record_state or reading.UNREADABLE) + ")")
-    elif codex_cli is not None and location and version:
+    elif codex_cli is not None and app_server is not None and location and version:
         # Each unreadable signal is recorded on its own. Reporting only the first would hide
         # the others, and every one of them independently stops the classification.
         points = hostrecord.points_for(
             record, component["component"], location=location,
             interpreter=version, install_digest=current_digest,
-            codex_cli=codex_cli, host=socket.gethostname(),
+            codex_cli=codex_cli, app_server=app_server, host=socket.gethostname(),
         )
 
     conflict = None
@@ -367,10 +373,15 @@ def cmd_diagnose(args):
     relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
 
     registration = registration_state(codex_home, args.bridge_command or "", args.bridge_arg or [])
+    # One read-only observation, shared by every component's classification. Without it the
+    # App Server dimension is unread and no recorded point can be said to cover this run.
+    app_server = observe_app_server(
+        interpreter_of(resolve_entry_point(bridge["consoleScript"], args.bridge_command))
+        or sys.executable, args.socket)
     try:
         classes = {
             c["component"]: classify_component(
-                c, record=record, record_state=host_record.state,
+                c, record=record, record_state=host_record.state, app_server=app_server,
                 entry_override=args.relay_command if c["component"] == "codex-session-relay" else None,
                 registration=registration if c["component"] == "codex-thread-bridge" else None,
             )
@@ -541,6 +552,29 @@ def _mcp_exposed(registration, observed):
     )
 
 
+def observe_app_server(python, socket_path=None):
+    """The App Server this host is talking to, observed now.
+
+    The bridge's own read-only check starts the MCP server, lists its tools and calls
+    get_capabilities, and its connection block is the identity a point records. Diagnosis makes
+    its own observation rather than reading the one out of the point it is about to compare
+    against, because a comparison against a value copied from its own subject is vacuous.
+    """
+    bridge = next(c for c in definition.load()["components"]
+                  if c["component"] == "codex-thread-bridge")
+    argv = [str(python), str(ROOT / bridge["exerciseScript"])]
+    if socket_path:
+        argv += ["--socket", str(socket_path)]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=180)
+        payload = json.loads(done.stdout) if done.stdout.strip() else {}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if done.returncode != 0 or not payload.get("connection"):
+        return None
+    return json.dumps(payload["connection"])
+
+
 def _bridge_identity_tool():
     bridge = next(c for c in definition.load()["components"]
                   if c["component"] == "codex-thread-bridge")
@@ -623,45 +657,86 @@ def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
     ]
 
 
+RELAY_SOURCE = ROOT / "packages" / "codex-session-relay" / "src"
+
+
+def _relay_normalizes(paths):
+    """Ask the relay's own normalizer, in its own source, what it refuses.
+
+    Reimplementing this drifted: a path written with a parent segment compares equal to its own
+    string, so a "is it already normalised" check written here passed something the relay
+    rejects at emit, after four mutating steps. The rule belongs to the relay, so the question
+    goes to the relay rather than to a second copy of it.
+
+    Returns (refusals, reason). A reason means the question could not be asked, which is a
+    refusal of its own - never a fallback to an approximation.
+    """
+    probe = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from codex_session_relay.scope import normalize_declared_path\n"
+        "out = {}\n"
+        "for path in json.loads(sys.argv[2]):\n"
+        "    try:\n"
+        "        normalize_declared_path(path)\n"
+        "    except Exception as error:\n"
+        "        out[path] = type(error).__name__ + ': ' + str(error)\n"
+        "print(json.dumps(out))\n"
+    )
+    argv = [sys.executable, "-c", probe, str(RELAY_SOURCE), json.dumps(list(paths))]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {}, "the relay's normalizer could not be run: " + type(error).__name__
+    if done.returncode != 0:
+        return {}, ("the relay's normalizer could not be asked: "
+                    + (done.stderr or "").strip()[-200:])
+    try:
+        return json.loads(done.stdout), None
+    except ValueError:
+        return {}, "the relay's normalizer returned nothing readable"
+
+
 def _unusable_artifacts(artifacts, root):
     """Why the relay would refuse each artifact, checked before anything is written.
 
-    The relay hashes every declared path while building the manifest and requires an already
-    normalised absolute path, a regular file, and no symbolic link at any component. A
-    readable symlink pointing inside the root still fails, and so does an existing path
-    written as /root/./name. Checked here so a typo costs nothing instead of four mutating
-    steps; the relay still revalidates, because a path can change in between.
+    The path shape is the relay's own rule, asked of the relay's own function. What remains
+    here is what that function deliberately does not cover: the file has to exist, be a regular
+    file with no symbolic link at any component, be readable, and be inside the declared root.
     """
+    paths = [str(raw) for raw in (artifacts or [])]
+    if not paths:
+        return []
+    refusals, reason = _relay_normalizes(paths)
+    if reason:
+        return [reason + "; artifacts are not checked against a second copy of the rule"]
+
     problems = []
     base = Path(str(root))
-    for raw in artifacts or []:
-        path = Path(str(raw))
-        if not path.is_absolute():
-            problems.append(str(raw) + " is not an absolute path")
+    for raw in paths:
+        if raw in refusals:
+            problems.append(raw + ": " + refusals[raw])
             continue
-        if str(path) != str(raw):
-            problems.append(str(raw) + " is not normalised; the relay compares the path as"
-                            " given")
-            continue
+        path = Path(raw)
         try:
             if not path.exists():
-                problems.append(str(raw) + " does not exist")
+                problems.append(raw + " does not exist")
                 continue
             if not path.is_file() or path.is_symlink():
-                problems.append(str(raw) + " is not a regular file")
+                problems.append(raw + " is not a regular file")
                 continue
             if any(part.is_symlink() for part in list(path.parents)):
-                problems.append(str(raw) + " has a symbolic link in its path")
+                problems.append(raw + " has a symbolic link in its path")
                 continue
             path.open("rb").close()
         except OSError as error:
-            problems.append(str(raw) + " could not be read: " + type(error).__name__)
+            problems.append(raw + " could not be read: " + type(error).__name__)
             continue
         try:
             if not (path == base or base in path.parents):
-                problems.append(str(raw) + " is not inside the artifact root " + str(base))
+                problems.append(raw + " is not inside the artifact root " + str(base))
         except (OSError, ValueError):
-            problems.append(str(raw) + " could not be compared with the artifact root")
+            problems.append(raw + " could not be compared with the artifact root")
     return problems
 
 
@@ -786,14 +861,33 @@ def _trial(args, relay_executable):
             " cannot produce that, and this is the part it can."
         ),
     }
+    # The lookup is the trial's pre-mutation store check, so its ANSWER is consulted, not only
+    # whether it ran. An issue that already has a responsible relationship belongs to that
+    # child; registering a second one is refused by the relay, and settings would be written
+    # first. Replay is decided by the identity the trial would register -- parent, child and
+    # issue -- rather than by an optional flag, so an ordinary repeat still proceeds.
+    payload = found.get("payload")
+    responsible = payload.get("responsibleRelationship") if isinstance(payload, dict) else None
+    responsible_child = payload.get("responsibleChild") if isinstance(payload, dict) else None
+    assignment["responsibleRelationship"] = responsible
+    assignment["responsibleChild"] = responsible_child
+    if responsible and str(responsible_child) != str(args.child_task):
+        return check.field(
+            "not_verified",
+            "issue " + str(args.issue) + " already belongs to child "
+            + str(responsible_child) + " under " + str(responsible) + ", and this trial would"
+            " register " + str(args.child_task) + ". The relay refuses the second assignment,"
+            " so proceeding would write settings for a trial that cannot complete. Nothing was"
+            " written.",
+            command=json.dumps(performed[-1]["command"]),
+            acting_process=acting_process(), measured_at=now(),
+        )
+
     if args.expect_relationship:
         # Compared against the field that names the responsible relationship, not against the
         # serialized answer. A substring test over the payload matches an archived assignment
         # sitting anywhere in it, so the guard meant to prove this process reads the expected
         # store would pass against a store where that relationship is closed.
-        payload = found.get("payload")
-        responsible = payload.get("responsibleRelationship") if isinstance(payload, dict) else None
-        assignment["responsibleRelationship"] = responsible
         assignment["comparedField"] = "responsibleRelationship"
         assignment["agrees"] = responsible is not None and responsible == args.expect_relationship
         if not assignment["agrees"]:
@@ -1093,7 +1187,10 @@ def cmd_install(args):
             name = component["component"]
             verdicts[name] = classify_component(
                 component, record=staged.value,
-                entry_override=installs[name]["entryPoint"])
+                entry_override=installs[name]["entryPoint"],
+                # Freshly observed by the measurement this promotion is about, so measurement,
+                # classification and promotion all speak about the same App Server.
+                app_server=measurement.get("appServer"))
         unqualified = {n: {"class": v["class"], "reasons": v["reasons"]}
                        for n, v in verdicts.items() if not ownership.reusable(v["class"])}
         if unqualified:

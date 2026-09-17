@@ -103,10 +103,20 @@ def survey(*, executable, socket, state=None, env=None):
                sees because it enumerates child directories only
     """
     root = default_state_root(env)
+    # The relay resolves an explicit selection from TWO places: --state and the environment
+    # variable. Surveying only the flag meant a store chosen by the environment was never read,
+    # so the summary described whichever store discovery picked while service status, the
+    # assignment lookup and the trial all acted on the other one.
+    source = os.environ if env is None else env
+    selection = state or source.get(STATE_ENV)
+    selected_via = "flag" if state else ("environment" if source.get(STATE_ENV) else None)
     readings = {
         "discovery": relay(["doctor"], executable=executable, socket=socket, env=env, discovery=True),
-        "selected": relay(["doctor"], executable=executable, socket=socket, state=state, env=env)
-        if state else {"ok": False, "skipped": "no explicit state directory was selected"},
+        "selected": relay(["doctor"], executable=executable, socket=socket, state=selection,
+                          env=env)
+        if selection else {"ok": False, "skipped": "no store is explicitly selected: neither"
+                                                   " --state nor " + STATE_ENV + " is set"},
+        "selectedVia": selected_via,
     }
     if (root / "relay.sqlite3").is_file():
         readings["rootCandidate"] = relay(
