@@ -95,6 +95,15 @@ class AckService:
 
         This is what makes a duplicate delivery harmless: a second arrival of the same event
         cannot obtain the claim, so the parent does not run the work again.
+
+        The one thing that reopens it is the canonical criteria moving. Editing a criterion
+        invalidates the review bound to the old wording, and the refusal that follows says to
+        claim the review again - which an unconditional INSERT OR IGNORE made impossible. The
+        review could then never be finished, and an event id is derived from the artifact
+        revision, so re-emitting unchanged bytes produced no new event to claim either: the
+        assignment stayed blocked until the child changed a byte it had no reason to change.
+        Re-claiming is allowed exactly where the set moved and nothing else did, so a duplicate
+        delivery still cannot obtain the claim (I-54).
         """
         now = self.clock.iso()
         with self.store.transaction() as db:
@@ -104,14 +113,73 @@ class AckService:
                 (event_id, turn_id, now),
             )
             claimed = cursor.rowcount == 1
-            if claimed:
+            reclaimed = False
+            if not claimed and self._re_review_open(
+                db, event_id, self.criteria.bound_digest(event_id)
+            ):
+                db.execute(
+                    "UPDATE verification_claims SET claim_turn_id = ?, claimed_at = ?"
+                    " WHERE event_id = ?",
+                    (turn_id, now, event_id),
+                )
+                # bind_review is INSERT OR IGNORE, so the stale binding has to go first. The
+                # whole point of re-claiming is to pin the review to the set in force NOW.
+                db.execute("DELETE FROM claim_context WHERE event_id = ?", (event_id,))
+                reclaimed = True
+            if claimed or reclaimed:
                 event = self.intake.row(event_id)
                 if event is not None:
                     # Bind this review to the criteria set as it stands now. Editing a
                     # criterion's text later then invalidates the review instead of being
                     # silently certified by findings made against the earlier wording.
-                    self.criteria.bind_review(db, event["relationship_id"], event_id)
-        return "proceed" if claimed else "already_claimed"
+                    digest = self.criteria.bind_review(db, event["relationship_id"], event_id)
+                    if reclaimed:
+                        self.store.journal(
+                            "review_reclaimed", event_id,
+                            {"setDigest": digest, "claimTurnId": turn_id}, at=now,
+                        )
+        # "proceed" either way: a re-claim means the caller holds the review and may rule on
+        # it, which is exactly what this word tells every existing caller. That a review was
+        # reopened is recorded in the journal rather than smuggled into a return value callers
+        # compare against a fixed string.
+        return "proceed" if (claimed or reclaimed) else "already_claimed"
+
+    def _re_review_open(self, db, event_id, decided_digest) -> bool:
+        """Has the criteria set moved out from under a review already decided against it?
+
+        One condition for both entry points - claiming and ruling - so the two can never
+        disagree about whether a re-review is open. It is the state AssignmentView already
+        reports as re_review_needed, read from the same records: the set in force differs from
+        the one this review was decided against, the event is still the revision this generation
+        stands on, and any ruling already recorded for it is a verified one.
+
+        needs_changes is excluded because it already moved the assignment to a new generation,
+        whose revision arrives as its own event with its own claim; aborted ends the assignment.
+        For either of those, a second ruling on the old event would be a second allocation
+        rather than a re-review.
+
+        Currency is required for the same reason record_verdict requires it: without it a
+        verified ruling on an event some later generation left behind could be rewritten, and
+        the view does not call that event re_review_needed in the first place.
+        """
+        settled = db.execute(
+            "SELECT verdict FROM verdicts WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        if settled is not None and settled["verdict"] != "verified":
+            return False
+        event = self.intake.row(event_id)
+        if event is None:
+            return False
+        registered = self.criteria.get(event["relationship_id"])
+        if decided_digest == (registered["setDigest"] if registered else None):
+            return False
+        relationship = db.execute(
+            "SELECT * FROM relationships WHERE relationship_id = ?",
+            (event["relationship_id"],),
+        ).fetchone()
+        if relationship is None:
+            return False
+        return bool(currency_of(db, relationship, event)["current"])
 
     def claim_holder(self, event_id: str):
         return self.store.one(
@@ -133,8 +201,7 @@ class AckService:
             )
         existing = self.store.one("SELECT * FROM acks WHERE event_id = ?", (event_id,))
         if existing is not None and existing["verified"] == "verified":
-            return json.loads(existing["record"])
-        self._upgrading = existing is not None
+            return self._settled_ack(existing)
         if row["state"] not in (DISPATCHED, INBOX_ONLY):
             raise AckRefused(
                 RefusalReason.NOT_CLAIMABLE,
@@ -158,6 +225,19 @@ class AckService:
         # Everything that decides the disposition happens INSIDE the write transaction, so a
         # generation that advances between the caller's view and this write cannot be accepted.
         with self.store.transaction() as db:
+            # Re-read FIRST, for the same reason the disposition below is computed here: the
+            # read above happens outside the lock and can be raced. Two processes disposing of
+            # one event both passed it, and whichever committed second overwrote the first.
+            # The taxonomy decided which one that was: evaluate() reports duplicate_event for a
+            # settled event, but the conflict guard refused it only for accepted=True, so a
+            # rejection carried on into the upsert and replaced a verified acceptance. A
+            # verified acknowledgement is settled, whatever the second caller asked for, and it
+            # is told what stands instead of being allowed to replace it.
+            already = db.execute(
+                "SELECT * FROM acks WHERE event_id = ?", (event_id,)
+            ).fetchone()
+            if already is not None and already["verified"] == "verified":
+                return self._settled_ack(already)
             fresh = self.delivery.find(event_id)
             if fresh is None or fresh["state"] not in (DISPATCHED, INBOX_ONLY, ACKNOWLEDGED):
                 raise AckRefused(
@@ -228,6 +308,20 @@ class AckService:
         result["_verified"] = verification
         return result
 
+    @staticmethod
+    def _settled_ack(existing) -> dict:
+        """What a caller gets when this acknowledgement was already settled, possibly by someone else.
+
+        The stored record exactly as written, plus the two facts a caller cannot read off it:
+        that it is verified, and that it is not the disposition this call asked for. Without the
+        first, a caller checking _verified attaches a "not established yet" note to an
+        acknowledgement that is in fact established.
+        """
+        record = json.loads(existing["record"])
+        record["_verified"] = existing["verified"]
+        record["_replay"] = True
+        return record
+
     def _verify_ack_turn(self, row, ack_turn_id, adapter) -> str:
         """An acknowledgement has to come from a real turn that started after the delivery.
 
@@ -293,6 +387,13 @@ class AckService:
 
         No parameter disables the check. An override on the public API writes exactly the stale
         completion this guard exists to prevent, whether or not a CLI flag exposes it.
+
+        A replay is not the same thing as a re-review. Editing the canonical criteria after a
+        verified ruling is already reported as re_review_needed, but every attempt to actually
+        re-review returned the historical record before it looked at the new set, so the
+        assignment could not be completed against the criteria it was now being judged by. The
+        replay stands for everything that has not moved; where the set moved under a verified
+        ruling on the current revision, this rules again.
         """
         if verdict not in VERDICTS:
             raise AckRefused(RefusalReason.DISPOSITION_CONFLICT, f"unknown verdict {verdict!r}")
@@ -301,9 +402,15 @@ class AckService:
 
         with self.store.transaction() as db:
             settled = db.execute(
-                "SELECT record FROM verdicts WHERE event_id = ?", (event_id,)
+                "SELECT v.record AS record, c.set_digest AS set_digest FROM verdicts v"
+                "  LEFT JOIN verdict_context c ON c.event_id = v.event_id"
+                " WHERE v.event_id = ?",
+                (event_id,),
             ).fetchone()
-            if settled is not None:
+            re_review = settled is not None and self._re_review_open(
+                db, event_id, settled["set_digest"]
+            )
+            if settled is not None and not re_review:
                 record = json.loads(settled["record"])
                 # Historical, and marked as such. A replay returns what was decided; it is
                 # never a fresh completion, and the assignment state is read from the head
@@ -404,20 +511,45 @@ class AckService:
 
             db.execute(
                 "INSERT INTO verdicts (event_id, record, verdict, next_generation,"
-                " verdict_turn_id, decided_at) VALUES (?,?,?,?,?,?)",
+                " verdict_turn_id, decided_at) VALUES (?,?,?,?,?,?)"
+                " ON CONFLICT(event_id) DO UPDATE SET record = excluded.record,"
+                " verdict = excluded.verdict, next_generation = excluded.next_generation,"
+                " verdict_turn_id = excluded.verdict_turn_id, decided_at = excluded.decided_at",
                 (
                     event_id, json.dumps(record), verdict,
                     record.get("nextExecutionGeneration"), verdict_turn_id, now,
                 ),
             )
             self.store.journal("verdict_recorded", event_id, {"verdict": verdict}, at=now)
+            if re_review:
+                # The schema has one verdict row per event and this change adds no table, so
+                # the ruling being replaced is kept where an append-only record already exists.
+                # Both digests travel with it: the pair is what made the old ruling history.
+                self.store.journal(
+                    "verdict_superseded", event_id,
+                    {
+                        "supersededVerdict": json.loads(settled["record"]),
+                        "reviewedSetDigest": settled["set_digest"],
+                        "currentSetDigest": cover.get("setDigest"),
+                    },
+                    at=now,
+                )
             # Everything the frozen contract has no room for. verdicts.record stays exactly
             # what verification-verdict.json allows; this is the relay-owned sidecar.
             db.execute(
                 "INSERT INTO verdict_context (event_id, set_digest, coverage, findings, reason,"
                 " currency, head_event_id, head_revision, ack_evidence, recorded_at)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?)"
-                " ON CONFLICT(event_id) DO NOTHING",
+                # A conflict here is now reachable in exactly one way, a re-review, and leaving
+                # the old digest in place would leave the assignment reading re_review_needed
+                # forever - the deadlock wearing a different hat. A concurrent replay never
+                # reaches this statement: it returns above, serialised by BEGIN IMMEDIATE.
+                " ON CONFLICT(event_id) DO UPDATE SET set_digest = excluded.set_digest,"
+                " coverage = excluded.coverage, findings = excluded.findings,"
+                " reason = excluded.reason, currency = excluded.currency,"
+                " head_event_id = excluded.head_event_id,"
+                " head_revision = excluded.head_revision,"
+                " ack_evidence = excluded.ack_evidence, recorded_at = excluded.recorded_at",
                 (
                     event_id, cover.get("setDigest"), cover["coverage"],
                     json.dumps(findings) if findings else None, reason,

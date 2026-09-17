@@ -84,12 +84,15 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-51b | The delivered message contains no parent turn id | asserted by test | implemented |
 | I-52 | An acknowledging turn must have started after the delivery | compared against the attempt's observation time | implemented |
 | I-53 | An unverifiable turn does not close the attempt | stored as unverified; the delivery state is unchanged | implemented |
-| I-54 | Duplicate delivery cannot cause a second verification | `ack.claim_verification` is an idempotent insert keyed on event id | implemented |
+| I-54 | Duplicate delivery cannot cause a second verification | `ack.claim_verification` is an idempotent insert keyed on event id, reopened only where `ack._re_review_open` holds | implemented |
 | I-55 | A revision routes to the same child under a new generation | `ack.record_verdict` opens the generation on the same relationship | implemented |
 | I-73 | A verdict requires an acknowledged event | `ack.record_verdict` | implemented |
 | I-74 | The child must be an authorized recipient before a revision is queued | checked before anything is written | implemented |
 | I-76 | The reverse direction is stored as a relay-internal record, outside the parent-shaped schemas | delivery rows carry a kind; conformance validation partitions by kind | implemented |
 | I-77 | Acknowledgement and disposition evaluation are unreachable for a revision request | kind guards raise | implemented |
+| I-143 | A verified acknowledgement is settled, and a competing disposition cannot replace it | `ack.acknowledge` re-reads the acknowledgement as the first statement inside its write transaction and returns the stored record whatever the caller asked for | implemented |
+| I-144 | A criteria edit is re-reviewable exactly where the view calls it re_review_needed: a verified ruling, or a claimed review, on the revision this generation still stands on | `ack._re_review_open`, the single condition both `claim_verification` and `record_verdict` read | implemented |
+| I-145 | A re-review replaces what the assignment stands on, never the record of deciding it | `ack.record_verdict` journals `verdict_superseded` with the replaced ruling and both criteria digests | implemented |
 
 ## Bounds
 
@@ -185,3 +188,4 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | `disable` writes the shared intent without the lock when the holder looks like ours | when acquisition fails and the record classifies as this installation's, the intent write happens outside the lock. A replacement can acquire the lock in that window, and the write then lands on a supervisor this command never examined, which obeys it at its next worker boundary. `enable` has the same shape. The refusal paths are unaffected; this is the accept path |
 | `start` confirms from a record and a separate lock probe | it reads a record matching its own launch id, then probes the lock, then reports success - and a replacement can hold the lock while that record still describes the launch which published it. It also reports before re-checking child exit, so a supervisor that published readiness and then died can be reported as started |
 | These are forward fixes | per-assignment settlement does not restore claims a previous global settlement already suppressed, and capped-state annotation does not reach deliveries whose generation advanced before it existed. Historical repair is separate work with its own evidence |
+| A re-review is not re-synchronised when it lands on the same disposition | `sync` derives `sync_id` from target, ref, kind, relationship, event, generation, revision and verdict, and enqueues with `INSERT OR IGNORE`. The criteria digest is not part of that identity, so a re-review that rules `verified` a second time produces the same id and no second job: the coordination document keeps the summary written against the earlier wording. A re-review that changes the disposition does enqueue. The local record is complete either way - `verdict_context.set_digest` carries the set actually ruled on and the `verdict_superseded` journal entry carries both digests - so this is a gap in what is pushed outward, not in what is known |
