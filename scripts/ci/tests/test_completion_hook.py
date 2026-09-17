@@ -1,0 +1,524 @@
+"""The completion hook adapter, exercised against a fake relay in temporary destinations.
+
+Nothing here reads or changes a real Codex home, an installed runtime, an MCP registration or
+an operational database. The relay is a script this file writes, so no case depends on what
+happens to be installed on the machine running it, and a host whose relay predates the guard is
+one of the cases rather than an obstacle to running them.
+
+What these establish: that the adapter calls the guard the way the contract fixes, that it
+cannot cost a turn when anything goes wrong, and that the answers it gives about its own
+failures stay distinct from each other and from the guard's. What they do not establish: that a
+real Codex host invoked it, honoured its output, or delivered a hold. That is the separate
+evidence the hook contract's packet and this repository's status command keep apart.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from crw_runtime import completion, hooks, reading
+
+import runtime_install
+
+ENTRY_POINT = ROOT / "scripts" / completion.ENTRY_POINT_NAME
+
+# A Stop payload with the nine fields the host was observed to deliver. Used as delivered, and
+# never as a template a case may quietly trim: the adapter's contract is that it forwards what
+# arrives, so a case that wants a different payload says so.
+STOP = {
+    "cwd": "/tmp/workspace",
+    "hook_event_name": "Stop",
+    "last_assistant_message": "I finished the task.",
+    "model": "test-model",
+    "permission_mode": "default",
+    "session_id": "01a0b109-1ea5-7fb3-9adc-87f45ed83688",
+    "stop_hook_active": False,
+    "transcript_path": "/tmp/transcript.jsonl",
+    "turn_id": "turn-1",
+}
+
+RELEASED = {"decision": "release", "state": "unmanaged", "observation": "unmanaged",
+            "reason": "No marker names this workspace.", "assignmentId": None,
+            "counters": {}, "recordedAs": None, "hook_output": {}}
+
+HELD = {"decision": "block", "state": "receipt_missing", "observation": "receipt_missing",
+        "reason": "This turn declared itself ready for review and no receipt names it.",
+        "assignmentId": "a" * 64, "counters": {"holdsThisTurn": 0},
+        "recordedAs": "hook/s/t/0.json",
+        "hook_output": {"decision": "block",
+                        "reason": "This turn declared itself ready for review and no receipt"
+                                  " names it.", "continue": True}}
+
+
+def fake_relay(directory, *, stdout="", code=0, sleep=0.0, record=None):
+    """A stand-in relay that records how it was called and answers as the case requires."""
+    path = Path(directory) / "codex-session-relay"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys, time\n"
+        "time.sleep(" + repr(float(sleep)) + ")\n"
+        "payload = sys.stdin.buffer.read().decode('utf-8', 'replace')\n"
+        "record = " + repr(str(record) if record else "") + "\n"
+        "if record:\n"
+        "    open(record, 'w').write(json.dumps({'argv': sys.argv[1:], 'stdin': payload}))\n"
+        "sys.stdout.write(" + repr(stdout) + ")\n"
+        "raise SystemExit(" + repr(int(code)) + ")\n",
+        encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
+    return path
+
+
+def settings(directory, **overrides):
+    document = completion.configuration(
+        relay=str(Path(directory) / "codex-session-relay"),
+        marker_root=str(Path(directory) / "marker"),
+        journal_root=str(Path(directory) / "journal"),
+        codex_home=str(directory), issue="CRW-37")
+    document.update(overrides)
+    path = completion.configuration_path(Path(directory))
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return document
+
+
+def journalled(directory):
+    root = Path(directory) / "journal"
+    return [json.loads(entry.read_text(encoding="utf-8"))
+            for day in sorted(root.glob("*")) for entry in sorted(day.glob("*.json"))]
+
+
+class TheCallToTheGuard(unittest.TestCase):
+    """Criterion 1: the confirmed event and output contract, and the guard's own flags."""
+
+    def test_the_payload_reaches_the_guard_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            seen = Path(temporary) / "seen.json"
+            fake_relay(temporary, stdout=json.dumps(RELEASED), record=seen)
+            settings(temporary)
+            answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
+                                    environ={})
+            call = json.loads(seen.read_text(encoding="utf-8"))
+        self.assertIsNone(answer, "a release prints nothing at all")
+        self.assertEqual(json.loads(call["stdin"]), STOP,
+                         "the guard is handed what the host delivered, not a reconstruction")
+        self.assertEqual(call["argv"][0], completion.GUARD_COMMAND)
+
+    def test_the_marker_root_is_always_named_and_the_clock_never_is(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            seen = Path(temporary) / "seen.json"
+            fake_relay(temporary, stdout=json.dumps(RELEASED), record=seen)
+            settings(temporary)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            call = json.loads(seen.read_text(encoding="utf-8"))
+        self.assertIn("--marker-root", call["argv"],
+                      "the host process does not carry the coordinator's environment, so a root"
+                      " left unnamed would resolve somewhere else and read every workspace as"
+                      " unmanaged")
+        self.assertNotIn("--now", call["argv"], "the time a decision is made is the guard's")
+        self.assertNotIn("--db-path", call["argv"],
+                         "an unconfigured database must stay unnamed, or the dbPath the"
+                         " coordinator recorded in its own intent becomes unreachable")
+        self.assertNotIn("--mode", call["argv"], "observe is the guard's own default")
+
+    def test_a_configured_database_and_hold_mode_are_named(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            seen = Path(temporary) / "seen.json"
+            fake_relay(temporary, stdout=json.dumps(RELEASED), record=seen)
+            settings(temporary, dbPath="/tmp/relay.sqlite", mode=completion.HOLD)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            call = json.loads(seen.read_text(encoding="utf-8"))
+        self.assertIn("--db-path", call["argv"])
+        self.assertEqual(call["argv"][call["argv"].index("--mode") + 1], completion.HOLD)
+
+    def test_a_held_turn_prints_the_block_the_guard_produced(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(HELD))
+            settings(temporary)
+            answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
+                                    environ={})
+        self.assertEqual(json.loads(answer),
+                         {"decision": "block", "reason": HELD["hook_output"]["reason"],
+                          "continue": True})
+
+    def test_a_block_carrying_no_prompt_is_not_delivered(self):
+        """The host reports a block with no reason as a failed run that continues nothing, so
+        delivering one would spend a turn's hold on a prompt the model never sees."""
+        for answer in ({"decision": "block", "continue": True},
+                       {"decision": "block", "reason": "   ", "continue": True},
+                       {"decision": "allow", "reason": "x"}):
+            with self.subTest(answer=answer):
+                self.assertIsNone(completion.hook_output({"hook_output": answer}))
+
+
+class NoTurnIsEverCostByThisAdapter(unittest.TestCase):
+    """Criterion 4: ordinary turns, and every failure of this adapter, end normally."""
+
+    def _entry_point(self, temporary, payload):
+        return subprocess.run(
+            [sys.executable, str(ENTRY_POINT)], input=payload, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, timeout=60,
+            env={**os.environ, "CODEX_HOME": str(temporary)})
+
+    def test_the_entry_point_exits_zero_and_stays_silent_when_the_relay_rejects_the_call(self):
+        """The case that actually occurs: a relay built before the guard existed. Its argument
+        parser exits 2 with a usage message, and exit 2 is the host's blocking code."""
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout="", code=2)
+            settings(temporary)
+            done = self._entry_point(temporary, json.dumps(STOP).encode("utf-8"))
+        self.assertEqual(done.returncode, 0, "exit 2 from anything inside must not escape")
+        self.assertEqual(done.stdout, b"", "a turn is not held because a runtime is too old")
+        self.assertEqual(done.stderr, b"", "stderr is the host's other continuation channel")
+
+    def test_the_entry_point_exits_zero_on_a_payload_that_is_not_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            done = self._entry_point(temporary, b"not json at all")
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, b"")
+        self.assertEqual(done.stderr, b"")
+
+    def test_the_entry_point_exits_zero_with_no_settings_at_all(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            done = self._entry_point(temporary, json.dumps(STOP).encode("utf-8"))
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, b"")
+
+    def test_the_entry_point_parses_no_arguments(self):
+        """A hook file can carry a flag this adapter never had. argparse would exit 2 on it,
+        and the host would read that as a hold with a usage message for its prompt."""
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            done = subprocess.run(
+                [sys.executable, str(ENTRY_POINT), "--some-flag-from-an-older-install"],
+                input=json.dumps(STOP).encode("utf-8"), stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, timeout=60,
+                env={**os.environ, "CODEX_HOME": str(temporary)})
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stderr, b"")
+
+    def test_a_guard_that_never_answers_is_killed_and_the_turn_ends(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(HELD), sleep=10)
+            settings(temporary, timeoutSeconds=1)
+            answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
+                                    environ={})
+            records = journalled(temporary)
+        self.assertIsNone(answer)
+        self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_TIMED_OUT)
+        self.assertEqual(records[0]["processEnding"], completion.TIMED_OUT)
+
+    def test_no_answer_this_adapter_gives_by_itself_holds_a_turn(self):
+        held = [outcome for outcome in completion.OUTCOMES if outcome in completion.ANSWERED]
+        self.assertEqual(held, [completion.GUARD_ANSWERED],
+                         "only a verdict the guard reached may reach stdout; every other"
+                         " outcome is this adapter failing, and a detector that fails must"
+                         " not cost the turn it failed on")
+
+
+class FailuresStayApart(unittest.TestCase):
+    """Invariant 1 and criterion 6: a reading that did not happen is never another's answer."""
+
+    def test_a_refused_request_and_a_rejected_call_are_different_answers(self):
+        """Both exit 2. One is the relay declining a request it understood; the other is its
+        argument parser refusing before any command ran, which is what a runtime without this
+        subcommand looks like. They are repaired in different places."""
+        refused = completion.outcome_of(
+            {"ending": completion.EXITED, "code": completion.GUARD_EXIT_REFUSED},
+            *completion.read_guard_stdout(json.dumps({"error": "refused", "reason": "x"})))
+        rejected = completion.outcome_of(
+            {"ending": completion.EXITED, "code": completion.GUARD_EXIT_REFUSED},
+            *completion.read_guard_stdout(""))
+        self.assertEqual(refused, completion.GUARD_REFUSED)
+        self.assertEqual(rejected, completion.GUARD_REJECTED_THE_CALL)
+        self.assertNotEqual(refused, rejected)
+
+    def test_every_way_of_failing_to_ask_has_its_own_answer(self):
+        cases = [
+            ({"ending": completion.NOT_STARTED}, "", completion.GUARD_UNREACHABLE),
+            ({"ending": completion.TIMED_OUT}, "", completion.GUARD_TIMED_OUT),
+            ({"ending": completion.SIGNALLED}, "", completion.GUARD_SIGNALLED),
+            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_HOST},
+             json.dumps({"error": "host"}), completion.GUARD_HOST_ERROR),
+            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_USAGE},
+             json.dumps({"error": "usage"}), completion.GUARD_USAGE_ERROR),
+            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
+             "this is not json", completion.GUARD_OUTPUT_UNREADABLE),
+            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK}, "",
+             completion.GUARD_SAID_NOTHING),
+            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
+             json.dumps({"decision": "release"}), completion.GUARD_VERDICT_INCOMPLETE),
+            ({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
+             json.dumps(RELEASED), completion.GUARD_ANSWERED),
+        ]
+        answers = []
+        for ending, said, expected in cases:
+            with self.subTest(expected=expected):
+                found = completion.outcome_of(ending, *completion.read_guard_stdout(said))
+                self.assertEqual(found, expected)
+                answers.append(found)
+        self.assertEqual(len(set(answers)), len(answers), "no two of these share an answer")
+
+    def test_a_runtime_that_is_not_there_names_why(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings(temporary)  # no relay was ever written
+            answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
+                                    environ={})
+            records = journalled(temporary)
+        self.assertIsNone(answer)
+        self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_UNREACHABLE)
+        self.assertEqual(records[0]["errno"], "ENOENT",
+                         "a runtime that is gone and one that cannot be executed are"
+                         " different repairs")
+
+    def test_settings_give_four_answers_and_not_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            path = completion.configuration_path(home)
+            _value, absent, _detail, _found = completion.read_configuration(path)
+            path.write_text("{ not json", encoding="utf-8")
+            _value, unreadable, _detail, _found = completion.read_configuration(path)
+            path.write_text(json.dumps({"relayExecutable": "/r", "markerRoot": "/m",
+                                        "mode": "whatever"}), encoding="utf-8")
+            _value, malformed, detail, _found = completion.read_configuration(path)
+        self.assertEqual(absent, completion.CONFIG_ABSENT)
+        self.assertEqual(unreadable, completion.CONFIG_UNREADABLE)
+        self.assertEqual(malformed, completion.CONFIG_MALFORMED)
+        self.assertIn("mode", detail)
+        self.assertEqual(len({absent, unreadable, malformed}), 3)
+
+    def test_the_settings_states_come_from_the_module_that_owns_them(self):
+        self.assertEqual(set(completion.CONFIG_OUTCOMES), set(reading.UNUSABLE) | {reading.ABSENT})
+
+
+class WhatIsRecordedAboutThisHookItself(unittest.TestCase):
+    """Criterion 6: firing evidence this adapter owns, separate from the guard's records."""
+
+    def test_an_unmanaged_workspace_still_leaves_evidence_that_the_hook_ran(self):
+        """The guard records only when it selected an assignment, so on a host with no managed
+        session it writes nothing. Without this, an empty firing record and a hook that never
+        runs at all would look identical."""
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            records = journalled(temporary)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_ANSWERED)
+        self.assertEqual(records[0]["guardState"], "unmanaged")
+        self.assertIsNone(records[0]["guardRecordedAs"],
+                          "the guard recorded nothing, and that is reported rather than filled in")
+        self.assertFalse(records[0]["held"])
+
+    def test_the_guards_own_answer_is_carried_verbatim_and_not_re_derived(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(HELD))
+            settings(temporary)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            record = journalled(temporary)[0]
+        self.assertEqual(record["guardState"], HELD["state"])
+        self.assertEqual(record["guardDecision"], HELD["decision"])
+        self.assertEqual(record["assignmentId"], HELD["assignmentId"])
+        self.assertEqual(record["guardRecordedAs"], HELD["recordedAs"])
+        self.assertTrue(record["held"])
+        self.assertIn("elapsedMs", record)
+
+
+class RegistrationIsNotFiring(unittest.TestCase):
+    """Criterion 6: the two are separate cells, and neither is derived from the other."""
+
+    def test_a_present_runtime_that_cannot_answer_is_its_own_cell(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout="", code=2)  # a relay built before the guard existed
+            settings(temporary)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["relayExecutable"]["value"], reading.PRESENT)
+        self.assertEqual(found["guardEvaluateOffered"]["value"], completion.GUARD_REJECTED_THE_CALL)
+        self.assertNotEqual(found["relayExecutable"]["value"],
+                            found["guardEvaluateOffered"]["value"],
+                            "merging these would report a hook that cannot work as working")
+
+    def test_what_was_not_asked_is_never_reported_as_nothing_being_there(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            found = completion.status(codex_home=temporary, environ={})
+        for cell in ("hostTrust", "guardRecords", "daemon", "firingJournal"):
+            with self.subTest(cell=cell):
+                self.assertEqual(found[cell]["value"], completion.NOT_READ)
+                self.assertTrue(found[cell]["evidence"])
+        self.assertEqual(found["configuration"]["value"], completion.CONFIG_ABSENT,
+                         "with no settings, the journal cell says nobody could tell where this"
+                         " hook would record, which is not the same as it having recorded"
+                         " nothing")
+
+    def test_a_configured_journal_that_is_not_there_yet_is_an_answer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["firingJournal"]["value"], reading.ABSENT,
+                         "settings name a journal and nothing has been written into it yet,"
+                         " which is a different answer from not knowing where to look")
+
+    def test_the_journal_policy_travels_with_its_count(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["firingJournal"]["value"], "1")
+        self.assertEqual(found["firingJournal"]["journalPolicy"], completion.EVERY_INVOCATION,
+                         "a count read without its policy cannot be compared with anything")
+
+    def test_a_registration_is_reported_apart_from_every_firing_question(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(code, 0)
+        self.assertEqual(emitted[0]["event"], completion.EVENT,
+                         "this adapter lands on Stop unless the caller says otherwise")
+        self.assertEqual(found["registration"]["value"], "1")
+        self.assertEqual(found["registeredCommandTarget"]["value"], reading.PRESENT)
+        self.assertEqual(found["firingJournal"]["value"], reading.ABSENT,
+                         "installing a hook is not the same claim as it having run")
+
+
+class TheInstallerSeam(unittest.TestCase):
+    """Criterion 1 and 5: one install path, its own settings, and a refusal to overwrite."""
+
+    def _install(self, home, **overrides):
+        args = argparse.Namespace(
+            codex_home=str(home), event=None, hook_command=None, adapter="completion",
+            dest=None, relay_command=str(Path(home) / "codex-session-relay"),
+            marker_root=str(Path(home) / "marker"), db_path=None,
+            journal_root=str(Path(home) / "journal"), python=sys.executable,
+            mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
+        for name, value in overrides.items():
+            setattr(args, name, value)
+        emitted = []
+        with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            code = runtime_install.cmd_hook(args)
+        return code, emitted[0]
+
+    def test_the_settings_are_written_before_the_hook_that_reads_them(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            code, payload = self._install(home)
+            document = json.loads(completion.configuration_path(home).read_text(encoding="utf-8"))
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["settings"]["outcome"], completion.CONFIG_CREATED)
+        self.assertEqual(payload["result"]["outcome"], hooks.CREATED)
+        self.assertEqual(document["mode"], completion.OBSERVE,
+                         "holding depends on isolation this command cannot grant, so observe is"
+                         " what an install writes unless it is told otherwise")
+
+    def test_settings_that_say_something_else_are_not_overwritten_and_no_hook_is_added(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            self._install(home)
+            code, payload = self._install(home, mode=completion.HOLD)
+            document = json.loads(completion.configuration_path(home).read_text(encoding="utf-8"))
+            registered = hooks.inventory(hooks.read(home / "hooks.json").value, completion.EVENT)
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["settings"]["outcome"], completion.CONFIG_DIFFERS)
+        self.assertIn("mode", payload["settings"]["differingFields"])
+        self.assertIsNone(payload["result"], "no hook is appended when its settings were refused")
+        self.assertEqual(document["mode"], completion.OBSERVE, "the mode was not changed silently")
+        self.assertEqual(len(registered), 1, "and no second registration was added")
+
+    def test_installing_the_same_thing_twice_settles_without_a_second_hook(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            self._install(home)
+            code, payload = self._install(home)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["settings"]["outcome"], completion.CONFIG_UNCHANGED)
+        self.assertEqual(payload["result"]["outcome"], hooks.LINKED)
+
+    def test_naming_no_runtime_at_all_is_refused_rather_than_resolved_from_the_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            code, payload = self._install(Path(temporary), relay_command=None, dest=None)
+        self.assertEqual(code, 2)
+        self.assertIn("PATH", payload["error"])
+        self.assertFalse((Path(temporary) / "hooks.json").exists())
+
+    def test_the_runtime_is_named_through_the_installers_own_pointer(self):
+        document = completion.configuration(destination="/opt/dest", marker_root="/m",
+                                            codex_home="/home", environ={})
+        self.assertEqual(document["relayExecutable"],
+                         "/opt/dest/current/bin/codex-session-relay",
+                         "an update moves the pointer, and these settings keep naming the"
+                         " runtime that is actually selected")
+
+    def test_an_explicit_command_still_installs_without_knowing_about_adapters(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(codex_home=str(home), event="SessionStart",
+                                      hook_command="/bin/true", timeout=5, issue="JUN-104",
+                                      apply=True)
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+        self.assertEqual(code, 0)
+        self.assertEqual(emitted[0]["result"]["outcome"], hooks.CREATED)
+        self.assertIsNone(emitted[0]["settings"], "no adapter settings were involved")
+
+
+class OwnershipStaysSeparate(unittest.TestCase):
+    """Criterion 5: this hook's own file, and nobody else's state."""
+
+    def test_the_settings_are_this_hooks_own_file(self):
+        self.assertEqual(completion.configuration_path("/home/x/.codex", environ={}).name,
+                         completion.CONFIG_NAME)
+
+    def test_installing_preserves_every_hook_already_registered(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": "/somebody/else/hook.sh",
+                            "timeout": 10}]}]}}), encoding="utf-8")
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
+            with mock.patch.object(runtime_install, "emit"):
+                runtime_install.cmd_hook(args)
+            written = json.loads((home / "hooks.json").read_text(encoding="utf-8"))
+        groups = written["hooks"][completion.EVENT]
+        self.assertEqual(groups[0]["hooks"][0]["command"], "/somebody/else/hook.sh",
+                         "installation appends, so no existing identity is renumbered")
+        self.assertEqual(len(groups), 2)
+
+    def test_nothing_here_reads_or_writes_another_hooks_state(self):
+        source = (ROOT / "scripts" / "crw_runtime" / "completion.py").read_text(encoding="utf-8")
+        entry = ENTRY_POINT.read_text(encoding="utf-8")
+        for forbidden in (".codexclaw", "goalplan", "ledger.jsonl", "sessions/"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, source)
+                self.assertNotIn(forbidden, entry)
+
+
+if __name__ == "__main__":
+    unittest.main()

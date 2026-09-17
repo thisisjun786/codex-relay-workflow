@@ -777,6 +777,11 @@ def status(codex_home=None, environ=None, event=EVENT):
         relay = _cell(NOT_READ, "no usable configuration names a runtime")
         offers = _cell(NOT_READ, "no usable configuration names a runtime")
         marker = _cell(NOT_READ, "no usable configuration names a marker root")
+        # Asked separately from the cell below, because settings that could not be read and
+        # settings that deliberately configure no journal are different answers. Reporting the
+        # first as an empty journal would say this hook has recorded nothing, when what
+        # happened is that nobody could tell where it would record.
+        firing = _cell(NOT_READ, "no usable configuration names a journal to read")
     else:
         settings = _cell(found.state, "settings read", configuration=str(path),
                          mode=config.get("mode"), dbPath=config.get("dbPath"))
@@ -790,6 +795,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         root = Path(config["markerRoot"])
         marker = _cell(reading.PRESENT if root.is_dir() else reading.ABSENT,
                        "the configured marker root", markerRoot=str(root))
+        firing = _journal_cell(config)
 
     return {
         "command": "hook-status",
@@ -803,7 +809,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         "relayExecutable": relay,
         "guardEvaluateOffered": offers,
         "markerRoot": marker,
-        "firingJournal": _journal_cell(config),
+        "firingJournal": firing,
         "guardRecords": _cell(NOT_READ, "the guard's own per-observation records live in the"
                                         " marker and belong to the relay, not to this command"),
         "daemon": _cell(NOT_READ, "the Stop path reads the marker and a read-only database and"
