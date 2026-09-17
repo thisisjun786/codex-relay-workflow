@@ -367,7 +367,7 @@ def release_candidate(path, definition_version, environment):
                 entry["installs"] = [i for i in entry.get("installs") or []
                                      if i.get("environment") != str(environment)]
             save(path, record)
-    except ValueError as error:
+    except TimeoutError as error:
         return (reading.Reading(state=reading.ACCESS_ERROR, source=path,
                                 exception=type(error).__name__,
                                 detail="the host record lock could not be taken: " + str(error)),
