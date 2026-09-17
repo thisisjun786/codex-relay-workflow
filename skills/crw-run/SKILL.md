@@ -333,15 +333,23 @@ does not; it is the management marker, it travels in the same full work request 
 assignment, and it is what identifies this creation afterwards. The task ID is the
 native identity that reuse, registration and every later mutation route on, and it
 exists only once creation has actually returned it. Join the two from the creation
-receipt. Where that receipt never arrived, resolve the marker through the transport's
-own operation lookup rather than issuing a second creation under a new marker. That
-lookup settles the case where a task exists and its ID can be read back. It does not
-always settle: a response lost at the wrong moment leaves the outcome genuinely
-unresolved, and an unresolved outcome means a writer may exist. Treat it as one.
-Reconcile from the backend's own listing, and create no replacement while it stands;
-an unresolved creation is a thing to report, not a thing to overwrite.
-[Bridge launch and recovery](references/bridge.md#receipts-and-safe-recovery)
-holds the mechanism for this transport.
+receipt.
+
+What to do when that receipt never arrived depends on the transport, so establish which
+one you are on before relying on either path. Where it accepts a caller-chosen id and
+exposes a lookup keyed on it, resolve the marker through that lookup rather than issuing
+a second creation under a new marker;
+[Bridge launch and recovery](references/bridge.md#receipts-and-safe-recovery) is that
+mechanism here. Where it does not, and some permitted native creation tools do not, the
+marker is still worth recording for the coordination record but it is not a recovery
+key: an id that only travelled inside the prompt is indexed nowhere, and treating it as
+a handle leaves an uncertain creation filed forever as a writer nobody can find. There
+the reconciliation is the backend's own task listing, correlated on what the creation
+did carry, such as the workspace, the title and the time.
+
+Neither path always settles. A response lost at the wrong moment leaves the outcome
+genuinely unresolved, and an unresolved outcome means a writer may exist. Treat it as
+one: create no replacement while it stands, and report it rather than overwrite it.
 
 Where a relay holds the assignment, register the relationship with its authorized
 scope, record BOTH the parent's and the child's authorized execution settings from
