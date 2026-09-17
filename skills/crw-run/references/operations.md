@@ -545,6 +545,13 @@ assignment reads as perfectly satisfiable until the first commit. A gap found he
 before dispatch, by changing the creation arguments or by changing the assignment to match what
 the task will really be able to reach. It is never settled by widening the task afterwards.
 
+So the git metadata is checked as a path of its own and not inferred from the checkout. For a
+worktree it lives in the original repository rather than under the working tree, so a root list
+naming the checkout does not contain it, and the reference and index writes a branch or a commit
+performs land outside every root the receipt returned. Resolve where that metadata actually is for
+the assigned checkout, check it like the other three, and where it falls outside, say so and
+assign the OPS-5.3 fallback deliberately instead of discovering it at the child's first commit.
+
 Tasks that are already running keep the settings they were created with. This clause describes how
 the next child is created; it is not authority to widen a live task, to alter its profile
 mid-assignment, or to work around a sandbox. A running task that cannot commit uses the OPS-5.3
@@ -587,12 +594,18 @@ indistinguishable from evidence the moment it is copied out of context.
 
 The same discipline governs the words and not only the times. A condition is reported in the
 vocabulary its own contract defines, so that one word means one thing across the layers, which is
-what OPS-2.3 already requires of the install outcomes. Where a relay holds an assignment its
-assignment states are that vocabulary and are cited rather than paraphrased. A condition the
-contract has no state for, a child waiting on a human answer being the obvious one, is reported as
-a named blocker against the state the contract does have. Inventing a state for it and filing it
-under the nearest existing one fail the same way: both produce a record that reads as something
-the contract can act on when nothing in it can.
+what OPS-2.3 already requires of the install outcomes. Two vocabularies are in play here and they
+are not interchangeable. A turn's disposition says what that turn did, and `in_progress`,
+`ready_for_review`, `blocked_needs_input` and `interrupted` are its words, defined in
+[Turn disposition](hook-contract.md#turn-disposition). An assignment's state says where the
+delivery stands, and where a relay holds the assignment its states are that vocabulary. A child
+waiting on a person is `blocked_needs_input` on its turn; that is not a new assignment state, and
+an assignment whose child is waiting has not thereby changed what it owes. Report both, in
+separate fields, citing each rather than paraphrasing it, because collapsing them loses exactly
+the distinction between a turn that stopped and a delivery that moved. Only a condition neither
+vocabulary has a word for is reported as a named blocker against the state that does apply.
+Inventing a state for it and filing it under the nearest existing one fail the same way: both
+produce a record that reads as something a contract can act on when nothing in it can.
 
 ### OPS-6.3 Installing a Linear hook
 
@@ -728,6 +741,13 @@ wait again within the requested delivery boundary rather than claiming completio
 the prompt or creating another child. A dispatch-only Run may return an explicit pending-work
 handoff without claiming automatic resumption. If no
 usable wait or resume path exists, record the capability blocker and the exact manual resume step.
+
+Once that readiness holds for this assignment, the handoff is the point of it: the parent stops
+polling and returns idle rather than continuing to watch a path it has just confirmed will reach
+it. Completion, failure and a child blocked on input all travel to the assignment's own registered
+parent under OPS-7.3, so none of them depends on some parent still observing. Returning idle ends
+that parent's observation and nothing else: it closes no assignment, releases no issue, and
+touches no service another parent is using.
 
 Two mechanisms are distinct and are never described as one. A native subagent finishes inside its
 parent's own turn, and the parent observes that completion directly. When an independent task is

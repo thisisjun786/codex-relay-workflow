@@ -451,14 +451,17 @@ only after its required contracts/revisions are verified and available in its
 checkout and it belongs to the agreed project scope or explicit narrower assignment.
 This is the same rule in Run and Loop; a goal changes persistence, not scope.
 
-Name what the assignment is doing in the vocabulary its contract already defines,
-rather than in words invented for the report. Ordinary progress, waiting on input, a
-stop, and a request for verification are conditions the parent has to be able to tell
-apart, and the contract holding the assignment is what supplies the words: where a
-relay holds it, [assignment state](references/relay.md#verify-the-current-revision) is
-that vocabulary. A condition the contract has no state for is reported as a named
-blocker against the state it does have, never as an invented state and never folded
-into a neighbouring one, under [OPS-6.1](references/operations.md#ops-61-six-states-that-never-imply-one-another).
+Name what the work is doing in the vocabulary its contract already defines, rather than
+in words invented for the report. Ordinary progress, waiting on input, a stop and a
+request for verification are conditions the parent has to tell apart, and two contracts
+supply the words for different questions. What the child's turn did is a
+[turn disposition](references/hook-contract.md#turn-disposition): `in_progress`,
+`blocked_needs_input`, `interrupted`, `ready_for_review`. Where the delivery stands is
+the [assignment state](references/relay.md#verify-the-current-revision) when a relay
+holds it. Report them separately; a child blocked on a person has a turn that stopped
+and a delivery that did not move, and one word cannot carry both. A condition neither
+vocabulary names is reported as a blocker against the state that does apply, under
+[OPS-6.2](references/operations.md#ops-62-record-shape).
 
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's

@@ -30,15 +30,14 @@ gap, and never claim host support this bridge has not established.
 
 There is a third question, and it is the one a dated reference cannot answer: which
 build is actually installed. `exposure` describes the bridge whose `get_capabilities`
-you called. That is not necessarily the version described here, and not necessarily
-the version the host registered when it last started its MCP servers. A path this
-document describes can be missing from the running server simply because the installed
-build predates it, and from the caller's side that looks identical to a bridge
-withholding it on purpose. So read `exposure` from the live session rather than from
-this file, and when a path is unavailable separate the three causes before reporting
-one: not exposed by the installed build, not supported by the connected host, or
-exposed and supported but refused for this particular request. Which build is installed
-is its own claim with its own evidence, classified under
+you called, which is not necessarily the version described here and not necessarily the
+version the host registered when it last started its MCP servers. A path this document
+describes can be missing from the running server simply because the installed build
+predates it, and from the caller's side that looks identical to a bridge withholding it
+on purpose. So read `exposure` from the live session rather than from this file. The
+rule for keeping the three apart is
+[OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents), and which
+build is installed is classified under
 [OPS-2.2](operations.md#ops-22-five-classes-and-their-rules).
 
 ## Reach a task that is already working
@@ -73,6 +72,16 @@ and that the peer acted on it is only visible in its delivered work. A steer nev
 substitutes for a completion receipt, an acknowledgement, or a verification result,
 and it changes no ownership: one parent still holds one project and one child one
 issue.
+
+What the host attaches to the input is a fourth thing, and the two paths are not
+observed together. A steer adds input to a turn already running; a resume starts a new
+one. Whatever a host attaches when it creates a task, skills among it, was attached by
+the path that created it, and nothing here establishes that the same attachment happens
+again on a bridge resume or accompanies a steer at all. Do not carry a conclusion from
+one path to the other: observe what actually arrived on the active-steer path and on
+the idle-resume path separately, and record them as two results rather than one. The
+practical consequence is that an instruction carries its own pointers in its text,
+because then it does not depend on the answer.
 
 After an uncertain send, reconcile from records rather than sending again. The
 steer is recorded under `clientUserMessageId` `steer:<request_id>`; replay the same
@@ -254,12 +263,12 @@ Choose one stable request_id per intended mutation and keep it across uncertaint
 Persist the exact arguments privately if needed for replay. Reusing an ID with
 changed arguments is an error; a new ID is not a harmless retry.
 
-That ID is the only identifier that exists before the task does, which is what makes it
-the management marker the coordinator records. A creation that returns normally hands
-back the thread ID in the same receipt, so there is no separate acceptance ID to
-resolve afterwards. A creation whose response is lost is the case that matters: it can
-leave even the thread ID unknown, and the request_id is then the only route back to
-whatever was created.
+On this transport a creation that returns normally hands back the thread ID in the same
+receipt, so there is no separate acceptance ID to resolve afterwards. The case that
+matters is a creation whose response was lost: it can leave even the thread ID unknown,
+which is why the marker the coordinator chose beforehand is the only route back to
+whatever was created. Why that marker is recorded at all is in
+[Prepare and dispatch](../SKILL.md#prepare-and-dispatch).
 
 - `accepted`: requested API steps returned; the task may still be running.
 - `failed`: inspect the actual rejection and any retained worktree/task/turn IDs.

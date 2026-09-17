@@ -64,10 +64,8 @@ Context:
 - Coordinator: [task ID; context only, never a CXC session binding]
 - Responsible child: [existing independent task/host ID, or newly created task from the launch receipt]
 - Assignment route: [reuse / create; current writer state and authorization source]
-- Management marker: [the stable creation request id this launch was issued under.
-  It is chosen before creation, so unlike the task id it exists even when the creation
-  response is lost; record it so an uncertain creation resolves back to this task
-  instead of producing a second one]
+- Management marker: [the stable creation request id this launch was issued under, per
+  [Prepare and dispatch](../SKILL.md#prepare-and-dispatch)]
 - Relay assignment, when one holds this issue: [shared state directory, set as BOTH
   `--state` and `CODEX_SESSION_RELAY_STATE` on every process that reaches the socket,
   and the exact issue identity registration was given, not a display key that differs from it;
@@ -146,6 +144,13 @@ Execution:
   identity and current state first, then continue them. Opening a second goal for the
   same assignment is a duplicate rather than a resume, and the coordinator reads it
   as one.
+  Confirming identity means reading it rather than assuming it: your own native task id,
+  the native working directory you are actually in, the source checkout that directory
+  belongs to, and your real recorded workflow state. Those four can disagree after a
+  resume or a compaction, and the disagreement is the thing worth catching. A session
+  binding is identity, not proof that a hook ran. Where a relay holds the assignment its
+  generation is read from the assignment by lookup, never inferred from your own state
+  and never copied from the coordinator's.
 - [For an explicit non-Loop or no-goal alternative:] omit that invocation and keep
   the agreed workflow. Assignment alone does not create a goal or activate a Loop.
 - Apply the agreed permissions and delivery scope. Do not modify global model or
@@ -235,14 +240,19 @@ reconstruct alone:
   required checks and reviews are outstanding on that head.
 - The unresolved findings, each with what would settle it.
 - The single next action this message is asking for.
+- Durable locators for the work the task itself owns: where its plan, its ledger and its
+  evidence live, with the identifiers and current revisions the coordinator already holds.
+  These are pointers to that task's own records rather than copies of them, and they are what
+  lets a task that lost its context find its record instead of starting a second one.
 
-What the block does NOT carry is the task's own plan, ledger, phase or goal state. That
-belongs to the task and to its own workflow skills, it is durable on that task's side,
-and this repository deliberately does not define its shape
+What the block carries about those records is their location and identity, never their
+contents. The plan, the ledger, the phase and the goal belong to the task and to its own
+workflow skills, they are durable on that task's side, and this repository deliberately
+does not define their shape
 ([OPS-10.3](operations.md#ops-103-where-the-packet-and-report-formats-are-defined)).
-The block points at it and asks the task to continue from it. A coordinator that
-reconstructs a child's plan for it has replaced the child's record with a guess, and
-the child will trust the guess.
+Pointing at a record is not defining it; rewriting one is. A coordinator that reconstructs
+a child's plan from its own view has replaced that child's record with a guess, and the
+child will trust the guess over the record it could have re-read.
 
 The block is context for resuming work already authorized. It requests no new approval,
 asks for no readiness-only turn spent confirming receipt, and re-opens nothing the
