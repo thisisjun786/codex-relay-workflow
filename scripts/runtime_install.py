@@ -1912,24 +1912,28 @@ def cmd_install(args):
     # reading's answer; nothing here is inferred from a neighbour.
     pointer_path = Path((record.get("pointer") or {}).get("path")
                         or pointer.pointer_path(destination))
-    if environment.exists():
-        # Deciding and acting are one step, held under a lock beside the directory. Read first
-        # and act later and two retries can both decide RECLAIM: the first deletes, recreates
-        # and takes its own lock, and the second then deletes that live build on the strength
-        # of a decision it made before any of that happened. Re-reading inside the lock is what
-        # makes the second run see a live directory instead of its own stale answer.
-        try:
-            entered = hostrecord.Locked(environment).__enter__()
-        except TimeoutError as error:
-            # A lock another run holds establishes nothing about this directory, which is the
-            # same answer release_candidate gives for a record it cannot read. Letting it out
-            # would report a competing run as an internal defect in this command.
-            emit({"command": "install", "applied": False, "environment": str(environment),
-                  "refused": "another run is deciding what to do with this directory: "
-                             + str(error),
-                  "note": "nothing was read, nothing was removed and nothing was written."})
-            return EXIT_REFUSED
-        try:
+    # ONE lock across deciding, creating and claiming, because those three are one step.
+    #
+    # The exclusive mkdir proves this run owns the directory, but proving it is not the whole
+    # of taking it: between the mkdir and the claim the directory is empty and carries no
+    # claim, which is exactly what another run reads as adoptable. It would remove it,
+    # recreate it and start building, and then one of the two runs would clean up the other's
+    # live build. Reading and acting were already serialised; creating and claiming have to be
+    # inside the same span or the window simply moves.
+    owned = None
+    holder = None
+    try:
+        taking = hostrecord.Locked(environment).__enter__()
+    except TimeoutError as error:
+        # A lock another run holds establishes nothing about this directory, which is the same
+        # answer release_candidate gives for a record it cannot read. Letting it out would
+        # report a competing run as an internal defect in this command.
+        emit({"command": "install", "applied": False, "environment": str(environment),
+              "refused": "another run is deciding what to do with this directory: " + str(error),
+              "note": "nothing was read, nothing was removed and nothing was written."})
+        return EXIT_REFUSED
+    try:
+        if environment.exists():
             protected, protection = protected_environment(record, environment, destination,
                                                           data)
             decision, why = staging.decide(
@@ -2008,40 +2012,39 @@ def cmd_install(args):
                                " established gone and which nothing is using, is removed."
                                " Nothing was written to the host record."))
                 return EXIT_REFUSED
-        finally:
-            # Released on every path, including the returns above. It guards the decision and
-            # the act, not the build: the exclusive mkdir below is what a competing run loses
-            # to once this one is past here.
-            entered.__exit__()
-
-    # Exclusive: this fails if the directory exists, which is what proves the run owns it and
-    # may therefore remove it on failure. An exists() test before a separate create does not.
-    try:
-        environment.mkdir()
-    except FileExistsError:
-        emit({"command": "install", "refused": "the environment directory already exists",
-              "environment": str(environment), "plan": plan, "outgoing": outgoing,
-              "note": "an existing environment is never overwritten, and a run only removes a"
-                      " directory it created itself. Nothing was written to the host record."})
-        return EXIT_REFUSED
-    owned = environment
-    holder = None
+        # Exclusive: this fails if the directory exists, which is what proves the run owns it
+        # and may therefore remove it on failure. An exists() test before a separate create
+        # does not.
+        try:
+            environment.mkdir()
+        except FileExistsError:
+            emit({"command": "install",
+                  "refused": "the environment directory already exists",
+                  "environment": str(environment), "plan": plan, "outgoing": outgoing,
+                  "note": "an existing environment is never overwritten, and a run only"
+                          " removes a directory it created itself. Nothing was written to"
+                          " the host record."})
+            return EXIT_REFUSED
+        owned = environment
+        # Claimed while the same lock is still held, so no other run can read this directory
+        # between its creation and its claim. The advisory lock is held for the RUN: the
+        # operating system releases it when this process ends however it ends, which is
+        # exactly the question a later run asks.
+        holder = staging.Held(environment).take()
+        staging.write_claim(environment, staging.STAGING, issue=args.issue,
+                            run=str(os.getpid()))
+        performed.append({"step": "claim the staging directory", "ok": True,
+                          "claim": str(staging.claim_path(environment))})
+    finally:
+        # Released on every path, including the returns above. It guards deciding, creating and
+        # claiming; the build that follows is guarded by the staging lock this run now holds.
+        taking.__exit__()
 
     # Past the exclusive mkdir this run owns a directory, and owning it obliges it to release
     # it however the run ends. A returned failure and a raised one are the same obligation:
     # an escaping exception used to leave the deterministic environment name behind, and the
     # next run then refused that destination for ever.
     try:
-        # Claimed before anything else is done in it, so a run killed a moment later leaves a
-        # directory this command can still recognise as its own rather than one that refuses
-        # the destination for ever. The advisory lock is held for the RUN, and the operating
-        # system releases it when this process ends however it ends, which is exactly the
-        # question a later run asks.
-        holder = staging.Held(environment).take()
-        staging.write_claim(environment, staging.STAGING, issue=args.issue,
-                            run=str(os.getpid()))
-        performed.append({"step": "claim the staging directory", "ok": True,
-                          "claim": str(staging.claim_path(environment))})
 
         # Ownership is proven, so this run may record what it observed on the way in.
         staged = hostrecord.update(record_path, data["definitionVersion"], outgoing=outgoing)

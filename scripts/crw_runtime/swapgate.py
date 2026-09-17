@@ -299,4 +299,3 @@ def decide(cells):
             " installation exactly as a refusal does."
         ),
     }
-

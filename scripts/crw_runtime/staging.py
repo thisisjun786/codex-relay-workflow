@@ -337,4 +337,3 @@ def decide(claim, liveness, *, occupied, protected, selected):
 def settled(claim):
     """Whether a readable claim says its run finished. Never inferred from the directory."""
     return claim.ok and (claim.value or {}).get("state") == COMPLETE
-

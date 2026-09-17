@@ -31,6 +31,8 @@ from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, owne
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
+import runtime_install as runtime_install_module
+
 try:
     import tomllib as _tomllib
     HAS_READER = True
@@ -6172,16 +6174,41 @@ class ReclaimRaceTests(unittest.TestCase):
         self.assertIn("another run is deciding", payload["refused"])
         self.assertTrue(survived, "a lock this run could not take establishes nothing")
 
-    def test_the_decision_and_the_removal_happen_under_one_lock(self):
+    def test_deciding_creating_and_claiming_are_all_inside_one_lock(self):
+        """Serialising the decision alone only moves the window.
+
+        Between the exclusive mkdir and the claim, the directory is empty and carries no claim,
+        which is exactly what another run reads as adoptable: it would remove it, recreate it
+        and start building, and one of the two runs would then clean up the other's live build.
+        So the span covers deciding, creating and claiming.
+        """
         source = RUNTIME.read_text(encoding="utf-8")
-        body = source[source.index("    if environment.exists():"):
-                      source.index("    # Exclusive: this fails if the directory exists")]
-        self.assertIn("hostrecord.Locked(environment)", body)
-        self.assertLess(body.index("hostrecord.Locked(environment)"),
-                        body.index("staging.decide("),
-                        "the decision is taken inside the lock, not carried into it")
-        self.assertLess(body.index("staging.decide("), body.index("shutil.rmtree("),
-                        "and the removal follows that same decision")
+        body = source[source.index("        taking = hostrecord.Locked(environment).__enter__()"):
+                      source.index("        taking.__exit__()")]
+        for step in ("staging.decide(", "shutil.rmtree(", "os.rmdir(", "environment.mkdir()",
+                     "staging.Held(environment).take()", "staging.write_claim("):
+            self.assertIn(step, body, step + " must be inside the span")
+
+    def test_a_directory_being_created_is_not_adopted_out_from_under_its_creator(self):
+        """The creator holds the span, so a competing run cannot see the empty window at all."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # A creator that has made the directory and not yet claimed it, holding the span.
+            host.candidate.mkdir(parents=True)
+            span = hostrecord.Locked(host.candidate, timeout=0.1).__enter__()
+            try:
+                with mock.patch.object(runtime_install_module.hostrecord,
+                                       "LOCK_TIMEOUT_SECONDS", 0.1):
+                    code, payload = UpdateRecoveryTests()._run(host)
+            finally:
+                span.__exit__()
+            still_there = host.candidate.is_dir()
+
+        self.assertEqual(code, 1)
+        self.assertIn("another run is deciding", payload["refused"])
+        self.assertTrue(still_there,
+                        "the empty window belongs to whoever holds the span, and a run that"
+                        " cannot take it removes nothing")
 
 
 class SchemaComparisonTests(unittest.TestCase):
