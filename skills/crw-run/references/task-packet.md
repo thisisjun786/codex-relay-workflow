@@ -236,8 +236,13 @@ reconstruct alone:
 - The effective workflow, restated. A transport carries model and effort as settings
   and has no field for the workflow, so a send that omits it has silently dropped it.
 - Assignment identity: the issue, this task's own id, and where a relay holds the
-  assignment its relationship id and current generation, read from the assignment
-  rather than copied from the coordinator's own state.
+  assignment its relationship id and the generation to emit under, read from the
+  assignment rather than copied from the coordinator's own state. On a needs-changes
+  correction that is the generation the verdict opens and not the one being superseded,
+  because the verdict is what opens it: a block composed beforehand that names the
+  current generation names the one the child has just stopped working in, and a receipt
+  emitted under it is refused. The relay carries the superseded event and its digest
+  itself, so the block does not repeat them.
 - The delivery artifact as it stands now: pull request URL, base and head, and which
   required checks and reviews are outstanding on that head.
 - The unresolved findings, each with what would settle it.
@@ -262,9 +267,10 @@ assignment already settled.
 
 Where a relay holds the assignment there is no second channel to put it on: the
 needs-changes verdict is the correction, so the block travels in that verdict's own
-findings and notes. Check it is there before recording the verdict, because afterwards
-the generation has already opened and the only remaining routes are the ones this
-workflow forbids.
+findings and notes. Compose it before recording the verdict, because afterwards the
+only remaining routes are the ones this workflow forbids, and write the generation the
+verdict is about to open rather than the one still current as you write. Those two are
+never the same on a correction, and the child acts on the one it was given.
 
 ## Coordination record
 
