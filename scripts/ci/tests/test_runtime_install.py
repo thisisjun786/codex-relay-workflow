@@ -7108,5 +7108,561 @@ class AbsentPointerRollbackTests(unittest.TestCase):
             self.assertTrue(real.is_dir(), "a real directory is never unlinked")
 
 
+# =========================================================================================
+# CRW-49 class-closing round - the answers that could not say "there was nothing"
+# =========================================================================================
+
+# The parameter names by which the three instances received the state they found, written here
+# as the observation the derivation is made FROM. The source declares the same set and the
+# agreement between the two is checked below, so neither side can quietly shrink: a check that
+# read only the declaration could be disabled by editing it.
+PRIOR_STATE_SEEN = ("previous", "before", "presence")
+
+
+def _prior_state_functions(trees, arguments):
+    """Every function handed the state it FOUND, as module.name, derived from the source.
+
+    Derived rather than listed, because the list is precisely what was missing. Three review
+    rounds each contributed one instance of the same thing -- an answer set with no value for
+    "there was nothing there" -- and each was patched on its own because nobody had drawn the
+    set they belonged to.
+    """
+    found = {}
+    for stem, tree in trees.items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            named = [argument.arg for argument in node.args.args + node.args.kwonlyargs]
+            taken = sorted(set(named) & set(arguments))
+            if taken:
+                found[stem + "." + node.name] = taken
+    return found
+
+
+def _module_offers(tree):
+    """What a module offers by name: its bindings, its functions, and its parameters.
+
+    A delta the single writer accepts is an operation the module offers exactly as much as a
+    function is, and it is named in the same file. Both count as the operation existing, which
+    is the question this asks; whether it is USED is a different question, asked below.
+    """
+    offered = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            offered.add(node.name)
+        if isinstance(node, ast.FunctionDef):
+            offered.update(argument.arg for argument
+                           in node.args.args + node.args.kwonlyargs)
+        if isinstance(node, ast.Assign):
+            offered.update(target.id for target in node.targets
+                           if isinstance(target, ast.Name))
+    return offered
+
+
+def _names_used_in(tree, function):
+    """Every identifier a function mentions: attributes, names and keyword arguments.
+
+    Keywords count because a delta is invoked by naming it. None when there is no such
+    function, which is itself a finding rather than an empty answer.
+    """
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == function):
+            continue
+        used = set()
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Attribute):
+                used.add(inner.attr)
+            elif isinstance(inner, ast.Name):
+                used.add(inner.id)
+            elif isinstance(inner, ast.keyword) and inner.arg:
+                used.add(inner.arg)
+        return used
+    return None
+
+
+def _absence_findings(trees, declared, arguments):
+    """Places that answer about a state they found and cannot say it was not there.
+
+    Two directions, because either one alone passes vacuously. A place derived from the source
+    and not declared is a place where absence has no value yet. A declared operation that does
+    not exist, or that exists and is never called where the answer is given, is a capability
+    nobody uses -- the same silence as no capability at all, which is how three rounds of this
+    class reached review.
+    """
+    findings = []
+    for place, taken in sorted(_prior_state_functions(trees, arguments).items()):
+        if place not in declared:
+            findings.append(place + ": receives " + ", ".join(taken) + " and declares no way"
+                            " to answer that there was nothing there")
+    for place, operations in sorted(declared.items()):
+        stem, _, function = place.rpartition(".")
+        if stem not in trees:
+            findings.append(place + ": names no module this command owns")
+            continue
+        used = _names_used_in(trees[stem], function)
+        if used is None:
+            findings.append(place + ": declared and no such function exists")
+            continue
+        for operation in operations:
+            owner, _, attribute = operation.rpartition(".")
+            if owner not in trees:
+                findings.append(operation + ": names no module this command owns")
+            elif attribute not in _module_offers(trees[owner]):
+                findings.append(operation + ": declared as an absence answer and does not"
+                                " exist")
+            elif attribute not in used:
+                findings.append(operation + ": declared for " + place + " and never used"
+                                " there")
+    return findings
+
+
+class AbsenceAnswerTests(unittest.TestCase):
+    """The class three rounds kept reopening, stated and checked at its own layer.
+
+    Each round produced one instance and each was read as its own defect: the in-flight cell
+    could not say "established absent" and a clean host could never promote; the pointer
+    rollback could not restore absence and a failed first install left a link nothing selected;
+    the selection rollback could not remove a selection that had no previous value and the same
+    install left its own candidate selected. The check derives the places from the source, so
+    the next one is a failure here rather than a fourth round.
+    """
+
+    def test_every_place_handed_the_state_it_found_can_say_there_was_nothing(self):
+        import runtime_install
+
+        # Read with a default rather than by attribute, so a source that declares nothing at
+        # all fails with the PLACES it leaves unanswered instead of with a missing name. The
+        # set being undrawn is the defect, and the failure has to say which places it hit.
+        declared = getattr(runtime_install, "ABSENCE_ANSWERS", {})
+        self.assertEqual(
+            _absence_findings(_runtime_trees(), declared, PRIOR_STATE_SEEN), [],
+            "a place that receives the state it found is answering about something that may"
+            " not have been there, and its answer set is incomplete until it can say so")
+
+    def test_the_source_declares_the_same_places_the_derivation_finds(self):
+        import runtime_install
+
+        derived = _prior_state_functions(_runtime_trees(), PRIOR_STATE_SEEN)
+        self.assertEqual(set(derived), {"runtime_install._restore_pointer",
+                                        "runtime_install._restore_selection",
+                                        "swapgate.inflight_cell"})
+        self.assertEqual(tuple(runtime_install.PRIOR_STATE_ARGUMENTS), PRIOR_STATE_SEEN,
+                         "the source and this check derive from the same observation")
+        self.assertEqual(set(derived), set(runtime_install.ABSENCE_ANSWERS),
+                         "a declaration for a place that no longer receives prior state is a"
+                         " dead entry, and one missing is an unanswered place")
+
+    def test_the_scan_sees_a_place_with_no_declared_absence_answer(self):
+        """Guards the derivation: without this an empty finding list proves nothing."""
+        trees = {"module": ast.parse("def restore(previous):\n    return previous\n")}
+        findings = _absence_findings(trees, {}, ("previous",))
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("nothing there", findings[0])
+
+    def test_the_scan_sees_a_declared_answer_that_does_not_exist(self):
+        trees = {"module": ast.parse("def restore(previous):\n    return previous\n")}
+        findings = _absence_findings(trees, {"module.restore": ("module.vanish",)},
+                                     ("previous",))
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("does not exist", findings[0])
+
+    def test_the_scan_sees_a_declared_answer_nothing_calls(self):
+        trees = {"module": ast.parse("def vanish(target):\n    return target\n\n\n"
+                                     "def restore(previous):\n    return previous\n")}
+        findings = _absence_findings(trees, {"module.restore": ("module.vanish",)},
+                                     ("previous",))
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("never used there", findings[0])
+
+    def test_the_scan_accepts_an_answer_that_exists_and_is_used(self):
+        trees = {"module": ast.parse("def vanish(target):\n    return target\n\n\n"
+                                     "def restore(previous):\n    return vanish(previous)\n")}
+        self.assertEqual(_absence_findings(trees, {"module.restore": ("module.vanish",)},
+                                           ("previous",)), [])
+
+    def test_a_delta_the_single_writer_accepts_counts_as_an_operation(self):
+        """The form two of the three answers take: a keyword on the one way to write."""
+        trees = {"writer": ast.parse("def update(path, *, drop=None):\n    return drop\n"),
+                 "module": ast.parse("import writer\n\n\ndef restore(previous):\n"
+                                     "    return writer.update(previous, drop=previous)\n")}
+        self.assertEqual(_absence_findings(trees, {"module.restore": ("writer.drop",)},
+                                           ("previous",)), [])
+
+
+class SelectionRollbackTests(unittest.TestCase):
+    """The instance still open when the class was drawn.
+
+    A select delta says "this is selected now" and had no way to say "nothing was selected
+    before this run". So a first install that failed put the pointer back to absence, left its
+    own candidate selected, and was then kept from releasing that candidate BECAUSE it was
+    selected. The destination could never be retried: the permanent refusal this command exists
+    to remove, reached through the selection instead of through the pointer.
+    """
+
+    def _record(self, path, selected=None):
+        record = hostrecord.empty(1)
+        if selected:
+            record["selected"] = dict(selected)
+        hostrecord.save(path, record)
+        return path
+
+    def test_a_selection_this_run_wrote_with_no_previous_value_is_taken_away(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._record(Path(temporary) / "record.json",
+                                {"bridge": "/dest/env-new/site/bridge"})
+            answer = runtime_install._restore_selection(
+                path, 1, {}, {"bridge": {"location": "/dest/env-new/site/bridge"}})
+            left = (hostrecord.load(path, 1).value or {}).get("selected")
+
+        self.assertEqual(left, {}, "a rollback with no way to unselect leaves its own candidate"
+                                   " selected, and a selected candidate is never released")
+        self.assertEqual(answer["removed"], ["bridge"])
+
+    def test_an_entry_another_run_has_moved_on_is_left_exactly_as_it_is(self):
+        """Compare-and-remove, not remove: undoing a promotion this run never made is worse
+        than the failure being rolled back."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._record(Path(temporary) / "record.json",
+                                {"bridge": "/dest/env-rival/site/bridge"})
+            answer = runtime_install._restore_selection(
+                path, 1, {}, {"bridge": {"location": "/dest/env-new/site/bridge"}})
+            left = (hostrecord.load(path, 1).value or {}).get("selected")
+
+        self.assertEqual(left, {"bridge": "/dest/env-rival/site/bridge"})
+        self.assertEqual(answer["movedOnByAnotherRun"], ["bridge"])
+
+    def test_both_shapes_are_put_back_in_one_write(self):
+        """One component had a previous value and one had none. Two answers, one write, because
+        two writes would leave a window where half the rollback had landed."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self._record(Path(temporary) / "record.json",
+                                {"bridge": "/dest/env-new/site/bridge",
+                                 "relay": "/dest/env-new/site/relay"})
+            answer = runtime_install._restore_selection(
+                path, 1, {"bridge": "/dest/env-old/site/bridge"},
+                {"bridge": {"location": "/dest/env-new/site/bridge"},
+                 "relay": {"location": "/dest/env-new/site/relay"}})
+            left = (hostrecord.load(path, 1).value or {}).get("selected")
+
+        self.assertEqual(left, {"bridge": "/dest/env-old/site/bridge"})
+        self.assertEqual(answer["restored"], ["bridge"])
+        self.assertEqual(answer["removed"], ["relay"])
+
+    def test_a_first_install_that_fails_leaves_nothing_selected_and_a_retriable_destination(self):
+        """End to end on a host with nothing installed, which is the case that produced it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            hostrecord.save(host.record_path,
+                            hostrecord.empty(host.data["definitionVersion"]))
+            host.pointer_path.unlink()
+
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="read the owned pointer back")
+            selected = (hostrecord.load(host.record_path,
+                                        host.data["definitionVersion"]).value or {}).get("selected")
+            state = pointer.read(host.pointer_path)["state"]
+            leftover = sorted(p.name for p in host.destination.iterdir())
+
+        self.assertEqual(code, 1)
+        self.assertEqual(selected, {}, "nothing was selected before this run, so nothing is"
+                                       " selected after it failed")
+        self.assertEqual(state, pointer.NO_POINTER)
+        self.assertTrue(payload["retriable"], json.dumps(payload)[:900])
+        self.assertNotIn(host.candidate.name, leftover,
+                         "a candidate nothing selects and no pointer names is released, so the"
+                         " deterministic destination can be retried")
+
+
+class PointerOwnershipRollbackTests(unittest.TestCase):
+    """Putting a link back to absence puts its ownership record back too.
+
+    The record is what makes a link this command's: the promotion refuses to replace one this
+    record never recorded placing. Left behind for a path where the link was removed, it arms
+    that guard in favour of whatever appears there next, and the guard exists to protect the
+    host from exactly that.
+    """
+
+    def _first_install(self, host):
+        record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+        record.pop("pointer", None)
+        hostrecord.save(host.record_path, record)
+        host.pointer_path.unlink()
+
+    def test_the_ownership_record_goes_with_the_link(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._first_install(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="read the owned pointer back")
+            record = hostrecord.load(host.record_path,
+                                     host.data["definitionVersion"]).value or {}
+
+        self.assertEqual(code, 1)
+        self.assertIsNone(record.get("pointer"),
+                          "the record must not claim a link this run took away")
+        self.assertTrue(payload["pointer"]["pointerRestored"]["ownershipDropped"])
+
+    def test_a_link_this_command_did_not_place_is_refused_after_the_rollback(self):
+        """The consequence, end to end. The leftover claim made a stranger's link ours."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._first_install(host)
+            UpdateRecoveryTests()._run(host, breaking="read the owned pointer back")
+
+            # Something other than this command puts a link at that path. Its target is a
+            # directory the record does account for, so nothing about the TARGET refuses it:
+            # the only thing that does is that this record never recorded placing it.
+            pointer.place(host.pointer_path, host.previous)
+            code, payload = UpdateRecoveryTests()._run(host)
+            still = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["failedStep"], "establish the pointer is this command's")
+        self.assertEqual(still, str(host.previous),
+                         "a link nobody recorded is left exactly as it is")
+
+    def test_the_record_is_left_alone_for_a_path_this_run_did_not_record(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            hostrecord.update(path, 1, pointer={"path": "/dest/current"})
+            hostrecord.update(path, 1, drop_pointer="/elsewhere/current")
+            kept = (hostrecord.load(path, 1).value or {}).get("pointer")
+            hostrecord.update(path, 1, drop_pointer="/dest/current")
+            gone = (hostrecord.load(path, 1).value or {}).get("pointer")
+
+        self.assertEqual((kept or {}).get("path"), "/dest/current")
+        self.assertIsNone(gone)
+
+
+class LegacyInstallTests(unittest.TestCase):
+    """An installation older than claims is not somebody else's directory.
+
+    Claims are newer than the installations they describe, so every install made before them is
+    populated and carries nothing saying who made it. Read as foreign it was refused, and the
+    environment name is derived from the sources, so the refusal is permanent for that
+    combination: there was no installed host this updater could move forward, which makes it
+    not an updater.
+    """
+
+    def _legacy(self, host):
+        """What an installer that never wrote claims leaves at the deterministic path.
+
+        Populated, selected by the host record, and carrying no claim, no staging lock and no
+        pointer. The marker file is here so a test can prove nothing was rebuilt.
+        """
+        (host.candidate / "bin").mkdir(parents=True)
+        (host.candidate / "bin" / "python").write_text("#!legacy", encoding="utf-8")
+        record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+        record.pop("pointer", None)
+        host.pointer_path.unlink()
+        for component in host.data["components"]:
+            site = host.candidate / "site" / component["module"]
+            site.mkdir(parents=True, exist_ok=True)
+            hostrecord.put_install(record, component["component"], {
+                "location": str(site),
+                "environment": str(host.candidate),
+                "entryPoint": str(host.candidate / "bin" / component["consoleScript"]),
+                "interpreterPath": str(host.candidate / "bin" / "python")})
+        record["selected"] = {c["component"]: str(host.candidate / "site" / c["module"])
+                              for c in host.data["components"]}
+        hostrecord.save(host.record_path, record)
+        return record["selected"]
+
+    def _decide(self, **overrides):
+        inputs = {"occupied": True, "protected": True, "selected": True}
+        inputs.update(overrides)
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            environment.mkdir()
+            (environment / "site").mkdir()
+            return staging.decide(staging.read_claim(environment),
+                                  staging.owner_liveness(environment)[0], **inputs)
+
+    def test_an_occupied_directory_the_record_selects_is_not_foreign(self):
+        decision, why = self._decide()
+        self.assertNotEqual(decision, staging.FOREIGN,
+                            "the host record positively says this is the runtime it selects")
+        self.assertNotIn(decision, staging.REMOVES,
+                         "positive ownership is not a licence to delete: " + why)
+        self.assertIn(decision, staging.DECISIONS)
+
+    def test_an_occupied_directory_nothing_selects_is_still_foreign(self):
+        decision, why = self._decide(selected=False)
+        self.assertEqual(decision, staging.FOREIGN, why)
+
+    def test_a_selection_reading_that_failed_does_not_authorise_reuse(self):
+        """The substitution this whole module refuses: an unread answer authorises nothing."""
+        decision, why = self._decide(selected=None)
+        self.assertEqual(decision, staging.FOREIGN, why)
+        self.assertNotIn(decision, staging.REMOVES)
+
+    def test_a_legacy_installation_is_adopted_rather_than_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            selected = self._legacy(host)
+            before = host.snapshot()
+
+            code, payload = UpdateRecoveryTests()._run(host)
+            record = hostrecord.load(host.record_path,
+                                     host.data["definitionVersion"]).value or {}
+            claim = staging.read_claim(host.candidate)
+            after = host.snapshot()
+            marker = (host.candidate / "bin" / "python").read_text(encoding="utf-8")
+            reached = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertTrue(payload["adopted"])
+        self.assertEqual(payload["stagingDecision"], staging.RECORDED)
+        self.assertEqual(marker, "#!legacy", "nothing was rebuilt")
+        self.assertEqual(record.get("selected"), selected, "and nothing was reselected")
+        self.assertEqual((claim.value or {}).get("state"), staging.COMPLETE)
+        self.assertEqual(record.get("pointer", {}).get("path"), str(host.pointer_path),
+                         "the pointer it placed is recorded, or the next update refuses it")
+        self.assertEqual(reached, str(host.candidate))
+        self.assertEqual(after["storeRows"], before["storeRows"])
+        self.assertEqual(after["config"], before["config"])
+
+    def test_the_update_after_an_adoption_lands(self):
+        """The reason the adoption is worth anything: the next combination can be promoted."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._legacy(host)
+            adopted, _ = UpdateRecoveryTests()._run(host)
+            # The next combination builds at its own path. Standing in for a source change,
+            # which would give a different directory name for the same reason.
+            shutil.rmtree(host.candidate)
+            code, payload = UpdateRecoveryTests()._run(host)
+            reached = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(adopted, 0)
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertTrue(payload["promoted"])
+        self.assertEqual(reached, str(host.candidate))
+
+    def test_repeating_the_adoption_writes_nothing_twice(self):
+        """Criterion 5 for this entry: a rerun reports the installation and adds nothing."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._legacy(host)
+            adopted, _ = UpdateRecoveryTests()._run(host)
+            claim_before = staging.claim_path(host.candidate).read_bytes()
+            config_before = host.config.read_bytes()
+
+            code, payload = UpdateRecoveryTests()._run(host)
+            claim_after = staging.claim_path(host.candidate).read_bytes()
+            config_after = host.config.read_bytes()
+            entries = sorted(p.name for p in host.destination.iterdir())
+
+        self.assertEqual(adopted, 0)
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertTrue(payload["alreadyInstalled"])
+        self.assertEqual(payload["stagingDecision"], staging.SETTLED)
+        self.assertEqual(claim_after, claim_before, "the settled claim is not rewritten")
+        self.assertEqual(config_after, config_before, "and the registration is not duplicated")
+        self.assertEqual(entries, sorted([host.previous.name, host.candidate.name, "current"]),
+                         "no orphan staging directory is left behind")
+
+
+class RecordedTargetTests(unittest.TestCase):
+    """A target that CONTAINS a recorded path is not a recorded runtime.
+
+    The destination root is the parent of every environment under it, so a link repointed at
+    the destination read as accounted for and was replaced. The containment helper asks the
+    opposite question -- is this path inside that root -- and is right everywhere it is used;
+    it was the wrong question here.
+    """
+
+    def _record(self, environment):
+        record = hostrecord.empty(1)
+        for component in definition.load()["components"]:
+            hostrecord.put_install(record, component["component"], {
+                "location": str(Path(environment) / "site" / component["module"]),
+                "environment": str(environment)})
+        return record
+
+    def test_an_ancestor_of_a_recorded_environment_is_not_accounted_for(self):
+        import runtime_install
+
+        data = definition.load()
+        record = self._record("/dest/env-known")
+        self.assertFalse(runtime_install._target_is_recorded(record, "/dest", data),
+                         "the destination root contains every environment under it")
+        self.assertFalse(runtime_install._target_is_recorded(record, "/", data))
+
+    def test_a_recorded_environment_and_location_still_are(self):
+        import runtime_install
+
+        data = definition.load()
+        record = self._record("/dest/env-known")
+        module = data["components"][0]["module"]
+        self.assertTrue(runtime_install._target_is_recorded(record, "/dest/env-known", data))
+        self.assertTrue(runtime_install._target_is_recorded(
+            record, "/dest/env-known/site/" + module, data))
+        self.assertFalse(runtime_install._target_is_recorded(
+            record, "/dest/env-known-other", data))
+
+    def test_a_resume_does_not_replace_a_link_aimed_at_the_destination_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            pointer.place(host.pointer_path, host.destination)
+
+            code, payload = UpdateRecoveryTests()._run(host)
+            still = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertIn("does not account for", payload["refused"])
+        self.assertEqual(still, str(host.destination))
+
+
+class PromotionPointerPathTests(unittest.TestCase):
+    """The path the swap replaces was derived before the lock and never refreshed.
+
+    A member of the promotion's declared fresh set that nothing had put in it. Proved by
+    overlapping the two runs rather than by reading the source: while this run measures its
+    candidate, another run records the owned pointer somewhere else, and what this run then
+    reads, guards and replaces has to be the link a host now reaches through.
+    """
+
+    def test_the_path_is_a_declared_member_of_the_promotions_fresh_set(self):
+        import runtime_install
+
+        self.assertIn("pointer_path", runtime_install.PROMOTION_FRESH)
+
+    def test_a_pointer_path_recorded_while_building_is_the_one_replaced(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            moved = host.destination / "moved-by-another-run" / "current"
+
+            def competitor():
+                hostrecord.update(host.record_path, host.data["definitionVersion"],
+                                  pointer={"path": str(moved), "recordedAt": "2026-09-18T01:00:00Z",
+                                           "recordedBy": "another run"})
+
+            code, payload = UpdateRecoveryTests()._run(host, interpose=competitor)
+            reached = pointer.read(moved)
+            left = pointer.read(host.pointer_path)
+
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertEqual(payload["pointer"]["path"], str(moved),
+                         "the link a host reaches through is the one the record names now")
+        self.assertEqual(reached["target"], str(host.candidate))
+        self.assertEqual(left["target"], str(host.previous),
+                         "and the path nobody records any more is not touched")
+
+
 if __name__ == "__main__":
     unittest.main()

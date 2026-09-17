@@ -36,6 +36,12 @@ DIFFERS = "DIFFERS"
 NO_STORE = "NO_STORE"
 TABLE_ANSWERS = (AGREES, EXTENDS, NARROWS, DIFFERS, NO_STORE)
 
+# The in-flight cell's established-absent answer, given a name. No store means no attempt can
+# be open, and that is a count this command READ rather than one nobody could take. Named
+# because the answer went missing while it had no name: the cell could say "unreadable" and
+# could not say "nothing is there", so a clean host could never promote.
+NO_ATTEMPTS = 0
+
 # Only an identical schema, or no store at all, lets a replacement through.
 #
 # NARROWS loses data outright: the store holds a table the candidate does not declare, so the
@@ -58,7 +64,7 @@ def _daemon_blocks(cell):
 
 def _in_flight_blocks(cell):
     """Any attempt still open is a handover in flight (OPS-4.4)."""
-    return cell.get("answer") != 0
+    return cell.get("answer") != NO_ATTEMPTS
 
 
 def _tables_block(cell):
@@ -138,7 +144,8 @@ def inflight_cell(envelope, presence=None):
                 return _cell(reading.UNREADABLE, readable=False, command=command,
                              detail="no store exists at " + str(presence.get("dbPath"))
                                     + " and the relay reports readable contents for it")
-            return _cell(0, readable=True, command=presence.get("command"), evidence=0,
+            return _cell(NO_ATTEMPTS, readable=True, command=presence.get("command"),
+                         evidence=NO_ATTEMPTS,
                          detail="no store exists at " + str(presence.get("dbPath"))
                                 + ", so no attempt can be open. That is established absence"
                                   " rather than a count nobody could read")

@@ -348,6 +348,37 @@ this checkout's copy of a rule the installation owns. And a point recorded befor
 existed no longer qualifies: it cannot name the instrument that produced its claim, so a host that
 reached `own` on such a point measures again.
 
+### An answer about a state that was found has to be able to say there was nothing there
+
+Three review rounds in a row produced what read as three separate defects, and they were one
+thing missing in three places. It was never a check nobody had written. It was a **value an
+answer set could not express**.
+
+| Where | The answer it could not give | What that cost |
+| --- | --- | --- |
+| the in-flight cell | established absent | a clean host could never promote, while the schema cell answered `NO_STORE` about the same store |
+| the pointer rollback | restore to absence | a failed first install left a link naming a candidate nothing selected, and the candidate was then kept BECAUSE the pointer named it |
+| the selection rollback | remove a selection that had none | the same install left its own candidate selected, and a selected candidate is never released |
+
+All three end in the permanent refusal the update path exists to remove, reached from three
+directions. So the rule is stated at the layer the instances came from rather than patched a
+fourth time: **where absence is a normal state, the answer set is incomplete until it can say
+so.** A rollback that can only restore a value cannot restore "there was nothing"; a cell that
+can only report a reading or a failure cannot report a question whose true answer is zero.
+
+`ABSENCE_ANSWERS` declares each place and the operation it answers absence with, and the check
+**derives** the places from the source instead of reading that list: a function that is handed
+the state it found — a parameter named `previous`, `before` or `presence` — is answering about
+something that may not have been there. A derived place with no declaration fails, and so does a
+declared operation that either does not exist or is never used where the answer is given, because
+a capability nothing calls is the same silence as no capability at all. The scan carries injected
+violations of each form, so an empty finding list is not mute.
+
+The two absence deltas are compare-and-remove rather than remove. `deselect` takes away only an
+entry that still names what this run wrote, and `drop_pointer` only the ownership record for the
+path this run recorded. Undoing a promotion this run never made is a worse outcome than the
+failure being rolled back.
+
 ### The failure contract
 
 The reading boundary answers questions about records. Underneath it, `main()` converts anything
@@ -528,6 +559,37 @@ proof; a file somebody else left is left alone.
 | An unsettled claim for an environment that IS selected | An interrupted promotion. Finished rather than rebuilt |
 | A lock held with no claim written | A run between taking the lock and writing its claim. Refused, nothing touched |
 
+The first row hid the installed base. Claims are newer than the installations they describe, so
+every installation made before them is populated and carries nothing saying who made it — which
+is exactly how the table read somebody else's directory. The environment name is derived from the
+sources, so that refusal is permanent for that combination: there was no installed host this
+updater could move forward, which makes it not an updater.
+
+| Observed | Answer |
+| --- | --- |
+| No claim, the directory holds files, and the host record selects a runtime inside it | This host's own installation, older than claims. Brought under this command's bookkeeping; nothing rebuilt, nothing removed |
+
+The branch order is deliberately unchanged. Asking the conservative protection reading earlier
+would let a reading that FAILED authorise reuse, which is the one substitution this whole path
+exists to prevent. Ownership is established positively instead, from the narrow reading: the host
+record was read, and it says the runtime it selects lives in this very directory. Nothing else
+qualifies — a populated directory the record does not select is still somebody else's, and a
+selection reading that failed authorises nothing.
+
+What that writes is the bookkeeping the installation never had: a settled claim, and a pointer
+aimed at the environment the record already selects, recorded as this command's. The record
+matters as much as the link, because the promotion refuses to replace a link this record never
+recorded placing — so adopting a host without recording the pointer would adopt it once and
+refuse it for ever after.
+
+Two limits belong with it. The adopted environment's bytes are not re-measured here and the swap
+gate is not asked, because this replaces nothing: the directory can only be at that path if it
+was built from these sources, and the record already selects it, so the runtime a host reaches
+afterwards is the one it was already running. And where a pointer exists naming a different
+recorded environment, aiming it at the selected one is the documented repair for a selection and
+a pointer that disagree — the same repair a resume performs, and with the same limit, which is
+that neither re-runs the gate conditions.
+
 A directory taken over with `rmdir` first has this command's own two files cleared from it, and
 only those two. A run whose claim write failed used to leave its lock file behind, and `rmdir`
 refuses a directory that still holds one — so the deterministic destination was blocked for ever,
@@ -539,6 +601,13 @@ promotion does. It cannot ask for agreement, because a resume necessarily finds 
 disagreeing with the selection — that IS the interruption it repairs. It asks instead whether the
 link still names a runtime this host record accounts for, and refuses one repointed by hand while
 the run was dead.
+
+"Accounts for" is equality against a recorded environment or install location, and containment in
+neither direction. A target that CONTAINS a recorded path is not a recorded runtime: the
+destination root is the parent of every environment under it, so a link repointed at the
+destination read as accounted for and was replaced. The containment helper asks the opposite
+question — is this path inside that root — and is right everywhere it is used; it was the wrong
+question here.
 
 Liveness is the lock and not the recorded process id, for the reason the relay already recorded
 about its own supervisor: inside a container sharing a kernel, the same process id under the same
@@ -711,9 +780,16 @@ rather than only that something did: `failedStep` names the step and the boundar
 under the promotion's own lock and puts back only the entries that still name what **this** run
 wrote. If another run has promoted something else in the meantime, that entry is left alone and
 the result says so in `movedOnByAnotherRun`: rolling back on top of somebody else's success is a
-worse outcome than the failure being rolled back. A component that had no previous selection
-cannot be unselected through a delta either, and the result names it rather than reporting a
-restoration that did not happen.
+worse outcome than the failure being rolled back.
+
+Putting a selection back includes putting it back to nothing. A component that had no previous
+selection — a first install, and a legacy install whose combination was never selected before —
+has the entry this run wrote taken away, in the same write that restores the entries that had a
+previous value, so half a rollback cannot land. Until the delta set could say that, the run
+reported a rollback, the pointer correctly went back to absence, and the candidate stayed
+selected; being selected is then exactly what keeps a candidate from being released, so the
+destination could never be retried. The result names what went back in `restored` and what was
+taken away in `removed`.
 
 What the pointer is put back to includes being put back to nothing. A first or legacy install
 has no pointer, so the swap creates one, and a rollback that could only restore a previous
@@ -724,6 +800,12 @@ established-absent answer the in-flight cell was missing. Removing a pointer is 
 placing one is: only a symbolic link, only while it still names what this run placed, and the
 absence is read back before it is claimed. A restoration that cannot be read back reports a
 residual pointer and keeps the candidate rather than claiming the rollback completed.
+
+The ownership record goes with the link. The record is what makes a link this command's — the
+promotion refuses to replace one the record never recorded placing — so a rollback that removed
+the link and left the record behind said this command owns a link that is not there, and armed
+that guard in favour of whatever appeared at that path next. It is dropped only after the link is
+verifiably gone, and only for the path this run recorded.
 
 The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
 destination is retriable; removal that could not finish reports the residual path, what recovery

@@ -126,7 +126,36 @@ CONFLICT_READINGS = ("registration", "links", "pointer")
 # Declared rather than remembered, because the previous three got in exactly where nothing was
 # looking. The check reads this set, finds the promotion critical section, and fails any member
 # that is read there without having been assigned there.
-PROMOTION_FRESH = ("fresh", "previous_selection", "gate", "before", "pointer_read")
+PROMOTION_FRESH = ("fresh", "previous_selection", "gate", "before", "pointer_read",
+                   "pointer_path")
+
+# Every answer this command gives about a state as it was FOUND, and the operation each one
+# says "there was nothing there" with.
+#
+# Three review rounds in a row were one thing missing, and it was never a check nobody had
+# written: it was a VALUE an answer set could not express. The in-flight cell had no
+# established-absent, so a clean host could not promote while the schema cell answered NO_STORE
+# about the very same store. The pointer rollback had no restore-to-absence, so a first install
+# that failed left a link naming a candidate nothing selected -- and the candidate was then kept
+# BECAUSE the pointer named it. The selection rollback had no remove-a-selection-that-had-none,
+# so the same first install left its own candidate selected. One shape, three places, three
+# rounds.
+#
+# So the rule is stated at the layer the instances came from. A place that is handed the state
+# it found -- see PRIOR_STATE_ARGUMENTS -- is answering about something that may not have been
+# there, and its answer set is incomplete until it can say so. The check DERIVES those places
+# from the source rather than reading this list, so a new one arrives as a failure instead of as
+# a fourth round, and it requires the declared operation both to exist and to be used where the
+# answer is given: a capability nothing calls is the same silence as no capability at all.
+ABSENCE_ANSWERS = {
+    "runtime_install._restore_pointer": ("pointer.remove", "hostrecord.drop_pointer"),
+    "runtime_install._restore_selection": ("hostrecord.deselect",),
+    "swapgate.inflight_cell": ("swapgate.NO_ATTEMPTS",),
+}
+
+# How a function says it receives the state as it was found. These are the parameter names the
+# three instances used, and they are what the derivation above keys on.
+PRIOR_STATE_ARGUMENTS = ("previous", "before", "presence")
 UNUSABLE_REGISTRATIONS = tuple(dict.fromkeys(reading.UNUSABLE + (codexconfig.UNREADABLE,)))
 
 # register-mcp's own three answers, beside the ones those modules own. A partial application is
@@ -2037,7 +2066,29 @@ def cmd_install(args):
                 # move the pointer. Rebuilding is the wrong repair: it is built, it is already
                 # selected, and a process may be running out of it.
                 return _finish_promotion(record_path, data, environment, pointer_path, standing,
-                                         issue=args.issue)
+                                         issue=args.issue, reported={
+                    "resumed": True,
+                    "note": "a previous run committed this environment as selected and did not"
+                            " live to move the pointer. Nothing was rebuilt and nothing was"
+                            " removed: the missing half of that promotion was written and the"
+                            " claim settled."})
+            if decision == staging.RECORDED:
+                # An installation made before this command wrote claims. It carries no claim,
+                # so every earlier reading called it somebody else's directory and refused --
+                # which refused the whole installed base this update exists to move forward.
+                # The host record positively selects it, so it is this host's own runtime: the
+                # bookkeeping it never had is written and nothing is rebuilt or removed.
+                return _finish_promotion(record_path, data, environment, pointer_path, standing,
+                                         issue=args.issue, reported={
+                    "adopted": True,
+                    "note": "this installation was made before this command wrote staging"
+                            " claims, and the host record selects it. It is brought under this"
+                            " command's bookkeeping -- a claim, and a pointer to reach it"
+                            " through -- so the NEXT update can move it. Nothing was rebuilt,"
+                            " nothing was removed, and the runtime a host reaches is the one"
+                            " the record already selected. Its bytes were not re-measured"
+                            " here: this run replaced nothing, and the swap gate is asked"
+                            " where something is replaced."})
             if decision == staging.ADOPT:
                 # rmdir, never rmtree. It succeeds only on an empty directory, so the call is
                 # its own proof that nothing was destroyed, and the exclusive mkdir below still
@@ -2233,6 +2284,15 @@ def cmd_install(args):
         try:
             with hostrecord.Exclusive(record_path):
                 fresh = hostrecord.load(record_path, data["definitionVersion"])
+                # The path this swap actually replaces, re-derived from the reading taken
+                # inside this lock. Derived before it -- as it is for the staging decision
+                # above, where it is the right value -- it is a path another run's promotion
+                # may have recorded somewhere else in the meantime, and then the link this
+                # swap reads, guards and replaces is not the link a host reaches through.
+                # Assigned before the refusal below reports it, so the member is read fresh
+                # everywhere in this section.
+                pointer_path = Path(((fresh.value or {}).get("pointer") or {}).get("path")
+                                    or pointer.pointer_path(destination))
                 if not fresh.usable:
                     return _install_failed(record_path, data["definitionVersion"], performed,
                                            environment, owned, pointer_path=pointer_path,
@@ -2379,7 +2439,8 @@ def cmd_install(args):
                                       "detail": type(error).__name__ + ": " + error.__str__()})
                     # place() can fail with the link already replaced, so the same restoration
                     # answers this branch: whatever is there now goes back to what was found.
-                    put_back = _restore_pointer(pointer_path, before, environment)
+                    put_back = _restore_pointer(pointer_path, before, environment, record_path,
+                                                data["definitionVersion"])
                     performed.append({"step": "put the pointer back", "ok": put_back["verified"],
                                       "detail": put_back["detail"]})
                     return _install_failed(
@@ -2395,7 +2456,8 @@ def cmd_install(args):
                 if landed is not True:
                     performed.append({"step": "read the owned pointer back", "ok": False,
                                       "detail": pointer.read(pointer_path).get("detail")})
-                    put_back = _restore_pointer(pointer_path, before, environment)
+                    put_back = _restore_pointer(pointer_path, before, environment, record_path,
+                                                data["definitionVersion"])
                     performed.append({"step": "put the pointer back", "ok": put_back["verified"],
                                       "detail": put_back["detail"]})
                     return _install_failed(
@@ -2471,7 +2533,8 @@ def cmd_install(args):
             holder.__exit__()
 
 
-def _finish_promotion(record_path, data, environment, pointer_path, standing, *, issue):
+def _finish_promotion(record_path, data, environment, pointer_path, standing, *, issue,
+                      reported):
     """Write the half a killed run did not: the pointer, for a selection already committed.
 
     The two truths are written one after the other inside one lock, so the only thing that can
@@ -2479,6 +2542,12 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
     unreachable, and rebuilding would be the wrong repair: it is built, it is selected, and a
     process may already be running out of it. So the pointer is brought into agreement with the
     selection and the claim is settled. Nothing is rebuilt and nothing is removed.
+
+    Two callers reach it for the same state read two ways. A killed run leaves a claim and a
+    committed selection; an installation older than claims leaves a committed selection and no
+    claim at all. Both are a runtime this record selects that no pointer reaches, and both are
+    repaired by writing the half that is missing. 'reported' is what the caller says about the
+    case it found, because the state is one thing and the reason is not.
     """
     with hostrecord.Exclusive(record_path):
         # Re-read the selection under the lock rather than trusting the decision that got here.
@@ -2493,11 +2562,12 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
             return EXIT_REFUSED
         if not _names_environment(current.value, environment, data):
             emit(dict(standing, refused="the host record no longer selects this environment, so"
-                                        " there is no interrupted promotion here to finish"))
+                                        " there is no promotion here to finish"))
             return EXIT_REFUSED
         before = pointer.read(pointer_path)
         if not pointer.usable(before["state"]):
-            emit(dict(standing, refused="the interrupted promotion could not be finished: "
+            emit(dict(standing, refused="the missing half of this promotion could not be"
+                                        " written: "
                                         + str(before["detail"]),
                       pointer={"path": str(pointer_path), "state": before["state"]}))
             return EXIT_REFUSED
@@ -2516,24 +2586,45 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
                               " interrupted promotion is not this run's to finish",
                       pointer={"path": str(pointer_path), "target": before.get("target")}))
             return EXIT_REFUSED
+        # A pointer this command owns is RECORDED when it is placed, and this path placed one
+        # without recording it. An installation older than claims has no such record, so the
+        # link written here was a link nobody recorded -- and the next update refuses to
+        # replace one of those. Adopting a host once and then refusing it for ever is the
+        # failure this command exists to remove, so the record is written with the link.
+        owning = hostrecord.update(record_path, data["definitionVersion"],
+                                   pointer={"path": str(pointer_path), "recordedAt": now(),
+                                            "recordedBy": issue})
+        if not owning.usable:
+            emit(dict(standing, refused="the pointer could not be recorded as this command's,"
+                                        " so placing one would leave a link the next update"
+                                        " refuses to replace: " + str(owning.detail),
+                      reading=owning.refusal()))
+            return EXIT_REFUSED
         try:
             pointer.place(pointer_path, environment)
         except OSError as error:
-            emit(dict(standing, refused="the interrupted promotion could not be finished: "
-                                        + type(error).__name__ + ": " + str(error)))
+            put_back = _restore_pointer(pointer_path, before, environment, record_path,
+                                        data["definitionVersion"])
+            emit(dict(standing, refused="the missing half of this promotion could not be"
+                                        " written: "
+                                        + type(error).__name__ + ": " + str(error),
+                      pointerRestored=put_back))
             return EXIT_REFUSED
         landed = pointer.names(pointer_path, environment)
-    if landed is not True:
-        emit(dict(standing, refused="the pointer did not land on the environment the host"
-                                    " record already selects"))
-        return EXIT_REFUSED
+        if landed is not True:
+            # Put back what was found, absence included, so a destination this call could not
+            # repair is left the way it was rather than holding a link nothing selects.
+            put_back = _restore_pointer(pointer_path, before, environment, record_path,
+                                        data["definitionVersion"])
+            emit(dict(standing, refused="the pointer did not land on the environment the host"
+                                        " record already selects",
+                      pointerRestored=put_back))
+            return EXIT_REFUSED
     staging.write_claim(environment, staging.COMPLETE, issue=issue, run=str(os.getpid()))
-    emit(dict(standing, applied=True, resumed=True,
+    emit(dict(standing, applied=True,
               pointer={"path": str(pointer_path), "previousTarget": before.get("target"),
                        "target": str(environment)},
-              note="a previous run committed this environment as selected and did not live to"
-                   " move the pointer. Nothing was rebuilt and nothing was removed: the missing"
-                   " half of that promotion was written and the claim settled."))
+              **reported))
     return EXIT_OK
 
 
@@ -2586,6 +2677,12 @@ def _target_is_recorded(record, target, data):
     True for an environment or install location the record holds, and False for anything else
     INCLUDING a target that could not be resolved, because this answer authorises replacing a
     link and an unread answer authorises nothing.
+
+    Equality, and not containment in either direction. A target that CONTAINS a recorded path
+    is not a recorded runtime: the destination root is the parent of every environment under
+    it, so a link repointed at the destination read as accounted for and was replaced. The
+    containment helper asks the opposite question -- is this path inside that root -- and is
+    right where it is used; it was the wrong question here.
     """
     if not target:
         return False
@@ -2604,7 +2701,7 @@ def _target_is_recorded(record, target, data):
                     known = Path(value).resolve()
                 except (OSError, ValueError):
                     continue
-                if wanted == known or wanted in known.parents:
+                if wanted == known:
                     return True
     return False
 
@@ -2669,7 +2766,8 @@ def _selected_install(record, name):
     return None
 
 
-def _restore_pointer(pointer_path, before, environment):
+def _restore_pointer(pointer_path, before, environment, record_path=None,
+                     definition_version=None):
     """Put the pointer back the way this run found it, INCLUDING finding it absent.
 
     The rollback could only restore a previous target, which has no answer for a first or legacy
@@ -2682,14 +2780,32 @@ def _restore_pointer(pointer_path, before, environment):
     'Restore to absence' was the value missing from this answer set, the same shape as the
     established-absent answer the in-flight cell was missing.
 
+    Restoring absence takes the OWNERSHIP RECORD away with the link. The record is what makes a
+    link this command's: the promotion refuses to replace one this record never recorded
+    placing. Left behind for a path where the link was removed, it says this command owns a
+    link that is not there, and the next run then reads a stranger's link at that path as its
+    own. Half a rollback re-arms the guard against the host it protects, so the record goes
+    only when the link went, and only for the path this run recorded.
+
     A restoration that cannot be read back is reported as residual rather than claimed: the
     caller then keeps the candidate, which is the safe direction when the disk and the record
     may disagree.
     """
     if before["state"] == pointer.NO_POINTER:
         removed, detail = pointer.remove(pointer_path, environment)
+        dropped = None
+        if removed and record_path is not None:
+            # Only after the link is verifiably gone. Dropping the record first would leave a
+            # link nobody recorded, which is the refusal shape from the opposite side.
+            written = hostrecord.update(record_path, definition_version,
+                                        drop_pointer=str(pointer_path))
+            dropped = written.usable
+            if not written.usable:
+                detail = (detail + ", but the ownership record for it could not be taken away: "
+                          + str(written.detail))
         return {"restoredTo": "absent" if removed else None, "verified": removed,
-                "residualPointer": None if removed else str(pointer_path), "detail": detail}
+                "residualPointer": None if removed else str(pointer_path),
+                "ownershipDropped": dropped, "detail": detail}
     if before["state"] == pointer.LINK and before.get("target"):
         try:
             pointer.place(pointer_path, before["target"])
@@ -2712,9 +2828,16 @@ def _restore_selection(record_path, definition_version, previous, installs):
 
     Narrow on purpose. Re-asserting a whole selection map would carry back entries read before
     the slow work and re-assert them as current, which is the staleness the single-writer helper
-    exists to prevent. This re-asserts only the components this run changed, and only where
-    there was a previous value. A component that was never selected cannot be unselected through
-    a delta, and saying so is better than reporting a restoration that did not happen.
+    exists to prevent. This re-asserts only the components this run changed.
+
+    Two answers, because putting a selection back has two shapes and this had only one. Where
+    there was a previous value it goes back. Where there was NONE -- a first install, and a
+    legacy install whose combination was never selected before -- the entry this run wrote is
+    taken away, which is the answer the delta set could not express: the run reported a
+    rollback, the pointer correctly went back to absence, and the candidate stayed selected.
+    Being selected is then what keeps the candidate from being released, so the destination
+    could never be retried. The permanent refusal again, and again from the answer set rather
+    than from the check.
     """
     missing = sorted(name for name in installs if not previous.get(name))
     # The caller holds the promotion lock; this does not take it again. 'previous' is the
@@ -2730,26 +2853,29 @@ def _restore_selection(record_path, definition_version, previous, installs):
                 "detail": "the host record could not be read, so the previous selection"
                           " could not be put back: " + str(current.detail)}
     selected = (current.value.get("selected") or {})
-    back, moved_on = {}, []
+    back, gone, moved_on = {}, {}, []
     for name, install in installs.items():
         if selected.get(name) != install["location"]:
             moved_on.append(name)
             continue
         if previous.get(name):
             back[name] = previous[name]
-    if not back:
+        else:
+            gone[name] = install["location"]
+    if not back and not gone:
         return {"selection": None, "restored": [], "withoutPrevious": missing,
                 "movedOnByAnotherRun": sorted(moved_on),
                 "detail": "there was nothing of this run's left to put back: either nothing"
-                          " was selected before it, or another run has since moved the"
-                          " selection on"}
-    written = hostrecord.update(record_path, definition_version, select=back)
+                          " this run wrote is still selected, or another run has since moved"
+                          " the selection on"}
+    written = hostrecord.update(record_path, definition_version, select=back, deselect=gone)
     return {"selection": back if written.usable else None,
             "restored": sorted(back) if written.usable else [],
+            "removed": sorted(gone) if written.usable else [],
             "withoutPrevious": missing, "movedOnByAnotherRun": sorted(moved_on),
-            "detail": ("the previous selection was put back" if written.usable
-                       else "the previous selection could not be put back: "
-                            + str(written.detail))}
+            "detail": ("the selection this run moved was put back to what it was, including"
+                       " back to nothing where nothing was selected before it" if written.usable
+                       else "the selection could not be put back: " + str(written.detail))}
 
 
 def _selected_digest(location):

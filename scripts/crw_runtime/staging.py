@@ -68,11 +68,12 @@ LIVENESS = (LIVE, DEAD, UNKNOWN)
 RECLAIM = "RECLAIM"
 ADOPT = "ADOPT"
 RESUME = "RESUME"
+RECORDED = "RECORDED"
 OCCUPIED = "OCCUPIED"
 FOREIGN = "FOREIGN"
 KEEP = "KEEP"
 SETTLED = "SETTLED"
-DECISIONS = (RECLAIM, ADOPT, RESUME, OCCUPIED, FOREIGN, KEEP, SETTLED)
+DECISIONS = (RECLAIM, ADOPT, RESUME, RECORDED, OCCUPIED, FOREIGN, KEEP, SETTLED)
 
 # The only decision that deletes anything. Declared, so a reader can see the whole of what this
 # module authorises removal for rather than having to find every branch.
@@ -279,6 +280,18 @@ def decide(claim, liveness, *, occupied, protected, selected):
     writing one on the strength of a reading that failed would aim a host command at an
     environment nothing selects. So RESUME asks 'selected', which is True only when the record
     was read and names this environment.
+
+    RECORDED is the same question asked of a directory with no claim at all. Claims are newer
+    than the installations they describe, so every installation made before them looks exactly
+    like somebody else's directory: populated, and carrying nothing that says who made it. Read
+    that way there was no installed host this command could update, which makes it no updater.
+    The branch order is unchanged and deliberately so -- testing 'protected' earlier would let
+    a reading that FAILED authorise reuse, which is the substitution the rest of this module
+    exists to prevent -- so ownership is established positively instead: 'selected' is True only
+    when the host record was read and says the runtime it selects lives in this very directory.
+    That is this host's own runtime, and writing the bookkeeping it never had is not replacing
+    anything. Nothing is rebuilt and nothing is removed, which is why RECORDED is not in
+    REMOVES.
     """
     if claim.state == reading.ABSENT:
         # Liveness first, even with no claim. A run takes the lock and writes its claim as one
@@ -295,8 +308,16 @@ def decide(claim, liveness, *, occupied, protected, selected):
             return KEEP, ("there is no claim here and the directory could not be listed, so"
                           " whether it holds anything could not be established")
         if occupied:
+            if selected is True:
+                return RECORDED, ("this directory holds the installation the host record"
+                                  " positively selects, and carries no claim because it was"
+                                  " made before this command wrote them. It is this host's own"
+                                  " runtime rather than somebody else's directory, so the"
+                                  " bookkeeping it never had is written; nothing is rebuilt"
+                                  " and nothing is removed")
             return FOREIGN, ("this directory holds files and carries no claim from this"
-                             " command, so it belongs to somebody else and is left alone")
+                             " command, and the host record does not select anything inside"
+                             " it, so it belongs to somebody else and is left alone")
         if protected:
             return KEEP, ("this environment is in use and carries no claim, so it is left"
                           " exactly as it is")

@@ -367,7 +367,8 @@ class Exclusive:
 # ------------------------------------------------------------------ the one way to write
 
 def update(path, definition_version, *, installs=None, points=None, select=None,
-           component_facts=None, outgoing=None, drop_environment=None, pointer=None):
+           component_facts=None, outgoing=None, drop_environment=None, pointer=None,
+           deselect=None, drop_pointer=None):
     """Apply narrow deltas to state this helper loads itself, inside the lock, at write time.
 
     The helper never accepts a record, and that is the whole point. A caller that loads a
@@ -380,6 +381,15 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
     'drop_environment' is the recovery delta: it removes the install records this run created
     and leaves the selection exactly as found, because another run's successful promotion is
     not this run's to undo.
+
+    'deselect' and 'drop_pointer' are the two deltas that say NOTHING IS THERE. Every other
+    delta asserts a value, and an answer set that can only assert cannot roll back to a state
+    where there was nothing: a first install that failed left its own candidate selected
+    because a select delta had no way to say "nothing was selected before this run", and left
+    an ownership record for a link it had just taken away. Both are compare-and-remove rather
+    than remove, for the same reason the selection restore is narrow -- an entry another run
+    has since moved on belongs to that run, and undoing a promotion this run never made is a
+    worse outcome than the failure being rolled back.
 
     Returns the Reading it loaded, so a caller can report an unreadable record rather than
     guess. Nothing is written when the record could not be read.
@@ -412,6 +422,20 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
             # Only the assignments this run made. A whole selection map would carry back
             # entries the caller read before its slow work and re-assert them as current.
             record.setdefault("selected", {}).update(select)
+        for name, location in (deselect or {}).items():
+            # Put a selection back to nothing. Only an entry that still names what this run
+            # wrote: one another run has moved on is that run's to keep.
+            selected = record.get("selected")
+            if isinstance(selected, dict) and selected.get(name) == str(location):
+                del selected[name]
+        if drop_pointer is not None:
+            # Put the pointer ownership back to nothing, and only for the path this run
+            # recorded. Left behind, this record says this command owns a link at a path where
+            # it removed one, and the guard that refuses to replace a link nobody recorded then
+            # reads a stranger's link at that path as this command's own.
+            owned = record.get("pointer")
+            if isinstance(owned, dict) and owned.get("path") == str(drop_pointer):
+                del record["pointer"]
         save(path, record)
     return current
 
