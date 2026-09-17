@@ -148,6 +148,80 @@ Recovery follows from the same rule. A failed install removes the directory it c
 only the install records keyed to that directory. It leaves the selection **exactly as found**,
 because another run's successful promotion is not this run's to undo.
 
+### Reading the configuration
+
+`tomllib` reads the configuration wherever it exists, which is Python 3.11 and newer: the host
+interpreter and every runtime this command installs. A hand-written TOML reader is an open
+correctness problem, and this one cost eight review rounds - delimiter counting, escape decoding,
+dotted names, quoted keys, the three-quote sequence, brackets inside quoted names, Unicode line
+boundaries, quoted member assignments - so it stopped being the reader.
+
+A narrow fallback remains for the one CI job on 3.10. It is not a TOML parser and does not try to
+be. It models `command` as a string and `args` as a list of strings, and refuses everything else:
+a multi-line string value, an inline table as either field, a table or dotted key that makes either
+of them a container, a value it cannot decode, and any line it cannot classify. Outside its subset
+the worst case is a refusal, never a different answer. The checks run it on every interpreter, and
+compare it against `tomllib` where `tomllib` exists, so the subset is judged by an oracle rather
+than by the job that has none.
+
+Parsing is not reading a registration. A file where `args` is the string `"ab"` parses cleanly and
+`list()` turns it into `["a", "b"]`, so the shape is validated before anything is compared:
+`mcp_servers` a table, each entry a table, `command` a string, `args` a list of strings. Other
+fields such as `env` are left alone rather than refused, and the comparison is a symmetric
+projection onto the two fields registration actually decides on.
+
+Appending gets the same treatment. Reading a file correctly does not make a trailing table mean
+what it says: a root `mcp_servers = {}` is a closed inline table that `[mcp_servers.x]` cannot
+extend, and under `[[mcp_servers]]` an appended table attaches to the last array element. So the
+proposed content is read back **before** it is written, and it must carry the intended registration
+and leave every other one unchanged, or nothing is written.
+
+### The failure contract
+
+The reading boundary answers questions about records. Underneath it, `main()` converts anything
+that escapes a handler into a controlled result and exits non-zero. The two are deliberately
+separate:
+
+| | Reading refusal | `internalError` |
+| --- | --- | --- |
+| means | this record could not be read | a defect in this command reached the top |
+| carries | a `state` from the four-state partition | the exception type and the line that raised it |
+| about | the record | the code |
+
+A defect is never filed as a statement about somebody's data, which is what would make it
+disappear. What this guarantees is narrow and worth stating plainly: the worst case is a named
+result rather than a traceback. It does not guarantee that every input was anticipated.
+`diagnose` still reports unreadability and exits zero; the contract is about tracebacks, not about
+forcing every command to refuse.
+
+### Recovery has two outcomes
+
+Reporting a refusal does not delete a directory. After a failed installation the result says which
+of these happened:
+
+- **retriable** - removal was verified on the filesystem, so the same destination can be used again.
+- **not retriable** - removal could not finish. The result names the residual path and what
+  recovery needs, and the original failure is reported alongside the cleanup failure rather than
+  replaced by it.
+
+Whether the candidate may be removed at all is read, never remembered. `hostrecord.update` saves
+inside the lock and releasing the lock can still raise afterwards, so a run can commit its
+promotion and raise anyway; a flag set from "the call returned" would then delete a runtime that is
+now selected. Recovery reads the selection back under its own lock and keeps the candidate when the
+environment is selected **and** when the selection cannot be established, because an unreadable
+record says nothing about what is selected. A raised failure releases exactly like a returned one.
+
+### The trial preflight matches what the relay requires
+
+Everything the trial needs is checked before its first command, and "needs" means what the relay
+itself enforces rather than what is merely present. `--turn-status` is one of the four the relay
+declares; `--turn-thread` equals `--child-task`, because a receipt's thread has to be the
+relationship's child task; and every `--artifact` is an absolute, already-normalised path to a
+regular file with no symbolic link at any component, readable, and inside `--artifact-root`, which
+is what the relay checks while building the manifest. The relay revalidates afterwards, because a
+path can change in between.
+
+
 ## Installing the runtime
 `runtime_install.py install` refuses unless `verify-definition` passes, then resolves an
 interpreter that satisfies both components' `requires-python`. The controller itself runs on

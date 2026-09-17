@@ -267,3 +267,46 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
             record.setdefault("selected", {}).update(select)
         save(path, record)
     return current
+
+
+def _under(location, environment):
+    """Whether a recorded location is that environment or lives inside it.
+
+    Containment over resolved parts, not a string prefix: /opt/env-other shares the text of
+    /opt/env and is a different place.
+    """
+    try:
+        candidate, root = Path(str(location)).resolve(), Path(str(environment)).resolve()
+    except (OSError, ValueError):
+        return False
+    return candidate == root or root in candidate.parents
+
+
+def release_candidate(path, definition_version, environment):
+    """Drop the install records for an environment, unless it is the selected one.
+
+    Returns (reading, decision). The decision is READ from the record under the lock rather
+    than remembered from a flag, and that distinction is the whole point: update() saves
+    inside the lock and releasing the lock can still raise afterwards, so a run can have
+    committed its promotion and raised anyway. A caller concluding "the call did not return,
+    so nothing was promoted" would then delete a runtime that is now selected.
+
+    Absence of evidence is not permission either. When the record cannot be read the
+    candidate is kept, because an unreadable record says nothing about what is selected.
+    """
+    with Locked(path):
+        current = load(path, definition_version)
+        if not current.usable:
+            return current, ("kept: the record could not be read, so nothing about the"
+                             " selection could be established")
+        record = current.value
+        selected = record.get("selected") or {}
+        if any(_under(location, environment) for location in selected.values() if location):
+            return current, ("kept: this environment is the selected one, so the run that"
+                             " promoted it committed before it failed")
+        for name in list(record.get("components") or {}):
+            entry = record["components"][name]
+            entry["installs"] = [i for i in entry.get("installs") or []
+                                 if i.get("environment") != str(environment)]
+        save(path, record)
+    return current, "dropped: the selection does not name this environment"

@@ -1,25 +1,24 @@
-"""A deliberately small reader for the MCP server tables in a Codex config.toml.
+"""Reading the MCP server tables in a Codex config.toml, and refusing what cannot be read.
 
-This is not a TOML parser and does not try to be one. tomllib does not exist on the Python
-this repository runs its own checks with, and a hand-written general parser would be a much
-larger thing to get wrong than the one shape that actually matters here.
+tomllib is the reader wherever it exists, which is Python 3.11 and newer. That is every place
+this code actually runs: the host interpreter and the runtimes this command installs. A
+hand-written TOML reader is an open correctness problem -- this module lost eight review rounds
+to delimiter counting, escape decoding, dotted names, quoted keys, the three-quote sequence,
+brackets inside quoted names, Unicode line boundaries and quoted member assignments -- and the
+way to close it is to stop writing one.
 
-It models exactly one shape, [mcp_servers.<name>], and treats everything it does not model
-as unreadable. That asymmetry is the whole safety argument: the damaging failure is not
-refusing a file it could have read, it is concluding that a server is absent because its
-registration was written in a form the scanner did not recognise, and then appending a
-second definition of a server that was already there.
+A narrow fallback remains for the one CI job on 3.10. Its obligation is not to be a TOML parser.
+It models command as a string and args as a list of strings, and it REFUSES every construct that
+would make either of them anything else, plus any line it cannot classify. So outside its subset
+the worst case is a refusal, never a different answer.
 
-The reader walks characters rather than counting delimiters, because a quote only means
-what it means outside a string. A single-quoted literal value can legitimately contain the
-three-quote sequence that opens a multi-line string, and counting delimiters reads that as a
-fence which never closes, silently skipping every table after it. A basic string also carries
-escapes that have to be decoded before its value can be compared with anything.
+That asymmetry is the whole safety argument, and it is the same one either reader serves: the
+damaging failure is not refusing a file that could have been read, it is concluding a server is
+absent when it is registered, and then appending a second definition of it.
 
-A server's name is the FIRST segment after mcp_servers. Deeper segments are that server's
-own sub-tables. A real configuration carries [mcp_servers.oracle.env] and
-[mcp_servers.codex-thread-bridge.tools.create_thread], and reading either as a server name
-would invent a server that does not exist and hide one that does.
+Parsing correctly is not the same as reading a registration. A file where args is the string
+"ab" parses fine and list() turns it into ["a", "b"], so the shape of what was parsed is
+validated before anything is compared.
 """
 
 import re
@@ -190,38 +189,151 @@ def _split_key(text):
     return segments
 
 
+def registration_view(mapping):
+    """Validate mcp_servers and project it to the two fields this command compares.
+
+    A correct parse says nothing about shape. Without this, args = "ab" reads as a string,
+    list() turns it into ["a", "b"], and a malformed registration compares equal to a
+    requested ["a", "b"] -- a right answer to the wrong question.
+
+    The projection is deliberate and symmetric: command and args are what registration
+    decides on, and a server carrying env or anything else is left alone rather than
+    refused.
+    """
+    if not isinstance(mapping, dict):
+        raise Unreadable("mcp_servers is a table of servers, found "
+                         + type(mapping).__name__)
+    view = {}
+    for name, entry in mapping.items():
+        if not isinstance(entry, dict):
+            raise Unreadable("the registration for " + repr(name) + " is a table, found "
+                             + type(entry).__name__)
+        projected = {}
+        if "command" in entry:
+            if not isinstance(entry["command"], str):
+                raise Unreadable(repr(name) + " has a command that is not a string, it is "
+                                 + type(entry["command"]).__name__)
+            projected["command"] = entry["command"]
+        if "args" in entry:
+            args = entry["args"]
+            if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+                raise Unreadable(repr(name) + " has args that are not a list of strings, they"
+                                 " are " + type(args).__name__)
+            projected["args"] = list(args)
+        view[name] = projected
+    return view
+
+
 def scan(text):
-    """Read the mcp_servers tables, or say why the file cannot be read."""
+    """Read the mcp_servers registrations, or say why the file cannot be read."""
+    try:
+        import tomllib
+    except ImportError:
+        return scan_subset(text)
+    try:
+        parsed = tomllib.loads(text)
+    except Exception as error:
+        return ConfigView({}, ["this file is not readable TOML: " + type(error).__name__
+                               + ": " + str(error)])
+    try:
+        return ConfigView(registration_view(parsed.get("mcp_servers", {})), [])
+    except Unreadable as error:
+        return ConfigView({}, [error.detail])
+
+
+def _depth(code):
+    """How far a value is left open by this line, counted on the blanked code."""
+    return (code.count("[") + code.count("{")) - (code.count("]") + code.count("}"))
+
+
+def _residue(code):
+    """What is left of a value once strings, array syntax and whitespace are removed.
+
+    consume blanks every string to spaces, so anything still here is a token this reader does
+    not model: a bare word, a number, a boolean, a date. Without this, command = /c decodes to
+    no strings at all and is recorded as an empty value, which is a different answer rather
+    than a refusal.
+    """
+    for character in "[],{}":
+        code = code.replace(character, " ")
+    return code.strip()
+
+
+def _assignment(line, code):
+    """(key segments, value code) for an assignment, or None.
+
+    The key is sliced from the ORIGINAL line, because a quoted key is blanked in the code and
+    a regex over the code cannot see it. That blanking is exactly how a quoted member of the
+    parent table slipped through unread and unrefused.
+    """
+    index, depth = None, 0
+    for position, char in enumerate(code):
+        if char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+        elif char == "=" and depth == 0:
+            index = position
+            break
+    if index is None:
+        return None
+    key_text = line[:index].strip()
+    if not key_text:
+        return None
+    segments = _split_key(key_text)
+    if segments is None:
+        raise Unreadable("an assignment whose key this reader cannot read: " + repr(key_text))
+    return segments, code[index + 1:]
+
+
+MODELLED_FIELDS = ("command", "args")
+TRIPLE_BASIC = chr(34) * 3
+TRIPLE_LITERAL = chr(39) * 3
+
+
+def scan_subset(text):
+    """The 3.10 fallback: a small modelled subset, and a refusal for everything else.
+
+    Kept as a named function rather than an implementation detail so the checks can compare it
+    against tomllib on an interpreter that HAS tomllib. Otherwise the only job that exercises
+    it is the only job with no oracle to judge it.
+    """
     servers = {}
     current = None
     section = None
     fence = None
     pending = None
+    depth = 0
 
     try:
-        # str.splitlines splits on Unicode boundaries such as U+2028 and U+0085 that TOML
-        # does not treat as line endings, which tears a value containing one in half and
-        # reads the remainder as syntax. TOML's line ending is a newline, optionally
-        # preceded by a carriage return.
+        # str.splitlines splits on Unicode boundaries such as U+2028 that TOML does not treat
+        # as line endings, which tears a value in half and reads the remainder as syntax.
         for number, line in enumerate(text.replace("\r\n", "\n").split("\n"), 1):
+            where = "line " + str(number) + ": "
             inside = fence is not None
             code, values, fence = consume(line, fence)
             if inside:
-                # This line began inside a multi-line string, so nothing in it is syntax
-                # until that string closes. A table header appearing after the close is a
-                # shape this reader does not model rather than one it may ignore.
                 if fence is not None:
                     continue
                 if "[" in code:
-                    raise Unreadable("line " + str(number) + ": a table header sharing a line"
-                                     " with the end of a multi-line string")
+                    raise Unreadable(where + "a table header sharing a line with the end of a"
+                                             " multi-line string")
 
-            if pending is not None:
-                pending["values"].extend(values)
-                if "]" in code:
-                    if current is not None:
-                        servers[current][pending["key"]] = pending["values"]
-                    pending = None
+            if depth > 0:
+                # A value left open on an earlier line. Classified, because refusing every
+                # continuation would refuse ordinary configurations.
+                if pending is not None:
+                    if _residue(code):
+                        raise Unreadable(where + "a value this reader does not model in "
+                                         + pending["key"] + ": " + repr(_residue(code)[:40]))
+                    pending["values"].extend(values)
+                depth += _depth(code)
+                if depth <= 0:
+                    depth = 0
+                    if pending is not None:
+                        if current is not None:
+                            servers[current][pending["key"]] = pending["values"]
+                        pending = None
                 continue
 
             stripped = code.strip()
@@ -229,65 +341,102 @@ def scan(text):
                 continue
 
             if ARRAY_HEADER.match(code):
-                if "mcp_servers" in line:
-                    raise Unreadable("line " + str(number) + ": an array-of-tables header under"
-                                     " mcp_servers, which this reader does not model")
+                header = HEADER.match(code.replace("[[", "[", 1).replace("]]", "]", 1))
+                segments = _split_key(line[2:line.rindex("]]")]) if "]]" in line else None
+                if segments and segments[0] == "mcp_servers":
+                    raise Unreadable(where + "an array-of-tables under mcp_servers, which this"
+                                             " reader does not model")
                 current, section = None, None
                 continue
 
-            # A header is recognised from the blanked code, which already knows where the
-            # strings are, and its key is then sliced out of the ORIGINAL line by the match
-            # span. Matching the raw line instead rejects a quoted name containing a bracket,
-            # which tomllib accepts, so the table would be read as no server at all; parsing
-            # the blanked interior instead would erase the name. The span is exact because
-            # every blanked string keeps its original width.
+            # A header is recognised from the blanked code, which knows where the strings are,
+            # and its key is sliced from the original line by the match span, so a bracket
+            # inside a quoted name is an ordinary character.
             header = HEADER.match(code)
             if header:
                 raw_key = line[header.start(1):header.end(1)]
                 segments = _split_key(raw_key)
                 if segments is None:
                     if "mcp_servers" in raw_key:
-                        raise Unreadable("line " + str(number) + ": a table header under"
-                                         " mcp_servers whose key this reader cannot read")
+                        raise Unreadable(where + "a table header under mcp_servers whose key"
+                                                 " this reader cannot read")
                     current, section = None, None
                     continue
                 section = segments
-                if segments and segments[0] == "mcp_servers" and len(segments) >= 2:
+                if segments[0] == "mcp_servers" and len(segments) >= 2:
                     name = segments[1]
                     if len(segments) == 2:
                         if name in servers:
-                            raise Unreadable("line " + str(number) + ": " + name
-                                             + " is defined more than once")
+                            raise Unreadable(where + name + " is defined more than once")
                         servers[name] = {}
                         current = name
                     else:
+                        if segments[2] in MODELLED_FIELDS:
+                            # Defines command or args as a table. This reader models them as a
+                            # string and a list of strings, and a projection that simply
+                            # omitted this would compare equal to a registration that is not
+                            # there.
+                            raise Unreadable(where + "a table that defines "
+                                             + segments[2] + " of " + name + " as a table")
                         servers.setdefault(name, {})
                         current = None
                 else:
                     current = None
                 continue
 
-            assignment = ASSIGNMENT.match(code)
-            if assignment:
-                key = assignment[1]
-                segments = _split_key(key)
-                if segments and segments[0] == "mcp_servers":
-                    raise Unreadable("line " + str(number) + ": a dotted or inline mcp_servers"
-                                     " assignment, which this reader does not model")
-                if section == ["mcp_servers"]:
-                    raise Unreadable("line " + str(number) + ": a member assignment inside the"
-                                     " mcp_servers table, which this reader does not model")
-                if current is not None and key in ("command", "args"):
-                    value = code.split("=", 1)[1]
-                    if key == "args" and "[" in value and "]" not in value:
-                        pending = {"key": key, "values": values}
-                        continue
-                    servers[current][key] = values[0] if key == "command" and values else values
+            found = _assignment(line, code)
+            if found is None:
+                raise Unreadable(where + "a line this reader cannot classify: "
+                                 + repr(line.strip()[:60]))
+            segments, value_code = found
+            if segments[0] == "mcp_servers":
+                raise Unreadable(where + "a dotted or inline mcp_servers assignment, which"
+                                         " this reader does not model")
+            if section == ["mcp_servers"]:
+                raise Unreadable(where + "a member assignment inside the mcp_servers table,"
+                                         " which this reader does not model")
+            if current is not None and segments[0] in MODELLED_FIELDS:
+                if len(segments) > 1:
+                    raise Unreadable(where + "a dotted assignment that defines "
+                                     + segments[0] + " of " + current + " as a table")
+                if TRIPLE_BASIC in line or TRIPLE_LITERAL in line:
+                    raise Unreadable(where + "a multi-line string value for "
+                                     + segments[0] + ", which this reader does not model")
+                if "{" in value_code:
+                    raise Unreadable(where + "an inline table as the value of " + segments[0])
+                residue = _residue(value_code)
+                if residue:
+                    raise Unreadable(where + segments[0] + " has a value this reader does not"
+                                     " model: " + repr(residue[:40]))
+                # The value's KIND has to match the field, or the fallback would read a
+                # string as a one-element list and call a malformed registration equal to a
+                # requested one. tomllib refuses that; so does this.
+                is_array = "[" in value_code
+                if segments[0] == "args" and not is_array:
+                    raise Unreadable(where + "args is a list of strings, and this value is"
+                                             " not a list")
+                if segments[0] == "command" and is_array:
+                    raise Unreadable(where + "command is a string, and this value is a list")
+                if segments[0] == "command" and len(values) != 1:
+                    raise Unreadable(where + "command is one string, and this value is "
+                                     + str(len(values)))
+                opened = _depth(value_code)
+                if opened > 0:
+                    pending = {"key": segments[0], "values": values}
+                    depth = opened
+                    continue
+                servers[current][segments[0]] = (
+                    values[0] if segments[0] == "command" and values else values
+                )
+                continue
+            opened = _depth(value_code)
+            if opened > 0:
+                depth = opened
 
         if fence is not None:
             raise Unreadable("the file ends inside an unterminated multi-line string")
-        if pending is not None:
-            raise Unreadable("the file ends inside an unterminated array value")
+        if depth > 0:
+            raise Unreadable("the file ends inside an unterminated value")
     except Unreadable as error:
         return ConfigView(servers, [error.detail])
     return ConfigView(servers, [])
@@ -360,15 +509,19 @@ def register(text, name, command, args):
     """Return (new_text, outcome, detail) without ever rewriting an existing table.
 
     LINKED   the registration is already exactly this one; nothing is written.
-    CREATED  it was absent; the table is appended at the end of the file.
-    CONFLICT a different command or argument list is registered; nothing is written.
+    CREATED  it was absent; the table is appended and the result was checked before writing.
+    CONFLICT a different command or argument list is registered, or appending would not mean
+             what it says; nothing is written.
+
+    Reading the file correctly is not enough to append to it correctly. A root
+    mcp_servers = {} is a closed inline table that a following [mcp_servers.x] cannot extend,
+    and under [[mcp_servers]] an appended table attaches to the last array element instead of
+    to a root mapping. So the proposal is read back before it is written, and it has to carry
+    the intended registration and leave every other one alone.
     """
     view = scan(text)
     if not view.readable:
         return text, "UNREADABLE", "; ".join(view.unreadable)
-    disagreement = cross_check(text, view)
-    if disagreement:
-        return text, "UNREADABLE", disagreement
 
     args = list(args or [])
     if name in view.servers:
@@ -381,4 +534,25 @@ def register(text, name, command, args):
         )
 
     separator = "" if text == "" or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
-    return text + separator + render(name, command, args), "CREATED", "appended at the end of the file"
+    proposal = text + separator + render(name, command, args)
+
+    check = scan(proposal)
+    if not check.readable:
+        return text, "CONFLICT", (
+            "appending this registration would produce a file that cannot be read, so nothing"
+            " was written: " + "; ".join(check.unreadable)
+        )
+    written = check.servers.get(name)
+    if written is None or written.get("command") != command \
+            or list(written.get("args") or []) != args:
+        return text, "CONFLICT", (
+            "appending would not produce the intended registration: the file would read "
+            + repr(written) + " for " + repr(name) + ", so nothing was written"
+        )
+    for other, entry in view.servers.items():
+        if check.servers.get(other) != entry:
+            return text, "CONFLICT", (
+                "appending would change the registration of " + repr(other)
+                + ", so nothing was written"
+            )
+    return proposal, "CREATED", "appended at the end of the file, and read back before writing"

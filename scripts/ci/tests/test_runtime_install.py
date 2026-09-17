@@ -25,6 +25,14 @@ from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, owne
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
+# Trial fixtures now pass through the same preflight the relay enforces, so they need an
+# artifact that is really there: an absolute, normalised, non-symlink regular file inside the
+# declared root. Created once, under the system temporary directory, never in the worktree.
+TRIAL_ROOT = str(Path(tempfile.gettempdir()) / "crw-jun104-trial-fixtures")
+Path(TRIAL_ROOT).mkdir(parents=True, exist_ok=True)
+TRIAL_ARTIFACT = str(Path(TRIAL_ROOT) / "deliverable.txt")
+Path(TRIAL_ARTIFACT).write_text("a deliverable", encoding="utf-8")
+
 
 def run(*args):
     return subprocess.run([sys.executable, str(RUNTIME), *args],
@@ -123,7 +131,14 @@ class ConfigScannerTests(unittest.TestCase):
         self.assertEqual(view.servers["codex-thread-bridge"]["command"], "/opt/bridge")
         self.assertEqual(view.servers["codex-thread-bridge"]["args"], ["--socket", "/tmp/s.sock"])
 
-    def test_shapes_it_does_not_model_are_unreadable_and_are_never_appended_to(self):
+    def test_a_registration_written_another_way_is_never_appended_to_twice(self):
+        """The property these shapes were protecting: a server that is there is found.
+
+        Which reader finds it changed. Where tomllib exists the dotted and inline spellings
+        are read correctly and register reports the conflict; where it does not the fallback
+        refuses them. Both answers are safe, and neither appends a second definition, which
+        is the only outcome that was ever dangerous.
+        """
         cases = {
             "array of tables": '[[mcp_servers.x]]\ncommand = "a"\n',
             "dotted assignment": 'mcp_servers.x.command = "a"\n',
@@ -133,11 +148,10 @@ class ConfigScannerTests(unittest.TestCase):
         }
         for name, text in cases.items():
             with self.subTest(case=name):
-                view = codexconfig.scan(text)
-                self.assertFalse(view.readable, name)
-                after, outcome, _ = codexconfig.register(text, "x", "/opt/new", [])
-                self.assertEqual(outcome, "UNREADABLE")
-                self.assertEqual(after, text, "an unreadable file must not be written to")
+                self.assertFalse(codexconfig.scan_subset(text).readable, name)
+                after, outcome, detail = codexconfig.register(text, "x", "/opt/new", [])
+                self.assertIn(outcome, ("UNREADABLE", "CONFLICT"), name + ": " + detail)
+                self.assertEqual(after, text, "nothing is appended to any of these")
 
     def test_a_table_header_inside_a_multiline_string_is_not_a_registration(self):
         text = 'note = """\n[mcp_servers.ghost]\n"""\n'
@@ -638,12 +652,15 @@ class TrialArgumentTests(unittest.TestCase):
 
         class Args:
             issue = "JUN-104"
-            parent_task = child_task = recipient = "parent"
-            artifact_root = "/tmp/artifacts"
-            artifact = ["/tmp/artifacts/result.txt"]
+            parent_task = recipient = "parent"
+            child_task = "child"
+            artifact_root = TRIAL_ROOT
+            artifact = [TRIAL_ARTIFACT]
             dispatch_turn_id = "anchor-1"
             recipient_settings = "@/tmp/settings.json"
-            turn_thread = "thread-1"
+            # The relay requires a receipt's thread to be the relationship's child task, and
+            # the preflight now requires it before anything is written.
+            turn_thread = "child"
             turn_id = "turn-1"
             turn_status = "completed"
             settings_already_recorded = False
@@ -695,26 +712,31 @@ class AuthorizedRepairTests(unittest.TestCase):
         self.assertTrue(view.readable, view.unreadable)
         self.assertEqual(sorted(view.servers), ["x"])
 
-    def test_a_member_assignment_inside_the_parent_table_is_unreadable(self):
-        text = "[mcp_servers]" + chr(10) + 'x = { command = "/opt/x" }' + chr(10)
-        view = codexconfig.scan(text)
-        self.assertFalse(view.readable)
-        after, outcome, _ = codexconfig.register(text, "x", "/opt/x", [])
-        self.assertEqual(outcome, "UNREADABLE")
-        self.assertEqual(after, text)
+    def test_a_member_assignment_inside_the_parent_table_is_never_duplicated(self):
+        # Bare and quoted spellings both. The quoted one was blanked before the assignment
+        # regex saw it, so the fallback read the server as absent and appended a second
+        # definition; now it refuses, and tomllib reads it correctly.
+        for spelling in ('x = { command = "/opt/x" }', '"x" = { command = "/opt/x" }'):
+            with self.subTest(spelling):
+                text = "[mcp_servers]" + chr(10) + spelling + chr(10)
+                self.assertFalse(codexconfig.scan_subset(text).readable)
+                after, outcome, detail = codexconfig.register(text, "x", "/opt/x", [])
+                self.assertIn(outcome, ("UNREADABLE", "LINKED"), detail)
+                self.assertEqual(after, text)
 
     def test_an_escape_this_reader_does_not_model_is_reported_not_guessed(self):
-        view = codexconfig.scan('[mcp_servers.x]' + chr(10) + 'command = "a' + chr(92) + 'q"' + chr(10))
-        self.assertFalse(view.readable)
-        self.assertIn("escape", view.unreadable[0])
+        # Invalid TOML either way: tomllib rejects the escape and the fallback names it.
+        text = '[mcp_servers.x]' + chr(10) + 'command = "a' + chr(92) + 'q"' + chr(10)
+        self.assertFalse(codexconfig.scan(text).readable)
+        self.assertIn("escape", codexconfig.scan_subset(text).unreadable[0])
 
     # (b) nothing mutates before the inputs are complete -----------------------------
 
     def trial_args(self, **overrides):
         base = dict(issue="JUN-104", parent_task="parent", child_task="child",
-                    recipient="parent", artifact_root="/tmp/a", artifact=["/tmp/a/r.txt"],
+                    recipient="parent", artifact_root=TRIAL_ROOT, artifact=[TRIAL_ARTIFACT],
                     dispatch_turn_id="anchor-1", recipient_settings="@/tmp/s.json",
-                    turn_thread="t", turn_id="u", turn_status="completed",
+                    turn_thread="child", turn_id="u", turn_status="completed",
                     settings_already_recorded=False, expect_relationship=None,
                     socket=None, state=None)
         base.update(overrides)
@@ -1087,7 +1109,7 @@ class IdentityComparisonTests(unittest.TestCase):
                    "assignments": [{"relationshipId": "rel-archived", "state": "closed"}]}
         args = argparse.Namespace(
             issue="JUN-104", parent_task="p", child_task="c", recipient="p",
-            artifact_root="/tmp", turn_thread="t", turn_id="ti", artifact=["/tmp/a"],
+            artifact_root=TRIAL_ROOT, turn_thread="c", turn_id="ti", artifact=[TRIAL_ARTIFACT],
             dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
             settings_already_recorded=True, expect_relationship="rel-archived",
             socket=None, state=None)
@@ -1719,7 +1741,7 @@ class TrialStepGatingTests(unittest.TestCase):
     def _args(self):
         return argparse.Namespace(
             issue="JUN-104", parent_task="p", child_task="c", recipient="p",
-            artifact_root="/tmp", turn_thread="t", turn_id="ti", artifact=["/tmp/a"],
+            artifact_root=TRIAL_ROOT, turn_thread="c", turn_id="ti", artifact=[TRIAL_ARTIFACT],
             dispatch_turn_id="d", turn_status="completed", recipient_settings="@/tmp/s.json",
             settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
 
@@ -1868,6 +1890,480 @@ class OwnershipReleaseTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(leftover, [], "the destination this run created must be retriable")
         self.assertIn("could not be written", json.dumps(emitted[-1]))
+
+
+
+
+# =========================================================================================
+# Check 1 - the reader's domain is not the writer's range
+# =========================================================================================
+
+# Generated from TOML's own shapes, not from render(). The reader has to meet configurations
+# this module would never write, and the two defects that reached review were both outside
+# anything the writer emits.
+READABLE_FIXTURES = [
+    ("empty file", ""),
+    ("comments only", "# just a comment\n\n   # another\n"),
+    ("one server", '[mcp_servers.one]\ncommand = "/bin/one"\n'),
+    ("quoted name", '[mcp_servers."codex-thread-bridge"]\ncommand = "/bin/bridge"\n'),
+    ("dotted name quoted", '[mcp_servers."a.b"]\ncommand = "/bin/ab"\n'),
+    ("bracket in a quoted name", '[mcp_servers."a[b]"]\ncommand = "/bin/x"\n'),
+    ("args on one line", '[mcp_servers.one]\ncommand = "/bin/one"\nargs = ["a", "b"]\n'),
+    ("args over lines", '[mcp_servers.one]\ncommand = "/c"\nargs = [\n  "a",\n  "b",\n]\n'),
+    ("a server sub-table that is not command or args",
+     '[mcp_servers.one]\ncommand = "/c"\n\n[mcp_servers.one.env]\nTOKEN = "t"\n'),
+    ("other tables around it",
+     '[tui]\ntheme = "dark"\n\n[mcp_servers.one]\ncommand = "/c"\n\n[history]\nmax = 10\n'),
+    ("a multi-line array in another table",
+     '[other]\nvalues = [\n  "a",\n  "b",\n]\n\n[mcp_servers.one]\ncommand = "/c"\n'),
+    ("a multi-line string in another table",
+     '[other]\nnote = """\nline\n"""\n\n[mcp_servers.one]\ncommand = "/c"\n'),
+    ("an inline table in another table", '[other]\nenv = { A = "1" }\n'),
+    ("array-of-tables elsewhere", '[[jobs]]\nname = "a"\n\n[[jobs]]\nname = "b"\n'),
+    ("CRLF", '[mcp_servers.one]\r\ncommand = "/c"\r\n'),
+    ("literal strings", "[mcp_servers.one]\ncommand = '/c'\nargs = ['a']\n"),
+    ("escapes in a value", '[mcp_servers.one]\ncommand = "a\\tb\\"c"\n'),
+    ("a comment after a value", '[mcp_servers.one]\ncommand = "/c"  # why\n'),
+    ("no mcp_servers at all", '[tui]\ntheme = "dark"\n'),
+]
+
+# Valid TOML that tomllib reads correctly and the fallback deliberately does not model. The
+# fallback must REFUSE these, never read them differently.
+FALLBACK_REFUSED = [
+    ("a member of the parent table", '[mcp_servers]\none = { command = "/c" }\n'),
+    ("a quoted member of the parent table", '[mcp_servers]\n"one" = { command = "/c" }\n'),
+    ("a dotted root assignment", 'mcp_servers.one.command = "/c"\n'),
+    ("a root inline table", 'mcp_servers = { one = { command = "/c" } }\n'),
+    ("a multi-line string command", '[mcp_servers.one]\ncommand = """\nrun"""\n'),
+]
+
+# Registration shapes that are not a registration at all. Both readers refuse these: one
+# because it validates the shape it parsed, the other because it does not model it.
+REFUSED_BY_BOTH = [
+    ("args as a string", '[mcp_servers.one]\ncommand = "/c"\nargs = "ab"\n'),
+    ("command as a list", '[mcp_servers.one]\ncommand = ["/c"]\n'),
+    ("args as a sub-table", '[mcp_servers.one]\ncommand = "/c"\n\n[mcp_servers.one.args]\nx = "a"\n'),
+    ("args as a dotted key", '[mcp_servers.one]\ncommand = "/c"\nargs.x = "a"\n'),
+    ("array-of-tables under mcp_servers", '[[mcp_servers]]\ncommand = "/c"\n'),
+    ("an escape-encoded mcp_servers array", '[["mcp_\u0073ervers"]]\n'),
+]
+
+INVALID_TOML = [
+    ("an unterminated header", "[broken\n"),
+    ("an unterminated string", '[mcp_servers.one]\ncommand = "/c\n'),
+    ("a stray token", "[mcp_servers.one]\ncommand = /c\n"),
+    ("an unterminated array", '[mcp_servers.one]\nargs = [\n'),
+]
+
+
+def _oracle(text):
+    """tomllib's view of mcp_servers, projected to the two fields registration compares."""
+    import tomllib
+
+    return codexconfig.registration_view(tomllib.loads(text).get("mcp_servers", {}))
+
+
+class ReaderDomainTests(unittest.TestCase):
+    """Correct, or unreadable. Readable-and-different is the state that cannot occur.
+
+    tomllib is the reader on 3.11 and newer, so the interesting subject here is the fallback,
+    and it is exercised on every interpreter rather than only on the one that has no oracle to
+    judge it. On 3.11+ the judge is tomllib; on 3.10 it is the expectations written above,
+    which were produced independently of both readers.
+    """
+
+    def _has_oracle(self):
+        try:
+            import tomllib  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def test_the_fallback_is_correct_or_unreadable_over_the_whole_corpus(self):
+        if not self._has_oracle():
+            self.skipTest("the differential comparison needs tomllib; 3.10 uses the fixtures")
+        wrong = []
+        for label, text in READABLE_FIXTURES + FALLBACK_REFUSED + REFUSED_BY_BOTH:
+            view = codexconfig.scan_subset(text)
+            if not view.readable:
+                continue
+            try:
+                expected = _oracle(text)
+            except Exception:
+                wrong.append((label, "readable, but the file is not valid TOML"))
+                continue
+            if view.servers != expected:
+                wrong.append((label, "read " + repr(view.servers) + " but tomllib reads "
+                              + repr(expected)))
+        self.assertEqual(wrong, [], "the fallback may refuse, and may agree; it may never"
+                                    " read something different")
+
+    def test_the_readable_fixtures_are_actually_read(self):
+        # Without this, refusing everything would satisfy the property above.
+        for label, text in READABLE_FIXTURES:
+            with self.subTest(label):
+                self.assertTrue(codexconfig.scan(text).readable,
+                                codexconfig.scan(text).unreadable)
+                view = codexconfig.scan_subset(text)
+                self.assertTrue(view.readable, str(view.unreadable))
+
+    def test_a_shape_the_fallback_does_not_model_is_refused_rather_than_guessed(self):
+        for label, text in FALLBACK_REFUSED:
+            with self.subTest(label):
+                self.assertFalse(codexconfig.scan_subset(text).readable, label)
+                # The same file is read correctly where tomllib exists, which is the point of
+                # using it: the fallback narrows what can be read, never what is true.
+                if self._has_oracle():
+                    self.assertTrue(codexconfig.scan(text).readable, label)
+
+    def test_a_malformed_registration_is_refused_by_both_readers(self):
+        for label, text in REFUSED_BY_BOTH:
+            with self.subTest(label):
+                self.assertFalse(codexconfig.scan_subset(text).readable, label)
+                self.assertFalse(codexconfig.scan(text).readable, label)
+
+    def test_invalid_toml_is_never_appended_to(self):
+        for label, text in INVALID_TOML:
+            with self.subTest(label):
+                new_text, outcome, detail = codexconfig.register(
+                    text, "codex-thread-bridge", "/usr/bin/bridge", [])
+                self.assertEqual(new_text, text, label)
+                self.assertIn(outcome, ("UNREADABLE", "CONFLICT"), label + ": " + detail)
+
+    def test_appending_is_read_back_before_it_is_written(self):
+        # A root inline table cannot be extended, and under an array-of-tables the appended
+        # table attaches to the last element rather than to a root mapping. Both are refused
+        # without writing.
+        for label, text in (("closed inline table", "mcp_servers = {}\n"),
+                            ("array of tables", "[[mcp_servers]]\n")):
+            with self.subTest(label):
+                new_text, outcome, detail = codexconfig.register(text, "one", "/c", [])
+                self.assertEqual(new_text, text)
+                self.assertIn(outcome, ("UNREADABLE", "CONFLICT"), detail)
+
+    def test_a_registration_shape_that_parses_is_still_validated(self):
+        # The parse is fine; list("ab") == ["a", "b"] is the trap.
+        text = '[mcp_servers.one]\ncommand = "run"\nargs = "ab"\n'
+        _, outcome, _ = codexconfig.register(text, "one", "run", ["a", "b"])
+        self.assertNotEqual(outcome, "LINKED",
+                            "a malformed registration must never compare equal to a"
+                            " well-formed request")
+
+
+
+
+# =========================================================================================
+# Check 4 - the failure contract: no input leaves a traceback
+# =========================================================================================
+
+class FailureContractTests(unittest.TestCase):
+    """A matrix cannot prove "no input", so the guarantee is structural and the matrix checks
+    that the modelled channels stay modelled.
+
+    main() converts anything that escapes a handler into an internalError result naming the
+    exception and the line that raised it. That is not a second reading boundary and does not
+    share its vocabulary: a reading refusal carries a state from the four-state partition and
+    says something about a record; internalError says a defect in this command reached the
+    top. A defect stays reportable, and the process never prints a traceback.
+    """
+
+    def test_a_defect_that_escapes_a_handler_is_named_rather_than_raised(self):
+        import runtime_install
+
+        for error in (ValueError("a defect"), KeyError("absent"), RuntimeError("boom")):
+            with self.subTest(type(error).__name__):
+                emitted = []
+                with mock.patch.object(runtime_install, "cmd_verify_definition",
+                                       side_effect=error), \
+                     mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                    code = runtime_install.main(["verify-definition"])
+                self.assertEqual(code, 1)
+                self.assertEqual(emitted[0]["internalError"]["exception"], type(error).__name__)
+                self.assertTrue(emitted[0]["internalError"]["raisedAt"])
+                self.assertNotIn("reading", emitted[0],
+                                 "a defect is never filed as a statement about a record")
+
+    def test_hostile_inputs_produce_modelled_refusals_rather_than_internal_errors(self):
+        # What the matrix is for, now that the contract covers the rest: the channels it
+        # exercises must still be answered by the readers rather than by the safety net.
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "home"
+            home.mkdir()
+            (home / "config.toml").write_bytes(b"\xff\xfe")
+            (home / "hooks.json").write_text('{"hooks": {"Stop": 5}}', encoding="utf-8")
+            record = Path(temporary) / "record.json"
+            record.write_text('{"components": {"a": {"installs": 7}}}', encoding="utf-8")
+            directory = Path(temporary) / "as-a-directory.json"
+            directory.mkdir()
+
+            runs = [
+                ("install", ["--dest", str(Path(temporary) / "dest"), "--record", str(record)]),
+                ("install", ["--dest", str(Path(temporary) / "dest2"), "--record", str(directory)]),
+                ("measure", ["--record", str(record)]),
+                ("register-mcp", ["--codex-home", str(home), "--bridge-command", "/usr/bin/b"]),
+                ("hook", ["--codex-home", str(home), "--event", "Stop",
+                          "--hook-command", "/bin/true"]),
+            ]
+            for command, extra in runs:
+                with self.subTest(command + " " + " ".join(extra[:2])):
+                    done = run(command, *extra)
+                    self.assertNotIn("Traceback", done.stderr, done.stderr[-400:])
+                    payload = json.loads(done.stdout)
+                    self.assertNotIn("internalError", payload,
+                                     "a modelled channel must be answered by a reader")
+
+    def test_diagnosis_reports_unreadability_and_still_exits_zero(self):
+        # The contract is about tracebacks, not about forcing every command to refuse.
+        with tempfile.TemporaryDirectory() as temporary:
+            record = Path(temporary) / "record.json"
+            record.write_text('{"components": {"a": {"installs": 7}}}', encoding="utf-8")
+            home = Path(temporary) / "home"
+            home.mkdir()
+            done = run("diagnose", "--record", str(record), "--codex-home", str(home))
+        self.assertEqual(done.returncode, 0, done.stderr[-400:])
+        self.assertNotIn("Traceback", done.stderr)
+        self.assertEqual(json.loads(done.stdout)["hostRecordState"], reading.UNREADABLE)
+
+    def test_an_unreadable_installed_file_refuses_instead_of_escaping_diagnosis(self):
+        # ops12_digest reads installed bytes; it used to do so outside every region.
+        if os.geteuid() == 0:
+            self.skipTest("permissions do not restrict root")
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "pkg"
+            package.mkdir()
+            secret = package / "mod.py"
+            secret.write_text("x = 1", encoding="utf-8")
+            secret.chmod(0o000)
+            try:
+                with self.assertRaises(reading.Refused) as caught:
+                    with reading.region(package, "the installed bytes"):
+                        definition.ops12_digest(package)
+            finally:
+                secret.chmod(0o600)
+        self.assertEqual(caught.exception.reading.state, reading.ACCESS_ERROR)
+
+
+# =========================================================================================
+# Check 6 - after a failed run the destination is retriable
+# =========================================================================================
+
+class RetriableDestinationTests(unittest.TestCase):
+    """The assertion is on the filesystem, not on the call.
+
+    rmtree(ignore_errors=True) reporting removal from pre-attempt existence satisfied "the
+    release path was called" while leaving a directory that refused every retry. So removal
+    is verified, and a cleanup that could not finish reports NOT retriable with what is left
+    rather than claiming a release it did not achieve.
+    """
+
+    def _install(self, temporary, **patches):
+        import runtime_install
+
+        record_path = Path(temporary) / "record.json"
+        hostrecord.save(record_path, hostrecord.empty(1))
+        emitted = []
+        args = argparse.Namespace(dest=str(Path(temporary) / "dest"), apply=True,
+                                  record=str(record_path), python=sys.executable,
+                                  socket=None, state=None, issue="JUN-104")
+        stack = [mock.patch.object(runtime_install, "emit", side_effect=emitted.append)]
+        for target, kwargs in patches.items():
+            stack.append(mock.patch.object(runtime_install, target, **kwargs))
+        for entered in stack:
+            entered.__enter__()
+        try:
+            code = runtime_install.cmd_install(args)
+        finally:
+            for entered in reversed(stack):
+                entered.__exit__(None, None, None)
+        return code, emitted, Path(temporary) / "dest", record_path
+
+    def test_every_failure_point_leaves_the_destination_retriable(self):
+        raising = reading.Reading(state=reading.ACCESS_ERROR, source="record",
+                                  exception="PermissionError", at="hostrecord.py:1",
+                                  detail="the record could not be written")
+        injections = {
+            "a returned record failure": {"hostrecord": None},
+            "a raised record failure": {"hostrecord": None},
+            "a failed subprocess step": {"perform": None},
+        }
+        import runtime_install
+
+        for label in injections:
+            with self.subTest(label):
+                with tempfile.TemporaryDirectory() as temporary:
+                    if label == "a returned record failure":
+                        patch = {"hostrecord": mock.DEFAULT}
+                        with mock.patch.object(runtime_install.hostrecord, "update",
+                                               return_value=raising):
+                            code, emitted, dest, _ = self._install(temporary)
+                    elif label == "a raised record failure":
+                        with mock.patch.object(runtime_install.hostrecord, "update",
+                                               side_effect=PermissionError("denied")):
+                            code, emitted, dest, _ = self._install(temporary)
+                    else:
+                        with mock.patch.object(runtime_install.subprocess, "run",
+                                               side_effect=OSError("no interpreter")):
+                            code, emitted, dest, _ = self._install(temporary)
+                    self.assertEqual(code, 1, label)
+                    leftover = sorted(p.name for p in dest.iterdir()) if dest.is_dir() else []
+                    self.assertEqual(leftover, [], label + ": the destination must be retriable")
+
+    def test_a_cleanup_that_cannot_finish_says_not_retriable(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            record_path = Path(temporary) / "record.json"
+            hostrecord.save(record_path, hostrecord.empty(1))
+            owned = Path(temporary) / "env"
+            owned.mkdir()
+            emitted = []
+            with mock.patch.object(runtime_install.shutil, "rmtree",
+                                   side_effect=PermissionError("in use")), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install._install_failed(record_path, 1, [], str(owned), owned)
+            self.assertTrue(owned.exists(), "the cleanup was made to fail")
+        self.assertEqual(code, 1)
+        result = emitted[0]
+        self.assertFalse(result["retriable"])
+        self.assertEqual(result["residualPaths"], [str(owned)])
+        self.assertIn("by hand", result["recoveryRequires"])
+        self.assertIn("PermissionError", result["cleanupError"])
+
+    def test_a_promoted_environment_survives_a_failure_after_the_promotion_committed(self):
+        # update() saves inside the lock and releasing the lock can still raise, so a run can
+        # commit its promotion and raise anyway. Recovery reads the selection rather than
+        # trusting a flag.
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            record_path = Path(temporary) / "record.json"
+            owned = Path(temporary) / "env"
+            owned.mkdir()
+            record = hostrecord.empty(1)
+            record["selected"] = {"codex-session-relay": str(owned / "lib" / "pkg")}
+            hostrecord.put_install(record, "codex-session-relay",
+                                   {"location": str(owned / "lib" / "pkg"),
+                                    "environment": str(owned)})
+            hostrecord.save(record_path, record)
+
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                runtime_install._install_failed(record_path, 1, [], str(owned), owned)
+            after = hostrecord.load(record_path, 1).value
+
+            self.assertTrue(owned.exists(), "a selected environment is never deleted")
+            self.assertIn("selected", emitted[0]["candidate"])
+            self.assertEqual(
+                len(after["components"]["codex-session-relay"]["installs"]), 1,
+                "and its records are kept with it")
+
+    def test_an_unreadable_record_is_not_permission_to_delete(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            record_path = Path(temporary) / "record.json"
+            record_path.write_text("{not json", encoding="utf-8")
+            owned = Path(temporary) / "env"
+            owned.mkdir()
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                runtime_install._install_failed(record_path, 1, [], str(owned), owned)
+            self.assertTrue(owned.exists(),
+                            "absence of evidence about the selection is not permission")
+            self.assertIn("could not be read", emitted[0]["candidate"])
+
+
+# =========================================================================================
+# The preflight corpus, filled in
+# =========================================================================================
+
+class PreflightCorpusTests(unittest.TestCase):
+    def test_a_turn_status_outside_the_relays_choices_is_refused_by_the_parser(self):
+        import runtime_install
+
+        parser = runtime_install.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["diagnose", "--trial", "--turn-status", "almost"])
+        parsed = parser.parse_args(["diagnose", "--trial", "--turn-status", "interrupted"])
+        self.assertEqual(parsed.turn_status, "interrupted")
+
+    def test_a_turn_thread_that_is_not_the_child_task_is_refused_before_any_write(self):
+        import runtime_install
+
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root="/tmp", turn_thread="not-c", turn_id="ti", artifact=["/tmp/a"],
+            dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
+            settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
+        with mock.patch.object(runtime_install.scope, "relay") as relay:
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "not_verified")
+        self.assertIn("is not the child task", result["evidence"])
+        relay.assert_not_called()
+
+    def test_an_artifact_the_relay_would_refuse_is_refused_before_any_write(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            root.mkdir()
+            real = root / "result.txt"
+            real.write_text("done", encoding="utf-8")
+            outside = Path(temporary) / "outside.txt"
+            outside.write_text("done", encoding="utf-8")
+            link = root / "link.txt"
+            link.symlink_to(real)
+
+            cases = {
+                "missing": str(root / "gone.txt"),
+                "outside the root": str(outside),
+                "a symlink": str(link),
+                "not normalised": str(root) + "/./result.txt",
+                "relative": "result.txt",
+                "a directory": str(root),
+            }
+            for label, path in cases.items():
+                with self.subTest(label):
+                    self.assertTrue(runtime_install._unusable_artifacts([path], str(root)),
+                                    label + " should be refused")
+            self.assertEqual(runtime_install._unusable_artifacts([str(real)], str(root)), [])
+
+    def test_a_refused_artifact_stops_the_trial_before_the_first_command(self):
+        import runtime_install
+
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root="/tmp/jun104-nowhere", turn_thread="c", turn_id="ti",
+            artifact=["/tmp/jun104-nowhere/missing.txt"], dispatch_turn_id="d",
+            turn_status="completed", recipient_settings=None,
+            settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
+        with mock.patch.object(runtime_install.scope, "relay") as relay:
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "not_verified")
+        self.assertIn("manifest entry", result["evidence"])
+        relay.assert_not_called()
+
+
+class UnreadableDimensionTests(unittest.TestCase):
+    def test_a_codex_version_that_cannot_be_read_never_lifts_a_classification(self):
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        record = hostrecord.empty(1)
+        with mock.patch.object(runtime_install, "codex_cli_version", return_value=None):
+            classified = runtime_install.classify_component(component, record=record)
+        self.assertEqual(classified["class"], "unreadable")
+        self.assertTrue(any("Codex CLI" in reason for reason in classified["reasons"]),
+                        classified["reasons"])
+        self.assertFalse(classified["reusable"])
+
+    def test_a_bare_relay_override_is_resolved_the_way_it_is_run(self):
+        import runtime_install
+
+        resolved = runtime_install.resolve_entry_point("python3", "python3")
+        self.assertIsNotNone(resolved)
+        self.assertTrue(Path(resolved).is_absolute(),
+                        "classification must describe the executable that would run")
 
 
 if __name__ == "__main__":

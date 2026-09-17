@@ -115,6 +115,13 @@ def skill_links(codex_home):
 
 def resolve_entry_point(console_script, override=None):
     if override:
+        # A bare name is resolved the way the shell resolves it, because scope.relay hands
+        # the same token to subprocess and gets PATH lookup. Treating it as a relative path
+        # reports the executable as foreign while diagnosis runs it successfully, so the
+        # ownership result would describe something other than what was exercised.
+        if os.sep not in str(override) and not str(override).startswith("."):
+            found = shutil.which(str(override))
+            return Path(found) if found else Path(override)
         return Path(override)
     found = shutil.which(console_script)
     return Path(found) if found else None
@@ -206,7 +213,9 @@ def classify_component(component, *, record, entry_override=None, registration=N
     current_digest = None
     digest_matches = None
     if location and Path(location).is_dir():
-        current_digest = definition.ops12_digest(location)
+        with reading.region(location, "the installed bytes of " + component["component"],
+                            field="importedLocation"):
+            current_digest = definition.ops12_digest(location)
         digest_matches = current_digest == component["sourceDigest"]
     elif resolved is not None:
         unreadable.append("the installed package location for " + component["component"])
@@ -229,11 +238,17 @@ def classify_component(component, *, record, entry_override=None, registration=N
         unreadable.append("the working tree cleanliness of " + str(ROOT))
 
     points = []
-    if record is not None and location and version:
+    codex_cli = codex_cli_version()
+    if codex_cli is None:
+        # A dimension that could not be read is not a dimension that agrees. Passing None
+        # through would drop the Codex CLI from the comparison entirely, and a point measured
+        # under another CLI would then carry this component to 'own' (OPS-1.3, OPS-2.1).
+        unreadable.append("the Codex CLI version")
+    elif record is not None and location and version:
         points = hostrecord.points_for(
             record, component["component"], location=location,
             interpreter=version, install_digest=current_digest,
-            codex_cli=codex_cli_version(), host=socket.gethostname(),
+            codex_cli=codex_cli, host=socket.gethostname(),
         )
     elif record is None:
         # Which failure it was, not merely that there was one: a record that could not be
@@ -605,6 +620,48 @@ def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
     ]
 
 
+def _unusable_artifacts(artifacts, root):
+    """Why the relay would refuse each artifact, checked before anything is written.
+
+    The relay hashes every declared path while building the manifest and requires an already
+    normalised absolute path, a regular file, and no symbolic link at any component. A
+    readable symlink pointing inside the root still fails, and so does an existing path
+    written as /root/./name. Checked here so a typo costs nothing instead of four mutating
+    steps; the relay still revalidates, because a path can change in between.
+    """
+    problems = []
+    base = Path(str(root))
+    for raw in artifacts or []:
+        path = Path(str(raw))
+        if not path.is_absolute():
+            problems.append(str(raw) + " is not an absolute path")
+            continue
+        if str(path) != str(raw):
+            problems.append(str(raw) + " is not normalised; the relay compares the path as"
+                            " given")
+            continue
+        try:
+            if not path.exists():
+                problems.append(str(raw) + " does not exist")
+                continue
+            if not path.is_file() or path.is_symlink():
+                problems.append(str(raw) + " is not a regular file")
+                continue
+            if any(part.is_symlink() for part in list(path.parents)):
+                problems.append(str(raw) + " has a symbolic link in its path")
+                continue
+            path.open("rb").close()
+        except OSError as error:
+            problems.append(str(raw) + " could not be read: " + type(error).__name__)
+            continue
+        try:
+            if not (path == base or base in path.parents):
+                problems.append(str(raw) + " is not inside the artifact root " + str(base))
+        except (OSError, ValueError):
+            problems.append(str(raw) + " could not be compared with the artifact root")
+    return problems
+
+
 def _trial(args, relay_executable):
     """Register, open the generation, emit, then a bounded deliver. Only this path creates work.
 
@@ -643,6 +700,24 @@ def _trial(args, relay_executable):
             + str(args.parent_task) + ". A completion is queued to the relationship parent and"
             " that parent must be an allowed recipient, so this combination can only be"
             " refused after the store has been written to.",
+            acting_process=acting_process(), measured_at=now(),
+        )
+    if str(args.turn_thread) != str(args.child_task):
+        return check.field(
+            "not_verified",
+            "the turn thread " + str(args.turn_thread) + " is not the child task "
+            + str(args.child_task) + ". The relay requires a receipt's thread to be the"
+            " relationship's child task, so this combination can only be refused at emit,"
+            " after the store has been written to.",
+            acting_process=acting_process(), measured_at=now(),
+        )
+    unusable = _unusable_artifacts(args.artifact, args.artifact_root)
+    if unusable:
+        return check.field(
+            "not_verified",
+            "these artifacts do not satisfy what the relay requires of a manifest entry: "
+            + "; ".join(unusable) + ". They are checked here because the relay checks them"
+            " while building the manifest, which happens after four mutating steps.",
             acting_process=acting_process(), measured_at=now(),
         )
     if not args.recipient_settings and not args.settings_already_recorded:
@@ -906,119 +981,144 @@ def cmd_install(args):
         return EXIT_REFUSED
     owned = environment
 
-    # Ownership is proven, so this run may record what it observed on the way in.
-    staged = hostrecord.update(record_path, data["definitionVersion"], outgoing=outgoing)
-    if not staged.usable:
-        # Past the exclusive mkdir, so every exit releases what this run created. Returning
-        # a bare refusal here would leave the deterministic directory behind and refuse every
-        # retry of the same destination for ever.
-        return _install_failed(record_path, data["definitionVersion"], performed, environment,
-                               owned, failed_reading=staged)
+    # Past the exclusive mkdir this run owns a directory, and owning it obliges it to release
+    # it however the run ends. A returned failure and a raised one are the same obligation:
+    # an escaping exception used to leave the deterministic environment name behind, and the
+    # next run then refused that destination for ever.
+    try:
 
-    if not perform("create environment", [str(interpreter), "-m", "venv", str(environment)]):
-        return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
+        # Ownership is proven, so this run may record what it observed on the way in.
+        staged = hostrecord.update(record_path, data["definitionVersion"], outgoing=outgoing)
+        if not staged.usable:
+            # Past the exclusive mkdir, so every exit releases what this run created. Returning
+            # a bare refusal here would leave the deterministic directory behind and refuse every
+            # retry of the same destination for ever.
+            return _install_failed(record_path, data["definitionVersion"], performed, environment,
+                                   owned, failed_reading=staged)
 
-    python = environment / "bin" / "python"
-    packages = [str(ROOT / c["subdirectory"]) for c in data["components"]]
-    if not perform("install packages", [str(python), "-m", "pip", "install", "--quiet", *packages]):
-        return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
-
-    version = interpreter_version(python)
-    installs = {}
-    facts = {}
-    for component in data["components"]:
-        location, error, _argv = module_location(python, component["module"])
-        if not location:
-            performed.append({"step": "read imported location", "component": component["component"],
-                              "ok": False, "detail": error})
+        if not perform("create environment", [str(interpreter), "-m", "venv", str(environment)]):
             return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
-        digest = definition.ops12_digest(location)
-        install = {
-            "location": location,
-            # Read back from the interpreter: an editable install leaves nothing under
-            # site-packages and a copied one does, so the mode follows the location.
-            # Containment over resolved parts, not a substring: /opt/env-other contains the
-            # text /opt/env, and reading a neighbouring environment's install as this one's
-            # copy is the same class of error as a prefix test on a recorded root.
-            "installMode": "copied" if within(Path(location).resolve(), environment.resolve())
-                           else "editable",
-            "entryPoint": str(environment / "bin" / component["consoleScript"]),
-            "environment": str(environment),
-            "interpreter": version,
-            "integrity": digest,
-            "digestMatchesDefinition": digest == component["sourceDigest"],
-            "reachedVia": "installed by runtime_install.py into " + str(destination),
-        }
-        facts[component["component"]] = {
-            # Recorded at install time, from the checkout the bytes actually came from, so
-            # the identity in the record is the one this run installed rather than whatever
-            # the checkout says later.
-            "repositoryCommit": definition.git(["rev-parse", "HEAD"], ROOT),
-            "repositoryTree": definition.git(["rev-parse", "HEAD^{tree}"], ROOT),
-            "subdirectoryTree": definition.git(
-                ["rev-parse", "HEAD:" + component["subdirectory"]], ROOT),
-            "workingTreeClean": definition.working_tree_clean(ROOT),
-        }
-        hostrecord.put_install(record, component["component"], install)
-        installs[component["component"]] = install
-        performed.append({"step": "read imported location", "component": component["component"],
-                          "ok": True, "location": location,
-                          "digestMatchesDefinition": install["digestMatchesDefinition"]})
 
-    written = hostrecord.update(
-        record_path, data["definitionVersion"],
-        installs=[(name, install) for name, install in installs.items()],
-        component_facts=facts,
-    )
-    if not written.usable:
-        return _install_failed(record_path, data["definitionVersion"], performed, environment,
-                               owned, failed_reading=written)
-    measurement = measure_candidate(data, record, python=python, environment=environment,
-                                    socket_path=args.socket, state=args.state,
-                                    relay_command=str(environment / "bin" / "codex-session-relay"),
-                                    measured_by=args.issue)
-    # A point measured during this run is a delta, applied to the record as it stands now.
-    # Measuring takes minutes; anything appended in the meantime is not this run's to drop.
-    if measurement.get("points"):
-        appended = hostrecord.update(
+        python = environment / "bin" / "python"
+        packages = [str(ROOT / c["subdirectory"]) for c in data["components"]]
+        if not perform("install packages", [str(python), "-m", "pip", "install", "--quiet", *packages]):
+            return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
+
+        version = interpreter_version(python)
+        installs = {}
+        facts = {}
+        for component in data["components"]:
+            location, error, _argv = module_location(python, component["module"])
+            if not location:
+                performed.append({"step": "read imported location", "component": component["component"],
+                                  "ok": False, "detail": error})
+                return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
+            with reading.region(location, "the bytes installed for " + component["component"]):
+                digest = definition.ops12_digest(location)
+            install = {
+                "location": location,
+                # Read back from the interpreter: an editable install leaves nothing under
+                # site-packages and a copied one does, so the mode follows the location.
+                # Containment over resolved parts, not a substring: /opt/env-other contains the
+                # text /opt/env, and reading a neighbouring environment's install as this one's
+                # copy is the same class of error as a prefix test on a recorded root.
+                "installMode": "copied" if within(Path(location).resolve(), environment.resolve())
+                               else "editable",
+                "entryPoint": str(environment / "bin" / component["consoleScript"]),
+                "environment": str(environment),
+                "interpreter": version,
+                "integrity": digest,
+                "digestMatchesDefinition": digest == component["sourceDigest"],
+                "reachedVia": "installed by runtime_install.py into " + str(destination),
+            }
+            facts[component["component"]] = {
+                # Recorded at install time, from the checkout the bytes actually came from, so
+                # the identity in the record is the one this run installed rather than whatever
+                # the checkout says later.
+                "repositoryCommit": definition.git(["rev-parse", "HEAD"], ROOT),
+                "repositoryTree": definition.git(["rev-parse", "HEAD^{tree}"], ROOT),
+                "subdirectoryTree": definition.git(
+                    ["rev-parse", "HEAD:" + component["subdirectory"]], ROOT),
+                "workingTreeClean": definition.working_tree_clean(ROOT),
+            }
+            hostrecord.put_install(record, component["component"], install)
+            installs[component["component"]] = install
+            performed.append({"step": "read imported location", "component": component["component"],
+                              "ok": True, "location": location,
+                              "digestMatchesDefinition": install["digestMatchesDefinition"]})
+
+        written = hostrecord.update(
             record_path, data["definitionVersion"],
-            points=[(name, point) for name, point in measurement["points"]])
-        if not appended.usable:
-            return _install_failed(record_path, data["definitionVersion"], performed,
-                                   environment, owned, failed_reading=appended)
-    if not measurement["qualifyingPoint"]:
-        # The candidate imports but does not work. Release the destination the same way any
-        # other failure does, so a transient connection failure does not block every retry.
-        performed.append({"step": "measure the candidate", "ok": False,
-                          "detail": measurement.get("refused")
-                          or "the candidate was not exercised successfully"})
-        return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
+            installs=[(name, install) for name, install in installs.items()],
+            component_facts=facts,
+        )
+        if not written.usable:
+            return _install_failed(record_path, data["definitionVersion"], performed, environment,
+                                   owned, failed_reading=written)
+        measurement = measure_candidate(data, record, python=python, environment=environment,
+                                        socket_path=args.socket, state=args.state,
+                                        relay_command=str(environment / "bin" / "codex-session-relay"),
+                                        measured_by=args.issue)
+        # A point measured during this run is a delta, applied to the record as it stands now.
+        # Measuring takes minutes; anything appended in the meantime is not this run's to drop.
+        if measurement.get("points"):
+            appended = hostrecord.update(
+                record_path, data["definitionVersion"],
+                points=[(name, point) for name, point in measurement["points"]])
+            if not appended.usable:
+                return _install_failed(record_path, data["definitionVersion"], performed,
+                                       environment, owned, failed_reading=appended)
+        if not measurement["qualifyingPoint"]:
+            # The candidate imports but does not work. Release the destination the same way any
+            # other failure does, so a transient connection failure does not block every retry.
+            performed.append({"step": "measure the candidate", "ok": False,
+                              "detail": measurement.get("refused")
+                              or "the candidate was not exercised successfully"})
+            return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
 
-    # Only the components this run installed. A whole selection map would re-assert entries
-    # read before the installation as though they were current.
-    promoted = hostrecord.update(
-        record_path, data["definitionVersion"],
-        select={name: install["location"] for name, install in installs.items()})
-    if not promoted.usable:
+        # Only the components this run installed. A whole selection map would re-assert entries
+        # read before the installation as though they were current.
+        promoted = hostrecord.update(
+            record_path, data["definitionVersion"],
+            select={name: install["location"] for name, install in installs.items()})
+        if not promoted.usable:
+            return _install_failed(record_path, data["definitionVersion"], performed, environment,
+                                   owned, failed_reading=promoted)
+        record = promoted.value
+
+        emit({
+            "command": "install", "applied": True, "environment": str(environment),
+            "hostRecord": str(record_path), "steps": performed, "installs": installs,
+            "measurement": measurement,
+            "promoted": bool(measurement["qualifyingPoint"]),
+            "selected": record.get("selected") or {},
+            "previousSelection": previous,
+            "note": (
+                "the pointer moves only after a qualifying point exists for the candidate"
+                " (OPS-2.4). A candidate that imports but fails its exercise stays unselected and"
+                " the previous runtime remains selected. Nothing here removes, moves or recreates"
+                " the store."
+            ),
+        })
+        return EXIT_OK if measurement["qualifyingPoint"] else EXIT_REFUSED
+
+
+    except reading.Refused as stop:
         return _install_failed(record_path, data["definitionVersion"], performed, environment,
-                               owned, failed_reading=promoted)
-    record = promoted.value
+                               owned, failed_reading=stop.reading)
+    except Exception as error:                                   # noqa: BLE001
+        return _install_failed(record_path, data["definitionVersion"], performed, environment,
+                               owned, failed_error=error)
 
-    emit({
-        "command": "install", "applied": True, "environment": str(environment),
-        "hostRecord": str(record_path), "steps": performed, "installs": installs,
-        "measurement": measurement,
-        "promoted": bool(measurement["qualifyingPoint"]),
-        "selected": record.get("selected") or {},
-        "previousSelection": previous,
-        "note": (
-            "the pointer moves only after a qualifying point exists for the candidate"
-            " (OPS-2.4). A candidate that imports but fails its exercise stays unselected and"
-            " the previous runtime remains selected. Nothing here removes, moves or recreates"
-            " the store."
-        ),
-    })
-    return EXIT_OK if measurement["qualifyingPoint"] else EXIT_REFUSED
+
+def _selected_digest(location):
+    """The bytes of a selected runtime, read at the boundary.
+
+    An unreadable file under a selected installation is a reading that failed, not a crash in
+    the middle of deciding what to stage over.
+    """
+    with reading.region(location, "the bytes of the selected runtime"):
+        return definition.ops12_digest(location)
 
 
 def _outgoing_runtime(record, data):
@@ -1034,43 +1134,74 @@ def _outgoing_runtime(record, data):
         observed[component["component"]] = {
             "selected": location,
             "present": present,
-            "digest": definition.ops12_digest(location) if present else None,
+            "digest": _selected_digest(location) if present else None,
         }
     return observed
 
 
 def _install_failed(record_path, definition_version, performed, environment, owned=None,
-                    failed_reading=None):
-    """Release a destination this run created, and drop only the records this run wrote.
+                    failed_reading=None, failed_error=None):
+    """Release a destination this run created, and report whether it is retriable.
 
-    The selection is left EXACTLY as found. Writing back the selection this run read at its
-    start would discard a promotion another run committed while this one was installing, and
-    holding a lock over that write does not help, because the staleness is already inside the
-    value being written. This run undoes its own installs and nothing else.
+    Two outcomes, because saying "refused" does not delete a directory. When removal is
+    VERIFIED the destination can be retried and the result says so. When removal could not
+    finish the result says NOT retriable, names what is left and what recovery needs, and the
+    original failure is reported alongside rather than replaced by the cleanup failure.
 
-    Removing only a directory this run created is what makes the retry work without ever
-    touching an environment somebody else owns; the exclusive mkdir above is the proof of
-    that ownership. The store is never removed, moved or recreated: update failure and store
-    loss are different accidents.
+    Whether the candidate may be removed at all is read from the record, never remembered:
+    release_candidate looks at the selection under the lock, because a run can commit its
+    promotion and still raise while releasing the lock. An environment that is selected, or a
+    record that cannot be read, keeps its candidate.
+
+    The store is never removed, moved or recreated: update failure and store loss are
+    different accidents.
     """
-    removed = None
-    if owned is not None and Path(owned).is_dir():
-        shutil.rmtree(str(owned), ignore_errors=True)
-        removed = str(owned)
-    dropped = hostrecord.update(record_path, definition_version, drop_environment=environment)
-    emit({"command": "install", "applied": False, "steps": performed,
-          "environment": str(environment),
-          "selected": (dropped.value or {}).get("selected") if dropped.usable else None,
-          "hostRecordState": dropped.state,
-          "recordsDropped": dropped.usable,
-          "removedCandidate": removed,
-          "refused": (failed_reading.detail if failed_reading is not None
-                      else "a step failed; whatever runtime was selected remains selected"),
-          "reading": None if failed_reading is None else failed_reading.refusal(),
-          "note": "the candidate this run created was removed so the destination can be"
-                  " retried, and only the install records this run wrote were dropped. The"
-                  " selection is left as found, because another run's promotion is not this"
-                  " run's to undo. The store is untouched."})
+    dropped, decision = hostrecord.release_candidate(
+        record_path, definition_version, environment)
+    keeping = not decision.startswith("dropped")
+
+    removed, residue, cleanup_error = False, None, None
+    if owned is not None and not keeping:
+        try:
+            shutil.rmtree(str(owned))
+        except OSError as error:
+            cleanup_error = type(error).__name__ + ": " + str(error)
+        # Verified on the filesystem rather than inferred from the call returning.
+        removed = not Path(owned).exists()
+        if not removed:
+            residue = str(owned)
+
+    retriable = keeping or removed
+    emit({
+        "command": "install", "applied": False, "steps": performed,
+        "environment": str(environment),
+        "selected": (dropped.value or {}).get("selected") if dropped.usable else None,
+        "hostRecordState": dropped.state,
+        "candidate": decision,
+        "removedCandidate": str(owned) if removed else None,
+        "cleanupError": cleanup_error,
+        "retriable": retriable,
+        "residualPaths": [residue] if residue else [],
+        "recoveryRequires": None if retriable else (
+            "remove " + str(residue) + " by hand; this run created it and could not remove it,"
+            " so the same destination will keep refusing until it is gone"
+        ),
+        "refused": (
+            failed_reading.detail if failed_reading is not None else
+            ("this command failed in a way it does not model: " + type(failed_error).__name__
+             + ": " + str(failed_error)[:300]) if failed_error is not None else
+            "a step failed; whatever runtime was selected remains selected"),
+        "reading": None if failed_reading is None else failed_reading.refusal(),
+        "internalError": None if failed_error is None else {
+            "exception": type(failed_error).__name__,
+            "raisedAt": reading.where(failed_error),
+        },
+        "note": (
+            "the selection is left as found, because another run's promotion is not this"
+            " run's to undo, and a candidate that is selected or whose record cannot be read"
+            " is kept rather than deleted. The store is untouched."
+        ),
+    })
     return EXIT_REFUSED
 
 
@@ -1124,7 +1255,9 @@ def _bind_installs(record, data, python, environment):
             return None, (component["component"] + " imported from " + location
                           + " but the recorded install for this environment is "
                           + install["location"])
-        digest = definition.ops12_digest(location)
+        with reading.region(location, "the bytes of " + component["component"]
+                            + " about to be exercised"):
+            digest = definition.ops12_digest(location)
         bound[component["component"]] = {"install": install, "digest": digest,
                                          "location": location}
     return bound, None
@@ -1442,6 +1575,7 @@ def build_parser():
                           help="run assignment-find and nothing else; it constructs a"
                                " store, which is why plain diagnose does not")
     diagnose.add_argument("--turn-status", default="completed",
+                          choices=["completed", "failed", "interrupted", "inProgress"],
                           help="trial input: the status the child turn was observed in")
     diagnose.add_argument("--temporary", action="store_true",
                           help="record that this destination is temporary, not a host")
@@ -1487,8 +1621,37 @@ def build_parser():
 
 
 def main(argv=None):
+    """Run one command, and never let a defect leave a traceback.
+
+    This is a bounded failure contract, not a second reading boundary, and the two are kept
+    apart deliberately. A reading boundary answers a question about a record and reports a
+    state from the four-state partition. This answers nothing: it says a defect in this
+    command reached the top, names the exception and the line that raised it, and exits
+    non-zero. 'internalError' never becomes an UNREADABLE record, because a code defect
+    filed as a data problem is a defect that disappears.
+
+    What it guarantees is narrow and worth stating: the worst case is a named refusal rather
+    than a traceback. It does not guarantee that every input was anticipated.
+    """
     args = build_parser().parse_args(argv)
-    return args.handler(args)
+    try:
+        return args.handler(args)
+    except reading.Refused as stop:
+        emit({"command": args.command, "refused": stop.reading.detail,
+              "reading": stop.reading.refusal(),
+              "note": "a record could not be read and the command that reads it did not"
+                      " report the refusal itself"})
+        return EXIT_REFUSED
+    except Exception as error:                                   # noqa: BLE001 - see above
+        emit({"command": args.command, "internalError": {
+            "exception": type(error).__name__,
+            "raisedAt": reading.where(error),
+            "detail": str(error)[:500],
+        }, "refused": "this command failed in a way it does not model",
+            "note": "this is a defect in runtime_install.py, not a statement about any"
+                    " record. It is reported rather than raised so a caller gets a result"
+                    " instead of a traceback, and named so the defect stays reportable."})
+        return EXIT_REFUSED
 
 
 if __name__ == "__main__":
