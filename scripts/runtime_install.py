@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
-                         pointer, reading, scope, staging, swapgate)
+from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
+                         ownership, pointer, reading, scope, staging, swapgate)
 from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +36,13 @@ EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
 BRIDGE = "codex-thread-bridge"
 RELAY = "codex-session-relay"
 MCP_NAME = BRIDGE
+
+# The hooks this repository owns and can therefore derive a command for, and the event a hook
+# lands on when nothing names one. A named adapter is not a second install path: it reaches the
+# same append-only installation, with the command derived instead of typed.
+COMPLETION = "completion"
+ADAPTERS = (COMPLETION,)
+SESSION_START = "SessionStart"
 
 # Which command-line override supplies each component's entry point. Diagnosis used to classify
 # the bridge against whatever was on PATH while --bridge-command pointed somewhere else, because
@@ -151,6 +158,11 @@ ABSENCE_ANSWERS = {
     "runtime_install._restore_pointer": ("pointer.remove", "hostrecord.drop_pointer"),
     "runtime_install._restore_selection": ("hostrecord.deselect",),
     "swapgate.inflight_cell": ("swapgate.NO_ATTEMPTS",),
+    # The hook's own settings are the fourth place, and the first one that arrived declared
+    # rather than as a review round: a write handed the file it found has to be able to say that
+    # there was no file, because a first install and an install over somebody else's settings
+    # need opposite handling.
+    "completion.config_outcome": ("completion.no_configuration",),
 }
 
 # How a function says it receives the state as it was found. These are the parameter names the
@@ -1899,12 +1911,139 @@ def _trial(args, relay_executable, relay_interpreter=None):
 def cmd_hook(args):
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     path = codex_home / "hooks.json"
-    hook = {"type": "command", "command": args.hook_command, "timeout": args.timeout}
-    result = hooks.install(path, args.event, hook, issue=args.issue, apply=args.apply)
+    settings = None
+    # Read once, defaulted, so a caller that names a command outright needs to know nothing
+    # about the adapters this repository happens to own.
+    adapter = getattr(args, "adapter", None)
+    if adapter == COMPLETION:
+        # EVERY precondition is checked before ANY write, and that ordering is the whole point
+        # of this block rather than an accident of how it grew. Five rounds of review each found
+        # one more condition being evaluated after a write it should have preceded, and the last
+        # of them was the expensive shape: the settings were written, the duplicate registration
+        # was refused afterwards, and a hook already in the file immediately began running
+        # against settings this command had just reported it would not install.
+        #
+        # So a new precondition belongs in this list, not in a new branch further down.
+        event = args.event or completion.EVENT
+        refused = (completion.registration_complaints(args.event)
+                   + completion.budget_complaints(args.guard_timeout, args.timeout))
+        interpreter = wanted = None
+        if not refused:
+            try:
+                # The candidate is only executed when this command is going to write. A plan
+                # that writes nothing should not run a program the caller named, and what it
+                # did not check it does not claim.
+                interpreter = completion.interpreter_for(args.python or sys.executable,
+                                                         run=args.apply)
+                wanted = completion.configuration(
+                    destination=args.dest, relay=args.relay_command,
+                    marker_root=args.marker_root, database=args.db_path, mode=args.mode,
+                    timeout=args.guard_timeout, journal_root=args.journal_root,
+                    codex_home=codex_home, issue=args.issue,
+                    isolation=getattr(args, "isolation_asserted_by", None),
+                )
+            except ValueError as error:
+                refused = [str(error)]
+        if refused:
+            emit({"command": "hook", "adapter": adapter, "error": "; ".join(refused),
+                  "hookFile": str(path), "settings": None, "result": None,
+                  "note": "nothing was written: every precondition is checked first."})
+            return EXIT_USAGE
+        configuration = completion.configuration_path(codex_home)
+        command = completion.command_for(interpreter,
+                                         ROOT / "scripts" / completion.ENTRY_POINT_NAME,
+                                         configuration)
+        already = hooks.read(path)
+        if not already.usable:
+            emit({"command": "hook", "adapter": adapter, "hookFile": str(path),
+                  "settings": None, "result": None, "reading": already.refusal(),
+                  "note": "the hook file could not be read, so nothing was written: whether"
+                          " this adapter is already registered could not be established."})
+            return EXIT_REFUSED
+        duplicate = completion.duplicate_complaints(already.value, event, command, args.timeout)
+        if duplicate:
+            emit({"command": "hook", "adapter": adapter, "settings": None,
+                  "hookFile": str(path), "result": None, "error": "; ".join(duplicate),
+                  "note": "nothing was written. Writing the settings first would have handed"
+                          " them to the registration already in this file, which this command"
+                          " is refusing to join."})
+            return EXIT_REFUSED
+        # Preconditions are settled. Now the writes, settings before the hook that reads them:
+        # a hook registered against settings that are not there releases on every Stop and says
+        # so nowhere, while settings with no hook cost nothing at all.
+        settings = completion.write_configuration(
+            configuration, wanted, apply=args.apply)
+        if settings["outcome"] not in completion.CONFIG_SETTLED:
+            emit({"command": "hook", "adapter": adapter, "settings": settings,
+                  "hookFile": str(path), "result": None,
+                  "note": ("The settings were not written, so no hook was appended. A hook"
+                           " registered against settings it cannot act on is installed and"
+                           " inert, which is the one outcome worth refusing outright.")})
+            return EXIT_REFUSED
+    else:
+        command = args.hook_command
+        event = args.event or SESSION_START
+    hook = {"type": "command", "command": command, "timeout": args.timeout}
+    result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
+    landed = None
+    if adapter == COMPLETION and args.apply:
+        # Read back after the append, because the duplicate check above and the append itself
+        # are not one atomic step: hooks.install takes its own lock, so two runs can both pass
+        # the check and both append. Detected and reported rather than claimed away; the append
+        # cannot be undone here, because removal renumbers later identities.
+        after = hooks.read(path)
+        if not after.usable:
+            # The promise this block makes is exactly one registration, and a read that did not
+            # happen cannot establish it. Skipping the judgment left a CREATED result exiting 0
+            # on a claim nobody could check, which is the same silence as claiming settings that
+            # were never read back.
+            emit({"command": "hook", "adapter": adapter, "settings": settings,
+                  "hookFile": str(path), "result": result, "registrations": None,
+                  "reading": after.refusal(),
+                  "error": "the hook file could not be read back after the append, so whether"
+                           " this adapter is registered exactly once could not be established"})
+            return EXIT_REFUSED
+        landed = completion.adapter_entries(after.value, event)
+        # Exactly one, and the append confirmed. Zero means the file was replaced after the
+        # append by a writer that does not take this lock; a false read-back means the append
+        # itself was not confirmed. Both leave this command claiming an installation nobody
+        # can find.
+        if len(landed) != 1 or result.get("readBack") is False:
+            emit({"command": "hook", "adapter": adapter, "settings": settings,
+                  "hookFile": str(path), "result": result,
+                  "registrations": [entry["identity"] for entry in landed],
+                  "error": ("this adapter is registered " + str(len(landed)) + " times for "
+                            + event + " after the append"
+                            + ("" if result.get("readBack") is not False
+                               else ", and the append was not read back")
+                            + "; the hook file changed under this run or the write could not"
+                              " be confirmed. Reconcile it by editing the hook file, which"
+                              " this command does not do because removal renumbers later"
+                              " identities.")})
+            return EXIT_REFUSED
+        # And it is the registration this run meant to make. Counting one without reading it
+        # would accept somebody else's adapter entry as this command's own work.
+        survivor = landed[0]
+        if (survivor["command"] != command or survivor["timeout"] != args.timeout
+                or survivor["matcher"] != hooks.INSTALLED_MATCHER):
+            emit({"command": "hook", "adapter": adapter, "settings": settings,
+                  "hookFile": str(path), "result": result,
+                  "registrations": [survivor["identity"]],
+                  "error": ("the one registration for " + event + " after the append is not the"
+                            " one this run made: it reads " + repr(survivor["command"])
+                            + " with timeout " + repr(survivor["timeout"])
+                            + " under matcher " + repr(survivor["matcher"])
+                            + ". The hook file changed under this run; reconcile it by hand,"
+                              " because removal renumbers later identities.")})
+            return EXIT_REFUSED
     emit({
         "command": "hook",
+        "adapter": adapter,
+        "event": event,
+        "settings": settings,
         "hookFile": str(path),
         "result": result,
+        "registrations": None if landed is None else [entry["identity"] for entry in landed],
         "note": (
             "Installed, enabled and observed to have fired are three separate claims. This"
             " command appends and reads back; it never enables a daemon and never reports"
@@ -1914,6 +2053,20 @@ def cmd_hook(args):
     })
     # The set comes from the module that produces the outcomes, not from a list respelled here.
     return EXIT_OK if result["outcome"] in hooks.SETTLED else EXIT_REFUSED
+
+
+# ------------------------------------------------------------------------- hook-status
+
+def cmd_hook_status(args):
+    """Read what is registered and what this hook recorded about itself, without merging them.
+
+    Writes nothing. A registration says a line is in the hook file; it does not say the host ran
+    it, that the runtime it names can answer the call, or that any turn was ever judged. Those
+    are separate cells here for exactly that reason.
+    """
+    codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    emit(completion.status(codex_home=codex_home, event=args.event or completion.EVENT))
+    return EXIT_OK
 
 
 # ------------------------------------------------------------------------- install
@@ -3461,12 +3614,39 @@ def build_parser():
 
     hook = sub.add_parser("hook")
     hook.add_argument("--codex-home")
-    hook.add_argument("--event", default="SessionStart")
-    hook.add_argument("--hook-command", required=True)
+    hook.add_argument("--event", default=None,
+                      help="defaults to " + SESSION_START + ", or to " + completion.EVENT
+                           + " when --adapter names the completion hook")
+    named = hook.add_mutually_exclusive_group(required=True)
+    named.add_argument("--hook-command", help="an explicit command to register")
+    named.add_argument("--adapter", choices=ADAPTERS,
+                       help="a hook this repository owns, whose command is derived rather than"
+                            " typed and whose settings are written before it is registered")
+    hook.add_argument("--dest", help="the install destination whose pointer names the runtime")
+    hook.add_argument("--relay-command", help="an explicit relay executable, instead of --dest")
+    hook.add_argument("--marker-root")
+    hook.add_argument("--db-path")
+    hook.add_argument("--journal-root")
+    hook.add_argument("--python", help="the interpreter the registered command runs under")
+    hook.add_argument("--mode", choices=completion.MODES, default=completion.OBSERVE,
+                      help="observe classifies and records and never holds, which is the"
+                           " default because holding depends on per-session write isolation"
+                           " the caller has to have granted")
+    hook.add_argument("--isolation-asserted-by",
+                      help="who established that a held child cannot write the facts the"
+                           " decision reads; required by --mode hold and recorded in the"
+                           " settings, because the contract makes that grant a prerequisite")
+    hook.add_argument("--guard-timeout", type=int, default=completion.DEFAULT_TIMEOUT_SECONDS,
+                      help="the adapter's own budget for one guard call, kept under --timeout")
     hook.add_argument("--timeout", type=int, default=10)
     hook.add_argument("--issue", default="JUN-104")
     hook.add_argument("--apply", action="store_true")
     hook.set_defaults(handler=cmd_hook)
+
+    hook_status = sub.add_parser("hook-status")
+    hook_status.add_argument("--codex-home")
+    hook_status.add_argument("--event", default=None)
+    hook_status.set_defaults(handler=cmd_hook_status)
     return parser
 
 

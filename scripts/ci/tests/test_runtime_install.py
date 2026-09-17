@@ -27,8 +27,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
-                         pointer, reading, scope, staging, swapgate)
+from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
+                         ownership, pointer, reading, scope, staging, swapgate)
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
@@ -1452,7 +1452,8 @@ class ReadingBoundaryTests(unittest.TestCase):
     def test_every_registered_command_has_a_boundary_fixture(self):
         self.assertEqual(
             sorted(_cli_entry_points()),
-            ["diagnose", "hook", "install", "measure", "register-mcp", "verify-definition"],
+            ["diagnose", "hook", "hook-status", "install", "measure", "register-mcp",
+             "verify-definition"],
             "a command added without a boundary fixture fails this check")
 
     def _assert_named_refusal(self, done, where):
@@ -3406,10 +3407,10 @@ class DeclaredSetReferenceTests(unittest.TestCase):
         Comparing the reader with a hand-written expectation would only check that two things I
         wrote agree. The imported module is the outside truth here.
         """
-        modules = {"check": check, "codexconfig": codexconfig, "definition": definition,
-                   "hooks": hooks, "hostrecord": hostrecord, "ownership": ownership,
-                   "pointer": pointer, "reading": reading, "scope": scope,
-                   "staging": staging, "swapgate": swapgate}
+        modules = {"check": check, "codexconfig": codexconfig, "completion": completion,
+                   "definition": definition, "hooks": hooks, "hostrecord": hostrecord,
+                   "ownership": ownership, "pointer": pointer, "reading": reading,
+                   "scope": scope, "staging": staging, "swapgate": swapgate}
         trees = _runtime_trees()
         declared_by_module = _declared_by_module(trees)
         computed = set()
@@ -7245,7 +7246,8 @@ class AbsenceAnswerTests(unittest.TestCase):
         derived = _prior_state_functions(_runtime_trees(), PRIOR_STATE_SEEN)
         self.assertEqual(set(derived), {"runtime_install._restore_pointer",
                                         "runtime_install._restore_selection",
-                                        "swapgate.inflight_cell"})
+                                        "swapgate.inflight_cell",
+                                        "completion.config_outcome"})
         self.assertEqual(tuple(runtime_install.PRIOR_STATE_ARGUMENTS), PRIOR_STATE_SEEN,
                          "the source and this check derive from the same observation")
         self.assertEqual(set(derived), set(runtime_install.ABSENCE_ANSWERS),

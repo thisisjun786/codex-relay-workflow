@@ -1078,6 +1078,206 @@ hash Codex recorded against each one stays attached. The file bytes do not: the 
 reserialized. The MCP registration is the one that preserves bytes, by appending and leaving the
 prior content as an exact prefix.
 
+## The completion hook
+
+`runtime_install.py hook --adapter completion` registers the Stop hook that catches a managed
+turn ending without the records a completion needs. It is the same install path as above, with the
+command derived from this checkout instead of typed, and it lands on `Stop` unless the caller
+names another event.
+
+The decision is not made in the hook. [The hook contract](../skills/crw-run/references/hook-contract.md)
+fixes the rules and the relay's `guard-evaluate` implements them, down to the exact Stop JSON to
+print. `scripts/completion_hook.py` is the piece between the host and that guard: it reads the
+delivered payload, asks the configured runtime, and prints only a block that runtime produced.
+
+It cannot cost a turn. The host reads exit 2 as the blocking code and takes stderr as the
+continuation prompt, and `argparse` exits 2 on any usage error, so the entry point parses no
+arguments, writes nothing to stderr, captures the subprocess's streams rather than inheriting
+them, and exits 0 on every path. A stale flag left in somebody's hook file is a hook that does
+nothing, not a hold on every ordinary turn.
+
+Its settings are its own file, `crw-completion-hook.json` beside the hook file, and they are
+written before the hook that reads them: a hook registered against settings that are not there
+answers `config_absent` on every Stop and releases, which is an installed hook that does
+nothing and says so nowhere. Settings that already say something else are refused rather than
+overwritten, because they carry the mode and a silent rewrite changes whether turns can be held
+at all. `observe` is what an install writes; holding depends on per-session write isolation this
+command cannot grant.
+
+Settings this command can generate but its own reader cannot act on are refused rather than
+written, so an install cannot report success and leave every later Stop reading those settings as
+malformed. The adapter's budget is checked against the registered timeout at the same point,
+because that is the one value whose meaning needs both files: a budget the host's timeout does
+not exceed lets the host kill the adapter before it records why it did not answer.
+
+The event is checked the same way and for the same reason. This adapter implements the `Stop`
+contract and has a decision for no other event: elsewhere the payload means something else and
+the output schema carries no top-level decision, so a hook registered on another event would
+never see the turn it was installed to watch. Naming one is refused; another event still takes
+an explicit `--hook-command`. Settings, budget and event are three checks of one kind, and the
+kind is that an install must not succeed and leave a hook that is registered, inert and silent
+about it.
+
+The read-back belongs to that same kind. Settings that were written and could not be read back
+as written answer `config_applied_unverified`: applied, because reporting a landed write as
+nothing written invites a retry over a file that now exists, and unsettled, because a hook must
+not be registered against settings nobody has read. Which outcomes settle follows the read-back
+rather than the write's intention.
+
+The registered command is a command line, so its two words are joined with shell quoting and
+read back by the same rules. Concatenating them raw fails in two sizes: a path holding a space
+is delivered as more words than it is, and a path holding shell syntax is delivered as syntax
+and runs on every Stop. Ordinary paths are unchanged by the quoting. `hook-status` recognises
+this adapter's own registrations by a complete argument whose last component is the entry point's
+name, never by the command's text containing it: a program called `not-completion_hook.py`
+contains that name and is a different program.
+
+The runtime is named through the owned pointer, `<dest>/current/bin/codex-session-relay`, and
+never through `PATH` or a checkout path. A host can carry a relay on `PATH` whose build
+predates the guard: the file is there, it runs, and it rejects the call. That the executable
+exists and that it offers `guard-evaluate` are two questions, and `hook-status` answers them
+as two cells for that reason.
+
+Every path the settings record is made absolute when they are written and required to be
+absolute when they are read, because this hook runs with the session's own workspace as its
+directory: a relative path would resolve somewhere the install never named, and a bare name
+would be looked up on `PATH`. The pointer itself is not followed, so an update moves the link
+and these settings keep naming the runtime that is actually selected.
+
+The registered command carries the settings path the install resolved, as a third word the entry
+point reads positionally and never parses. Otherwise the path would be resolved twice, in two
+different directories and under two different values of `CODEX_HOME`, and the second resolution
+is the one that decides what every Stop reads. The install decided which file it wrote, so the
+install is what says which file to read.
+
+`hook-status` reads that same word rather than resolving a path of its own, and reports which
+of the two it used. Recomputing it would answer about a file the hook may never open: an install
+that used the override embedded the resolved path in its command, and a later diagnosis has no
+reason to be running under the same environment.
+
+A registration naming its settings with a relative path is reported rather than resolved. The
+hook resolves such a path against each session's workspace, so no single file answers for it,
+and inspecting the one the diagnosis would resolve would report an unrelated file as the hook's
+own. Nothing downstream of those settings is read either.
+
+That judgment uses the same expansion the hook applies, so a `~` path is absolute here too;
+calling it relative would hide a working configuration and every cell below it.
+
+The interpreter the registration names is its own cell beside the script. A virtual environment
+that moved after installation leaves the script in place and the interpreter gone, and then the
+host cannot start the adapter at all: no decision, no journal entry, and a registration that
+still looks correct.
+
+A bare interpreter name is resolved on `PATH`, the way the host resolves it, so a working hook
+is not failed in diagnosis for not spelling a file path. A wrapper's own target is not followed,
+and the cell says so rather than implying the program behind it was checked.
+A relative spelling carrying a separator is reported as workspace-dependent instead: resolving it
+would answer about a program under whatever checkout the diagnosis ran from, not the one the host
+starts in a session's workspace.
+
+Whether the runtime offers `guard-evaluate` requires it to describe the subcommand, not merely
+to exit 0. A program that ignores its arguments and succeeds would otherwise be reported as
+offering one it has never heard of.
+A flag the real help carries is required beside the subcommand's own name, because a program
+that echoes its arguments prints that name back while offering nothing.
+
+A registration naming the adapter with a relative path is reported rather than resolved, for
+the same reason a relative settings path is: the file this command would find is not the one
+the host runs.
+
+Registrations naming different settings files are reported as ambiguous and nothing below them
+is read. Every one of them runs, so naming one would describe one hook while reporting the
+others' state as if it were that one's.
+A relative spelling counts as its own unresolved source there, because two of them name two
+files, and so do one relative and one absolute.
+
+A matcher is part of a registration. Installation only ever appends an unconditional group and
+the hook file's own installer treats only that group as already installed, so an identical
+command sitting under a matcher is a duplicate: appending would add a second registration beside
+it and both would run on a matching `Stop`.
+
+The interpreter in the registered command is settled the same way, and a bare name is looked up
+at install time, on the machine doing the install. That is the only moment the lookup means
+anything, because the hook runs later from each session's own workspace.
+
+It also has to be a Python this adapter runs on. Executable is not the question: `/bin/true` is
+executable and exits 0, and a Python below the supported version fails the same way and looks
+identical from the hook file. Both are refused. The candidate is executed only when the command
+is going to write, because a plan that writes nothing should not run a program the caller named,
+and what it did not check it does not claim.
+
+The registered timeout is held to the one this repository has evidence for. The host clamps an
+over-long timeout at discovery and the clamped value was not measured, so a large number is not
+the deadline it appears to be and could land under the guard budget.
+
+The marker root follows the relay's own resolution, including
+`CODEX_SESSION_RELAY_MARKER_ROOT`. A default that skipped it would not be a default but a
+disagreement: the coordinator would publish its intents under one tree while this hook looked
+under another, and every managed turn would read as unmanaged with nothing recorded.
+
+`--mode hold` additionally requires `--isolation-asserted-by`, recorded in the settings and
+shown by `hook-status`. The contract makes per-session write isolation a prerequisite for
+holding and not for observing, so the assertion is a named record rather than something
+inferred from the mode having been set.
+
+A second registration of this adapter that differs from the one already there is refused rather
+than appended. Installation appends and never removes, so appending would leave two copies
+running on every `Stop`; the existing identity is named so it can be edited.
+
+Every precondition is checked before any write, and that ordering is the point rather than an
+accident of how the command grew. The interpreter, the budget, the event, the settings' own
+readability and the duplicate registration are one list. The shape this protects against is the
+expensive one: settings written, duplicate refused afterwards, and a hook already in the file
+running against settings the command had just reported it would not install. The duplicate check
+and the append are still not one atomic step, so the registration is read back afterwards and a
+second copy is reported rather than claimed away.
+
+`hook-status` writes nothing of its own, but it is not inert: answering whether the runtime
+offers `guard-evaluate` means running that runtime with `--help`, and what that runtime does
+is outside this command's control. The command says so in its own output.
+
+`hook-status` probes these paths through the four reading states rather than asking whether a
+file is there. A runtime behind a permission wall and one that was never installed answer
+differently, because they are repaired in different places, and a runtime that could not be
+reached is not asked whether it offers the subcommand.
+
+Only a verdict that agrees with itself is acted on. Both halves are read: a verdict whose own
+decision releases while its `hook_output` holds did not come from the guard, and rebuilding a
+block out of the nested half alone would let this adapter deliver a hold nobody decided. Any
+disagreement reads as `guard_verdict_incomplete` and releases.
+
+Failures keep their own names. A runtime that could not be run carries its `errno`, because a
+moved pointer and a file that cannot be executed are different repairs. An exit of 2 carrying the
+relay's own error record is the relay declining a request it understood; an exit of 2 carrying
+nothing is its argument parser refusing before any command ran. Every one of these releases the
+turn and is recorded.
+
+## Registration is not firing
+
+`runtime_install.py hook-status` reads and writes nothing. It answers registration, the host's
+trust state, whether the registered command's target still exists, the settings, the runtime,
+whether that runtime offers the subcommand, this hook's own record of its invocations, the
+guard's records, and the daemon, each as its own cell. `not_read` is used where a question was
+not asked and is never written as an absence.
+
+This hook records one entry per invocation by default, and the default is not frugality. The
+guard publishes an observation only when it selected an assignment, so on a host with no managed
+session it writes nothing at all, and an empty firing record would be indistinguishable from a
+hook that never runs. The count is always reported beside the policy that produced it.
+
+A record is whole or it is absent. A short write is finished rather than accepted, and a write
+that cannot finish removes what it left: a truncated record survives under a name nothing will
+reuse and would be counted as an invocation whose contents no longer read back.
+
+The settings are read before the payload is looked at, because the settings say where a record
+goes. Reading them second meant a payload the adapter could not parse was released with nothing
+written anywhere, which is the one class of invocation that most needs a record.
+
+The daemon is not on this path. The guard reads the marker and a read-only database, so a stopped
+daemon is not observable from a Stop and is never inferred from one; `hook-status` answers it
+separately or says it did not look. Long retries and whole verification loops belong to the daemon
+and to the coordinating task, not to a hook with a five-second budget.
+
 ## What none of this establishes
 
 Running the entry point against a temporary destination proves what it did there. It is not
@@ -1085,6 +1285,11 @@ evidence about a host's real Codex home, its installed runtime, its MCP registra
 operational database. `installed`, `mcpExposed`, `connected`, `deliveryAccepted`,
 `verificationComplete` and `alwaysActive` are six separate facts under OPS-6.1, and `imported` and
 `settingsPreserved` are two more beside them. None of the eight is read from another.
+
+A registered completion hook is not a fired one, and a fired one is not a delivered hold. That a
+line is in the hook file says nothing about the host having run it, about the runtime it names
+being able to answer, or about any turn having been judged. Those claims need the host's own
+evidence, not this command's.
 
 A successful update is not one of them either. That the pointer moved, that the gate found the
 daemon stopped and no attempt open, and that the store's tables were compatible are three
