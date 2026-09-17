@@ -199,10 +199,27 @@ class ReviewClaimedBeforeTheEdit(ReReviewTestCase):
         )
         record = self.ack.record_verdict(
             event_id, verdict="verified", verdict_turn_id="v1", findings=PASSING,
-            expect_criteria_digest=self.criteria.get(self._rid)["setDigest"],
         )
         self.assertFalse(record.get("_replay"))
         self.assertEqual(self.state()["state"], VERIFIED)
+
+    def test_an_unruled_re_review_needs_no_stated_digest(self):
+        """What skills/crw-run/references/relay.md tells an operator to type, exactly.
+
+        The re-claim rebinds, so there is no ruling to tell this apart from, and the ordinary
+        claim-then-verdict pair works with no extra flag. Only a review that already produced a
+        ruling has to name the set it read.
+        """
+        event_id = self.claimed()
+        self.edit_criteria()
+        self.assertEqual(
+            self.ack.claim_verification(event_id, turn_id="re-review-turn"), "proceed"
+        )
+        record = self.ack.record_verdict(
+            event_id, verdict="verified", verdict_turn_id="v1", findings=PASSING,
+        )
+        self.assertEqual(record["verdict"], "verified")
+        self.assertFalse(record.get("_replay"))
 
     def test_registering_criteria_after_a_legacy_verdict_opens_a_re_review(self):
         """A legacy ruling certified no wording at all, so registering a set moves it too."""
@@ -400,6 +417,24 @@ class ProtectionsThatMustSurvive(ReReviewTestCase):
         self.assertEqual(
             self.ack.claim_verification(event_id, turn_id="re-review-turn"), "already_claimed"
         )
+
+    def test_a_criteria_edit_after_unverified_does_not_reopen_the_old_event(self):
+        """Named in the skills as a case that still takes a fresh generation."""
+        event_id = self.claimed()
+        self.ack.record_verdict(
+            event_id, verdict="unverified", verdict_turn_id="v1",
+            findings=[{"id": "c1", "verdict": "unverified", "note": "no access"}],
+        )
+        self.edit_criteria()
+        self.assertEqual(
+            self.ack.claim_verification(event_id, turn_id="re-review-turn"), "already_claimed"
+        )
+        again = self.ack.record_verdict(
+            event_id, verdict="verified", verdict_turn_id="v2", findings=PASSING,
+            expect_criteria_digest=self.criteria.get(self._rid)["setDigest"],
+        )
+        self.assertTrue(again.get("_replay"))
+        self.assertEqual(again["verdict"], "unverified")
 
     def test_an_unchanged_criteria_set_still_refuses_a_second_claim(self):
         """I-54: a duplicate delivery cannot cause a second verification."""
