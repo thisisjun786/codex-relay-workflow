@@ -1419,6 +1419,117 @@ class ParticipantAccessReceipts(CliBase):
                 self.assertEqual(parent["resumeMode"], "workspace-write")
                 self.assertIsNone(parent["detail"])
 
+    def test_every_transformation_a_send_applies_to_the_record_is_covered(self):
+        """The SET, read out of the source, rather than the instances found so far.
+
+        Three versions of `deliverable` were wrong the same way: a predicate was applied to
+        the member that had been demonstrated instead of to the set that member belongs to.
+        First the sandbox type, then `require_usable()`, then the params construction - and
+        the fourth instance, `environments`, arrived the same way the first three did.
+
+        So the set is derived here instead of listed. It is the transformations delivery
+        applies to the RECORDED settings before turn/start, and it comes out of the source in
+        two steps: the `TaskSettings` methods the send path calls, read from `delivery.py` and
+        `bridge_adapter.py`, and then every recorded field handed to a call inside those
+        methods. Today that is `normalise_policy(sandbox)`, `list(runtimeWorkspaceRoots)` and
+        `normalise_environments(environments)`.
+
+        Each derived field is mutated to a value its transformation cannot consume, and the
+        receipt must not advertise that participant as deliverable. A fifth transformation
+        added to the send path joins the derived set and fails here until the probe reaches
+        it, which is the property a written-down list cannot have.
+
+        The two floor assertions are not the definition. They guard the extractor: an AST walk
+        that silently matched nothing would run zero mutations and pass, which is how this kind
+        of test goes green while holding nothing.
+        """
+        import ast
+        import inspect
+        from pathlib import Path
+
+        from codex_session_relay import bridge_adapter, delivery
+        from codex_session_relay import settings as settings_module
+        from codex_session_relay.settings import TaskSettings
+        from codex_session_relay.store import Store
+
+        def parsed(module):
+            return ast.parse(inspect.getsource(module))
+
+        api = {name for name in vars(TaskSettings) if not name.startswith("_")}
+        called = set()
+        for module in (delivery, bridge_adapter):
+            for node in ast.walk(parsed(module)):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in api):
+                    called.add(node.func.attr)
+
+        defined = {
+            node.name: node for node in ast.walk(parsed(settings_module))
+            if isinstance(node, ast.FunctionDef)
+        }
+
+        def transformed_fields(name, seen=None):
+            """Recorded fields this method hands to a call, through self.<method>() hops."""
+            seen = set() if seen is None else seen
+            if name in seen or name not in defined:
+                return set()
+            seen.add(name)
+            fields = set()
+            for node in ast.walk(defined[name]):
+                if not isinstance(node, ast.Call):
+                    continue
+                for argument in node.args:
+                    if (isinstance(argument, ast.Subscript)
+                            and isinstance(argument.value, ast.Attribute)
+                            and argument.value.attr == "data"
+                            and isinstance(argument.slice, ast.Constant)
+                            and isinstance(argument.slice.value, str)):
+                        fields.add(argument.slice.value)
+                if (isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "self"):
+                    fields |= transformed_fields(node.func.attr, seen)
+            return fields
+
+        fields = set().union(*(transformed_fields(name) for name in called))
+
+        self.assertGreaterEqual(
+            called, {"require_usable", "resume_params", "mismatches"},
+            "the send path's settings calls were not found, so nothing below is derived",
+        )
+        self.assertGreaterEqual(
+            fields, {"sandbox", "runtimeWorkspaceRoots", "environments"},
+            "the extraction found fewer transformations than are known to be there",
+        )
+
+        self.seeded()
+        for field in sorted(fields):
+            with self.subTest(transforms=field):
+                # A value no transformation in the set can consume: not a mapping, not a
+                # sequence, and present, so the completeness gate hands it straight on.
+                stale = dict(self.settings(self.root))
+                stale[field] = 7
+                store = Store(Path(self.tmp) / "relay.sqlite3")
+                with store.transaction() as db:
+                    db.execute(
+                        "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                        (json.dumps(stale), CHILD),
+                    )
+                store.db.commit()
+                store.close()
+
+                child = self.participant(
+                    "doctor", state=self.tmp, pin=self.tmp,
+                )["accessReceipt"]["recordedSandbox"]["participants"][CHILD]
+
+                self.assertIsNot(
+                    child.get("deliverable"), True,
+                    f"no send can transform this {field!r}, and the receipt advertised one",
+                )
+                if child["readable"]:
+                    self.assertTrue(child["refusedBy"], child)
+                    self.assertTrue(child["detail"], child)
+
     def test_a_store_replaced_by_a_copy_under_the_read_is_reported_not_served(self):
         """The receipt's own mid-command replacement check, against the case it missed.
 

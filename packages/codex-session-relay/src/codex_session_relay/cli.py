@@ -797,20 +797,26 @@ def _sandbox_summary(row) -> dict:
     never made. So the recorded values are still shown, because they are the only clue to WHY
     delivery refuses this participant, and `deliverable` says whether a send can carry them.
 
-    It is computed by RUNNING that preparation, not by describing it. The whole of delivery's
-    pre-send settings path is `TaskSettings.require_usable()` in `DeliveryService._settings_for`
-    (delivery.py) and `TaskSettings.resume_params()` in `_guarded_send` (bridge_adapter.py);
-    both are executed here and the first refusal is what the receipt reports. Three earlier
-    versions named the answer after gates they had counted, and each drew the line one step
-    short of the path: the first looked at the sandbox type alone, the second delegated to
-    `require_usable()` while the params construction fails after it. Running both means a
-    change inside either one is followed here without this helper being touched, and the
-    reason and wording a receipt carries are the ones that actually stopped the send.
+    It is computed by RUNNING those transformations, not by describing them, and the set is
+    the transformations delivery applies to the RECORDED row before turn/start:
+    `TaskSettings.require_usable()` in `DeliveryService._settings_for` (delivery.py), the
+    resume-params construction in `_guarded_send` (bridge_adapter.py), and the recorded half
+    of the verification that follows the response, where `normalise_environments` is the one
+    transformation the first two do not already reach. The first refusal any of them raises is
+    what the receipt reports.
+
+    Four versions of this field were wrong the same way before that sentence could be
+    written: each named the answer after the steps it had counted, and each stopped one step
+    short - the sandbox type, then `require_usable()`, then the params construction, then the
+    post-response half. The set is no longer kept by hand here either.
+    `test_every_transformation_a_send_applies_to_the_record_is_covered` (tests/test_cli.py)
+    derives it from those two modules and fails if a transformation is added that this does
+    not reach.
     """
     import json
 
     from .errors import DeliveryRefused
-    from .settings import TaskSettings, normalise_policy
+    from .settings import TaskSettings, normalise_environments, normalise_policy
 
     try:
         settings = json.loads(row["settings"])
@@ -836,6 +842,14 @@ def _sandbox_summary(row) -> dict:
         # params["threadId"] and reads nothing from it, so a placeholder can neither hide a
         # failure nor invent one.
         view.resume_params("doctor-probe-thread")
+        # The recorded half of what runs AFTER the response. `mismatches` needs a resume
+        # response and cannot be run here, but the transformations it applies to the recorded
+        # row can be, and this is the one the two calls above do not reach: environments is
+        # read only by the verification, so a value the completeness gate admits and the
+        # params never touch gets that far. Measured both ways - a response that reports its
+        # environment selection raises here, one that reports null withholds the send as
+        # environments_unknown - so no send completes for such a row either way.
+        normalise_environments(settings.get("environments"))
     except DeliveryRefused as refusal:
         refused = refusal
     except Exception as error:  # noqa: BLE001 - total, like everything else in this helper

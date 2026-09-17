@@ -1022,10 +1022,13 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
     For diagnosis that is a side effect the command promised not to have: pointing it at an
     empty, legacy or unrelated file would silently adopt it. Every error becomes a field.
 
-    The identity of the file the rows came from is measured here and returned with them. A
-    caller that stat'd the path earlier cannot otherwise tell that the rows arrived from a
-    replacement: comparing the store id does not settle it, because the id is minted once and
-    travels with a copy of the bytes.
+    The identity of the file AT THE PATH is measured here, before and after the read, and
+    returned with the rows. A caller that stat'd the path earlier cannot otherwise tell that
+    the rows arrived from a replacement: comparing the store id does not settle it, because
+    the id is minted once and travels with a copy of the bytes. Two observations of the path
+    catch a replacement that persists past the read, and not one reverted inside the window -
+    both stats would then report the original inode. Catching that would mean opening the
+    database through a held descriptor rather than by path.
     """
     db_path = selection.db_path
 
