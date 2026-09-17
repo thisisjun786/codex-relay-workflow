@@ -91,6 +91,7 @@ DECISION_READINGS = {
     "liveness": ("staging", "owner_liveness"),
     "occupied": ("staging", "directory_occupied"),
     "protected": ("runtime_install", "protected_environment"),
+    "selected": ("runtime_install", "protected_environment"),
 }
 
 
@@ -258,7 +259,7 @@ def directory_occupied(environment):
                          if other else "it holds nothing besides this command's own files")
 
 
-def decide(claim, liveness, *, occupied, protected):
+def decide(claim, liveness, *, occupied, protected, selected):
     """What may be done with an environment directory that already exists.
 
     Returns (decision, reason). Each argument is one reading's answer and none of them is
@@ -269,6 +270,15 @@ def decide(claim, liveness, *, occupied, protected):
     a claim this command wrote, in STAGING, whose owner is established gone, that nothing is
     using. A finished environment is never deleted here however its selection has moved: it is
     a runtime that was promoted once, and a process may still be running out of it.
+
+    'protected' and 'selected' are two readings and not one. 'protected' is deliberately
+    conservative -- it says yes when either the record or the pointer names this environment AND
+    when either of those readings failed -- because the cost of keeping a directory is a report
+    and the cost of removing a live one is the accident this exists to prevent. That makes it
+    exactly the wrong thing to ACT on: finishing an interrupted promotion writes a pointer, and
+    writing one on the strength of a reading that failed would aim a host command at an
+    environment nothing selects. So RESUME asks 'selected', which is True only when the record
+    was read and names this environment.
     """
     if claim.state == reading.ABSENT:
         if occupied is None:
@@ -305,12 +315,16 @@ def decide(claim, liveness, *, occupied, protected):
                       " but a process started from it may still be running out of it, so it is"
                       " reported rather than removed")
 
-    if protected:
+    if selected is True:
         # The previous run committed the selection and did not live to move the pointer. The
         # runtime is built and selected; what is missing is the half that was never written.
         return RESUME, ("a previous run committed this environment as selected and did not"
                         " finish. It is built and in use, so the pointer is brought into"
                         " agreement with the selection rather than anything being rebuilt")
+    if protected:
+        return KEEP, ("something may be using this environment, but the host record could not"
+                      " be read to confirm it selects this one, so neither removing it nor"
+                      " writing a pointer to it is established as safe")
     return RECLAIM, ("this staging was abandoned by a run that no longer holds it and nothing"
                      " selects it or points at it, so it is removed and created again")
 

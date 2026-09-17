@@ -5225,7 +5225,7 @@ class StagingClaimTests(unittest.TestCase):
             self.assertEqual(liveness, staging.DEAD, detail)
             decision, why = staging.decide(
                 staging.read_claim(environment), liveness,
-                occupied=staging.directory_occupied(environment)[0], protected=False)
+                occupied=staging.directory_occupied(environment)[0], protected=False, selected=False)
         self.assertEqual(decision, staging.RECLAIM, why)
 
     def test_a_directory_a_live_run_still_holds_is_refused(self):
@@ -5238,7 +5238,7 @@ class StagingClaimTests(unittest.TestCase):
                 self.assertEqual(liveness, staging.LIVE, detail)
                 decision, why = staging.decide(
                     staging.read_claim(environment), liveness,
-                    occupied=True, protected=False)
+                    occupied=True, protected=False, selected=False)
             finally:
                 held.__exit__()
         self.assertEqual(decision, staging.OCCUPIED, why)
@@ -5252,7 +5252,7 @@ class StagingClaimTests(unittest.TestCase):
             _claim_written(environment, staging.STAGING)
             decision, why = staging.decide(
                 staging.read_claim(environment), staging.UNKNOWN,
-                occupied=True, protected=False)
+                occupied=True, protected=False, selected=False)
         self.assertEqual(decision, staging.KEEP, why)
         self.assertNotIn(decision, staging.REMOVES)
 
@@ -5271,7 +5271,7 @@ class StagingClaimTests(unittest.TestCase):
             staging.claim_path(environment).write_text("{ not json", encoding="utf-8")
             claim = staging.read_claim(environment)
             self.assertFalse(claim.usable)
-            decision, why = staging.decide(claim, staging.DEAD, occupied=True, protected=False)
+            decision, why = staging.decide(claim, staging.DEAD, occupied=True, protected=False, selected=False)
         self.assertEqual(decision, staging.KEEP, why)
 
     def test_a_claim_whose_state_is_not_one_of_the_two_is_unreadable(self):
@@ -5289,7 +5289,7 @@ class StagingClaimTests(unittest.TestCase):
             environment = Path(temporary) / "env"
             _claim_written(environment, staging.STAGING)
             decision, why = staging.decide(
-                staging.read_claim(environment), staging.DEAD, occupied=True, protected=True)
+                staging.read_claim(environment), staging.DEAD, occupied=True, protected=True, selected=True)
         self.assertNotIn(decision, staging.REMOVES, why)
 
     def test_an_installed_and_selected_environment_is_already_done(self):
@@ -5297,7 +5297,7 @@ class StagingClaimTests(unittest.TestCase):
             environment = Path(temporary) / "env"
             _claim_written(environment, staging.COMPLETE)
             decision, why = staging.decide(
-                staging.read_claim(environment), staging.DEAD, occupied=True, protected=True)
+                staging.read_claim(environment), staging.DEAD, occupied=True, protected=True, selected=True)
         self.assertEqual(decision, staging.SETTLED, why)
 
 
@@ -5964,7 +5964,7 @@ class ClaimOwnershipTests(unittest.TestCase):
                     claim = staging.read_claim(environment)
                     decision, why = staging.decide(
                         claim, staging.DEAD,
-                        occupied=staging.directory_occupied(environment)[0], protected=False)
+                        occupied=staging.directory_occupied(environment)[0], protected=False, selected=False)
                 self.assertFalse(claim.usable, label)
                 self.assertNotIn(decision, staging.REMOVES,
                                  label + ": a file at that path is not proof of ownership")
@@ -5977,7 +5977,7 @@ class ClaimOwnershipTests(unittest.TestCase):
             environment.mkdir()
             staging.write_claim(environment, staging.COMPLETE, issue="CRW-49", run="1")
             decision, why = staging.decide(
-                staging.read_claim(environment), staging.DEAD, occupied=True, protected=False)
+                staging.read_claim(environment), staging.DEAD, occupied=True, protected=False, selected=False)
         self.assertEqual(decision, staging.KEEP, why)
         self.assertNotIn(decision, staging.REMOVES)
 
@@ -5987,7 +5987,7 @@ class ClaimOwnershipTests(unittest.TestCase):
             environment.mkdir()
             decision, why = staging.decide(
                 staging.read_claim(environment), staging.DEAD,
-                occupied=staging.directory_occupied(environment)[0], protected=False)
+                occupied=staging.directory_occupied(environment)[0], protected=False, selected=False)
         self.assertEqual(decision, staging.ADOPT, why)
         self.assertNotIn(decision, staging.REMOVES,
                          "nothing is removed for a directory that holds nothing")
@@ -5998,9 +5998,37 @@ class ClaimOwnershipTests(unittest.TestCase):
             environment.mkdir()
             staging.write_claim(environment, staging.STAGING, issue="CRW-49", run="killed")
             decision, why = staging.decide(
-                staging.read_claim(environment), staging.DEAD, occupied=True, protected=True)
+                staging.read_claim(environment), staging.DEAD, occupied=True, protected=True, selected=True)
         self.assertEqual(decision, staging.RESUME, why)
         self.assertNotIn(decision, staging.REMOVES)
+
+    def test_a_resume_needs_a_positive_selection_and_not_merely_protection(self):
+        """protected is deliberately conservative: it says yes when a reading FAILED, because
+        keeping a directory costs a report and removing a live one is unrecoverable. Acting on
+        it would write a pointer on the strength of a reading nobody made."""
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            environment.mkdir()
+            staging.write_claim(environment, staging.STAGING, issue="CRW-49", run="killed")
+            claim = staging.read_claim(environment)
+            resumed, _why = staging.decide(claim, staging.DEAD, occupied=True,
+                                           protected=True, selected=True)
+            unread, why = staging.decide(claim, staging.DEAD, occupied=True,
+                                         protected=True, selected=None)
+        self.assertEqual(resumed, staging.RESUME)
+        self.assertEqual(unread, staging.KEEP, why)
+        self.assertNotIn(unread, staging.REMOVES)
+
+    def test_finishing_a_promotion_re_reads_the_selection_under_its_own_lock(self):
+        source = RUNTIME.read_text(encoding="utf-8")
+        body = source[source.index("def _finish_promotion("):source.index("def _names_environment(")]
+        self.assertIn("hostrecord.Locked(pointer_path)", body)
+        self.assertIn("hostrecord.load(record_path", body)
+        self.assertLess(body.index("hostrecord.Locked(pointer_path)"),
+                        body.index("hostrecord.load(record_path"),
+                        "the selection is re-read inside the lock, not trusted from before it")
+        self.assertLess(body.index("_names_environment"), body.index("pointer.place("),
+                        "and the pointer is only aimed where the record is read to select")
 
 
 class InterruptedPromotionTests(unittest.TestCase):

@@ -1918,7 +1918,11 @@ def cmd_install(args):
             staging.read_claim(environment),
             staging.owner_liveness(environment)[0],
             occupied=staging.directory_occupied(environment)[0],
-            protected=protected)
+            protected=protected,
+            # The narrow half of the same reading. Removing asks the conservative question and
+            # writing a pointer asks this one, because a reading that failed must not authorise
+            # a write.
+            selected=protection["recordSelectsIt"])
         standing = {"command": "install", "applied": False, "environment": str(environment),
                     "stagingDecision": decision, "stagingReason": why,
                     "protection": protection, "plan": plan, "outgoing": outgoing}
@@ -2295,6 +2299,20 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
     selection and the claim is settled. Nothing is rebuilt and nothing is removed.
     """
     with hostrecord.Locked(pointer_path):
+        # Re-read the selection under the lock rather than trusting the decision that got here.
+        # The reading that chose RESUME was taken before this lock existed, and the pointer is
+        # only ever aimed at an environment the record is CURRENTLY read to select.
+        current = hostrecord.load(record_path, data["definitionVersion"])
+        if not current.usable:
+            emit(dict(standing, refused="the host record could not be read, so whether it"
+                                        " selects this environment could not be established: "
+                                        + str(current.detail),
+                      reading=current.refusal()))
+            return EXIT_REFUSED
+        if not _names_environment(current.value, environment, data):
+            emit(dict(standing, refused="the host record no longer selects this environment, so"
+                                        " there is no interrupted promotion here to finish"))
+            return EXIT_REFUSED
         before = pointer.read(pointer_path)
         if not pointer.usable(before["state"]):
             emit(dict(standing, refused="the interrupted promotion could not be finished: "
@@ -2320,6 +2338,24 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
                    " move the pointer. Nothing was rebuilt and nothing was removed: the missing"
                    " half of that promotion was written and the claim settled."))
     return EXIT_OK
+
+
+def _names_environment(record, environment, data):
+    """Whether the record's selection lies inside this environment, read and not assumed.
+
+    False for a record that names something else AND for one whose paths could not be resolved,
+    because this answer authorises writing a pointer and an unread answer authorises nothing.
+    """
+    selected = (record or {}).get("selected") or {}
+    named = [selected.get(c["component"]) for c in data["components"]]
+    named = [location for location in named if location]
+    if not named:
+        return False
+    try:
+        root = Path(environment).resolve()
+        return all(within(Path(location).resolve(), root) for location in named)
+    except (OSError, ValueError):
+        return False
 
 
 def _selected_install(record, name):
