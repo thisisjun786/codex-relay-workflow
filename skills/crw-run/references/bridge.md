@@ -89,16 +89,19 @@ evidence or report the path as unverified.
 **Existing task-owned worktree:** `create_thread` accepts an existing absolute
 cwd, title, model, reasoning_effort, sandbox, expected_sandbox_policy,
 runtime_workspace_roots, optional prompt, and stable request_id. It creates no
-worktree. Reuse the coordinator-prepared checkout. Omitting a setting uses the App
-Server configuration and checks nothing; supply the ones the assignment depends on,
-because an omitted setting is reported but never verified.
+worktree. Reuse the coordinator-prepared checkout. Model and reasoning effort are
+required; omitting either refuses the request before any call rather than inheriting
+the App Server configuration. Omitting any other setting uses that configuration and
+checks nothing, so supply the ones the assignment depends on: an omitted setting is
+reported but never verified.
 
 **New retained worktree:** `create_worktree_thread` accepts a source checkout,
 full immutable commit, absent absolute destination with an existing parent,
 explicit `worktree_mode: bridge-managed-retained`, model, reasoning_effort,
 sandbox, and the complete expected_sandbox_policy. Honor the tool's explicit
 ownership, permission, and prompt authorization requirements; reuse an earlier
-authorization that actually covers these choices.
+authorization that actually covers these choices. The pair is authorized before any
+Git work, so a refused launch leaves no worktree behind.
 
 This second path creates a detached, locked checkout, not a branch or
 Desktop-managed worktree. Arrange any needed branch according to project policy
@@ -142,15 +145,37 @@ permissions. Capability at creation is OPS-5.5 and delivery ownership is OPS-9 i
 
 ## Model and settings verification
 
-Pass exact model/effort overrides only where the current schema supports them.
-Do not invent an argument or change global configuration. For an explicit effort
-on an API with no override, use an already-permitted path or effective
-configuration that actually applies the requested values. If none does, report the
-concrete unsupported capability and settle it before creating the task; never
-launch a task already known to carry the wrong setting, and never silently
-downgrade it. This is not a readiness handshake: once the settings can be applied,
-create with the full work prompt, and reconcile a mismatch observed after creation
-on that same task.
+State the model and the reasoning effort on every mutation that starts a turn:
+`create_thread`, `create_worktree_thread` and `send_message_to_thread`. `steer_thread` and
+`pause_goal` start no turn and select no model, so they accept neither argument and need no
+authorization. Do not invent an argument
+or change global configuration. For an explicit effort on an API with no override, use
+an already-permitted path or effective configuration that actually applies the requested
+values. If none does, report the concrete unsupported capability and settle it before
+creating the task; never launch a task already known to carry the wrong setting, and
+never silently downgrade it. This is not a readiness handshake: once the settings can be
+applied, create with the full work prompt, and reconcile a mismatch observed after
+creation on that same task.
+
+Where the host has configured an execution policy, the stated pair must also be one the
+operator approved, and an unapproved one is refused before anything is created. Read
+`get_capabilities` before creating: it reports whether an allowlist is in force and a
+digest identifying it, so an assumption about which pairs are available is never needed.
+A per-task exception is cited by id through `policy_exception`; the id, its one model,
+its one effort and the directories it covers all live in the host's own file. Naming an
+exception is not approving one, and a request cannot carry its own allowance. Ask the
+user to declare an exception rather than proposing a different model, and never widen a
+global setting to make a launch succeed.
+
+Because an exception is bound to directories, a request citing one must also state the cwd it
+applies to. Creation always does. On the resume path cwd is otherwise optional, so a send that
+cites `policy_exception` has to include `cwd` in `expected_settings` as well, or it is refused
+before the task is read.
+
+A refused request sends nothing and records nothing, so correct the arguments and reuse
+the same request_id; a new id for the same intent is not a retry. A receipt retained from
+before these arguments were required is reconciled with `get_operation`, which returns
+the same receipt bytes, rather than replayed through the tool or replaced.
 
 Compare actual cwd, workspace roots, model, reasoningEffort, approvalPolicy, and
 the full sandbox/permission response. Do not infer OCX routing from a model ID
@@ -167,19 +192,24 @@ and the exact record shape are in [codex-session-relay](relay.md).
 Create with the full work prompt so the assignment is dispatched once. Use
 `send_message_to_thread` for a later correction or recovery, never to resend the
 same assignment: it is a separate intentional mutation with its own request_id, it
-refuses active tasks, and it takes an optional `expected_settings` carrying the
-authorized cwd, sandbox, expected_sandbox_policy, model, reasoning_effort and
-runtime_workspace_roots. Supply it: the resume then carries those settings and is
-read as an observation, and a difference or a setting the host does not report
-withholds the message instead of dispatching it. Omitting it keeps the old
-behaviour, where nothing is checked and the receipt says `not_requested`. An
-unrecognised key is refused rather than ignored. Verify the returned settings on
-each mutation and reconcile a mismatch on the same task.
+refuses active tasks, and it requires `expected_settings` carrying at least the
+authorized model and reasoning_effort, and optionally cwd, sandbox,
+expected_sandbox_policy and runtime_workspace_roots. A turn on an existing task costs
+what a new one costs, so a send with no stated pair is refused before the task is even
+read. The resume carries those settings and is read as an observation, and a difference
+or a setting the host does not report withholds the message instead of dispatching it.
+An unrecognised key is refused rather than ignored. Verify the returned settings on each
+mutation and reconcile a mismatch on the same task.
 
 The `settings` receipt describes what the host reported at creation or at the
 resume, not a guarantee about the dispatched turn: no host-side exclusivity is
 held, so it says `observed_at_creation` or `observed_at_resume` rather than
 verified.
+
+The `executionPolicy` block beside it records which mode authorized the request and,
+where one applied, the exception id. It says what this bridge requested and transmitted.
+It is not served-provider evidence, and an installed bridge enforces this only after the
+operator has updated and restarted it, which is a separate fact from the source.
 
 ### Observed empty-task failure
 
