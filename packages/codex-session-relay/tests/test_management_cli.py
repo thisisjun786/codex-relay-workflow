@@ -203,6 +203,19 @@ class Refusals(MarkerCli):
         )
         self.assertEqual(payload["error"], "usage")
 
+    def test_a_hold_that_cannot_be_recorded_is_refused_at_the_command_line(self):
+        """A hold is reserved, counted against the bounds and released by its own record.
+
+        Asking for one with --no-record asks for a hold nothing can account for, so it is refused
+        where the operator typed it rather than answered with a release they did not expect.
+        """
+        payload = self.marker_cli(
+            "guard-evaluate", "--marker-root", self.markers, "--mode", "hold", "--no-record",
+            stdin=self.stop_payload(), expect=4,
+        )
+        self.assertEqual(payload["error"], "usage")
+        self.assertIn("--no-record", payload["detail"])
+
     def test_observe_is_the_default_mode_on_the_command_line(self):
         declared = self.declare()
         assignment = declared["assignmentId"]

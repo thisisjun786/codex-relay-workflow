@@ -220,7 +220,7 @@ class EnforcementIsNotSkipped(GuardTestCase):
         bad.mkdir(parents=True)
         (bad / "hold.json").write_text('"not a record"', encoding="utf-8")
         verdict = guard.evaluate(
-            self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=False
+            self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=True
         )
         self.assertEqual(verdict["observation"], "undeclared_turn_end")
         self.assertEqual(verdict["decision"], guard.BLOCK)
@@ -352,6 +352,90 @@ SWALLOWING_ALLOWED = {
 
 OWNED_MODULES = ("marker.py", "intent.py", "guard.py", "cli.py")
 
+# Inventory C: sentinel returns whose PROVENANCE is a failure. Extension A's inventory is a set of
+# stdlib predicate NAMES, and a name set structurally cannot see this shape - a function that turns
+# its own failure into an ordinary return calls nothing suspicious. The enumerable thing here is the
+# return path: a sentinel return reached from an except handler, from "if not <readable flag>", or
+# from a loop that ran out of attempts.
+#
+# Each one is either a classified answer the caller branches on, or it is named here with the
+# reason it may lose its failure. A new one that is neither fails this test.
+SENTINEL_MODULES = ("marker.py", "intent.py", "guard.py")
+
+FAILURE_SENTINEL_ALLOWED = {
+    ("marker.py", "_fsync_directory"): "best effort by design: the link already decided the winner,"
+                                       " and failing a publication because a filesystem refuses to"
+                                       " open a directory for fsync trades durability for"
+                                       " availability",
+    ("intent.py", "_moment"): "the failure IS the answer: a value that does not parse as a"
+                              " timestamp is not a moment, and every caller treats the absence as"
+                              " the malformed field it is",
+    ("intent.py", "read_only_connection"): "None is the only thing a failed connection can be, and"
+                                           " its callers convert it into their own reported"
+                                           " readable=False rather than into an empty result",
+}
+
+# Named so the gap is not mistaken for a clean result. The scan classifies by PROVENANCE, so the
+# remaining bare sentinel in guard.record_observation does not appear: it answers an identity that
+# cannot be a directory name, which is a classification rather than a failure, and its two real
+# failure paths now raise. What this scan cannot see is a failure a function converts into a
+# classification before returning it.
+
+FAILISH = ("readable", "ok", "success", "published", "written", "reserved")
+
+
+def _is_sentinel(node):
+    """A return that carries nothing beyond 'nothing'."""
+    value = node.value
+    if value is None:
+        return True
+    if isinstance(value, ast.Constant) and value.value in (None, False):
+        return True
+    if isinstance(value, ast.Tuple):
+        return all(
+            isinstance(element, ast.Constant) and element.value in (None, False, 0)
+            for element in value.elts
+        )
+    return False
+
+
+def _failure_provenance(function, node):
+    """Why this sentinel return is reached: from a caught error, a reported flag, or exhaustion."""
+    chain = []
+
+    def walk(parent, path):
+        for child in ast.iter_child_nodes(parent):
+            if child is node:
+                chain.extend(path + [parent])
+                return True
+            if walk(child, path + [parent]):
+                return True
+        return False
+
+    walk(function, [])
+    kinds = set()
+    for ancestor in chain:
+        if isinstance(ancestor, ast.ExceptHandler):
+            kinds.add("except")
+        if isinstance(ancestor, ast.If) and isinstance(ancestor.test, ast.UnaryOp):
+            if isinstance(ancestor.test.op, ast.Not):
+                rendered = ast.unparse(ancestor.test)
+                if any(word in rendered for word in FAILISH):
+                    kinds.add("reported-flag")
+    body = function.body
+    for index, statement in enumerate(body):
+        # Only a RETRY loop exhausts. A loop over a collection is a search, and falling out of it
+        # is a real answer - "no field is malformed" is not a failure to look at the fields.
+        retry = isinstance(statement, ast.While) or (
+            isinstance(statement, ast.For)
+            and isinstance(statement.iter, ast.Call)
+            and isinstance(statement.iter.func, ast.Name)
+            and statement.iter.func.id == "range"
+        )
+        if retry and index + 1 < len(body) and body[index + 1] is node:
+            kinds.add("exhausted")
+    return sorted(kinds)
+
 
 def _enclosing_functions(tree):
     """Map every node to the function that contains it, so a call site can be attributed."""
@@ -361,6 +445,174 @@ def _enclosing_functions(tree):
             for child in ast.walk(node):
                 owner.setdefault(child, node.name)
     return owner
+
+
+class FailureProvenanceInventory(unittest.TestCase):
+    """Property extension C: a failure path reports its result instead of losing it.
+
+    Two shapes can lose one. A CALLER can ignore a sentinel, and a CALLEE can turn its own failure
+    into a sentinel the caller cannot tell apart from "there was nothing to do". Both are counted
+    here, because fixing one site and leaving its siblings is what produced three rounds of the
+    same finding.
+    """
+
+    def modules(self):
+        base = Path(__file__).resolve().parent.parent / "src" / "codex_session_relay"
+        return {
+            name: ast.parse((base / name).read_text(encoding="utf-8"))
+            for name in SENTINEL_MODULES
+        }
+
+    def helpers(self, trees):
+        """Functions that answer with a failure sentinel as well as with something substantive."""
+        found = {}
+        for name, tree in trees.items():
+            for function in ast.walk(tree):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                returns = [n for n in ast.walk(function) if isinstance(n, ast.Return)]
+                if any(_is_sentinel(n) for n in returns) and any(
+                    not _is_sentinel(n) for n in returns
+                ):
+                    found[function.name] = name
+        return found
+
+    def test_no_caller_discards_a_sentinel_answer(self):
+        """A bare expression statement throws the answer away, failure included."""
+        trees = self.modules()
+        helpers = self.helpers(trees)
+        discarded = []
+        for name, tree in trees.items():
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
+                    continue
+                func = node.value.func
+                called = (
+                    func.attr if isinstance(func, ast.Attribute)
+                    else func.id if isinstance(func, ast.Name) else None
+                )
+                if called in helpers:
+                    discarded.append((name, node.lineno, called))
+        self.assertEqual(discarded, [], "these call sites drop a sentinel answer on the floor")
+
+    def test_no_caller_unpacks_a_readability_flag_and_then_ignores_it(self):
+        """(value, readable) only reports anything if the second half is read."""
+        trees = self.modules()
+        helpers = self.helpers(trees)
+        ignored = []
+        for name, tree in trees.items():
+            for function in ast.walk(tree):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                loaded = {
+                    n.id for n in ast.walk(function)
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                }
+                for assignment in ast.walk(function):
+                    if not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1:
+                        continue
+                    target = assignment.targets[0]
+                    if not isinstance(target, ast.Tuple) or len(target.elts) != 2:
+                        continue
+                    if not isinstance(assignment.value, ast.Call):
+                        continue
+                    func = assignment.value.func
+                    called = (
+                        func.attr if isinstance(func, ast.Attribute)
+                        else func.id if isinstance(func, ast.Name) else None
+                    )
+                    flag = target.elts[1]
+                    if called in helpers and isinstance(flag, ast.Name):
+                        if flag.id == "_" or flag.id not in loaded:
+                            ignored.append((name, assignment.lineno, called, flag.id))
+        self.assertEqual(ignored, [], "these unpack a readability answer and never read it")
+
+    def sentinels(self):
+        rows = []
+        for name, tree in self.modules().items():
+            for function in ast.walk(tree):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for node in ast.walk(function):
+                    if not isinstance(node, ast.Return) or not _is_sentinel(node):
+                        continue
+                    kinds = _failure_provenance(function, node)
+                    if kinds:
+                        rows.append((name, function.name, node.lineno, "+".join(kinds)))
+        return rows
+
+    def test_every_failure_sentinel_is_a_reported_pair_or_is_justified(self):
+        """A sentinel reached from a failure must still tell the caller a failure happened.
+
+        It does that by carrying a readability flag the caller branches on - proved by the two
+        tests above - or it is named in FAILURE_SENTINEL_ALLOWED with the reason it may not.
+        """
+        trees = self.modules()
+        unreported = []
+        for module, function, line, kinds in self.sentinels():
+            if (module, function) in FAILURE_SENTINEL_ALLOWED:
+                continue
+            node = next(
+                f for f in ast.walk(trees[module])
+                if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name == function
+            )
+            pairs = [
+                n for n in ast.walk(node)
+                if isinstance(n, ast.Return) and isinstance(n.value, ast.Tuple)
+            ]
+            if not pairs:
+                unreported.append((module, function, line, kinds))
+        self.assertEqual(
+            unreported, [],
+            "these lose a failure behind a bare sentinel; return it as a reported pair, raise it,"
+            " or name it in FAILURE_SENTINEL_ALLOWED with a reason",
+        )
+
+    def test_the_inventory_still_finds_the_shape_it_was_built_for(self):
+        """A scan that finds nothing proves nothing."""
+        found = {(row[0], row[1]) for row in self.sentinels()}
+        self.assertIn(("intent.py", "read_only_connection"), found)
+        self.assertIn(("guard.py", "lookup_receipt"), found)
+        self.assertIn(("guard.py", "_next_hook_seq"), found)
+
+    def test_the_scan_catches_the_shape_this_round_removed(self):
+        """The strongest form of "it works": run it against the code as it was before the fix.
+
+        record_observation used to answer an unreadable directory and an exhausted retry loop with
+        a bare None, which the caller could not tell apart from "there was nothing to record". The
+        scan is fed that exact shape and must flag both.
+        """
+        before = ast.parse(
+            "def record_observation(directory, record):\n"
+            "    for _ in range(64):\n"
+            "        index, readable = _next_hook_seq(directory)\n"
+            "        if not readable:\n"
+            "            return None\n"
+            "        if publish(index) == PUBLISHED:\n"
+            "            return 'hook/0'\n"
+            "    return None\n"
+        )
+        function = before.body[0]
+        flagged = [
+            _failure_provenance(function, node)
+            for node in ast.walk(function)
+            if isinstance(node, ast.Return) and _is_sentinel(node)
+        ]
+        self.assertEqual(sorted(flagged), [["exhausted"], ["reported-flag"]])
+
+    def test_the_twin_that_always_raised_still_does(self):
+        """intent._publish_numbered is the same loop; guard.record_observation was the drifted copy.
+
+        Kept as a test because the two must not drift apart again.
+        """
+        tree = self.modules()["intent.py"]
+        publish_numbered = next(
+            f for f in ast.walk(tree)
+            if isinstance(f, ast.FunctionDef) and f.name == "_publish_numbered"
+        )
+        self.assertEqual(
+            len([n for n in ast.walk(publish_numbered) if isinstance(n, ast.Raise)]), 2
+        )
 
 
 class SwallowingPredicateInventory(unittest.TestCase):
@@ -515,7 +767,7 @@ class HoldReservation(GuardTestCase):
         def race():
             barrier.wait()
             verdict = guard.evaluate(
-                self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=False
+                self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=True
             )
             with lock:
                 decisions.append(verdict["decision"])
@@ -691,4 +943,3 @@ class FailedPublicationLeavesNoLitter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

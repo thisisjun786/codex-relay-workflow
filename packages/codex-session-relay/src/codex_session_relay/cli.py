@@ -1299,6 +1299,16 @@ def cmd_guard_evaluate(services, args) -> dict:
         raise SystemExit2(f"the Stop payload is not JSON: {error}", EXIT_USAGE) from error
     if not isinstance(stop_input, dict):
         raise SystemExit2("the Stop payload must be a JSON object", EXIT_USAGE)
+    if args.mode == guard.HOLD and args.no_record:
+        # Refused here rather than downgraded silently. A hold is reserved, counted and released
+        # through the observation record, so asking for one without recording asks for a hold
+        # nothing can account for. evaluate() also downgrades and says so; an operator who typed
+        # this at a terminal should be told instead of handed a release they did not expect.
+        raise SystemExit2(
+            "--mode hold cannot be combined with --no-record: a hold that publishes no observation "
+            "cannot be released, counted against the bounds, or audited",
+            EXIT_USAGE,
+        )
     return guard.evaluate(
         _marker_root(args),
         stop_input,

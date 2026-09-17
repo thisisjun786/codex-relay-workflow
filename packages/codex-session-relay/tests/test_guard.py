@@ -14,8 +14,9 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from codex_session_relay import guard, intent, marker
+from codex_session_relay import guard, intent, manifest, marker
 
 from .support import CHILD, DISPATCH_TURN, RelayTestCase
 
@@ -603,6 +604,173 @@ class ReviewRegressions(GuardTestCase):
         self.assertEqual(verdict["observation"], "state_unreadable")
         self.assertIn("workspace", verdict["reason"])
         self.assertEqual(verdict["decision"], guard.RELEASE)
+
+
+class ReceiptsAreBoundToTheRevisionTheyWereComputedOver(GuardTestCase):
+    """A receipt names a revision, and a revision is bytes. Existence is not validity.
+
+    Standing at the head is a statement about lineage. It says nothing about whether the artifacts
+    the receipt hashed are still those artifacts, so a receipt accepted for merely existing releases
+    a turn whose deliverable has since become something nobody reviewed - which is the same shape as
+    a verdict outliving the criteria it judged.
+
+    The rule is not new here. ReceiptIntake._verify_bytes already decides what verified means, and
+    relationships.artifact_roots already holds the roots intake used, so the guard re-applies the
+    same standard the receipt was admitted under.
+    """
+
+    def ready(self):
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        return relationship
+
+    def test_unchanged_bytes_still_release_the_turn(self):
+        """The compatibility half: re-verification must not hold an honest child."""
+        self.ready()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_artifacts_changed_after_intake_stop_answering_for_the_receipt(self):
+        self.ready()
+        self.artifact("out.txt", "rewritten after the receipt was accepted")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["receiptEvidence"], "artifacts_changed_since_receipt")
+        self.assertIn("out.txt", verdict["receiptDetail"])
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        # And the why travels with the record, so the hold names something the child can act on.
+        self.assertEqual(verdict["record"]["receiptEvidence"], "artifacts_changed_since_receipt")
+
+    def test_a_deleted_artifact_is_a_changed_revision_not_an_absent_receipt(self):
+        self.ready()
+        os.remove(os.path.join(self.root, "out.txt"))
+        verdict = self.evaluate()
+        self.assertEqual(verdict["receiptEvidence"], "artifacts_changed_since_receipt")
+        self.assertIn("out.txt", verdict["receiptDetail"])
+        # A vanished artifact is a readable answer about the deliverable, not a store this process
+        # failed to read. The two release differently, so the distinction is the assertion.
+        self.assertEqual(verdict["observation"], "receipt_missing")
+
+    def test_a_frozen_copy_answers_for_files_that_legitimately_moved_on(self):
+        """Intake consults the frozen copy only when the live bytes disagree; so does this."""
+        relationship = self.managed()
+        path = self.artifact("out.txt", "work")
+        entries, _bindings = manifest.build(
+            [path], relationship["authorizedScope"]["artifactRoots"]
+        )
+        frozen = os.path.join(self.tmp, "frozen")
+        manifest.freeze(entries, frozen)
+        payload = self.ready_payload(relationship, [path])
+        payload["manifestRef"] = frozen
+        self.accept(payload)
+        self.dispose("ready_for_review")
+        self.artifact("out.txt", "the working tree moved on")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_an_unreadable_deliverable_is_never_reported_as_a_changed_one(self):
+        """Could-not-look and did-change are repaired in different places, so they answer apart.
+
+        Folding them together would hold a child over a directory this process could not open, and
+        would point the repair at the child instead of at the permission that actually broke.
+        """
+        self.ready()
+        with mock.patch(
+            "codex_session_relay.guard.verify_against_disk",
+            side_effect=PermissionError(13, "the artifact root cannot be read"),
+        ):
+            verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertIn("the receipt's artifacts", verdict["reason"])
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertTrue(verdict["recordedAs"].startswith("hook/"))
+
+    def test_a_stored_receipt_that_is_not_json_is_reported_rather_than_trusted(self):
+        relationship = self.ready()
+        self.store.db.execute(
+            "UPDATE events SET receipt = ? WHERE relationship_id = ?",
+            ("{not json", relationship["relationshipId"]),
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["receiptEvidence"], "stored_receipt_unreadable")
+
+
+class AHoldIsOnlyIssuedWhereItCanBeRecorded(GuardTestCase):
+    """A hold is reserved, counted against three bounds, and released by the record that explains
+    it. An evaluation that cannot record cannot do any of those, so it must not take one."""
+
+    def holds(self, directory):
+        return sorted((directory / "hook").glob("*/*/" + guard.HOLD_FILE))
+
+    def test_a_dry_run_never_spends_a_turns_hold(self):
+        """--no-record reserved hold.json and published nothing, so a preview spent the budget."""
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        verdict = guard.evaluate(
+            self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=False
+        )
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(verdict["modeDowngraded"], "hold_requires_a_recorded_observation")
+        self.assertEqual(self.holds(directory), [])
+        counters, _malformed, _unreadable = guard.hold_counters(
+            directory, session_id=CHILD, turn_id=DISPATCH_TURN, now=LATER,
+            workspace_root=directory.parent,
+        )
+        self.assertEqual(counters["holdsThisTurn"], 0)
+
+    def test_the_downgrade_is_named_rather_than_applied_quietly(self):
+        self.managed()
+        verdict = guard.evaluate(
+            self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=False
+        )
+        self.assertEqual(verdict["record"]["mode"], guard.OBSERVE)
+        self.assertEqual(
+            verdict["record"]["modeDowngraded"], "hold_requires_a_recorded_observation"
+        )
+        self.assertIn("Hold mode was not applied", verdict["reason"])
+
+    def test_recording_still_holds_when_it_is_actually_asked_for(self):
+        """The control: the same Stop with recording on does take its hold."""
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertEqual(len(self.holds(directory)), 1)
+
+    def test_an_unpublishable_observation_is_reported_and_gives_the_hold_back(self):
+        """record_observation returned None, so the caller's release path never ran.
+
+        The hold was reserved, the observation was never published, and the verdict claimed a hold
+        that no record explained. intent._publish_numbered is the same loop over the same kind of
+        (index, readable) helper and already raised on both of its paths.
+        """
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        with mock.patch(
+            "codex_session_relay.guard._next_hook_seq", return_value=(0, False)
+        ):
+            verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], guard.FAULTED)
+        self.assertIn("OSError", verdict["fault"])
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertIsNone(verdict["recordedAs"])
+        self.assertEqual(self.holds(directory), [])
+
+    def test_an_exhausted_slot_search_is_reported_rather_than_returned(self):
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        with mock.patch("codex_session_relay.guard.publish", return_value=marker.EXISTS):
+            with self.assertRaises(OSError) as caught:
+                guard.record_observation(
+                    directory,
+                    {"sessionId": CHILD, "turnId": DISPATCH_TURN, "observation": "x"},
+                )
+        self.assertIn("64 attempts", str(caught.exception))
 
 
 if __name__ == "__main__":

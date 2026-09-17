@@ -24,6 +24,8 @@ from pathlib import Path
 
 from . import intent as intents
 from .currency import AMBIGUOUS, head_revision
+from .errors import ScopeError
+from .manifest import Entry, revision_hash, verify_against_disk, verify_frozen
 from .marker import (
     DIRECTORIES,
     PUBLISHED,
@@ -76,7 +78,66 @@ EVALUATION_STAGES = (
 READY = "ready_for_review"
 
 
+# What the deliverable a receipt was computed over looks like NOW. A receipt names a revision, and
+# the revision is the bytes: existence is not validity.
+DELIVERABLE_CURRENT = "current"
+DELIVERABLE_CHANGED = "changed"
+DELIVERABLE_UNVERIFIABLE = "unverifiable"
+
+
 # ---------------------------------------------------------------- the receipt
+
+
+def deliverable_state(payload, manifest_ref, roots):
+    """Do the artifacts still hash to the revision this receipt claims? (state, binding, detail).
+
+    The rule is not invented here. ReceiptIntake._verify_bytes already decides what verified means
+    at intake, and this re-applies it with the roots the relationship authorised, so a receipt is
+    judged at Stop time by the same standard it was admitted under. A frozen copy is consulted only
+    when the live bytes disagree, exactly as intake does, because once the working files move on the
+    frozen copy is what the receipt was about.
+
+    A read that could not happen is never reported as a revision that changed. The two have
+    different repairs - a permission or a vanished mount on one side, a child that must re-emit on
+    the other - and collapsing them would hold a child over a directory we could not open.
+
+    No lease is requested. A lease costs a concurrent writer real time and this runs inside a
+    five-second hook budget, so the guard verifies at the best-effort tier: it confirms the bytes
+    match when it looks, and it does not pretend to prevent them changing afterwards.
+    """
+    try:
+        records = (payload or {}).get("manifest")
+        if not isinstance(records, list) or not records:
+            # Intake refuses a reviewable receipt that carries no manifest, so a head event without
+            # one did not come through it. Reported rather than waved through: nothing here can say
+            # which bytes it stood for.
+            return DELIVERABLE_CHANGED, None, "the stored receipt carries no manifest to verify"
+        entries = [Entry.from_record(record) for record in records]
+        claimed = (payload or {}).get("revisionHash")
+        recomputed = revision_hash(entries)
+        if claimed and recomputed != claimed:
+            return (
+                DELIVERABLE_CHANGED,
+                None,
+                "the stored manifest hashes to " + recomputed + " but the receipt claims "
+                + str(claimed),
+            )
+        problems, _bindings = verify_against_disk(entries, roots)
+        if not problems:
+            return DELIVERABLE_CURRENT, "live", None
+        if manifest_ref:
+            _digest, frozen = verify_frozen(manifest_ref, entries)
+            if not frozen:
+                return DELIVERABLE_CURRENT, "frozen", None
+            problems = problems + frozen
+        return DELIVERABLE_CHANGED, None, "; ".join(problems[:3])
+    except (OSError, ScopeError) as error:
+        # Could not look. Never folded into "changed".
+        return DELIVERABLE_UNVERIFIABLE, None, type(error).__name__ + ": " + str(error)
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        # Looked, and the stored record is not the shape a receipt is. That is a readable answer
+        # about the record rather than a failure to read it.
+        return DELIVERABLE_CHANGED, None, type(error).__name__ + ": " + str(error)
 
 
 def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
@@ -122,7 +183,7 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
         # named, and the guard would then judge against a revision that is no longer current.
         connection.execute("BEGIN DEFERRED")
         relationship = connection.execute(
-            "SELECT status, superseded_by, execution_generation FROM relationships"
+            "SELECT status, superseded_by, execution_generation, artifact_roots FROM relationships"
             " WHERE relationship_id = ?",
             (relationship_id,),
         ).fetchone()
@@ -140,7 +201,8 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
         if not head.get("eventId"):
             return dict(base, evidence="no_reviewable_revision"), True
         row = connection.execute(
-            "SELECT event_id, stage, revision_hash, turn_thread_id, turn_id, producer"
+            "SELECT event_id, stage, revision_hash, turn_thread_id, turn_id, producer,"
+            " receipt, manifest_ref"
             "  FROM events WHERE event_id = ?",
             (head["eventId"],),
         ).fetchone()
@@ -162,6 +224,32 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
         and same_identity(row["turn_id"], turn_id)
     ):
         return dict(base, evidence="head_belongs_to_another_turn"), True
+
+    # Standing at the head is a statement about the LINEAGE. It says nothing about whether the
+    # artifacts the receipt was computed over are still those artifacts, and a receipt that outlived
+    # its deliverable would release a turn whose work no longer matches anything anyone reviewed.
+    # Hashed after the snapshot is closed: artifact I/O must never hold BEGIN DEFERRED open.
+    try:
+        roots = json.loads(relationship["artifact_roots"] or "[]")
+        payload = json.loads(row["receipt"])
+    except (ValueError, TypeError) as error:
+        return dict(
+            base,
+            evidence="stored_receipt_unreadable",
+            detail=type(error).__name__ + ": " + str(error),
+            eventId=row["event_id"],
+        ), True
+    state, binding, detail = deliverable_state(payload, row["manifest_ref"], roots)
+    if state == DELIVERABLE_UNVERIFIABLE:
+        return dict(base, evidence="deliverable_unverifiable", detail=detail), False
+    if state == DELIVERABLE_CHANGED:
+        return dict(
+            base,
+            evidence="artifacts_changed_since_receipt",
+            detail=detail,
+            eventId=row["event_id"],
+            revisionHash=row["revision_hash"],
+        ), True
     return dict(
         base,
         atCurrentHead=True,
@@ -169,6 +257,7 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
         eventId=row["event_id"],
         revisionHash=row["revision_hash"],
         stage=row["stage"],
+        deliverableBinding=binding,
     ), True
 
 
@@ -345,21 +434,38 @@ def _next_hook_seq(directory, session_id, turn_id):
 def record_observation(directory, record, *, root=None) -> str | None:
     """Publish this observation. One turn can be observed more than once, so the sequence is part
     of the identity: a single create-once file per turn would let the first observation consume the
-    only name available and silently lose every later one."""
+    only name available and silently lose every later one.
+
+    Failing to publish RAISES. Returning None for it would hand the caller the same answer it gets
+    when there was nothing to name, and the caller's release path - which gives back the hold this
+    unrecorded decision reserved - would never run, leaving a hold in flight that no record
+    explains. intent._publish_numbered is the same loop over a (index, readable) helper and already
+    raises on both of these paths; this is the one that had drifted.
+    """
     session_id, turn_id = record.get("sessionId"), record.get("turnId")
     if not (valid_segment(session_id) and valid_segment(turn_id)):
         # The observation is built from the delivered Stop payload, so these reach a path from
         # outside. An identity that cannot be a directory name records nothing here rather than
         # publishing into a directory the assignment does not own.
+        #
+        # Returns rather than raises, unlike the two failures below. This one is already classified
+        # upstream as a malformed stop identity, and raising it would relabel a data problem as a
+        # defect in the guard - the exact conflation guard_faulted exists to prevent.
         return None
     for _ in range(64):
         index, readable = _next_hook_seq(directory, session_id, turn_id)
         if not readable:
-            return None
+            raise OSError(
+                "the hook observation directory for " + session_id + "/" + turn_id
+                + " cannot be read, so no slot can be allocated in it"
+            )
         target = Path(directory) / "hook" / session_id / turn_id / (str(index) + ".json")
         if publish(target, record, root=root) == PUBLISHED:
             return "hook/" + session_id + "/" + turn_id + "/" + str(index)
-    return None
+    raise OSError(
+        "could not publish an observation for " + session_id + "/" + turn_id
+        + " after 64 attempts; every allocated slot was taken by another writer first"
+    )
 
 
 # ---------------------------------------------------------------- classification
@@ -537,6 +643,11 @@ def decide(observation, *, counters=None, mode=OBSERVE):
             # different problems to fix.
             record["receiptEvidence"] = receipt["evidence"]
             result["receiptEvidence"] = receipt["evidence"]
+            if receipt.get("detail"):
+                # The label says which kind of problem; this says which artifact and how. A hold a
+                # child cannot act on is a hold it cannot clear.
+                record["receiptDetail"] = receipt["detail"]
+                result["receiptDetail"] = receipt["detail"]
         result["hook_output"] = (
             {"decision": "block", "reason": final_reason, "continue": True}
             if decision == BLOCK
@@ -587,9 +698,17 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_pa
     is the one outcome worse than a wrong answer.
     """
     stop = stop_input or {}
+    downgraded = None
+    if mode == HOLD and not record:
+        # A hold IS a side effect: it is reserved as a create-once file, counted against three
+        # bounds, and released by the record that explains it. An evaluation asked not to record
+        # cannot do any of that, so reserving one here would spend a turn's budget on a decision
+        # nothing durable accounts for. Answered as the observation it actually is, and the
+        # downgrade is named in the verdict rather than applied quietly.
+        mode, downgraded = OBSERVE, "hold_requires_a_recorded_observation"
     reached = {"directory": None}
     try:
-        return _evaluate(
+        verdict = _evaluate(
             root, stop, now=now, mode=mode, db_path=db_path,
             default_db_path=default_db_path, record=record, reached=reached,
         )
@@ -604,7 +723,14 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_pa
                 # Recording is the last thing that can fail, and failing it must not re-raise: the
                 # caller still gets a classified release rather than a traceback.
                 verdict["recordedAs"] = None
-        return verdict
+    if downgraded:
+        verdict["modeDowngraded"] = downgraded
+        verdict["record"]["modeDowngraded"] = downgraded
+        verdict["reason"] = verdict["reason"] + (
+            " Hold mode was not applied: this evaluation was asked not to record, and a hold that"
+            " publishes no observation cannot be released, counted against the bounds, or audited."
+        )
+    return verdict
 
 
 def _faulted(stop, now, mode, error) -> dict:
@@ -694,7 +820,14 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
                 turn_id=turn_id,
             )
             if not readable:
-                unreadable.append("receipts")
+                # Named apart from the store. A database we could not open and a deliverable we
+                # could not hash are both "could not look", and they are repaired in different
+                # places, so the recorded reason points at the right one.
+                unreadable.append(
+                    "the receipt's artifacts"
+                    if (receipt or {}).get("evidence") == "deliverable_unverifiable"
+                    else "receipts"
+                )
     observation = {
         "stop_input": stop,
         "marker": marker_facts,
