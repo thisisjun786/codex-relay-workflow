@@ -11,6 +11,7 @@ The components it installs need 3.11 or newer; that interpreter is resolved, not
 """
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -166,17 +167,27 @@ def classify_component(component, *, record, entry_override=None, registration=N
     if python:
         location, import_error, import_command = module_location(python, component["module"])
 
+    current_digest = None
     digest_matches = None
     if location and Path(location).is_dir():
-        digest_matches = definition.ops12_digest(location) == component["sourceDigest"]
+        current_digest = definition.ops12_digest(location)
+        digest_matches = current_digest == component["sourceDigest"]
     elif resolved is not None:
         unreadable.append("the installed package location for " + component["component"])
 
-    commit_matches = tree_matches = None
+    # The component's subdirectory tree is the identity test, because packages share a
+    # repository commit and a commit therefore cannot say whether this component changed
+    # (OPS-1.5). The repository commit is read and reported beside it, but it is
+    # informational: an unrelated commit must not turn an unchanged component into a fork.
+    tree_matches = None
     if entry_recorded:
-        commit_matches = definition.git(["rev-parse", "HEAD:" + component["subdirectory"]], ROOT) \
-            == component["subdirectoryTree"]
-        tree_matches = commit_matches
+        tree_matches = definition.git(
+            ["rev-parse", "HEAD:" + component["subdirectory"]], ROOT
+        ) == component["subdirectoryTree"]
+    repository_commit = definition.git(["rev-parse", "HEAD"], ROOT)
+    recorded_commit = ((record or {}).get("components", {}).get(component["component"]) or {}) \
+        .get("repositoryCommit")
+    commit_matches = None
     clean = definition.working_tree_clean(ROOT) if entry_recorded else None
     if entry_recorded and clean is None:
         unreadable.append("the working tree cleanliness of " + str(ROOT))
@@ -185,7 +196,7 @@ def classify_component(component, *, record, entry_override=None, registration=N
     if record is not None and location and version:
         points = hostrecord.points_for(
             record, component["component"], location=location,
-            interpreter=version, source_digest=component["sourceDigest"],
+            interpreter=version, install_digest=current_digest,
             codex_cli=codex_cli_version(), host=socket.gethostname(),
         )
     elif record is None:
@@ -220,6 +231,16 @@ def classify_component(component, *, record, entry_override=None, registration=N
         "importError": import_error,
         "importCommand": import_command,
         "digestMatches": digest_matches,
+        "installedDigest": current_digest,
+        "repositoryCommit": repository_commit,
+        "repositoryCommitRecordedAtInstall": recorded_commit,
+        "repositoryCommitDrift": (
+            None if not recorded_commit else recorded_commit != repository_commit
+        ),
+        "repositoryCommitMeaning": (
+            "reported, not used as the identity test. The component subdirectory tree decides"
+            " whether this component changed (OPS-1.5); an unrelated commit does not."
+        ),
         "measuredPoints": len(points),
         "reusable": ownership.reusable(classification),
     }
@@ -294,7 +315,25 @@ def cmd_diagnose(args):
                     " no parent may stop one another parent is using (OPS-4.1).",
         })
 
-    installed_class = classes["codex-session-relay"]["class"]
+    # OPS-3.4's lookup constructs a store, and a diagnosis constructs none, so it is opt-in
+    # and never part of the default path.
+    assignment = {"ran": False, "reason": (
+        "assignment-find constructs a writable store and this command constructs none."
+        " Pass --assignment-lookup to run it, or use --trial, where it runs before anything"
+        " is written."
+    )}
+    if args.assignment_lookup and relay_executable and args.issue:
+        found = scope.relay(["assignment-find", "--issue", str(args.issue)],
+                            executable=relay_executable, socket=args.socket, state=args.state)
+        assignment = {"ran": True, "ok": found.get("ok"), "command": found.get("command"),
+                      "payload": found.get("payload"),
+                      "note": "OPS-3.4 also wants this reading from each participating"
+                              " process; one command cannot produce that."}
+    elif args.assignment_lookup:
+        assignment = {"ran": False, "reason": "no --issue, or no relay executable was found"}
+    if summary:
+        summary["assignmentFind"] = assignment
+
     both_own = all(c["class"] == "own" for c in classes.values())
     imported_ok = all(c["importedLocation"] for c in classes.values())
 
@@ -357,6 +396,7 @@ def cmd_diagnose(args):
         "components": classes,
         "mcpRegistration": registration,
         "scope": summary,
+        "assignment": assignment,
         "scopeReadings": readings,
         "checks": check.record(
             fields, destination=codex_home,
@@ -444,7 +484,12 @@ def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
     at execution time.
     """
     request_id = trial_request_id(issue)
-    steps = []
+    steps = [
+        # First, before anything is written. A lookup run after register could find the
+        # relationship this trial just created, which says nothing about the store
+        # (OPS-3.4). Run first, it describes the store as it was found.
+        ["assignment-find", "--issue", str(issue)],
+    ]
     if recipient_settings:
         # A send is withheld until the recipient's authorized settings are on record, because
         # preserving them is what the delivery has to check against.
@@ -459,13 +504,13 @@ def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
         # relay refuses to emit against an unbound generation.
         ["generation-open", "--relationship", TRIAL_RELATIONSHIP,
          "--dispatch-request-id", request_id]
-        + (["--dispatch-turn-id", str(dispatch_turn_id)] if dispatch_turn_id else []),
+        + (["--dispatch-turn-id", dispatch_turn_id] if dispatch_turn_id else []),
         # A reviewable receipt must carry a deliverable: the relay refuses one whose manifest
         # is empty, because that is the no-deliverable sentinel.
         # register opens the generation but leaves it unbound, and the relay refuses to emit
         # against a generation with no anchor. Binding is its own step, not a flag on the open.
         ["generation-bind", "--relationship", TRIAL_RELATIONSHIP,
-         "--generation", TRIAL_GENERATION, "--dispatch-turn-id", str(dispatch_turn_id)],
+         "--generation", TRIAL_GENERATION, "--dispatch-turn-id", dispatch_turn_id],
         # Only the anchor turn is admitted by default. A turn the child actually ran is a
         # continuation and needs an explicit admission naming the generation and an actor.
         ["admit-turn", "--relationship", TRIAL_RELATIONSHIP, "--generation", TRIAL_GENERATION,
@@ -494,14 +539,37 @@ def _trial(args, relay_executable):
     required = {"--issue": args.issue, "--parent-task": args.parent_task,
                 "--child-task": args.child_task, "--recipient": args.recipient,
                 "--artifact-root": args.artifact_root, "--turn-thread": args.turn_thread,
-                "--turn-id": args.turn_id}
+                "--turn-id": args.turn_id,
+                # A reviewable receipt with an empty manifest is refused, and a generation
+                # with no anchor cannot be emitted against. Both were discovered at the
+                # relay, after the trial had already written rows.
+                "--artifact": args.artifact,
+                "--dispatch-turn-id": args.dispatch_turn_id}
     missing = sorted(name for name, value in required.items() if not value)
     if missing:
         return check.field(
             "not_verified",
             "trial requested but these inputs were not supplied: " + ", ".join(missing)
-            + ". The trial registers a relationship and sends, so it names its recipient"
-            " rather than inventing one.",
+            + ". Everything the trial needs is checked here, before the first command, so an"
+            " incomplete trial writes nothing.",
+            acting_process=acting_process(), measured_at=now(),
+        )
+    if args.recipient != args.parent_task:
+        return check.field(
+            "not_verified",
+            "the recipient " + str(args.recipient) + " is not the parent task "
+            + str(args.parent_task) + ". A completion is queued to the relationship parent and"
+            " that parent must be an allowed recipient, so this combination can only be"
+            " refused after the store has been written to.",
+            acting_process=acting_process(), measured_at=now(),
+        )
+    if not args.recipient_settings and not args.settings_already_recorded:
+        return check.field(
+            "not_verified",
+            "a send is withheld until the recipient's authorized settings are on record."
+            " Supply --recipient-settings, or --settings-already-recorded to proceed on the"
+            " caller's own claim that they are already recorded for this recipient. There is"
+            " no read-only way to check from here: every relay read constructs a store.",
             acting_process=acting_process(), measured_at=now(),
         )
 
@@ -535,6 +603,36 @@ def _trial(args, relay_executable):
         )
 
     by_name = {argv[0]: argv for argv in steps}
+
+    # OPS-3.4: the lookup that distinguishes the expected store from a different populated
+    # one. Run before anything is written, and compared against what the caller independently
+    # expects. With no expectation supplied it stays an observation, not a proof.
+    found = run_step(by_name["assignment-find"])
+    assignment = {
+        "ran": True,
+        "ok": found.get("ok"),
+        "payload": found.get("payload"),
+        "expected": args.expect_relationship,
+        "agrees": None,
+        "meaning": (
+            "OPS-3.4 also wants this reading from each participating process; one command"
+            " cannot produce that, and this is the part it can."
+        ),
+    }
+    if args.expect_relationship:
+        seen = json.dumps(found.get("payload"))
+        assignment["agrees"] = args.expect_relationship in seen
+        if not assignment["agrees"]:
+            return check.field(
+                "not_verified",
+                "the store does not hold the expected relationship "
+                + str(args.expect_relationship) + " for issue " + str(args.issue)
+                + ", so this process is pointed at a different store than the one the"
+                " assignment lives in. Nothing was written. Lookup: " + seen[:300],
+                command=json.dumps(performed[-1]["command"]),
+                acting_process=acting_process(), measured_at=now(),
+            )
+
     for argv in steps:
         if argv[0] == "settings-record":
             recorded = run_step(argv)
@@ -582,7 +680,8 @@ def _trial(args, relay_executable):
     if delivered.get("ok") and turn:
         return check.field(
             "verified",
-            "the delivery attempt returned turn id " + str(turn) + " for event " + str(event)
+            "assignment lookup before any write: " + json.dumps(assignment)[:300]
+            + ". The delivery attempt returned turn id " + str(turn) + " for event " + str(event)
             + ", relationship " + str(relationship) + ", generation " + str(generation)
             + ". Recipient " + str(args.recipient) + ". Steps: " + json.dumps(performed),
             command=json.dumps(performed[-1]["command"]),
@@ -637,8 +736,12 @@ def cmd_install(args):
         return EXIT_REFUSED
 
     destination = Path(args.dest).expanduser().absolute()
-    environment = destination / ("env-" + str(data["definitionVersion"]) + "-"
-                                 + data["components"][0]["sourceDigest"][:12])
+    # Every component, not the first one. Derived from only the bridge, a relay-only change
+    # produced the same directory name and the existence check then refused to install it.
+    combined = hashlib.sha256(
+        "".join(c["sourceDigest"] for c in data["components"]).encode()
+    ).hexdigest()[:12]
+    environment = destination / ("env-" + str(data["definitionVersion"]) + "-" + combined)
     record_path = Path(args.record) if args.record else hostrecord.record_path()
     record = hostrecord.load(record_path, data["definitionVersion"])
     if record is None:
@@ -659,11 +762,6 @@ def cmd_install(args):
          "note": "only after the candidate is exercised; a candidate that imports but fails its"
                  " exercise stays unselected and the previous runtime remains selected"},
     ]
-    if environment.exists():
-        emit({"command": "install", "refused": "the environment directory already exists",
-              "environment": str(environment), "plan": plan,
-              "note": "an existing environment is never overwritten"})
-        return EXIT_REFUSED
     if not args.apply:
         emit({"command": "install", "applied": False, "plan": plan, "environment": str(environment),
               "note": "nothing was written. Rerun with --apply to stage the installation."})
@@ -685,13 +783,32 @@ def cmd_install(args):
         return done.returncode == 0
 
     destination.mkdir(parents=True, exist_ok=True)
+    # OPS-2.4's first measurement: what is selected now, before anything replaces it. Without
+    # it, restoring the previous pointer after a failure reports a runtime as selected with no
+    # current evidence about it.
+    outgoing = _outgoing_runtime(record, data)
+    record["outgoing"] = outgoing
+    hostrecord.save(record_path, record)
+
+    # Exclusive: this fails if the directory exists, which is what proves the run owns it and
+    # may therefore remove it on failure. An exists() test before a separate create does not.
+    try:
+        environment.mkdir()
+    except FileExistsError:
+        emit({"command": "install", "refused": "the environment directory already exists",
+              "environment": str(environment), "plan": plan,
+              "note": "an existing environment is never overwritten, and a run only removes a"
+                      " directory it created itself"})
+        return EXIT_REFUSED
+    owned = environment
+
     if not perform("create environment", [str(interpreter), "-m", "venv", str(environment)]):
-        return _install_failed(record_path, record, previous, performed, environment)
+        return _install_failed(record_path, record, previous, performed, environment, owned)
 
     python = environment / "bin" / "python"
     packages = [str(ROOT / c["subdirectory"]) for c in data["components"]]
     if not perform("install packages", [str(python), "-m", "pip", "install", "--quiet", *packages]):
-        return _install_failed(record_path, record, previous, performed, environment)
+        return _install_failed(record_path, record, previous, performed, environment, owned)
 
     version = interpreter_version(python)
     installs = {}
@@ -700,7 +817,7 @@ def cmd_install(args):
         if not location:
             performed.append({"step": "read imported location", "component": component["component"],
                               "ok": False, "detail": error})
-            return _install_failed(record_path, record, previous, performed, environment)
+            return _install_failed(record_path, record, previous, performed, environment, owned)
         digest = definition.ops12_digest(location)
         install = {
             "location": location,
@@ -714,6 +831,12 @@ def cmd_install(args):
             "digestMatchesDefinition": digest == component["sourceDigest"],
             "reachedVia": "installed by runtime_install.py into " + str(destination),
         }
+        entry = hostrecord.component(record, component["component"])
+        entry["repositoryCommit"] = definition.git(["rev-parse", "HEAD"], ROOT)
+        entry["repositoryTree"] = definition.git(["rev-parse", "HEAD^{tree}"], ROOT)
+        entry["subdirectoryTree"] = definition.git(
+            ["rev-parse", "HEAD:" + component["subdirectory"]], ROOT)
+        entry["workingTreeClean"] = definition.working_tree_clean(ROOT)
         hostrecord.put_install(record, component["component"], install)
         installs[component["component"]] = install
         performed.append({"step": "read imported location", "component": component["component"],
@@ -725,11 +848,18 @@ def cmd_install(args):
                                     socket_path=args.socket, state=args.state,
                                     relay_command=str(environment / "bin" / "codex-session-relay"),
                                     measured_by=args.issue)
-    if measurement["qualifyingPoint"]:
-        record.setdefault("selected", {})
-        for name, install in installs.items():
-            record["selected"][name] = install["location"]
-        hostrecord.save(record_path, record)
+    if not measurement["qualifyingPoint"]:
+        # The candidate imports but does not work. Release the destination the same way any
+        # other failure does, so a transient connection failure does not block every retry.
+        performed.append({"step": "measure the candidate", "ok": False,
+                          "detail": measurement.get("refused")
+                          or "the candidate was not exercised successfully"})
+        return _install_failed(record_path, record, previous, performed, environment, owned)
+
+    record.setdefault("selected", {})
+    for name, install in installs.items():
+        record["selected"][name] = install["location"]
+    hostrecord.save(record_path, record)
 
     emit({
         "command": "install", "applied": True, "environment": str(environment),
@@ -748,13 +878,48 @@ def cmd_install(args):
     return EXIT_OK if measurement["qualifyingPoint"] else EXIT_REFUSED
 
 
-def _install_failed(record_path, record, previous, performed, environment):
+def _outgoing_runtime(record, data):
+    """What is selected right now, and whether its bytes are still what was recorded."""
+    reading = {}
+    selected = record.get("selected") or {}
+    for component in data["components"]:
+        location = selected.get(component["component"])
+        if not location:
+            reading[component["component"]] = {"selected": None}
+            continue
+        present = Path(location).is_dir()
+        reading[component["component"]] = {
+            "selected": location,
+            "present": present,
+            "digest": definition.ops12_digest(location) if present else None,
+        }
+    return reading
+
+
+def _install_failed(record_path, record, previous, performed, environment, owned=None):
+    """Restore the previous selection and release a destination this run created.
+
+    Removing only a directory this run created is what makes the retry work without ever
+    touching an environment somebody else owns; the exclusive mkdir above is the proof of
+    that ownership. The store is never removed, moved or recreated: update failure and store
+    loss are different accidents.
+    """
     record["selected"] = previous
+    removed = None
+    if owned is not None and Path(owned).is_dir():
+        shutil.rmtree(str(owned), ignore_errors=True)
+        removed = str(owned)
+    for component in list((record.get("components") or {})):
+        entry = record["components"][component]
+        entry["installs"] = [i for i in entry.get("installs", [])
+                             if i.get("environment") != str(environment)]
     hostrecord.save(record_path, record)
     emit({"command": "install", "applied": False, "steps": performed,
           "environment": str(environment), "selected": previous,
+          "removedCandidate": removed,
           "refused": "a step failed; the previously selected runtime remains selected",
-          "note": "the store is never removed, moved or recreated by a failed install"})
+          "note": "the candidate this run created was removed so the destination can be"
+                  " retried, and the records for it were dropped. The store is untouched."})
     return EXIT_REFUSED
 
 
@@ -775,6 +940,45 @@ def _find_interpreter(data):
 
 # ------------------------------------------------------------------------- measure
 
+def _interpreter_prefix(python):
+    """The environment an interpreter reports for itself."""
+    try:
+        done = subprocess.run([str(python), "-c", "import sys;print(sys.prefix)"],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() or None if done.returncode == 0 else None
+
+
+def _bind_installs(record, data, python, environment):
+    """Match each module's imported location to the install recorded for this environment.
+
+    Returns (bound, refusal). 'bound' maps a component name to its recorded install and the
+    digest of the bytes as they are right now, which is what the point will record.
+    """
+    bound = {}
+    for component in data["components"]:
+        entry = (record.get("components", {}).get(component["component"]) or {})
+        installs = [i for i in entry.get("installs", [])
+                    if i.get("environment") == str(environment)]
+        if not installs:
+            return None, ("no install of " + component["component"] + " is recorded for "
+                          + str(environment) + ", so a run there could not be attributed")
+        install = installs[0]
+        location, error, _argv = module_location(python, component["module"])
+        if not location:
+            return None, (component["component"] + " could not be imported by " + str(python)
+                          + ": " + str(error))
+        if Path(location).resolve() != Path(install["location"]).resolve():
+            return None, (component["component"] + " imported from " + location
+                          + " but the recorded install for this environment is "
+                          + install["location"])
+        digest = definition.ops12_digest(location)
+        bound[component["component"]] = {"install": install, "digest": digest,
+                                         "location": location}
+    return bound, None
+
+
 def measure_candidate(data, record, *, python, environment, socket_path, state,
                       relay_command, measured_by=None):
     """Exercise both components and record a point only if both actually ran.
@@ -789,6 +993,30 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
     bridge = next(c for c in data["components"] if c["component"] == "codex-thread-bridge")
     relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
     operations = []
+
+    # Bind the run to the environment before anything is exercised or recorded. Two checks,
+    # because neither alone is enough. The interpreter reports its own prefix, which is the
+    # only thing that identifies which environment is running: a virtual environment's
+    # bin/python legitimately resolves to an interpreter outside it, so a path test would
+    # reject valid environments. And each module's imported location must equal the location
+    # recorded for that environment's install, which is what accommodates an editable
+    # install whose location sits outside its environment by design (OPS-1.1). Without the
+    # first, two environments sharing one editable source are indistinguishable.
+    prefix = _interpreter_prefix(python)
+    if prefix is None:
+        return {"operations": [], "qualifyingPoint": False, "appServer": None, "toolsListed": [],
+                "refused": "the interpreter did not report its prefix, so the environment it"
+                           " runs cannot be identified"}
+    if Path(prefix).resolve() != Path(environment).resolve():
+        return {"operations": [], "qualifyingPoint": False, "appServer": None, "toolsListed": [],
+                "refused": "the interpreter reports prefix " + str(prefix) + " but the selected"
+                           " environment is " + str(environment) + ", so this run would exercise"
+                           " one runtime and record the point against another"}
+
+    bound, mismatch = _bind_installs(record, data, python, environment)
+    if mismatch:
+        return {"operations": [], "qualifyingPoint": False, "appServer": None, "toolsListed": [],
+                "refused": mismatch}
 
     reading = scope.relay(["doctor"], executable=relay_command, socket=socket_path, state=state)
     connect = ((reading.get("payload") or {}).get("actorReachability") or {}).get("socketConnect")
@@ -823,14 +1051,9 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
     qualifying = all(op["exercised"] for op in operations)
     if qualifying:
         for component in data["components"]:
-            install = next(
-                (i for i in (record.get("components", {}).get(component["component"]) or {})
-                 .get("installs", []) if i.get("environment") == str(environment)), None)
-            if install is None:
-                qualifying = False
-                continue
+            install = bound[component["component"]]["install"]
             hostrecord.add_point(record, component["component"], {
-                "interpreter": install.get("interpreter"),
+                "interpreter": interpreter_version(python),
                 "codexCli": codex_cli_version(),
                 "appServer": app_server,
                 "host": socket.gethostname(),
@@ -841,7 +1064,12 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
                 ),
                 "exercised": True,
                 "install": install.get("location"),
+                # The digest of what was exercised, measured now, not the digest the
+                # definition expects. A point has to describe the bytes that ran.
+                "installDigest": bound[component["component"]]["digest"],
                 "definitionDigest": component["sourceDigest"],
+                "digestMatchesDefinition":
+                    bound[component["component"]]["digest"] == component["sourceDigest"],
             })
     return {"operations": operations, "qualifyingPoint": qualifying,
             "appServer": app_server, "toolsListed": tools_listed}
@@ -859,7 +1087,14 @@ def cmd_measure(args):
     relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
     relay_command = args.relay_command or shutil.which(relay_component["consoleScript"])
     python = args.python or sys.executable
-    environment = args.environment or str(Path(python).resolve().parent.parent)
+    # Derived from what the interpreter reports, not from its executable's parent: a virtual
+    # environment's bin/python commonly resolves into the base installation, and that path
+    # names the wrong environment.
+    environment = args.environment or _interpreter_prefix(python)
+    if not environment:
+        emit({"command": "measure", "refused": "the interpreter did not report a prefix, so no"
+              " environment could be selected; pass --environment"})
+        return EXIT_REFUSED
 
     if not relay_command:
         emit({"command": "measure", "refused": "no relay executable was found"})
@@ -900,9 +1135,30 @@ def cmd_register_mcp(args):
     )
     wrote = False
     if args.apply and outcome == "CREATED":
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_text, encoding="utf-8")
-        wrote = True
+        # Held under one lock for the whole read-modify-write, re-read immediately before
+        # replacing, and written by temp file and replace. That coordinates runs of this
+        # command with each other and removes truncation. It cannot coordinate with an editor
+        # that does not take the same lock, and this is not called compare-and-swap for that
+        # reason: a writer ignoring the lock can still land in the remaining window.
+        try:
+            with hostrecord.Locked(path):
+                current = path.read_text(encoding="utf-8") if path.is_file() else ""
+                if current != before:
+                    emit({"command": "register-mcp", "path": str(path), "outcome": "CHANGED",
+                          "detail": "config.toml changed after it was read, so nothing was"
+                                    " written; rerun against the file as it now stands",
+                          "applied": False, "otherTablesPreserved": True})
+                    return EXIT_REFUSED
+                fresh, outcome, detail = codexconfig.register(
+                    current, args.name, args.bridge_command, args.bridge_arg or [],
+                )
+                if outcome == "CREATED":
+                    hostrecord.atomic_write(path, fresh)
+                    new_text, wrote = fresh, True
+        except TimeoutError as error:
+            emit({"command": "register-mcp", "path": str(path), "outcome": "BUSY",
+                  "detail": str(error), "applied": False, "otherTablesPreserved": True})
+            return EXIT_REFUSED
 
     after = path.read_text(encoding="utf-8") if path.is_file() else ""
     preserved = after.startswith(before) if wrote else after == before
@@ -959,6 +1215,14 @@ def build_parser():
                           help="trial input: the parent turn the generation binds to")
     diagnose.add_argument("--recipient-settings",
                           help="trial input: the recipient's authorized settings, JSON or @path")
+    diagnose.add_argument("--settings-already-recorded", action="store_true",
+                          help="trial input: the caller's own unverified claim that the"
+                               " recipient's authorized settings are already recorded")
+    diagnose.add_argument("--expect-relationship",
+                          help="the relationship the caller expects the store to hold")
+    diagnose.add_argument("--assignment-lookup", action="store_true",
+                          help="run assignment-find and nothing else; it constructs a"
+                               " store, which is why plain diagnose does not")
     diagnose.add_argument("--turn-status", default="completed",
                           help="trial input: the status the child turn was observed in")
     diagnose.add_argument("--temporary", action="store_true",

@@ -15,6 +15,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from . import hostrecord
+
 SOURCE = "user"
 
 
@@ -96,12 +98,23 @@ def install(path, event, hook, *, issue, apply=False):
                 "plan": proposal, "applied": False,
                 "installed": False, "enabled": "unknown", "observedFired": "unknown"}
 
-    document.setdefault("hooks", {}).setdefault(event, []).append({"hooks": [hook]})
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    # The whole read-modify-write is held under one lock, and the write itself is a temp
+    # file and replace, so an interrupted run cannot truncate a file holding other hooks.
+    # The lock coordinates runs of this command; it cannot coordinate with an editor that
+    # does not take it, and that limit is stated rather than assumed away.
+    with hostrecord.Locked(path):
+        current, error = read(path)
+        if current is None:
+            return {"outcome": "UNREADABLE", "detail": error}
+        if json.dumps(current, sort_keys=True) != json.dumps(document, sort_keys=True):
+            return {"outcome": "CHANGED", "detail": (
+                "the hook file changed after it was read, so nothing was appended;"
+                " rerun to plan against the file as it now stands")}
+        document.setdefault("hooks", {}).setdefault(event, []).append({"hooks": [hook]})
+        hostrecord.atomic_write(path, json.dumps(document, indent=2) + "\n")
 
-    # Read the registration back rather than trusting the write.
-    written, error = read(path)
+        # Read the registration back rather than trusting the write.
+        written, error = read(path)
     if written is None:
         return {"outcome": "UNREADABLE", "detail": "wrote, but could not read back: " + str(error)}
     after = {entry["identity"]: entry["trustedHash"] for entry in inventory(written)}

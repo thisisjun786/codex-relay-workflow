@@ -166,9 +166,8 @@ def summarise(readings, *, issue=None, env=None, service=None):
             " relationship from each participating process: a nonzero count from a different"
             " populated database would satisfy a count check while proving nothing"
         ),
-        "assignmentFind": (
-            "not run: no --issue was supplied" if not issue else "run separately; see assignment"
-        ),
+        # Filled in by the caller when it actually ran one. Never claims a lookup happened.
+        "assignmentFind": {"ran": False, "reason": "not run by this reading"},
         "perProjectDaemon": (
             "none created. One service and one store serve the whole operating scope (OPS-3.1),"
             " so a second repository or project reuses them rather than starting its own"

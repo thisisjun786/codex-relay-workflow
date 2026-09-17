@@ -243,11 +243,11 @@ class HostRecordTests(unittest.TestCase):
         record = hostrecord.empty(1)
         hostrecord.add_point(record, "codex-session-relay", {
             "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
-            "definitionDigest": "abc", "method": "doctor",
+            "installDigest": "abc", "method": "doctor",
         })
-        matching = dict(location="/env/pkg", interpreter="3.13.1", source_digest="abc")
+        matching = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc")
         self.assertEqual(len(hostrecord.points_for(record, "codex-session-relay", **matching)), 1)
-        for change in (dict(location="/other"), dict(interpreter="3.11.0"), dict(source_digest="def")):
+        for change in (dict(location="/other"), dict(interpreter="3.11.0"), dict(install_digest="def")):
             with self.subTest(change=change):
                 asked = dict(matching)
                 asked.update(change)
@@ -458,9 +458,9 @@ class ReviewFixTests(unittest.TestCase):
         record = hostrecord.empty(1)
         hostrecord.add_point(record, "codex-session-relay", {
             "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
-            "definitionDigest": "abc", "codexCli": "0.154.0", "host": "one",
+            "installDigest": "abc", "codexCli": "0.154.0", "host": "one",
         })
-        asked = dict(location="/env/pkg", interpreter="3.13.1", source_digest="abc")
+        asked = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc")
         self.assertEqual(len(hostrecord.points_for(record, "codex-session-relay", **asked,
                                                    codex_cli="0.154.0", host="one")), 1)
         self.assertEqual(hostrecord.points_for(record, "codex-session-relay", **asked,
@@ -546,8 +546,8 @@ class TrialArgumentTests(unittest.TestCase):
         # Guards the fixture itself. If trial_steps grows a command, or the fixture stops
         # producing one, the comparison silently stops covering it.
         self.assertEqual([argv[0] for argv in self.steps()],
-                         ["settings-record", "register", "generation-open", "generation-bind",
-                          "admit-turn", "emit", "deliver"])
+                         ["assignment-find", "settings-record", "register", "generation-open",
+                          "generation-bind", "admit-turn", "emit", "deliver"])
 
     def test_the_relay_parser_is_readable_and_names_what_it_requires(self):
         required = relay_required_arguments()
@@ -584,8 +584,8 @@ class TrialArgumentTests(unittest.TestCase):
             dispatch_turn_id="anchor-1", recipient_settings="@/tmp/settings.json",
         )
         self.assertEqual([argv[0] for argv in with_settings],
-                         ["settings-record", "register", "generation-open", "generation-bind",
-                          "admit-turn", "emit", "deliver"])
+                         ["assignment-find", "settings-record", "register", "generation-open",
+                          "generation-bind", "admit-turn", "emit", "deliver"])
         emit = next(argv for argv in with_settings if argv[0] == "emit")
         self.assertIn("--artifact", emit,
                       "a reviewable receipt whose manifest is empty is refused")
@@ -611,6 +611,7 @@ class TrialArgumentTests(unittest.TestCase):
         import runtime_install
 
         payloads = {
+            "assignment-find": {"ok": True, "payload": {"relationships": []}},
             "settings-record": {"ok": True, "payload": {"recorded": True}},
             "register": {"ok": True, "payload": {"relationshipId": "rel-1",
                                                  "executionGeneration": 7}},
@@ -638,6 +639,8 @@ class TrialArgumentTests(unittest.TestCase):
             turn_thread = "thread-1"
             turn_id = "turn-1"
             turn_status = "completed"
+            settings_already_recorded = False
+            expect_relationship = None
             socket = state = None
 
         original = runtime_install.scope.relay
@@ -652,6 +655,194 @@ class TrialArgumentTests(unittest.TestCase):
         emitted = next(argv for argv in sent if argv[0] == "emit")
         self.assertIn("7", emitted, "the reported generation must reach emit")
         self.assertNotIn("None", emitted)
+
+
+class AuthorizedRepairTests(unittest.TestCase):
+    """The six areas the coordinator authorized after escalation."""
+
+    TRI = '"' * 3
+
+    # (a) the reader reads what it wrote, and refuses what it does not model ---------
+
+    def test_what_render_writes_scan_reads_back_and_register_calls_linked(self):
+        awkward = ["/opt/x", "a" + chr(92) + "b", 'say "hi"', "has " + self.TRI + " seq",
+                   "tab" + chr(9) + "char", chr(92) + chr(92) + '"' + chr(92)]
+        for value in awkward:
+            with self.subTest(value=value):
+                created, outcome, _ = codexconfig.register("", "srv", value, ["--a", value])
+                self.assertEqual(outcome, "CREATED")
+                view = codexconfig.scan(created)
+                self.assertTrue(view.readable, view.unreadable)
+                self.assertEqual(view.servers["srv"]["command"], value)
+                self.assertEqual(view.servers["srv"]["args"], ["--a", value])
+                # The round trip is the property, not the three examples: a value this
+                # module wrote must never come back as a different registration.
+                again, rerun, _ = codexconfig.register(created, "srv", value, ["--a", value])
+                self.assertEqual(rerun, "LINKED")
+                self.assertEqual(again, created)
+
+    def test_a_literal_value_holding_the_fence_sequence_hides_nothing_after_it(self):
+        text = ("command = " + chr(39) + "say " + self.TRI + " hi" + chr(39) + chr(10)
+                + "[mcp_servers.x]" + chr(10) + 'command = "/opt/x"' + chr(10))
+        view = codexconfig.scan(text)
+        self.assertTrue(view.readable, view.unreadable)
+        self.assertEqual(sorted(view.servers), ["x"])
+
+    def test_a_member_assignment_inside_the_parent_table_is_unreadable(self):
+        text = "[mcp_servers]" + chr(10) + 'x = { command = "/opt/x" }' + chr(10)
+        view = codexconfig.scan(text)
+        self.assertFalse(view.readable)
+        after, outcome, _ = codexconfig.register(text, "x", "/opt/x", [])
+        self.assertEqual(outcome, "UNREADABLE")
+        self.assertEqual(after, text)
+
+    def test_an_escape_this_reader_does_not_model_is_reported_not_guessed(self):
+        view = codexconfig.scan('[mcp_servers.x]' + chr(10) + 'command = "a' + chr(92) + 'q"' + chr(10))
+        self.assertFalse(view.readable)
+        self.assertIn("escape", view.unreadable[0])
+
+    # (b) nothing mutates before the inputs are complete -----------------------------
+
+    def trial_args(self, **overrides):
+        base = dict(issue="JUN-104", parent_task="parent", child_task="child",
+                    recipient="parent", artifact_root="/tmp/a", artifact=["/tmp/a/r.txt"],
+                    dispatch_turn_id="anchor-1", recipient_settings="@/tmp/s.json",
+                    turn_thread="t", turn_id="u", turn_status="completed",
+                    settings_already_recorded=False, expect_relationship=None,
+                    socket=None, state=None)
+        base.update(overrides)
+        return type("Args", (), base)()
+
+    def run_trial(self, args):
+        import runtime_install
+
+        sent = []
+
+        def fake_relay(command, **kwargs):
+            sent.append(list(command))
+            return {"ok": True, "payload": {}, "command": list(command)}
+
+        original = runtime_install.scope.relay
+        runtime_install.scope.relay = fake_relay
+        try:
+            return runtime_install._trial(args, "/opt/relay"), sent
+        finally:
+            runtime_install.scope.relay = original
+
+    def test_an_incomplete_trial_sends_no_relay_command_at_all(self):
+        for missing in ("artifact", "dispatch_turn_id", "turn_id", "recipient_settings"):
+            with self.subTest(missing=missing):
+                overrides = {missing: None}
+                if missing == "recipient_settings":
+                    overrides["settings_already_recorded"] = False
+                result, sent = self.run_trial(self.trial_args(**overrides))
+                self.assertEqual(result["value"], "not_verified")
+                self.assertEqual(sent, [], "an incomplete trial must write nothing")
+
+    def test_a_recipient_that_is_not_the_parent_is_refused_before_any_write(self):
+        result, sent = self.run_trial(self.trial_args(recipient="somebody-else"))
+        self.assertEqual(result["value"], "not_verified")
+        self.assertIn("not the parent task", result["evidence"])
+        self.assertEqual(sent, [])
+
+    def test_recorded_settings_stay_reusable_through_an_explicit_claim(self):
+        # The acknowledgement is the caller's, and it is not verified here. It exists so a
+        # host whose settings are already authorized is not forced to resupply them.
+        args = self.trial_args(recipient_settings=None, settings_already_recorded=True)
+        result, sent = self.run_trial(args)
+        self.assertNotEqual(sent, [], "the trial should proceed on the acknowledgement")
+        self.assertNotIn("settings-record", [argv[0] for argv in sent])
+
+    def test_the_assignment_lookup_runs_before_anything_is_written(self):
+        _result, sent = self.run_trial(self.trial_args())
+        self.assertEqual(sent[0][0], "assignment-find",
+                         "a lookup after register could find what the trial itself wrote")
+
+    def test_a_store_without_the_expected_relationship_stops_the_trial(self):
+        result, sent = self.run_trial(self.trial_args(expect_relationship="rel-expected"))
+        self.assertEqual(result["value"], "not_verified")
+        self.assertIn("rel-expected", result["evidence"])
+        self.assertEqual([argv[0] for argv in sent], ["assignment-find"])
+
+    # (c) a point describes the bytes that ran ---------------------------------------
+
+    def test_a_point_without_an_exercised_digest_never_qualifies(self):
+        record = hostrecord.empty(1)
+        hostrecord.add_point(record, "codex-session-relay", {
+            "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
+            "definitionDigest": "abc",
+        })
+        self.assertEqual(hostrecord.points_for(
+            record, "codex-session-relay", location="/env/pkg", interpreter="3.13.1",
+            install_digest="abc"), [], "a point recorded before this existed says nothing"
+            " about which bytes ran")
+
+    def test_measuring_refuses_when_the_interpreter_belongs_to_another_environment(self):
+        import runtime_install
+
+        record = hostrecord.empty(1)
+        data = definition.load()
+        original = runtime_install._interpreter_prefix
+        runtime_install._interpreter_prefix = lambda python: "/envs/A"
+        try:
+            outcome = runtime_install.measure_candidate(
+                data, record, python="/envs/A/bin/python", environment="/envs/B",
+                socket_path=None, state=None, relay_command="/envs/B/bin/relay")
+        finally:
+            runtime_install._interpreter_prefix = original
+        self.assertFalse(outcome["qualifyingPoint"])
+        self.assertIn("/envs/B", outcome["refused"])
+        self.assertEqual(outcome["operations"], [], "nothing is exercised before the refusal")
+
+    def test_an_import_from_somewhere_other_than_the_recorded_install_is_refused(self):
+        import runtime_install
+
+        record = hostrecord.empty(1)
+        data = definition.load()
+        for component in data["components"]:
+            hostrecord.put_install(record, component["component"], {
+                "location": "/envs/A/lib/" + component["module"], "environment": "/envs/A"})
+        original = runtime_install.module_location
+        runtime_install.module_location = lambda python, module: ("/elsewhere/" + module, None, [])
+        try:
+            bound, mismatch = runtime_install._bind_installs(
+                record, data, "/envs/A/bin/python", "/envs/A")
+        finally:
+            runtime_install.module_location = original
+        self.assertIsNone(bound)
+        self.assertIn("/elsewhere/", mismatch)
+
+    # (f) recovery -------------------------------------------------------------------
+
+    def test_the_environment_name_covers_every_component(self):
+        # Derived from the first component alone, a relay-only change produced the same
+        # directory and the existence check then refused to install it.
+        source = (ROOT / "scripts" / "runtime_install.py").read_text(encoding="utf-8")
+        self.assertIn('"".join(c["sourceDigest"] for c in data["components"])', source)
+
+    def test_a_failed_run_releases_only_the_directory_it_created(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            record_path = Path(temporary) / "record.json"
+            record = hostrecord.empty(1)
+            hostrecord.put_install(record, "codex-session-relay",
+                                   {"location": "/c/pkg", "environment": str(Path(temporary) / "mine")})
+            mine = Path(temporary) / "mine"
+            mine.mkdir()
+            theirs = Path(temporary) / "theirs"
+            theirs.mkdir()
+
+            code = runtime_install._install_failed(
+                record_path, record, {"codex-session-relay": "/previous"}, [], str(mine), mine)
+            self.assertEqual(code, 1)
+            self.assertFalse(mine.exists(), "the destination this run created must be retryable")
+            self.assertTrue(theirs.exists(), "a directory this run did not create is untouched")
+            written = hostrecord.load(record_path, 1)
+            self.assertEqual(written["selected"], {"codex-session-relay": "/previous"})
+            self.assertEqual(
+                written["components"]["codex-session-relay"]["installs"], [],
+                "records for a removed candidate are dropped")
 
 
 if __name__ == "__main__":

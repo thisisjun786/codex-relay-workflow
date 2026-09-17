@@ -14,6 +14,7 @@ import json
 import os
 import socket
 import tempfile
+import time
 from pathlib import Path
 
 RECORD_NAME = "host-record.json"
@@ -88,7 +89,7 @@ def add_point(record, name, point):
     return point
 
 
-def points_for(record, name, *, location, interpreter, source_digest,
+def points_for(record, name, *, location, interpreter, install_digest,
                codex_cli=None, app_server=None, host=None):
     """Points that actually cover this install, this interpreter and these bytes.
 
@@ -104,7 +105,10 @@ def points_for(record, name, *, location, interpreter, source_digest,
             continue
         if point.get("interpreter") != interpreter:
             continue
-        if point.get("definitionDigest") != source_digest:
+        # The digest of the bytes that were actually exercised, measured at that time.
+        # A point written before this existed carries none and can never qualify, because
+        # nothing in it says which bytes the run covered.
+        if not point.get("installDigest") or point.get("installDigest") != install_digest:
             continue
         # The rest of the combination counts too. A point recorded against another Codex
         # CLI, another App Server or another host describes a run that is not this one,
@@ -116,3 +120,72 @@ def points_for(record, name, *, location, interpreter, source_digest,
             found.append(point)
     return found
 
+# --------------------------------------------------------------- shared safe writing
+
+LOCK_SUFFIX = ".crw-lock"
+STALE_LOCK_SECONDS = 300
+
+
+def atomic_write(path, text):
+    """Write by temp file and replace, so an interrupted write cannot truncate the target.
+
+    os.replace replaces a symlink rather than following it, which plain write_text does not.
+    That difference is deliberate here: the file this command owns is the path it was given.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".crw-write-")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.replace(temporary, str(path))
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+class Locked:
+    """An exclusive lock file around a read-modify-write.
+
+    What this covers: two runs of these commands cannot interleave their own
+    read-modify-write, and the write itself cannot leave a truncated file.
+
+    What it does not cover: an editor that does not take this lock. A concurrent writer that
+    ignores it can still land between the last read and the replace. That limit is stated
+    rather than papered over, because calling this compare-and-swap would claim a guarantee
+    it does not have.
+    """
+
+    def __init__(self, target, timeout=10.0):
+        self.path = Path(str(target) + LOCK_SUFFIX)
+        self.timeout = timeout
+        self.handle = None
+
+    def __enter__(self):
+        deadline = time.time() + self.timeout
+        while True:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self.handle = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self.handle, str(os.getpid()).encode())
+                return self
+            except FileExistsError:
+                # A lock left by a process that died would otherwise block for ever.
+                try:
+                    age = time.time() - self.path.stat().st_mtime
+                except OSError:
+                    age = 0
+                if age > STALE_LOCK_SECONDS:
+                    self.path.unlink(missing_ok=True)
+                    continue
+                if time.time() > deadline:
+                    raise TimeoutError("another run holds " + str(self.path))
+                time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        # Released on every path, including an exception, so a failure cannot strand the lock.
+        if self.handle is not None:
+            os.close(self.handle)
+            self.handle = None
+        self.path.unlink(missing_ok=True)
+        return False
