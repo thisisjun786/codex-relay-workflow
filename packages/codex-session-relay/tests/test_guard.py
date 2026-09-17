@@ -604,6 +604,11 @@ class ReviewRegressions(GuardTestCase):
         self.assertEqual(verdict["observation"], "state_unreadable")
         self.assertIn("workspace", verdict["reason"])
         self.assertEqual(verdict["decision"], guard.RELEASE)
+        # And nothing was written, because there is nowhere to write it: selection produced no
+        # assignment directory, and both recording paths are guarded by having one. Asserted so the
+        # invariant that says so stays checked rather than merely claimed - the previous wording
+        # promised persistence unconditionally and this is the case that does not have it.
+        self.assertIsNone(verdict.get("recordedAs"))
 
 
 class ReceiptsAreBoundToTheRevisionTheyWereComputedOver(GuardTestCase):
