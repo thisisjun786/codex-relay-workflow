@@ -791,18 +791,23 @@ def _sandbox_summary(row) -> dict:
     participant's line, never the store identity and access evidence standing beside it.
 
     Readable is not the same as deliverable, and the difference is the whole point of the
-    field. `normalise_policy` validates shape and fills defaults but accepts any type string,
-    while delivery separately needs that type to have a resumable spelling in
-    RESUME_SANDBOX_MODE - and the two sets are not the same. `externalSandbox` has defaults,
-    so it normalises cleanly, and has no resumable mode, so `require_usable()` refuses the row
-    and no sandbox is sent at all. Reporting it as what the adapter would carry would have an
-    operator read access as fine and go looking somewhere else. So the recorded values are
-    still shown - they are what the row says - and `deliverable` says whether a send can
-    actually carry them.
+    field. A row can parse, normalise and still be refused before any transport call, in
+    which case no sandbox goes on the wire at all - and reporting it as what the adapter
+    would carry tells an operator access is fine for a participant whose sends are never
+    made. So the recorded values are still shown, because they are the only clue to WHY
+    delivery refuses this participant, and `deliverable` says whether a send can carry them.
+
+    That question is asked of delivery's own validator rather than answered here. Two earlier
+    versions of this re-derived the rule and were wrong in the same direction twice: the
+    first checked neither gate, the second checked the sandbox mode and named the result
+    after all of them, while `require_usable()` independently rejects any record missing a
+    REQUIRED field first. Calling it is the only form that cannot drift from it - the reason
+    and the wording a receipt reports are then literally the ones that refused the send.
     """
     import json
 
-    from .settings import RESUME_SANDBOX_MODE, normalise_policy
+    from .errors import DeliveryRefused
+    from .settings import TaskSettings, normalise_policy
 
     try:
         settings = json.loads(row["settings"])
@@ -817,21 +822,30 @@ def _sandbox_summary(row) -> dict:
     policy = normalise_policy(settings.get("sandbox"))
     if policy is None:
         return {"readable": False, "detail": "the recorded sandbox policy cannot be read"}
+    view = TaskSettings(settings)
+    refused = None
+    try:
+        view.require_usable()
+    except DeliveryRefused as refusal:
+        refused = refusal
+    except Exception as error:  # noqa: BLE001 - total, like everything else in this helper
+        # The validator is not written to be fed hand-edited rows, and a diagnosis must not
+        # die on one. An unexpected failure is still a refusal, reported as what it was.
+        refused = DeliveryRefused(None, f"{type(error).__name__}: {error}")
     cwd = settings.get("cwd")
-    mode = policy.get("type")
-    resume = RESUME_SANDBOX_MODE.get(mode)
     return {
         "readable": True,
-        "deliverable": resume is not None,
-        # What a send would really put on the wire, which is the question behind all of this.
-        # None means nothing goes on it, because delivery refuses the row rather than
-        # downgrading it to some other sandbox.
-        "resumeMode": resume,
-        "detail": None if resume is not None else (
-            f"delivery has no resumable mode for {mode!r}, so it refuses this record and"
-            " sends no sandbox at all"
+        "deliverable": refused is None,
+        # Which gate refused, in delivery's own vocabulary, so a receipt and a delivery
+        # journal name the same thing.
+        "refusedBy": None if refused is None else (
+            refused.reason.value if refused.reason else "unexpected"
         ),
-        "mode": mode,
+        "detail": None if refused is None else refused.detail,
+        # What a send would really put on the wire. None whenever the record is refused,
+        # because delivery sends no sandbox at all rather than downgrading to another one.
+        "resumeMode": view.sandbox_mode() if refused is None else None,
+        "mode": policy.get("type"),
         "writableRoots": policy.get("writableRoots"),
         "networkAccess": policy.get("networkAccess"),
         "excludeTmpdirEnvVar": policy.get("excludeTmpdirEnvVar"),

@@ -1133,6 +1133,18 @@ class ParticipantAccessReceipts(CliBase):
     the adapter reads it, and setting only --state lets the store and the ledger diverge. The
     real state directory under the user's home is never selected by any of these runs.
 
+    HOW THAT IS MEASURED, because the obvious way is wrong here. Snapshotting the real state
+    directory before and after a suite run does NOT establish isolation on a host where
+    anything else touches it: on 2026-09-17 that directory grew WAL and shared-memory
+    sidecars across all three of its stores while this suite was not running at all, in a
+    100-second control with nothing else started. Three bisections each blamed a different
+    test file, because the external writes simply landed during whichever file was running.
+    A before/after snapshot therefore fails for the wrong reason, the way a vacuous
+    assertion passes for the wrong one. What this class relies on instead is per-run
+    attribution: every participant here is given its own HOME and its own explicit --state,
+    so the real directory is never selected, and that is a property of the arguments rather
+    than of what the filesystem happened to do.
+
     WHAT THIS DOES NOT COVER. The participants here are three processes with three
     environments, not three genuinely different sandboxes: this host runs them all under the
     same kernel policy, so the receipts prove the store is shared and that each process really
@@ -1312,61 +1324,78 @@ class ParticipantAccessReceipts(CliBase):
         self.assertIs(sandbox["excludeTmpdirEnvVar"], False)
         self.assertIs(sandbox["excludeSlashTmp"], False)
 
-    def test_a_sandbox_delivery_cannot_carry_is_not_reported_as_one_it_would(self):
+    def test_a_record_delivery_cannot_carry_is_not_reported_as_one_it_would(self):
         """Readable is not deliverable, and this field is documented as the second one.
 
-        `normalise_policy` accepts any type string; delivery separately needs that type to
-        have a resumable spelling, and the two sets are not the same. `externalSandbox` has
-        defaults so it normalises cleanly, and no resumable mode, so `require_usable()`
-        refuses the row and no sandbox is sent at all. Reported as the sandbox the adapter
-        would carry, it tells an operator access is fine for a participant whose sends will
-        never be made - so they go looking somewhere else for the cause.
+        `require_usable()` has more than one gate and they refuse independently: a record
+        missing any REQUIRED field is rejected BEFORE the sandbox type is looked at. Both
+        cases below normalise cleanly and neither reaches the wire, so reporting either as
+        the sandbox the adapter would carry tells an operator access is fine for a
+        participant whose sends are never made.
 
-        Written past the validating recorder deliberately: registration refuses this policy,
-        so the only way a store holds one is an older writer or a hand edit, which is exactly
-        the case this helper says it supports.
+        Both are here because the two earlier versions of this field each caught one gate and
+        missed the other. A single case would pass while the field still lied.
+
+        Written past the validating recorder deliberately: registration refuses both, so the
+        only way a store holds one is an older writer or a hand edit - which is exactly the
+        case this helper says it supports.
         """
         from pathlib import Path
 
         from codex_session_relay.store import Store
 
         self.seeded()
-        stale = dict(self.settings(self.root), sandbox={"type": "externalSandbox"})
-        store = Store(Path(self.tmp) / "relay.sqlite3")
-        self.addCleanup(store.close)
-        with store.transaction() as db:
-            db.execute(
-                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
-                (json.dumps(stale), CHILD),
-            )
-        store.db.commit()
+        unsupported = dict(self.settings(self.root), sandbox={"type": "externalSandbox"})
+        # A supported sandbox, but the record around it is incomplete. This is the gate
+        # require_usable() reaches FIRST, and the one a sandbox-only check walks past.
+        incomplete = dict(self.settings(self.root))
+        del incomplete["cwd"]
 
-        receipt = self.participant("doctor", state=self.tmp, pin=self.tmp)["accessReceipt"]
+        cases = {
+            "an unsupported sandbox type": (unsupported, "unsupported_sandbox_type"),
+            "a record missing a required field": (incomplete, "settings_incomplete"),
+        }
+        for label, (stale, expected_reason) in cases.items():
+            with self.subTest(refusal=label):
+                store = Store(Path(self.tmp) / "relay.sqlite3")
+                with store.transaction() as db:
+                    db.execute(
+                        "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                        (json.dumps(stale), CHILD),
+                    )
+                store.db.commit()
+                store.close()
 
-        child = receipt["recordedSandbox"]["participants"][CHILD]
-        parent = receipt["recordedSandbox"]["participants"][PARENT]
-        # The defect stated as what it is: a participant delivery refuses outright was
-        # reported exactly like one it can serve, with nothing anywhere in the row to tell
-        # them apart. Asserted before the individual fields so the failure says that.
-        signal = ("deliverable", "resumeMode")
-        self.assertNotEqual(
-            {key: child.get(key) for key in signal},
-            {key: parent.get(key) for key in signal},
-            "a refused sandbox is reported exactly like one a send can carry",
-        )
-        # The row is readable, and what it records is still shown - dropping it would lose the
-        # only clue to why delivery refuses this participant.
-        self.assertTrue(child["readable"], child)
-        self.assertEqual(child["mode"], "externalSandbox", child)
-        # But nothing goes on the wire for it, and the receipt has to say so.
-        self.assertFalse(child["deliverable"], child)
-        self.assertIsNone(child["resumeMode"], child)
-        self.assertIn("no resumable mode", child["detail"])
+                receipt = self.participant(
+                    "doctor", state=self.tmp, pin=self.tmp,
+                )["accessReceipt"]
+                child = receipt["recordedSandbox"]["participants"][CHILD]
+                parent = receipt["recordedSandbox"]["participants"][PARENT]
 
-        # And the participant delivery can serve is still reported as one it can.
-        self.assertTrue(parent["deliverable"], parent)
-        self.assertEqual(parent["resumeMode"], "workspace-write")
-        self.assertIsNone(parent["detail"])
+                # The defect stated as what it is: a participant delivery refuses outright
+                # was reported exactly like one it can serve, with nothing in the row to
+                # tell them apart. Asserted first so the failure says that, not KeyError.
+                signal = ("deliverable", "refusedBy", "resumeMode")
+                self.assertNotEqual(
+                    {key: child.get(key) for key in signal},
+                    {key: parent.get(key) for key in signal},
+                    "a refused record is reported exactly like one a send can carry",
+                )
+                self.assertFalse(child["deliverable"], child)
+                # Delivery's own vocabulary, so a receipt and a delivery journal agree.
+                self.assertEqual(child["refusedBy"], expected_reason, child)
+                self.assertIsNone(child["resumeMode"], "a refused record sends no sandbox")
+                self.assertTrue(child["detail"], child)
+                # The row stays readable and what it records is still shown: dropping it
+                # would lose the only clue to why delivery refuses this participant.
+                self.assertTrue(child["readable"], child)
+                self.assertEqual(child["mode"], stale["sandbox"]["type"], child)
+
+                # And the participant delivery can serve is still reported as one it can.
+                self.assertTrue(parent["deliverable"], parent)
+                self.assertIsNone(parent["refusedBy"], parent)
+                self.assertEqual(parent["resumeMode"], "workspace-write")
+                self.assertIsNone(parent["detail"])
 
     def test_one_unreadable_participant_does_not_take_the_diagnosis_with_it(self):
         """A damaged row is exactly when the rest of the report is worth most.
