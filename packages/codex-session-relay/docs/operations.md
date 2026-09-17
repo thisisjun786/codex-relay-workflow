@@ -98,14 +98,22 @@ created.
 
 A path string is not proof: symlinks, bind mounts and per-sandbox mounts all make equal
 paths unequal and unequal paths equal. A stored identifier alone is not proof either,
-because copying the database copies the identifier.
+because copying the database copies the identifier. A device and inode pair is conclusive
+when it differs and insufficient when it agrees, because one inode can have more than one
+name and SQLite derives the write-ahead log from the path a connection opens.
 
 | Evidence | Verdict |
 |---|---|
 | a nonce written by one participant is readable by the other | proven |
-| equal store id and equal device/inode | proven |
+| equal store id and equal device/inode, for an inode with one name | proven |
 | equal store id, different inode, no nonce | unproven - a copy is possible |
+| an inode with more than one name | unproven - the peer may have opened a different name |
 | different store id | mismatch |
+
+Insufficient evidence is decided before agreeing evidence, so an inode with more than one
+name is unproven even when a nonce was found: the nonce says the peer's write reached this
+file and cannot say which name the peer keeps writing through. `compare_store` grades all
+of it.
 
 `doctor --expect-store <id>` exits non-zero on a mismatch. An unproven result is never
 reported as healthy.

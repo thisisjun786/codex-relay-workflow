@@ -845,13 +845,19 @@ class Store:
 
         The device and inode come from the RESOLVED path, so a symlink or a bind mount that
         reaches the same bytes compares equal while two genuinely different files do not.
+
+        The number of names the inode has travels with them, because the pair alone cannot
+        say whether another participant opened THIS name or another one for the same file.
+        `compare_store` is where that is graded.
         """
         try:
             real = self.path.resolve()
             info = os.stat(real)
             device, inode, real_path = info.st_dev, info.st_ino, str(real)
+            links = info.st_nlink
         except OSError:
             device = inode = real_path = None
+            links = None
         return {
             "exists": True,
             "storeId": self.identity,
@@ -860,6 +866,7 @@ class Store:
             "realPath": real_path,
             "device": device,
             "inode": inode,
+            "links": links,
             "schemaVersion": self.meta("version"),
         }
 
@@ -935,7 +942,8 @@ def probe(selection: StateSelection) -> dict:
     }
     store = {
         "exists": False, "storeId": None, "createdAt": None, "dbPath": str(db_path),
-        "realPath": None, "device": None, "inode": None, "schemaVersion": None,
+        "realPath": None, "device": None, "inode": None, "links": None,
+        "schemaVersion": None,
     }
 
     try:
@@ -958,6 +966,9 @@ def probe(selection: StateSelection) -> dict:
         access["dbExists"] = store["exists"] = True
         store["realPath"] = str(db_path.resolve())
         store["device"], store["inode"] = info.st_dev, info.st_ino
+        # Names for this inode, counted because a shared pair does not say the other
+        # participant opened the same name. Graded in compare_store.
+        store["links"] = info.st_nlink
     except OSError as error:
         if access["directoryExists"]:
             notes.append(f"database stat failed: {type(error).__name__}: {error}")
@@ -1010,21 +1021,51 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
     so any command that reaches for it to READ leaves a fully formed relay database behind.
     For diagnosis that is a side effect the command promised not to have: pointing it at an
     empty, legacy or unrelated file would silently adopt it. Every error becomes a field.
+
+    The identity of the file the rows came from is measured here and returned with them. A
+    caller that stat'd the path earlier cannot otherwise tell that the rows arrived from a
+    replacement: comparing the store id does not settle it, because the id is minted once and
+    travels with a copy of the bytes.
     """
     db_path = selection.db_path
+
+    def identity():
+        try:
+            info = os.stat(db_path)
+        except OSError:
+            return None
+        return {"device": info.st_dev, "inode": info.st_ino, "links": info.st_nlink}
+
+    unknown = {"device": None, "inode": None, "links": None}
+    opened = identity()
     try:
         connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
     except (OSError, sqlite3.Error, ValueError) as error:
-        return {"readable": False, "rows": [],
+        return {**unknown, "readable": False, "rows": [],
                 "detail": f"{type(error).__name__}: {error}"}
     try:
         connection.row_factory = sqlite3.Row
         rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
     except sqlite3.Error as error:
         connection.close()
-        return {"readable": True, "rows": [], "detail": f"{type(error).__name__}: {error}"}
+        return {**unknown, "readable": True, "rows": [],
+                "detail": f"{type(error).__name__}: {error}"}
     connection.close()
-    return {"readable": True, "rows": rows, "detail": None}
+    closed = identity()
+    if opened is None or closed is None:
+        return {**unknown, "readable": True, "rows": [],
+                "detail": "the database could not be identified while it was being read"}
+    if (opened["device"], opened["inode"]) != (closed["device"], closed["inode"]):
+        # A rename over this path during the read. The rows are from one file and any
+        # comparison a caller makes is against another, which is worth a field rather than
+        # rows a caller cannot attribute.
+        return {**unknown, "readable": True, "rows": [],
+                "detail": (
+                    f"the database was replaced while it was being read: device:inode"
+                    f" {opened['device']}:{opened['inode']} became"
+                    f" {closed['device']}:{closed['inode']}"
+                )}
+    return {**closed, "readable": True, "rows": rows, "detail": None}
 
 
 def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
@@ -1061,6 +1102,13 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     happened to succeed can never talk a mismatch down. Absence is never agreement: a store
     that cannot state its identity is unproven, not proven, because the criterion is that a
     different database must never be reported as healthy.
+
+    What each piece of evidence can carry differs, and the grades follow that. A store id is
+    minted once and copied with the bytes, so agreement is never proof. A device and inode
+    pair is conclusive when it DIFFERS and insufficient when it agrees, because one inode can
+    have more than one name. A nonce is live evidence that the other participant's write
+    landed in the file being read - the strongest of the three, and still blind to the name
+    the peer opened, which is why the name count is graded beside it rather than inside it.
     """
     reasons = []
     if expect_store is not None:
@@ -1091,6 +1139,26 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
             reasons.append((PROVEN, "a nonce written by another participant is readable here"))
         else:
             reasons.append((MISMATCH, "a nonce written by another participant is not here"))
+
+    if reasons:
+        # SQLite derives -wal and -shm from the path a connection opens, so two names for one
+        # inode are two write-ahead logs. Measured on this host on 2026-09-17: with a store
+        # open on one name, a read through a hardlinked second name failed with
+        # `OperationalError: disk I/O error` while the first connection's log was live, and
+        # after that connection closed and checkpointed the second name grew its own -wal and
+        # -shm. Two participants can therefore agree on device, inode AND store id, and read a
+        # nonce one of them wrote, while still not writing into one live store.
+        names = store.get("links")
+        if names is None:
+            reasons.append((
+                UNPROVEN, "the number of names this database has could not be measured",
+            ))
+        elif names > 1:
+            reasons.append((UNPROVEN, (
+                f"this database has {names} names, so a shared device and inode cannot say"
+                " which one the other participant opened, and each name carries its own"
+                " write-ahead log"
+            )))
 
     if not reasons:
         return {"sameStore": UNPROVEN, "detail": "no expectation was supplied to compare against"}

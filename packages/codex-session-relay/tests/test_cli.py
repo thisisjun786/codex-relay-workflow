@@ -1152,9 +1152,13 @@ class ParticipantAccessReceipts(CliBase):
     correctly. The recorded sandbox each receipt carries is the settings the adapter would
     send with, which is the value a denial would have to be explained against.
 
-    The device and inode pair is also namespace-local. These participants are co-located, so
-    it settles identity for them; across mount namespaces or hosts it does not, and
-    `store-challenge` with `doctor --expect-nonce` is the mechanism that does.
+    The device and inode pair is decisive in one direction only. A DIFFERENT pair means a
+    different file and that is conclusive; an agreeing pair is not sufficient for the same
+    one. It is namespace-local, so participants in separate mount namespaces or on different
+    hosts can hold one pair while sharing nothing, and a hardlink gives one inode a second
+    name that carries its own write-ahead log. `store-challenge` with `doctor --expect-nonce`
+    is what settles a shared store, and `compare_store` (store.py) is where each of these is
+    graded.
     """
 
     def probe_socket(self):
@@ -1414,6 +1418,52 @@ class ParticipantAccessReceipts(CliBase):
                 self.assertIsNone(parent["refusedBy"], parent)
                 self.assertEqual(parent["resumeMode"], "workspace-write")
                 self.assertIsNone(parent["detail"])
+
+    def test_a_store_replaced_by_a_copy_under_the_read_is_reported_not_served(self):
+        """The receipt's own mid-command replacement check, against the case it missed.
+
+        The identity and the participants come out of one read so that an atomic replacement
+        between two opens cannot pair one store's identity with another store's rows. That
+        check compared store ids, and a COPY carries the store id: the row is minted once and
+        copied with the bytes, which `test_a_copy_keeps_the_identifier_and_is_not_the_same_store`
+        (test_store.py) already states. So the comparison that exists to catch a replacement
+        was satisfied by a replacement made with a copy.
+
+        The replacement here happens between the probe and the read for real - the report
+        passed in is the one measured before it - which is the window the check exists for.
+        """
+        from types import SimpleNamespace
+
+        from codex_session_relay.cli import Services, _access_receipt
+        from codex_session_relay.store import probe, resolve_state_dir
+
+        state = self.seeded()
+        selection = resolve_state_dir(state, None)
+        measured = probe(selection)
+        self.assertTrue(measured["store"]["storeId"], measured)
+
+        database = os.path.join(state, "relay.sqlite3")
+        replacement = os.path.join(state, "replacement.sqlite3")
+        shutil.copy(database, replacement)
+        os.replace(replacement, database)
+
+        # Asserted, not assumed: a copy that had lost the identity row, or one that landed on
+        # the same inode, would make the receipt below right for a reason this is not testing.
+        swapped = probe(selection)["store"]
+        self.assertEqual(
+            swapped["storeId"], measured["store"]["storeId"],
+            "the replacement is not a real copy, so nothing here is about a copy",
+        )
+        self.assertNotEqual(swapped["inode"], measured["store"]["inode"])
+
+        receipt = _access_receipt(Services(SimpleNamespace(state=state, socket=None)), measured)
+
+        recorded = receipt["recordedSandbox"]
+        self.assertFalse(
+            recorded["available"],
+            "rows read from a file that replaced the measured one were served as its own",
+        )
+        self.assertIn("inode", recorded["detail"], recorded)
 
     def test_one_unreadable_participant_does_not_take_the_diagnosis_with_it(self):
         """A damaged row is exactly when the rest of the report is worth most.

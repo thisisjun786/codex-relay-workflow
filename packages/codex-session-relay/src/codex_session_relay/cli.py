@@ -880,19 +880,21 @@ def _access_receipt(services, report) -> dict:
     different sandboxes. The device and inode are what actually answer it, which is why they
     are here beside the path rather than instead of it.
 
-    They answer it only within one filesystem namespace, though. Participants in separate
-    mount namespaces, or on different hosts, can hold the same device and inode while sharing
-    nothing at all - so this pair is evidence for co-located participants and not a proof
-    across that boundary. `store-challenge` and `doctor --expect-nonce` are what settle it
-    there: a value one participant writes and another reads back proves a shared store however
-    the paths and the mounts are arranged.
+    The pair is decisive in one direction only, and `compare_store` (store.py) grades it that
+    way. A DIFFERENT pair means a different file; an agreeing pair is not sufficient for the
+    same one. It is namespace-local, so participants in separate mount namespaces or on
+    different hosts can hold one pair while sharing nothing, and one inode can have more than
+    one name - which is why `links` is reported beside it. `store-challenge` and
+    `doctor --expect-nonce` are what settle a shared store: a value one participant writes
+    and another reads back, however the paths and the mounts are arranged.
 
     The identity and the participants come out of ONE read for the same reason. Collected by
     two separate opens, an atomic replacement between them would pair one store's identity
     with another store's participants and the receipt would say nothing about it - a mismatch
     invisible in exactly the comparison this exists to support. One statement carries both,
-    and the store id it returns is checked against the one the probe stat'd: if those differ
-    the file moved mid-command, and that is reported instead of the participants.
+    and what it returns is checked against what the probe measured - the store id AND the
+    device and inode the rows were actually read from. The id alone was not that check: it is
+    minted once and travels with a copy of the bytes, so a replacement by a copy satisfied it.
     """
     from .store import read_only_rows
 
@@ -919,12 +921,22 @@ def _access_receipt(services, report) -> dict:
             seen = next(
                 (row["settings"] for row in rows["rows"] if row["kind"] == "meta"), None
             )
+            read_from = (rows["device"], rows["inode"])
+            measured = (store["device"], store["inode"])
             if seen != store["storeId"]:
                 # The file this read opened is not the file the probe measured. Reporting
                 # both halves as one receipt is the failure; saying so is not.
                 recorded["detail"] = (
                     f"the store changed under this command: identity {store['storeId']!r}"
                     f" was measured, settings were read from {seen!r}"
+                )
+            elif read_from != measured:
+                # Same identity, different file: a copy carries the store id. This is the
+                # replacement the id comparison above cannot see.
+                recorded["detail"] = (
+                    "the store changed under this command: device:inode"
+                    f" {measured[0]}:{measured[1]} was measured, rows were read from"
+                    f" {read_from[0]}:{read_from[1]}"
                 )
             else:
                 recorded["available"] = True
@@ -938,6 +950,9 @@ def _access_receipt(services, report) -> dict:
         "realPath": store["realPath"],
         "device": store["device"],
         "inode": store["inode"],
+        # How many names this inode has. One agreeing pair is not one live store if the peer
+        # may have opened another name for it; compare_store grades that.
+        "links": store["links"],
         "selectedBy": {
             "source": services.selection.source,
             "detail": services.selection.detail,

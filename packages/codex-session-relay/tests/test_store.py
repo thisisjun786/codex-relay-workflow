@@ -512,6 +512,10 @@ class Identity(unittest.TestCase):
         mine = self.store.locate()
         through_alias = probe(resolve_state_dir(alias))["store"]
         self.assertNotEqual(through_alias["dbPath"], mine["dbPath"])
+        # One name, reached by two spellings. This is the case the device/inode pair is
+        # proof for, and it is here beside the hardlink case below to keep the difference
+        # between them visible: there the inode has a second name, here it does not.
+        self.assertEqual(through_alias["links"], 1, through_alias)
         self.assertEqual(
             compare_store(
                 through_alias, expect_store=mine["storeId"],
@@ -519,6 +523,80 @@ class Identity(unittest.TestCase):
             )["sameStore"],
             "proven",
         )
+
+    def test_a_second_name_for_one_inode_is_not_proof_of_a_shared_store(self):
+        """A hardlink agrees on every identity this compared, and is still not one store.
+
+        Measured here on 2026-09-17 rather than reasoned about. With a store open on
+        `a/relay.sqlite3` and a hardlink at `b/relay.sqlite3`: `st_nlink` is 2 and the
+        device, inode and store id all agree - the first two are properties of the one inode
+        and the third is a row inside it, minted once.
+        A read through the second name while the first connection's write-ahead log was live
+        failed with `OperationalError: disk I/O error` and `probe` returned `storeId: None`;
+        after the first connection closed and checkpointed, the same read succeeded and the
+        second directory had grown its own `relay.sqlite3-wal` and `-shm`. Two names are two
+        write-ahead logs, so agreeing on the inode does not say the two participants are
+        writing and reading one live store.
+
+        This is why the pair is graded the way it is: it is decisive about a DIFFERENT file
+        and not sufficient for the same one. A nonce does not close this either - once the
+        first connection checkpoints, a nonce written through one name is readable through
+        the other - so the name count is measured rather than inferred from either.
+        """
+        mine = self.store.locate()
+        # Closed first so the committed content is in the main file: a probe through the
+        # second name during a live write-ahead log cannot read the store id at all, and
+        # then this case would pass because the identity was MISSING rather than because a
+        # shared inode was refused as proof.
+        self.store.close()
+        other = os.path.join(self.tmp, "hardlink")
+        os.makedirs(other)
+        os.link(os.path.join(self.a, "relay.sqlite3"), os.path.join(other, "relay.sqlite3"))
+
+        theirs = probe(resolve_state_dir(other))["store"]
+
+        graded = compare_store(
+            theirs, expect_store=mine["storeId"],
+            expect_inode=f"{mine['device']}:{mine['inode']}",
+        )
+
+        # The defect first, so a failure says what it is rather than naming a missing field.
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "a second name for one inode was graded as proof of a shared live store",
+        )
+        self.assertIn("names", graded["detail"], graded)
+
+        # And the case really is the one described: every identity agrees, only the number
+        # of names for the inode does not.
+        self.assertEqual(theirs["storeId"], mine["storeId"], "the identities must agree")
+        self.assertEqual(
+            (theirs["device"], theirs["inode"]), (mine["device"], mine["inode"]),
+            "one inode, or this case is not the one being tested",
+        )
+        self.assertNotEqual(theirs["realPath"], mine["realPath"])
+        self.assertEqual(theirs["links"], 2, theirs)
+
+    def test_a_nonce_does_not_talk_the_second_name_up_into_proof(self):
+        """The nonce cannot see this, so it must not outvote it.
+
+        A nonce written through one name and read through the other is found once the
+        writer has checkpointed, which says they shared the file at that moment and says
+        nothing about the separate write-ahead logs they keep writing into. Absence is never
+        agreement here for the same reason a missing identity is not.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        other = os.path.join(self.tmp, "hardlink")
+        os.makedirs(other)
+        os.link(os.path.join(self.a, "relay.sqlite3"), os.path.join(other, "relay.sqlite3"))
+
+        found = nonce_lookup(resolve_state_dir(other), written["nonce"])
+        self.assertTrue(found["found"], "the nonce is readable through the second name")
+
+        graded = compare_store(probe(resolve_state_dir(other))["store"], nonce=found)
+        self.assertEqual(graded["sameStore"], "unproven", graded)
+        self.assertIn("names", graded["detail"], graded)
 
     def test_a_store_with_no_identity_is_never_proven_equal(self):
         """Absence must not become agreement; an old store predates the identity rows."""
