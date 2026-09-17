@@ -691,6 +691,57 @@ class TheWriterSatisfiesItsOwnReader(unittest.TestCase):
         self.assertFalse(path.exists())
         self.assertNotIn(completion.CONFIG_WOULD_NOT_BE_READABLE, completion.CONFIG_SETTLED)
 
+    def test_a_write_that_could_not_be_read_back_does_not_settle(self):
+        """The write landed; what is in the file now was not confirmed to be it. Registering a
+        hook against it would be the same hole the write-before-register order closes, one step
+        later."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            wanted = completion.configuration(relay=str(home / "relay"),
+                                              marker_root=str(home / "marker"),
+                                              codex_home=str(home), environ={})
+            real = reading.read_json
+            calls = []
+
+            def flaky(path, what, **kwargs):
+                calls.append(path)
+                if len(calls) >= 3:
+                    return reading.Reading(state=reading.UNREADABLE, source=path,
+                                           exception="TypeError", at="completion.py:1",
+                                           detail="the readback could not be read")
+                return real(path, what, **kwargs)
+
+            with mock.patch.object(completion.reading, "read_json", side_effect=flaky):
+                answer = completion.write_configuration(
+                    completion.configuration_path(home), wanted, apply=True)
+            self.assertTrue(completion.configuration_path(home).exists(),
+                            "the write really did land, which is why it is reported as applied")
+        self.assertEqual(answer["outcome"], completion.CONFIG_APPLIED_UNVERIFIED)
+        self.assertTrue(answer["applied"])
+        self.assertTrue(answer["wrote"])
+        self.assertFalse(answer["readBack"])
+        self.assertNotIn(completion.CONFIG_APPLIED_UNVERIFIED, completion.CONFIG_SETTLED)
+
+    def test_an_unverified_write_stops_the_hook_from_being_registered(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
+            emitted = []
+            with mock.patch.object(completion, "write_configuration",
+                                   return_value={"outcome": completion.CONFIG_APPLIED_UNVERIFIED,
+                                                 "applied": True, "wrote": True,
+                                                 "readBack": False}), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+            self.assertFalse((home / "hooks.json").exists())
+        self.assertEqual(code, 1)
+        self.assertIsNone(emitted[0]["result"])
+
     def test_a_non_positive_budget_is_refused_before_anything_is_installed(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

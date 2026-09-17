@@ -1118,6 +1118,12 @@ an explicit `--hook-command`. Settings, budget and event are three checks of one
 kind is that an install must not succeed and leave a hook that is registered, inert and silent
 about it.
 
+The read-back belongs to that same kind. Settings that were written and could not be read back
+as written answer `config_applied_unverified`: applied, because reporting a landed write as
+nothing written invites a retry over a file that now exists, and unsettled, because a hook must
+not be registered against settings nobody has read. Which outcomes settle follows the read-back
+rather than the write's intention.
+
 The registered command is a command line, so its two words are joined with shell quoting and
 read back by the same rules. Concatenating them raw fails in two sizes: a path holding a space
 is delivered as more words than it is, and a path holding shell syntax is delivered as syntax

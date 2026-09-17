@@ -210,16 +210,24 @@ CONFIG_UNCHANGED = "config_unchanged"
 CONFIG_WOULD_CREATE = "config_would_create"
 CONFIG_DIFFERS = "config_differs"
 CONFIG_CHANGED_UNDERNEATH = "config_changed_underneath"
+# The write landed and could not be confirmed. Reported as applied, because saying nothing was
+# written would invite a retry over a file that now exists, and reported as unsettled, because
+# the settings a hook is about to be registered against have not been read back.
+CONFIG_APPLIED_UNVERIFIED = "config_applied_unverified"
 # The writer refusing to write a document its own reader would reject. Without it an install
 # reports success and every Stop afterwards reads the settings it just wrote as malformed,
 # which is a hook that is registered, inert, and says so nowhere anybody looks.
 CONFIG_WOULD_NOT_BE_READABLE = "config_would_not_be_readable"
 CONFIG_WRITE_OUTCOMES = (CONFIG_CREATED, CONFIG_UNCHANGED, CONFIG_WOULD_CREATE, CONFIG_DIFFERS,
-                         CONFIG_CHANGED_UNDERNEATH, CONFIG_WOULD_NOT_BE_READABLE)
+                         CONFIG_CHANGED_UNDERNEATH, CONFIG_APPLIED_UNVERIFIED,
+                         CONFIG_WOULD_NOT_BE_READABLE)
 
-# The outcomes that mean these settings now say what this install asked them to, or would with
-# --apply. Everything else, including every unusable reading, is a refusal, and the set is named
-# here so an exit status is derived from it rather than from a list kept equal by hand.
+# The outcomes that mean these settings were READ BACK saying what this install asked them to,
+# or would with --apply. Membership follows the read-back rather than the write's intention,
+# because a hook is about to be registered against whatever is in that file now, not against
+# what this command meant to put there. Everything else, including every unusable reading, is a
+# refusal, and the set is named here so an exit status is derived from it rather than from a
+# list kept equal by hand.
 CONFIG_SETTLED = (CONFIG_CREATED, CONFIG_UNCHANGED, CONFIG_WOULD_CREATE)
 
 # What status() answers with when it did not ask. Distinct from an absence, which is an answer.
@@ -815,6 +823,13 @@ def write_configuration(path, wanted, *, apply=False):
     answer["readBack"] = bool(back.usable and back.value == wanted)
     if not back.usable:
         answer["reading"] = back.refusal()
+    if not answer["readBack"]:
+        # The write landed; what is in the file now was not confirmed to be it. Left settled,
+        # this is the same hole the write-before-register order exists to close, one step later:
+        # a hook registered against settings nobody read back.
+        answer["outcome"] = CONFIG_APPLIED_UNVERIFIED
+        answer["detail"] = ("the settings were written and could not be read back as written;"
+                            " no hook should be registered against them until they can be")
     return answer
 
 
