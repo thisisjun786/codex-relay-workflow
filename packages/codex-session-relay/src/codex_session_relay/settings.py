@@ -76,6 +76,13 @@ UNVERIFIABLE_PERMISSION_PROFILE = "unverifiable_permission_profile"
 UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
 UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
 
+# The only approval policy a resume response may report. It is a VALUE constraint on the
+# recorded row rather than something a transformation can fail on: a host that preserves what
+# it was asked for returns what was recorded, so a row recording anything else is refused
+# after the resume and never reaches turn/start. Named here so the verification below and
+# `doctor`'s receipt read one definition instead of two spellings of it.
+AUTHORIZED_APPROVAL_POLICY = "never"
+
 
 def normalise_policy(policy):
     """Fill the declared defaults so an omitted default compares equal to an explicit one.
@@ -211,13 +218,13 @@ class TaskSettings:
             # Not the closed-channel case: a policy we cannot see is not a policy we know is
             # interactive. It withholds, and stays eligible for a bounded pre-send retry.
             return [{"code": SETTING_UNOBSERVABLE, "field": "approvalPolicy",
-                     "expected": "never", "returned": None}]
-        if returned_policy != "never":
+                     "expected": AUTHORIZED_APPROVAL_POLICY, "returned": None}]
+        if returned_policy != AUTHORIZED_APPROVAL_POLICY:
             # A granular policy is an object; it is never copied into the frozen record, which
             # types this field as string or null. Contract v1 admits only a plain string.
             label = returned_policy if isinstance(returned_policy, str) else "granular"
             found.append({"code": UNSUPPORTED_APPROVAL_POLICY, "field": "approvalPolicy",
-                          "expected": "never", "returned": label,
+                          "expected": AUTHORIZED_APPROVAL_POLICY, "returned": label,
                           "returnedShape": type(returned_policy).__name__})
             return found
 

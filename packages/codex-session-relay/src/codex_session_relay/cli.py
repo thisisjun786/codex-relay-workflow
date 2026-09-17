@@ -747,8 +747,11 @@ def cmd_store_identity(services, args) -> dict:
 def cmd_store_challenge(services, args) -> dict:
     """Write a nonce here, or look for one another participant wrote.
 
-    This is the only evidence that survives a copied database: the identifier inside a copy is
-    identical, but a value written AFTER the copy exists in exactly one of the two files.
+    It is the only LIVE evidence here: the identifier inside a copy is identical, while a
+    value written after the copy was taken exists in exactly one of the two files. That
+    ordering is what nothing enforces, though - a copy taken after the write carries the nonce
+    too - so `compare_store` grades a found nonce as proof only alongside an agreeing device
+    and inode, and `doctor --expect-nonce` on its own is unproven.
     """
     if args.write:
         return services.store.write_challenge(actor=args.actor or "cli")
@@ -776,6 +779,263 @@ def _ledger_location(services) -> dict:
     return {
         "configured": True, "directory": str(directory),
         "path": str(directory / f"operations-{endpoint}.sqlite3"), "split": split,
+    }
+
+
+def _sandbox_summary(row) -> dict:
+    """The sandbox the adapter would actually carry for one participant.
+
+    Read from the authorized settings the creation result reported, because that is what a
+    send actually sends. A policy file on disk may describe something else entirely, and the
+    question here is what this installation would really do, not what it is configured to do.
+
+    Normalised through the same helper delivery uses rather than read raw, for that same
+    reason. An authorized policy may legitimately omit a documented default -
+    `{"type": "workspaceWrite"}` passes `TaskSettings.require_usable()` - and the adapter then
+    applies `networkAccess: false`, empty writable roots and the two temporary-directory
+    flags. A receipt built from the raw JSON would report `networkAccess` as null for a
+    participant whose sends really do carry false, which is the opposite of what this field
+    exists to answer.
+
+    Total, like the helper it leans on. These rows can hold anything an older writer or a hand
+    edit left behind, and this is a diagnosis: one unreadable participant must cost that
+    participant's line, never the store identity and access evidence standing beside it.
+
+    Readable is not the same as deliverable, and the difference is the whole point of the
+    field. A row can parse, normalise and still be refused before its settings ever reach a
+    host, in which case no sandbox goes on the wire at all - and reporting it as what the
+    adapter would carry tells an operator access is fine for a participant whose sends are
+    never made. So the recorded values are still shown, because they are the only clue to WHY
+    delivery refuses this participant, and `deliverable` says whether a send can carry them.
+
+    The set is the constraints delivery imposes on the RECORDED row before turn/start, and it
+    has two kinds of member. A TRANSFORMATION can fail on the row by raising, so it is RUN
+    here rather than described: `TaskSettings.require_usable()` in
+    `DeliveryService._settings_for` (delivery.py), the resume-params construction in
+    `_guarded_send` (bridge_adapter.py), and `normalise_environments`, which is the one the
+    first two do not already reach. A VALUE CONSTRAINT cannot fail by raising: it exists only
+    as a comparison against a fixed value in the resume verification, so the recorded value is
+    compared against that same value instead.
+
+    The two are reported in different fields because they decide different things. A failing
+    transformation settles the send on the row alone - no host can consume
+    `runtimeWorkspaceRoots: 7` - so it makes `deliverable` false. A violated value constraint
+    settles only what a host that reports the setting BACK will do, and a host that replaces
+    it proceeds, so it lands in `refusedIfPreserved` and leaves `deliverable` describing the
+    preparation. Collapsing them cost a round in the other direction: the receipt denied a
+    send that today's delivery completes when the host normalises the value.
+
+    Five versions of this field were wrong the same way before those two sentences could be
+    written: each named the answer after the members it had been shown - the sandbox type,
+    then `require_usable()`, then the params construction, then the post-response half, then
+    the constraint that raises nothing at all. The set is not kept by hand here.
+    `test_every_transformation_a_send_applies_to_the_record_is_covered` (tests/test_cli.py)
+    derives both kinds from those two modules and fails if a member of either is added that
+    this does not reach.
+
+    What it does NOT answer is whether the host accepts the parameters. The App Server's own
+    schema is not in this repository, so nothing here can say what it does with a recorded
+    `cwd: 7`: the params are built and sent, and the answer comes back from the wire.
+    `deliverable` is about the constraints delivery imposes on the row, and typing the
+    recorded fields locally would belong in `require_usable()` beside the policy rule.
+    """
+    import json
+
+    from .errors import DeliveryRefused, RefusalReason
+    from .settings import (
+        AUTHORIZED_APPROVAL_POLICY, TaskSettings, normalise_environments, normalise_policy,
+    )
+
+    try:
+        settings = json.loads(row["settings"])
+    except (TypeError, ValueError):
+        return {"readable": False, "detail": "the recorded settings are not valid JSON"}
+    if not isinstance(settings, dict):
+        # json.loads happily returns a list or a number, and .get raises on both.
+        return {
+            "readable": False,
+            "detail": f"the recorded settings are {type(settings).__name__}, not an object",
+        }
+    policy = normalise_policy(settings.get("sandbox"))
+    if policy is None:
+        return {"readable": False, "detail": "the recorded sandbox policy cannot be read"}
+    view = TaskSettings(settings)
+    refused = None
+    try:
+        view.require_usable()
+        # Not an inspection of the params: the construction a send performs, run for real. A
+        # record the validator accepts can still fail in it - runtimeWorkspaceRoots: 7 is
+        # present, so require_usable() passes, and then list(7) raises. The thread id is the
+        # one input that cannot change the answer: resume_params assigns it to
+        # params["threadId"] and reads nothing from it, so a placeholder can neither hide a
+        # failure nor invent one.
+        view.resume_params("doctor-probe-thread")
+        # The recorded half of what runs AFTER the response. `mismatches` needs a resume
+        # response and cannot be run here, but the transformations it applies to the recorded
+        # row can be, and this is the one the two calls above do not reach: environments is
+        # read only by the verification, so a value the completeness gate admits and the
+        # params never touch gets that far. Measured both ways - a response that reports its
+        # environment selection raises here, one that reports null withholds the send as
+        # environments_unknown - so no send completes for such a row either way.
+        normalise_environments(settings.get("environments"))
+    except DeliveryRefused as refusal:
+        refused = refusal
+    except Exception as error:  # noqa: BLE001 - total, like everything else in this helper
+        # The validator is not written to be fed hand-edited rows, and a diagnosis must not
+        # die on one. An unexpected failure is still a refusal, reported as what it was.
+        refused = DeliveryRefused(None, f"{type(error).__name__}: {error}")
+
+    # The constraint kind, reported BESIDE deliverable rather than folded into it, because it
+    # decides something different. A transformation that fails decides the send on the row
+    # alone: no host can rescue `runtimeWorkspaceRoots: 7`. This one does not. Measured: a
+    # resume that reports "on-request" back produces unsupported_approval_policy and no turn,
+    # while a host that answers "never" regardless returns no findings and the send proceeds.
+    # So a row recording another policy cannot be carried AS RECORDED, and folding that into
+    # `deliverable` would have the receipt deny a send that today's delivery would complete
+    # against a host that replaces the value.
+    recorded_policy = settings.get("approvalPolicy")
+    preserved = None
+    if recorded_policy != AUTHORIZED_APPROVAL_POLICY:
+        preserved = {
+            "field": "approvalPolicy",
+            # The finding code the resume verification reports for this, so a receipt and a
+            # delivery journal name it alike.
+            "refusedBy": RefusalReason.UNSUPPORTED_APPROVAL_POLICY.value,
+            "detail": (
+                f"the recorded approvalPolicy is {recorded_policy!r}; a resume that reports it"
+                f" back is refused, so only {AUTHORIZED_APPROVAL_POLICY!r} can be carried as"
+                " recorded and this row completes a send only against a host that replaces it"
+            ),
+        }
+    cwd = settings.get("cwd")
+    return {
+        "readable": True,
+        "deliverable": refused is None,
+        # The other kind of constraint: null when nothing in the row would be refused after a
+        # host reports it back, and otherwise the field, the code and why. Separate from
+        # `deliverable` on purpose - see the comment above the check.
+        "refusedIfPreserved": preserved,
+        # Which gate refused, in delivery's own vocabulary, so a receipt and a delivery
+        # journal name the same thing.
+        "refusedBy": None if refused is None else (
+            refused.reason.value if refused.reason else "unexpected"
+        ),
+        "detail": None if refused is None else refused.detail,
+        # What a send would really put on the wire. None whenever the record is refused,
+        # because delivery sends no sandbox at all rather than downgrading to another one.
+        "resumeMode": view.sandbox_mode() if refused is None else None,
+        "mode": policy.get("type"),
+        "writableRoots": policy.get("writableRoots"),
+        "networkAccess": policy.get("networkAccess"),
+        "excludeTmpdirEnvVar": policy.get("excludeTmpdirEnvVar"),
+        "excludeSlashTmp": policy.get("excludeSlashTmp"),
+        "cwd": cwd if isinstance(cwd, str) else None,
+        "recordedFrom": row["source"],
+        "recordedAt": row["recorded_at"],
+    }
+
+
+def _access_receipt(services, report) -> dict:
+    """One participant's observed answer to: which store is this, and may I use it?
+
+    Every field is measured rather than declared. The identity and the device/inode pair come
+    from the probe's own stat; the read and write answers come from a real read-only
+    connection and a real rolled-back write transaction, not from a permission bit; and the
+    sandbox comes from the settings the adapter would carry rather than from configuration.
+
+    It exists to be COMPARED. Two participants put their receipts side by side to find out
+    whether they are on one database or two, and a matching path does not settle that: two
+    spellings can be one file, and one spelling can be two files on different mounts or in
+    different sandboxes. The device and inode are what actually answer it, which is why they
+    are here beside the path rather than instead of it.
+
+    The pair is decisive in one direction only, and `compare_store` (store.py) grades it that
+    way. A DIFFERENT pair means a different file; an agreeing pair is not sufficient for the
+    same one. It is namespace-local, so participants in separate mount namespaces or on
+    different hosts can hold one pair while sharing nothing, and one inode can be reached at
+    more than one pathname, which is what decides the write-ahead log. `links` is reported
+    beside the pair because it catches one kind of second pathname, the hardlink; a bind mount
+    adds one without changing it, so a count of one settles nothing. What settles a shared
+    store is `store-challenge` and `doctor --expect-nonce` TOGETHER with the peer's
+    `--expect-inode`: the nonce is the live half, and since a copy taken after the challenge
+    carries it, the physical identity is the half that says the file is still the same one.
+
+    The identity and the participants come out of ONE read for the same reason. Collected by
+    two separate opens, an atomic replacement between them would pair one store's identity
+    with another store's participants and the receipt would say nothing about it - a mismatch
+    invisible in exactly the comparison this exists to support. One statement carries both,
+    and what it returns is checked against what the probe measured - the store id AND the
+    device and inode the rows were actually read from. The id alone was not that check: it is
+    minted once and travels with a copy of the bytes, so a replacement by a copy satisfied it.
+    """
+    from .store import read_only_rows
+
+    store, access = report["store"], report["access"]
+    recorded = {"available": False, "participants": {}, "detail": None}
+    if access["dbReadable"]:
+        # Read-only, through the same door the probe used. Opening a Store here would create
+        # and migrate one, which is the side effect doctor promises not to have.
+        rows = read_only_rows(
+            services.selection,
+            "SELECT 'meta' AS kind, key AS task_id, value AS settings,"
+            "       NULL AS source, NULL AS recorded_at"
+            "  FROM schema_meta WHERE key = 'store_id'"
+            " UNION ALL"
+            " SELECT 'settings', task_id, settings, source, recorded_at"
+            "   FROM authorized_settings"
+            " ORDER BY kind, task_id",
+        )
+        if not rows["readable"] or rows["detail"]:
+            recorded["detail"] = (
+                rows["detail"] or "the authorized settings could not be read"
+            )
+        else:
+            seen = next(
+                (row["settings"] for row in rows["rows"] if row["kind"] == "meta"), None
+            )
+            read_from = (rows["device"], rows["inode"])
+            measured = (store["device"], store["inode"])
+            if seen != store["storeId"]:
+                # The file this read opened is not the file the probe measured. Reporting
+                # both halves as one receipt is the failure; saying so is not.
+                recorded["detail"] = (
+                    f"the store changed under this command: identity {store['storeId']!r}"
+                    f" was measured, settings were read from {seen!r}"
+                )
+            elif read_from != measured:
+                # Same identity, different file: a copy carries the store id. This is the
+                # replacement the id comparison above cannot see.
+                recorded["detail"] = (
+                    "the store changed under this command: device:inode"
+                    f" {measured[0]}:{measured[1]} was measured, rows were read from"
+                    f" {read_from[0]}:{read_from[1]}"
+                )
+            else:
+                recorded["available"] = True
+                recorded["participants"] = {
+                    row["task_id"]: _sandbox_summary(row)
+                    for row in rows["rows"] if row["kind"] == "settings"
+                }
+    return {
+        "storeId": store["storeId"],
+        "dbPath": store["dbPath"],
+        "realPath": store["realPath"],
+        "device": store["device"],
+        "inode": store["inode"],
+        # How many names this inode has. One agreeing pair is not one live store if the peer
+        # may have opened another name for it; compare_store grades that.
+        "links": store["links"],
+        "selectedBy": {
+            "source": services.selection.source,
+            "detail": services.selection.detail,
+        },
+        "observedAccess": {
+            "read": access["dbReadable"],
+            "write": access["dbWritable"],
+            "directoryWritable": access["directoryWritable"],
+            "detail": access["detail"],
+        },
+        "recordedSandbox": recorded,
     }
 
 
@@ -855,6 +1115,9 @@ def cmd_doctor(services, args) -> dict:
     report["actorReachability"] = _reachability(services, report)
     report["contents"] = _contents(services, report)
     report["siblingStores"] = _sibling_stores(services)
+    # Emitted by every participant, so parent, child and daemon receipts can be compared
+    # against each other rather than each being read as healthy on its own.
+    report["accessReceipt"] = _access_receipt(services, report)
 
     nonce = nonce_lookup(services.selection, args.expect_nonce) if args.expect_nonce else None
     report["nonce"] = nonce
@@ -1881,19 +2144,29 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
     # straight back to the store that caused the refusal: a dead end wearing the label of an
     # alternative. Printed resolved for the same reason - quoting ~ stops the shell expanding
     # it, so the pasted command would not mean what it reads.
+    #
+    # resolve() rather than absolute(), because absolute() keeps dot segments: /x/a/../store
+    # and /x/store are one directory and one database, and comparing the spellings called
+    # them two. The question being asked here is whether this is the same STORE, not whether
+    # it is the same string.
     try:
-        resolved = Path(pinned).expanduser().absolute()
-    except RuntimeError:
+        resolved = Path(pinned).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
         # ~someone whose home this host cannot resolve. The variable is never validated at
         # startup when --state overrides it, so this is the first thing that touches it - and
         # a refusal payload that becomes a traceback leaves the operator with nothing at all.
         # Said rather than dropped: it is the value they set, and it is not usable.
+        #
+        # Wider than the one failure measured here, on purpose. Only RuntimeError reproduces
+        # on CPython 3.14.4 - an unsearchable parent returns the path rather than raising, and
+        # so does an over-long one - but resolve() touches the filesystem and this class of
+        # escape has already cost a refusal its whole payload once.
         lines.append(
             f"  {STATE_ENV} is set to {pinned!r}, which names a home directory that does not"
             " resolve on this host, so it is not offered as a candidate"
         )
         return lines
-    if resolved != Path(selection.path).expanduser().absolute():
+    if resolved != Path(selection.path).expanduser().resolve():
         lines.append(
             f"{_program()} --state={_quote(resolved)} --socket={_quote(wanted)} doctor"
         )

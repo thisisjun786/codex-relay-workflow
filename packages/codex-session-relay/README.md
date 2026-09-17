@@ -65,9 +65,14 @@ not see each other. The endpoint hash is derived from the socket path, so passin
 `--socket` is enough.
 
 `doctor` reports which rule won, the database it resolved to and the access this process really
-has. To prove two participants share one store rather than two copies of one, write a nonce with
-`store-challenge --write` and check it from the other side with `doctor --expect-nonce`; an
-identifier alone is copied along with the file. See [docs/operations.md](docs/operations.md).
+has. To prove two participants share one store rather than two copies of one, take
+`store-identity` on one side and write a nonce with `store-challenge --write`, then check both
+from the other side: `doctor --expect-inode <device>:<inode> --expect-nonce <nonce>`. Each half
+is necessary. An identifier is copied along with the file; a nonce is copied too when the copy
+is taken after the challenge was written; and a device and inode that agree do not say both
+processes opened the same pathname for that inode. Anything short of the pair is reported
+`unproven` and exits non-zero rather than being read as yes. See
+[docs/operations.md](docs/operations.md).
 
 ## Authorized execution settings
 

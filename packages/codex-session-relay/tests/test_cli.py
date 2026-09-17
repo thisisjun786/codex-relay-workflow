@@ -436,7 +436,14 @@ class Diagnosis(unittest.TestCase):
         self.assertIn("stateSelection", refused)
         self.assertIn("access", refused)
 
-    def test_a_nonce_proves_one_store_and_disproves_a_copy(self):
+    def test_a_nonce_and_the_physical_identity_prove_one_store_and_disprove_a_copy(self):
+        """Proof takes both, and either alone is refused rather than reported healthy.
+
+        A nonce says a write of the other participant's reached the file being read. A copy
+        taken AFTER the challenge was written carries it with the bytes, so that alone does
+        not say the two are one file now - the device and inode are what answer that. The copy
+        here is made BEFORE the write, which is why it lacks the nonce and is a mismatch.
+        """
         a, b = os.path.join(self.tmp, "a"), os.path.join(self.tmp, "b")
         mine = self.cli("store-identity", state=a)["store"]
         os.makedirs(b, exist_ok=True)
@@ -445,13 +452,22 @@ class Diagnosis(unittest.TestCase):
             if os.path.exists(source):
                 shutil.copy(source, os.path.join(b, f"relay.sqlite3{suffix}"))
         nonce = self.cli("store-challenge", "--write", "--actor", "parent", state=a)["nonce"]
+        pair = f"{mine['device']}:{mine['inode']}"
         proven = self.cli(
-            "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=a,
+            "doctor", "--expect-store", mine["storeId"], "--expect-inode", pair,
+            "--expect-nonce", nonce, state=a,
         )
         self.assertEqual(proven["sameStore"], "proven")
-        copied = self.cli(
-            "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=b,
+        # The nonce on its own is not proof, and unproven exits non-zero like a mismatch.
+        alone = self.cli(
+            "doctor", "--expect-store", mine["storeId"], "--expect-nonce", nonce, state=a,
             expect=2,
+        )
+        self.assertEqual(alone["sameStore"], "unproven")
+        self.assertIn("--expect-inode", alone["detail"])
+        copied = self.cli(
+            "doctor", "--expect-store", mine["storeId"], "--expect-inode", pair,
+            "--expect-nonce", nonce, state=b, expect=2,
         )
         self.assertEqual(copied["sameStore"], "mismatch")
         # Identifier alone cannot separate them, which is why it is graded unproven.
@@ -914,10 +930,11 @@ class ContestedSocket(CliBase):
     def test_a_pin_that_only_spells_the_same_directory_differently_is_not_a_candidate(self):
         """Offering a candidate has to mean offering a different store.
 
-        resolve_state_dir expands ~ and makes the path absolute before choosing, so
-        `~/pinned` and `/home/.../pinned` are one directory. Compared as raw text they look
-        like two, and the extra line resolves straight back to the store that caused the
-        refusal - a dead end wearing the label of an alternative.
+        Two spellings reach the same directory and neither is exotic: `~/pinned` because
+        selection expands it, and `.../x/../pinned` because the filesystem does. Compared as
+        written they look like separate candidates, and the line each would add resolves
+        straight back to the store that caused the refusal - a dead end wearing the label of
+        an alternative.
         """
         from pathlib import Path
 
@@ -932,28 +949,36 @@ class ContestedSocket(CliBase):
             socket_path=os.path.join(self.tmp, "tilde-other.sock"),
         ).close()
 
-        environment = dict(
-            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
-            # The same directory the flag names, spelled through the home shortcut.
-            CODEX_SESSION_RELAY_STATE="~/pinned",
-        )
-        environment.pop("XDG_STATE_HOME", None)
-        completed = subprocess.run(
-            [sys.executable, "-m", "codex_session_relay.cli", f"--state={pinned}",
-             f"--socket={wanted}", "status"],
-            capture_output=True, text=True, env=environment, timeout=60,
-        )
-        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
-        refused = json.loads(completed.stdout)
-        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+        # Each spelling names exactly the directory --state names, by a different route.
+        spellings = {
+            "the home shortcut": "~/pinned",
+            "a dot segment": os.path.join(home, "pinned", "..", "pinned"),
+        }
+        for label, spelling in spellings.items():
+            with self.subTest(spelling=label):
+                environment = dict(
+                    os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
+                    CODEX_SESSION_RELAY_STATE=spelling,
+                )
+                environment.pop("XDG_STATE_HOME", None)
+                completed = subprocess.run(
+                    [sys.executable, "-m", "codex_session_relay.cli", f"--state={pinned}",
+                     f"--socket={wanted}", "status"],
+                    capture_output=True, text=True, env=environment, timeout=60,
+                )
+                self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+                refused = json.loads(completed.stdout)
+                self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
 
-        commands = [line for line in refused["recover"] if not line.startswith("  ")]
-        pinning = [c for c in commands if "--state=" in c]
-        self.assertEqual(
-            len(pinning), 1,
-            f"the refusing store was offered back as its own alternative: {refused['recover']}",
-        )
-        self.assertNotIn("~/pinned", " ".join(commands))
+                commands = [
+                    line for line in refused["recover"] if not line.startswith("  ")
+                ]
+                pinning = [c for c in commands if "--state=" in c]
+                self.assertEqual(
+                    len(pinning), 1,
+                    f"the refusing store came back as its own alternative: {refused['recover']}",
+                )
+                self.assertNotIn(spelling, " ".join(commands))
 
     def test_an_unexpandable_pin_does_not_replace_the_refusal_with_a_host_error(self):
         """The refusal payload is everything the operator has, so it has to survive.
@@ -1107,3 +1132,666 @@ class ContestedSocket(CliBase):
         answer = self.run_in_home(home, "--state", chosen, "--socket", socket, "status")
 
         self.assertEqual(answer["deliveries"], [])
+
+
+class ParticipantAccessReceipts(CliBase):
+    """Parent, child and daemon on one database, each proving its own access to it.
+
+    The criterion asks for two things a single healthy-looking report cannot give. Whether the
+    participants share a store is a question about THREE observations, not one; and whether
+    each sandbox permits what that participant needs is a question about what it can actually
+    do, not about what its configuration says. So every participant emits a receipt and the
+    receipts are compared.
+
+    Isolation, because this touches the same machinery a real installation uses: a temporary
+    HOME and CODEX_HOME, a socket bound here and closed here, an explicit temporary --state,
+    and CODEX_SESSION_RELAY_STATE pinned to that same directory. The pin matters on its own -
+    the adapter reads it, and setting only --state lets the store and the ledger diverge. The
+    real state directory under the user's home is never selected by any of these runs.
+
+    HOW THAT IS MEASURED, because the obvious way is wrong here. Snapshotting the real state
+    directory before and after a suite run does NOT establish isolation on a host where
+    anything else touches it: on 2026-09-17 that directory grew WAL and shared-memory
+    sidecars across all three of its stores while this suite was not running at all, in a
+    100-second control with nothing else started. Three bisections each blamed a different
+    test file, because the external writes simply landed during whichever file was running.
+    A before/after snapshot therefore fails for the wrong reason, the way a vacuous
+    assertion passes for the wrong one. What this class relies on instead is per-run
+    attribution: every participant here is given its own HOME and its own explicit --state,
+    so the real directory is never selected, and that is a property of the arguments rather
+    than of what the filesystem happened to do.
+
+    WHAT THIS DOES NOT COVER. The participants here are three processes with three
+    environments, not three genuinely different sandboxes: this host runs them all under the
+    same kernel policy, so the receipts prove the store is shared and that each process really
+    could read and write it, not that a restrictive sandbox would have been reported
+    correctly. The recorded sandbox each receipt carries is the settings the adapter would
+    send with, which is the value a denial would have to be explained against.
+
+    The device and inode pair is decisive in one direction only. A DIFFERENT pair means a
+    different file and that is conclusive; an agreeing pair is not sufficient for the same
+    one. It is namespace-local, so participants in separate mount namespaces or on different
+    hosts can hold one pair while sharing nothing, and one inode can be reached at more than
+    one pathname - a hardlink name or a file bind mount - each of which carries its own
+    write-ahead log. What settles a shared store is `store-challenge` with
+    `doctor --expect-nonce` AND the peer's `--expect-inode`: a copy taken after the challenge
+    carries the nonce, so the live half and the physical half are each necessary.
+    `compare_store` (store.py) is where all of it is graded.
+    """
+
+    def probe_socket(self):
+        """A socket that really accepts, so reachability is observed rather than assumed."""
+        import socket
+
+        path = os.path.join(self.tmp, "probe-app-server.sock")
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(path)
+        listener.listen(1)
+        self.addCleanup(listener.close)
+        return path
+
+    def participant(self, *args, state=None, pin=None, cwd=None, expect=0):
+        """Run one participant's own doctor, in its own environment."""
+        home = os.path.join(self.tmp, "participant-home")
+        os.makedirs(home, exist_ok=True)
+        environment = dict(
+            os.environ,
+            PYTHONPATH=os.path.join(REPO, "src"),
+            HOME=home,
+            CODEX_HOME=os.path.join(self.tmp, "codex-home"),
+        )
+        environment.pop("XDG_STATE_HOME", None)
+        if pin is None:
+            environment.pop("CODEX_SESSION_RELAY_STATE", None)
+        else:
+            environment["CODEX_SESSION_RELAY_STATE"] = pin
+        argv = [sys.executable, "-m", "codex_session_relay.cli"]
+        if state is not None:
+            argv.append(f"--state={state}")
+        argv += list(args)
+        completed = subprocess.run(
+            argv, capture_output=True, text=True, env=environment, timeout=60,
+            cwd=cwd or self.tmp,
+        )
+        self.assertEqual(
+            completed.returncode, expect,
+            f"exit {completed.returncode}: {completed.stdout}{completed.stderr}",
+        )
+        return json.loads(completed.stdout)
+
+    def settings(self, cwd):
+        """Shaped like the creation result the host reports, which is what gets recorded."""
+        return {
+            "sandbox": {"type": "workspaceWrite", "writableRoots": [cwd],
+                        "networkAccess": False, "excludeTmpdirEnvVar": False,
+                        "excludeSlashTmp": False},
+            "approvalPolicy": "never",
+            "cwd": cwd,
+            "runtimeWorkspaceRoots": [cwd],
+            "model": "anthropic/claude-opus-5",
+            "reasoningEffort": "xhigh",
+            "environments": [{"environmentId": "local", "cwd": cwd,
+                              "runtimeWorkspaceRoots": [cwd]}],
+        }
+
+    def seeded(self):
+        """A store with an assignment in it, and settings recorded for both participants.
+
+        Recorded through register's own --parent-settings/--child-settings, which is the path
+        a creation result really takes, so the sandbox in the receipt is the one a send would
+        carry rather than something this test wrote by hand into the table.
+        """
+        parent_cwd = os.path.join(self.tmp, "parent")
+        os.makedirs(parent_cwd, exist_ok=True)
+        recorded = self.run_cli(
+            "register", "--parent-task", PARENT, "--parent-host", HOST,
+            "--child-task", CHILD, "--child-host", HOST, "--issue", ISSUE,
+            "--artifact-root", self.root, "--allowed-recipient", PARENT,
+            "--dispatch-request-id", "dispatch-1", "--dispatch-turn-id", DISPATCH_TURN,
+            "--parent-settings", json.dumps(self.settings(parent_cwd)),
+            "--child-settings", json.dumps(self.settings(self.root)),
+        )
+        self.assertEqual(
+            recorded["authorizedSettings"], {PARENT: "recorded", CHILD: "recorded"},
+        )
+        return self.tmp
+
+    def test_three_participants_reach_one_store_by_three_different_routes(self):
+        state = self.seeded()
+        socket_path = self.probe_socket()
+
+        # Deliberately not the same route to the same place: if only one rule were exercised
+        # this would prove nothing about participants that reach the store differently.
+        parent = self.participant(
+            "--socket", socket_path, "doctor", state=state, pin=state,
+            cwd=os.path.join(self.tmp, "parent"),
+        )["accessReceipt"]
+        child = self.participant(
+            "--socket", socket_path, "doctor", pin=state, cwd=self.root,
+        )["accessReceipt"]
+        daemon = self.participant(
+            "--socket", socket_path, "doctor", state=state, pin=state,
+        )["accessReceipt"]
+        receipts = {"parent": parent, "child": child, "daemon": daemon}
+
+        self.assertEqual(
+            {name: r["selectedBy"]["source"] for name, r in receipts.items()},
+            {"parent": "flag", "child": "env", "daemon": "flag"},
+            "the routes collapsed, so this no longer tests what it claims to",
+        )
+        # The path is not the assertion. Two spellings can be one file and one spelling can be
+        # two files, so identity is settled on the store id and the device/inode pair.
+        for name, receipt in receipts.items():
+            with self.subTest(participant=name):
+                self.assertIsNotNone(receipt["storeId"], receipt)
+                self.assertEqual(receipt["storeId"], parent["storeId"])
+                self.assertEqual(
+                    (receipt["device"], receipt["inode"]),
+                    (parent["device"], parent["inode"]),
+                    "this participant is on a different file",
+                )
+                # Measured, not inferred from a permission bit.
+                self.assertTrue(receipt["observedAccess"]["read"], receipt)
+                self.assertTrue(receipt["observedAccess"]["write"], receipt)
+                self.assertIsNone(receipt["observedAccess"]["detail"], receipt)
+
+    def test_each_receipt_carries_the_sandbox_a_denial_would_be_explained_against(self):
+        state = self.seeded()
+        receipt = self.participant("doctor", state=state, pin=state)["accessReceipt"]
+
+        recorded = receipt["recordedSandbox"]
+        self.assertTrue(recorded["available"], recorded)
+        self.assertEqual(sorted(recorded["participants"]), sorted([PARENT, CHILD]))
+        for task in (PARENT, CHILD):
+            with self.subTest(task=task):
+                sandbox = recorded["participants"][task]
+                self.assertTrue(sandbox["readable"], sandbox)
+                # The value the adapter would actually send with, not a policy file.
+                self.assertEqual(sandbox["mode"], "workspaceWrite")
+                self.assertIsInstance(sandbox["writableRoots"], list)
+                self.assertIs(sandbox["networkAccess"], False)
+                self.assertEqual(sandbox["recordedFrom"], "creation_result")
+        self.assertEqual(
+            recorded["participants"][CHILD]["cwd"], self.root,
+            "the child's recorded cwd is not the workspace it actually runs in",
+        )
+
+    def test_a_policy_that_omits_its_defaults_still_reports_what_would_be_sent(self):
+        """The receipt has to show the effective sandbox, not the recorded keystrokes.
+
+        `{"type": "workspaceWrite"}` is accepted, and the adapter fills networkAccess false,
+        empty writable roots and the two temporary-directory flags from the pinned defaults
+        before sending. Reported raw, networkAccess reads as null for a participant whose
+        sends really do carry false - which would have an operator diagnosing a denial against
+        a value the host never sees.
+        """
+        settings = self.settings(self.root)
+        settings["sandbox"] = {"type": "workspaceWrite"}
+        self.run_cli(
+            "register", "--parent-task", PARENT, "--parent-host", HOST,
+            "--child-task", CHILD, "--child-host", HOST, "--issue", ISSUE,
+            "--artifact-root", self.root, "--allowed-recipient", PARENT,
+            "--dispatch-request-id", "dispatch-1", "--dispatch-turn-id", DISPATCH_TURN,
+            "--parent-settings", json.dumps(settings),
+            "--child-settings", json.dumps(settings),
+        )
+
+        receipt = self.participant("doctor", state=self.tmp, pin=self.tmp)["accessReceipt"]
+
+        sandbox = receipt["recordedSandbox"]["participants"][PARENT]
+        self.assertTrue(sandbox["readable"], sandbox)
+        self.assertEqual(sandbox["mode"], "workspaceWrite")
+        self.assertIs(sandbox["networkAccess"], False, "the default was reported as unknown")
+        self.assertEqual(sandbox["writableRoots"], [])
+        self.assertIs(sandbox["excludeTmpdirEnvVar"], False)
+        self.assertIs(sandbox["excludeSlashTmp"], False)
+
+    def test_a_record_delivery_cannot_carry_is_not_reported_as_one_it_would(self):
+        """Readable is not deliverable, and this field is documented as the second one.
+
+        The preparation a send performs stops in more than one place and each place stops on
+        its own: a record missing any REQUIRED field is rejected before the sandbox type is
+        looked at, and the resume-params construction in `_guarded_send` fails after both of
+        those. All three records below are readable and none of them can carry its settings
+        to a host - the first two are refused before any transport call, the third fails
+        while the params are built, after `thread/read` and before `thread/resume`
+        (bridge_adapter.py). Reporting any of them as the sandbox the adapter would carry
+        tells an operator access is fine for a participant whose sends are never made.
+
+        Three cases because three versions of this field each stopped one step short of the
+        path: the sandbox type alone, then `require_usable()` alone. A suite missing the last
+        case passes while the field still lies.
+
+        The first two are written past the validating recorder deliberately: registration
+        refuses them, so the only way a store holds one is an older writer or a hand edit,
+        which is the case this helper says it supports. The third needs no hand edit at all -
+        `record_settings` validates with `require_usable()` (registry.py) and that accepts it,
+        so this row can arrive through the ordinary recorder and still fail every send.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        self.seeded()
+        unsupported = dict(self.settings(self.root), sandbox={"type": "externalSandbox"})
+        # A supported sandbox, but the record around it is incomplete. This is the gate
+        # require_usable() reaches FIRST, and the one a sandbox-only check walks past.
+        incomplete = dict(self.settings(self.root))
+        del incomplete["cwd"]
+        # Complete, supported, and still not sendable: require_usable() checks that every
+        # REQUIRED field is present and says nothing about its type, while resume_params
+        # calls list() on this one.
+        unusable_roots = dict(self.settings(self.root), runtimeWorkspaceRoots=7)
+
+        cases = {
+            "an unsupported sandbox type": (
+                unsupported, "unsupported_sandbox_type", "externalSandbox",
+            ),
+            "a record missing a required field": (incomplete, "settings_incomplete", "cwd"),
+            "a field the params construction cannot use": (
+                unusable_roots, "unexpected", "TypeError",
+            ),
+        }
+        for label, (stale, expected_reason, detail_says) in cases.items():
+            with self.subTest(refusal=label):
+                store = Store(Path(self.tmp) / "relay.sqlite3")
+                with store.transaction() as db:
+                    db.execute(
+                        "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                        (json.dumps(stale), CHILD),
+                    )
+                store.db.commit()
+                store.close()
+
+                receipt = self.participant(
+                    "doctor", state=self.tmp, pin=self.tmp,
+                )["accessReceipt"]
+                child = receipt["recordedSandbox"]["participants"][CHILD]
+                parent = receipt["recordedSandbox"]["participants"][PARENT]
+
+                # The defect stated as what it is: a participant delivery refuses outright
+                # was reported exactly like one it can serve, with nothing in the row to
+                # tell them apart. Asserted first so the failure says that, not KeyError.
+                signal = ("deliverable", "refusedBy", "resumeMode")
+                self.assertNotEqual(
+                    {key: child.get(key) for key in signal},
+                    {key: parent.get(key) for key in signal},
+                    "a refused record is reported exactly like one a send can carry",
+                )
+                self.assertFalse(child["deliverable"], child)
+                # Delivery's own vocabulary, so a receipt and a delivery journal agree.
+                self.assertEqual(child["refusedBy"], expected_reason, child)
+                self.assertIsNone(child["resumeMode"], "a refused record sends no sandbox")
+                self.assertTrue(child["detail"], child)
+                # The refusal that actually happened, not a generic one: an operator reading
+                # this has to be able to tell these three apart.
+                self.assertIn(detail_says, child["detail"], child)
+                # The row stays readable and what it records is still shown: dropping it
+                # would lose the only clue to why delivery refuses this participant.
+                self.assertTrue(child["readable"], child)
+                self.assertEqual(child["mode"], stale["sandbox"]["type"], child)
+
+                # And the participant delivery can serve is still reported as one it can.
+                self.assertTrue(parent["deliverable"], parent)
+                self.assertIsNone(parent["refusedBy"], parent)
+                self.assertEqual(parent["resumeMode"], "workspace-write")
+                self.assertIsNone(parent["detail"])
+
+    def test_every_transformation_a_send_applies_to_the_record_is_covered(self):
+        """The SET, read out of the source, rather than the instances found so far.
+
+        Three versions of `deliverable` were wrong the same way: a predicate was applied to
+        the member that had been demonstrated instead of to the set that member belongs to.
+        First the sandbox type, then `require_usable()`, then the params construction - and
+        the fourth instance, `environments`, arrived the same way the first three did.
+
+        So the set is derived here instead of listed. It is the constraints delivery imposes
+        on the RECORDED settings before turn/start, and it has two kinds of member, both read
+        out of the source. Both start from the `TaskSettings` methods the send path calls,
+        taken from `delivery.py` and `bridge_adapter.py`.
+
+        A TRANSFORMATION can fail on the row by raising: every recorded field handed to a
+        call inside those methods. Today `normalise_policy(sandbox)`,
+        `list(runtimeWorkspaceRoots)`, `normalise_environments(environments)`.
+
+        A VALUE CONSTRAINT cannot. It exists only as a comparison against a fixed value -
+        `mismatches` refuses any returned `approvalPolicy` that is not the authorized one -
+        and a host that preserves what it was asked for returns what was recorded, so a row
+        recording anything else cannot be carried AS RECORDED. Nothing raises on such a row,
+        which is why the first extraction cannot see it: there is no call to put the field
+        into. That member was found by review rather than by this test, and the second
+        extraction below is the answer to that rather than another hand-added case.
+
+        Each derived field is then mutated with the mutant its kind needs - a value no
+        transformation can consume, or a well-typed value that is not the authorized literal -
+        and the receipt must report it in the field its kind belongs to. A failing
+        transformation settles the send on the row alone, so it makes `deliverable` false. A
+        violated constraint settles only what a host reporting the setting back will do, and a
+        host that replaces it proceeds, so it lands in `refusedIfPreserved`. A new member of
+        either kind joins the derived set and fails here until the probe reaches it, which is
+        the property a written-down list cannot have.
+
+        Both extractions are syntactic and recognize the shapes that are there: a positional
+        `self.data["<field>"]` argument, and a name bound from `get("<field>")` on something
+        other than `self.data` and then compared against a literal or a module constant. A
+        field reached through an alias, a keyword argument, or a helper these do not follow
+        would escape both, so passing this is not a proof of total coverage.
+
+        The floor assertions are not the definition either. They guard the extractors: an AST
+        walk that silently matched nothing would run zero mutations and pass, which is how
+        this kind of test goes green while holding nothing.
+        """
+        import ast
+        import inspect
+        from pathlib import Path
+
+        from codex_session_relay import bridge_adapter, delivery
+        from codex_session_relay import settings as settings_module
+        from codex_session_relay.settings import TaskSettings
+        from codex_session_relay.store import Store
+
+        def parsed(module):
+            return ast.parse(inspect.getsource(module))
+
+        api = {name for name in vars(TaskSettings) if not name.startswith("_")}
+        called = set()
+        for module in (delivery, bridge_adapter):
+            for node in ast.walk(parsed(module)):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in api):
+                    called.add(node.func.attr)
+
+        defined = {
+            node.name: node for node in ast.walk(parsed(settings_module))
+            if isinstance(node, ast.FunctionDef)
+        }
+
+        def transformed_fields(name, seen=None):
+            """Recorded fields this method hands to a call, through self.<method>() hops."""
+            seen = set() if seen is None else seen
+            if name in seen or name not in defined:
+                return set()
+            seen.add(name)
+            fields = set()
+            for node in ast.walk(defined[name]):
+                if not isinstance(node, ast.Call):
+                    continue
+                for argument in node.args:
+                    if (isinstance(argument, ast.Subscript)
+                            and isinstance(argument.value, ast.Attribute)
+                            and argument.value.attr == "data"
+                            and isinstance(argument.slice, ast.Constant)
+                            and isinstance(argument.slice.value, str)):
+                        fields.add(argument.slice.value)
+                if (isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "self"):
+                    fields |= transformed_fields(node.func.attr, seen)
+            return fields
+
+        def constant(node):
+            """A string literal, or a module constant that holds one."""
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, ast.Name):
+                return getattr(settings_module, node.id, None)
+            return None
+
+        def literal_constraints(name, seen=None):
+            """Response fields this method compares against a fixed value.
+
+            The recorded row cannot fail one of these by raising, so it is the recorded
+            VALUE that has to be compared. Read in two passes rather than one, so a
+            comparison is never reached before the name it compares was bound.
+            """
+            seen = set() if seen is None else seen
+            if name in seen or name not in defined:
+                return set()
+            seen.add(name)
+            body = list(ast.walk(defined[name]))
+            bound = {}
+            for node in body:
+                if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Name)):
+                    continue
+                read = node.value
+                if (isinstance(read, ast.Call) and isinstance(read.func, ast.Attribute)
+                        and read.func.attr == "get" and len(read.args) == 1
+                        and isinstance(read.args[0], ast.Constant)
+                        and isinstance(read.args[0].value, str)
+                        and not (isinstance(read.func.value, ast.Attribute)
+                                 and read.func.value.attr == "data")):
+                    bound[node.targets[0].id] = read.args[0].value
+            found = set()
+            for node in body:
+                if (isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
+                        and node.left.id in bound):
+                    for comparator in node.comparators:
+                        literal = constant(comparator)
+                        if isinstance(literal, str):
+                            found.add((bound[node.left.id], literal))
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "self"):
+                    found |= literal_constraints(node.func.attr, seen)
+            return found
+
+        fields = set().union(*(transformed_fields(name) for name in called))
+        constraints = set().union(*(literal_constraints(name) for name in called))
+
+        self.assertGreaterEqual(
+            called, {"require_usable", "resume_params", "mismatches"},
+            "the send path's settings calls were not found, so nothing below is derived",
+        )
+        self.assertGreaterEqual(
+            fields, {"sandbox", "runtimeWorkspaceRoots", "environments"},
+            "the extraction found fewer transformations than are known to be there",
+        )
+        self.assertGreaterEqual(
+            constraints, {("approvalPolicy", "never")},
+            "the value-constraint extraction found less than is known to be there",
+        )
+
+        # One mutant per kind, each derived from what the kind is. A transformation cannot
+        # consume 7 - not a mapping, not a sequence, and present, so the completeness gate
+        # hands it straight on. A value constraint needs a well-typed value that is simply
+        # not the authorized one, taken from the literal itself rather than invented.
+        mutants = {field: 7 for field in fields}
+        mutants.update({field: f"not-{literal}" for field, literal in constraints})
+
+        self.seeded()
+        for field, mutant in sorted(mutants.items()):
+            with self.subTest(constrains=field):
+                stale = dict(self.settings(self.root))
+                stale[field] = mutant
+                store = Store(Path(self.tmp) / "relay.sqlite3")
+                with store.transaction() as db:
+                    db.execute(
+                        "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                        (json.dumps(stale), CHILD),
+                    )
+                store.db.commit()
+                store.close()
+
+                child = self.participant(
+                    "doctor", state=self.tmp, pin=self.tmp,
+                )["accessReceipt"]["recordedSandbox"]["participants"][CHILD]
+
+                if field in fields:
+                    # A transformation cannot consume it, so no host can either: the row
+                    # itself settles the send.
+                    self.assertIsNot(
+                        child.get("deliverable"), True,
+                        f"no send can carry this {field!r}, and the receipt advertised one",
+                    )
+                    if child["readable"]:
+                        self.assertTrue(child["refusedBy"], child)
+                        self.assertTrue(child["detail"], child)
+                else:
+                    # A host reporting it back refuses it, one replacing it proceeds. The
+                    # receipt has to say that rather than deny the send outright.
+                    self.assertIs(
+                        child.get("deliverable"), True,
+                        f"the receipt denied a send for {field!r} that delivery completes"
+                        " today against a host that replaces the value",
+                    )
+                    refused = child.get("refusedIfPreserved")
+                    self.assertTrue(
+                        refused,
+                        f"a resume reporting this {field!r} back is refused, and the receipt"
+                        " said nothing about it",
+                    )
+                    self.assertEqual(refused["field"], field, refused)
+                    self.assertTrue(refused["refusedBy"], refused)
+                    self.assertTrue(refused["detail"], refused)
+
+    def test_a_store_replaced_by_a_copy_under_the_read_is_reported_not_served(self):
+        """The receipt's own mid-command replacement check, against the case it missed.
+
+        The identity and the participants come out of one read so that an atomic replacement
+        between two opens cannot pair one store's identity with another store's rows. That
+        check compared store ids, and a COPY carries the store id: the row is minted once and
+        copied with the bytes, which `test_a_copy_keeps_the_identifier_and_is_not_the_same_store`
+        (test_store.py) already states. So the comparison that exists to catch a replacement
+        was satisfied by a replacement made with a copy.
+
+        The replacement here happens between the probe and the read for real - the report
+        passed in is the one measured before it - which is the window the check exists for.
+        """
+        from types import SimpleNamespace
+
+        from codex_session_relay.cli import Services, _access_receipt
+        from codex_session_relay.store import probe, resolve_state_dir
+
+        state = self.seeded()
+        selection = resolve_state_dir(state, None)
+        measured = probe(selection)
+        self.assertTrue(measured["store"]["storeId"], measured)
+
+        database = os.path.join(state, "relay.sqlite3")
+        replacement = os.path.join(state, "replacement.sqlite3")
+        shutil.copy(database, replacement)
+        os.replace(replacement, database)
+
+        # Asserted, not assumed: a copy that had lost the identity row, or one that landed on
+        # the same inode, would make the receipt below right for a reason this is not testing.
+        swapped = probe(selection)["store"]
+        self.assertEqual(
+            swapped["storeId"], measured["store"]["storeId"],
+            "the replacement is not a real copy, so nothing here is about a copy",
+        )
+        self.assertNotEqual(swapped["inode"], measured["store"]["inode"])
+
+        receipt = _access_receipt(Services(SimpleNamespace(state=state, socket=None)), measured)
+
+        recorded = receipt["recordedSandbox"]
+        self.assertFalse(
+            recorded["available"],
+            "rows read from a file that replaced the measured one were served as its own",
+        )
+        self.assertIn("inode", recorded["detail"], recorded)
+
+    def test_one_unreadable_participant_does_not_take_the_diagnosis_with_it(self):
+        """A damaged row is exactly when the rest of the report is worth most.
+
+        These rows can hold whatever an older writer or a hand edit left, and a shape the
+        parser accepts is not a shape the reader can use: json.loads returns a list for `[]`
+        quite happily. Raising there would cost the store identity and the access evidence too,
+        leaving a generic host error where the diagnosis should be.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        self.seeded()
+        store = Store(Path(self.tmp) / "relay.sqlite3")
+        self.addCleanup(store.close)
+        with store.transaction() as db:
+            db.execute(
+                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                ("[]", CHILD),
+            )
+        store.db.commit()
+
+        receipt = self.participant("doctor", state=self.tmp, pin=self.tmp)["accessReceipt"]
+
+        participants = receipt["recordedSandbox"]["participants"]
+        self.assertFalse(participants[CHILD]["readable"], participants[CHILD])
+        self.assertIn("not an object", participants[CHILD]["detail"])
+        # The damage is confined to the row that carries it.
+        self.assertTrue(participants[PARENT]["readable"], participants[PARENT])
+        self.assertIsNotNone(receipt["storeId"])
+        self.assertTrue(receipt["observedAccess"]["read"])
+    def test_a_store_swapped_mid_command_is_reported_rather_than_paired(self):
+        """Identity and participants have to come from the same file, or say they did not.
+
+        Collected by two opens, an atomic replacement between them pairs one store's identity
+        with another store's participants, and nothing in the receipt would show it - a
+        mismatch invisible in exactly the comparison this exists to support. One statement
+        carries both now, and its store id is checked against the one the probe measured.
+
+        Driven at the function rather than through the CLI: the window is one command against
+        a database being swapped underneath it, which cannot be opened from outside the
+        process. The probe result is real; only the identity it reports is moved, which is
+        what a replacement between the two reads would have produced.
+        """
+        from codex_session_relay.cli import _access_receipt
+        from codex_session_relay.store import probe, resolve_state_dir
+
+        self.seeded()
+        selection = resolve_state_dir(self.tmp)
+        report = probe(selection)
+        self.assertTrue(report["access"]["dbReadable"], report)
+
+        class Services:
+            pass
+
+        services = Services()
+        services.selection = selection
+
+        honest = _access_receipt(services, report)
+        self.assertTrue(honest["recordedSandbox"]["available"], honest)
+        self.assertIn(PARENT, honest["recordedSandbox"]["participants"])
+
+        # Now the identity names a file the settings did not come from.
+        moved = dict(report, store=dict(report["store"], storeId="another-store-entirely"))
+        receipt = _access_receipt(services, moved)
+
+        recorded = receipt["recordedSandbox"]
+        self.assertFalse(recorded["available"], recorded)
+        self.assertEqual(recorded["participants"], {}, "mismatched participants were reported")
+        self.assertIn("changed under this command", recorded["detail"])
+        self.assertIn("another-store-entirely", recorded["detail"])
+
+    def test_a_participant_on_another_store_is_refused_rather_than_called_healthy(self):
+        """The failure this criterion is really about: agreeing while looking at two stores."""
+        state = self.seeded()
+        mine = self.participant("doctor", state=state, pin=state)["accessReceipt"]
+
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        # A real second database, not an empty directory. doctor constructs no Store, so
+        # pointing it at a path that does not exist yet returns null identity and null
+        # device/inode - which makes every inequality below pass for the wrong reason and
+        # turns the refusal into a test of an ABSENT store rather than a different one.
+        # store-identity opens one, which is what gives this test two stores to tell apart.
+        created = self.participant("store-identity", state=elsewhere, pin=elsewhere)
+        self.assertIsNotNone(created["store"]["storeId"], created)
+        stray = self.participant("doctor", state=elsewhere, pin=elsewhere)["accessReceipt"]
+
+        for name, receipt in (("mine", mine), ("stray", stray)):
+            with self.subTest(receipt=name):
+                self.assertIsNotNone(receipt["storeId"], receipt)
+                self.assertIsNotNone(receipt["inode"], receipt)
+        self.assertNotEqual(stray["storeId"], mine["storeId"])
+        self.assertNotEqual(
+            (stray["device"], stray["inode"]), (mine["device"], mine["inode"]),
+            "the two runs landed on one file, so this proves nothing",
+        )
+        # And asked to prove it is the same store, a participant sitting on the other one
+        # refuses instead of reporting health - which is the failure the criterion names.
+        refused = self.participant(
+            "doctor", f"--expect-store={mine['storeId']}",
+            state=elsewhere, pin=elsewhere, expect=2,
+        )
+        self.assertNotEqual(refused["sameStore"], "proven", refused)
+        self.assertEqual(refused["accessReceipt"]["storeId"], stray["storeId"], refused)

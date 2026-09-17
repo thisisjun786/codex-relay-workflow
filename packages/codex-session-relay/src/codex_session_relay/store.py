@@ -845,13 +845,19 @@ class Store:
 
         The device and inode come from the RESOLVED path, so a symlink or a bind mount that
         reaches the same bytes compares equal while two genuinely different files do not.
+
+        The number of names the inode has travels with them, because the pair alone cannot
+        say whether another participant opened THIS name or another one for the same file.
+        `compare_store` is where that is graded.
         """
         try:
             real = self.path.resolve()
             info = os.stat(real)
             device, inode, real_path = info.st_dev, info.st_ino, str(real)
+            links = info.st_nlink
         except OSError:
             device = inode = real_path = None
+            links = None
         return {
             "exists": True,
             "storeId": self.identity,
@@ -860,6 +866,7 @@ class Store:
             "realPath": real_path,
             "device": device,
             "inode": inode,
+            "links": links,
             "schemaVersion": self.meta("version"),
         }
 
@@ -935,7 +942,8 @@ def probe(selection: StateSelection) -> dict:
     }
     store = {
         "exists": False, "storeId": None, "createdAt": None, "dbPath": str(db_path),
-        "realPath": None, "device": None, "inode": None, "schemaVersion": None,
+        "realPath": None, "device": None, "inode": None, "links": None,
+        "schemaVersion": None,
     }
 
     try:
@@ -958,6 +966,9 @@ def probe(selection: StateSelection) -> dict:
         access["dbExists"] = store["exists"] = True
         store["realPath"] = str(db_path.resolve())
         store["device"], store["inode"] = info.st_dev, info.st_ino
+        # Names for this inode, counted because a shared pair does not say the other
+        # participant opened the same name. Graded in compare_store.
+        store["links"] = info.st_nlink
     except OSError as error:
         if access["directoryExists"]:
             notes.append(f"database stat failed: {type(error).__name__}: {error}")
@@ -1003,6 +1014,21 @@ def probe(selection: StateSelection) -> dict:
     return {"stateSelection": selection.to_record(), "store": store, "access": access}
 
 
+def _path_identity(db_path):
+    """Device, inode and name count of the file AT THIS PATH, or None if it cannot be stat'd.
+
+    Measured at the path rather than taken from an open connection, which is the whole of what
+    it can promise: two observations of a path catch a replacement that persists past a read,
+    and not one reverted inside the window, because both would then report the original inode.
+    Catching that needs the descriptor the connection holds, and `sqlite3` exposes none.
+    """
+    try:
+        info = os.stat(db_path)
+    except OSError:
+        return None
+    return {"device": info.st_dev, "inode": info.st_ino, "links": info.st_nlink}
+
+
 def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
     """Answer a question about the store without creating or migrating one.
 
@@ -1010,30 +1036,63 @@ def read_only_rows(selection: StateSelection, sql: str, params=()) -> dict:
     so any command that reaches for it to READ leaves a fully formed relay database behind.
     For diagnosis that is a side effect the command promised not to have: pointing it at an
     empty, legacy or unrelated file would silently adopt it. Every error becomes a field.
+
+    The identity of the file AT THE PATH is measured here, before and after the read, and
+    returned with the rows. A caller that stat'd the path earlier cannot otherwise tell that
+    the rows arrived from a replacement: comparing the store id does not settle it, because
+    the id is minted once and travels with a copy of the bytes. `_path_identity` states what
+    two observations of a path do and do not catch.
     """
     db_path = selection.db_path
+
+    unknown = {"device": None, "inode": None, "links": None}
+    opened = _path_identity(db_path)
     try:
         connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
     except (OSError, sqlite3.Error, ValueError) as error:
-        return {"readable": False, "rows": [],
+        return {**unknown, "readable": False, "rows": [],
                 "detail": f"{type(error).__name__}: {error}"}
     try:
         connection.row_factory = sqlite3.Row
         rows = [dict(row) for row in connection.execute(sql, params).fetchall()]
     except sqlite3.Error as error:
         connection.close()
-        return {"readable": True, "rows": [], "detail": f"{type(error).__name__}: {error}"}
+        return {**unknown, "readable": True, "rows": [],
+                "detail": f"{type(error).__name__}: {error}"}
     connection.close()
-    return {"readable": True, "rows": rows, "detail": None}
+    closed = _path_identity(db_path)
+    if opened is None or closed is None:
+        return {**unknown, "readable": True, "rows": [],
+                "detail": "the database could not be identified while it was being read"}
+    if (opened["device"], opened["inode"]) != (closed["device"], closed["inode"]):
+        # A rename over this path during the read. The rows are from one file and any
+        # comparison a caller makes is against another, which is worth a field rather than
+        # rows a caller cannot attribute.
+        return {**unknown, "readable": True, "rows": [],
+                "detail": (
+                    f"the database was replaced while it was being read: device:inode"
+                    f" {opened['device']}:{opened['inode']} became"
+                    f" {closed['device']}:{closed['inode']}"
+                )}
+    return {**closed, "readable": True, "rows": rows, "detail": None}
 
 
 def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
-    """Look for a challenge nonce read-only, so a comparison never writes to the store."""
+    """Look for a challenge nonce read-only, so a comparison never writes to the store.
+
+    The identity of the file it read comes back with the answer, because this is the only
+    evidence `compare_store` grades as proof and it is obtained through a second open of the
+    path - after whatever stat'd it for the receipt. Without that identity, a nonce found in a
+    database that replaced the measured one satisfies the one proving mechanism there is, and
+    a copy carries the challenge row with the bytes, so the replacement need not be crafted.
+    """
     db_path = selection.db_path
+    unknown = {"device": None, "inode": None, "links": None}
+    opened = _path_identity(db_path)
     try:
         connection = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5)
     except (OSError, sqlite3.Error) as error:
-        return {"nonce": nonce, "found": False, "readable": False,
+        return {**unknown, "nonce": nonce, "found": False, "readable": False,
                 "detail": f"{type(error).__name__}: {error}"}
     try:
         connection.row_factory = sqlite3.Row
@@ -1044,13 +1103,33 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
         # NOT readable. A locked, malformed or momentarily unavailable database answers no
         # question, and calling it readable turns "we could not look" into "it is not there",
         # which compare_store then grades as a definite store mismatch.
-        return {"nonce": nonce, "found": False, "readable": False,
+        return {**unknown, "nonce": nonce, "found": False, "readable": False,
                 "detail": f"{type(error).__name__}: {error}"}
     finally:
         connection.close()
+    closed = _path_identity(db_path)
+    if opened is None or closed is None:
+        moved = "the database could not be identified while the nonce was being read"
+    elif (opened["device"], opened["inode"]) != (closed["device"], closed["inode"]):
+        moved = (
+            f"the database was replaced while the nonce was being read: device:inode"
+            f" {opened['device']}:{opened['inode']} became"
+            f" {closed['device']}:{closed['inode']}"
+        )
+    else:
+        moved = None
+    if moved is not None:
+        # Unreadable rather than absent, for the reason above: an answer that cannot be
+        # attributed to a file is not an answer about any store.
+        return {**unknown, "nonce": nonce, "found": False, "readable": False, "detail": moved}
+    # Both of this read's own observations, carried as the larger count. A second name present
+    # at the open and unlinked before the close leaves the closing count at one, and a peer
+    # that already opened the removed alias can hold that connection and keep writing through
+    # its own write-ahead log. Reporting only the closing count kept half of what was measured.
+    seen = {**closed, "links": max(opened["links"], closed["links"])}
     if row is None:
-        return {"nonce": nonce, "found": False, "readable": True, "detail": None}
-    return {"nonce": nonce, "found": True, "readable": True, "detail": None,
+        return {**seen, "nonce": nonce, "found": False, "readable": True, "detail": None}
+    return {**seen, "nonce": nonce, "found": True, "readable": True, "detail": None,
             "writtenBy": row["written_by"], "writtenAt": row["written_at"]}
 
 
@@ -1061,6 +1140,34 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     happened to succeed can never talk a mismatch down. Absence is never agreement: a store
     that cannot state its identity is unproven, not proven, because the criterion is that a
     different database must never be reported as healthy.
+
+    What each piece of evidence can carry differs, and the grades follow that. A store id is
+    minted once and copied with the bytes, so agreement is never proof. A device and inode
+    pair is conclusive when it DIFFERS and insufficient when it agrees, because one inode can
+    be reached at more than one pathname and SQLite derives the write-ahead log from the
+    pathname a connection opens. Neither a hardlink name nor a file bind mount is visible from
+    this side: the caller holds its own path and the peer's device and inode, and nothing that
+    says which pathname the peer opened. A nonce is the only live evidence here - the peer's
+    write is readable in the file being read - and it is what the contract designates as proof.
+
+    Being the only proof, it has to be evidence about THIS file. The answer carries the
+    identity of the file it was read from, because it comes from a second open of the path,
+    and a found nonce is graded as proof only when that matches the store being compared. An
+    answer that cannot be attributed is unproven rather than a mismatch: it says nothing about
+    whether two participants share a store, only that this reading is not about the one here.
+
+    And being live is not the same as being current. What a found nonce says is that the file
+    read here contains a write that was made to the writer's file at some earlier moment - a
+    copy taken AFTER the challenge was written carries it with the bytes, and stays stable for
+    a whole invocation, so nothing looking for a replacement or a second name sees anything
+    wrong. Whether it is still one file is what the physical identity answers. So proof takes
+    both: a found, attributed nonce AND an agreeing device and inode. Neither alone is graded
+    as proof, and each is unproven for its own reason.
+
+    The name count is graded beside all of that rather than folded into any of it. It catches
+    one concrete case and only one: `st_nlink` counts hardlink names, and a bind mount adds a
+    pathname without changing it. So more than one name refuses, and one name is not evidence
+    of a single pathname - which is exactly why an agreeing pair is not proof by itself.
     """
     reasons = []
     if expect_store is not None:
@@ -1073,14 +1180,25 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     if expect_inode is not None:
         want = str(expect_inode).split(":")
         here = (store.get("device"), store.get("inode"))
+        physical = None
         if len(want) != 2 or None in here:
             reasons.append((UNPROVEN, "physical identity is not comparable here"))
         elif (str(here[0]), str(here[1])) != (want[0], want[1]):
+            physical = False
             reasons.append((
                 MISMATCH, f"device:inode {here[0]}:{here[1]} is not {expect_inode}",
             ))
         else:
-            reasons.append((PROVEN, "same device and inode"))
+            physical = True
+            # Agreement, not proof. Two pathnames for one inode agree here and still keep
+            # separate write-ahead logs, and this side cannot see the second pathname.
+            reasons.append((None, (
+                "device and inode match, which does not say both participants opened the"
+                " same pathname for that inode"
+            )))
+    else:
+        # Not compared at all, which is not the same as compared and agreeing.
+        physical = None
     if nonce is not None:
         if nonce.get("readable") is False:
             # Not being able to read is not the same as the nonce being absent. Calling it a
@@ -1088,9 +1206,60 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
             # truth is that this one merely could not look.
             reasons.append((UNPROVEN, f"the nonce could not be read here: {nonce.get('detail')}"))
         elif nonce.get("found"):
-            reasons.append((PROVEN, "a nonce written by another participant is readable here"))
+            read_from = (nonce.get("device"), nonce.get("inode"))
+            here = (store.get("device"), store.get("inode"))
+            if None in read_from or None in here or read_from != here:
+                reasons.append((UNPROVEN, (
+                    f"the nonce was read from device:inode {read_from[0]}:{read_from[1]}, and"
+                    f" this comparison is about {here[0]}:{here[1]}"
+                )))
+            elif physical is not True:
+                reasons.append((UNPROVEN, (
+                    "a nonce written by another participant is readable here, which does not"
+                    " say the two are one file now: a copy taken after the challenge was"
+                    " written carries the nonce with the bytes. Supply the other"
+                    " participant's --expect-inode so the physical identity is compared too"
+                )))
+            else:
+                reasons.append((
+                    PROVEN,
+                    "a nonce written by another participant is readable here, in the file this"
+                    " comparison is about",
+                ))
         else:
             reasons.append((MISMATCH, "a nonce written by another participant is not here"))
+
+    if reasons:
+        # One detected case of a second pathname, refused outright. Measured on this host on
+        # 2026-09-17: with a store open on one name, a read through a hardlinked second name
+        # failed with `OperationalError: disk I/O error` while the first connection's log was
+        # live, and after that connection closed and checkpointed the second name grew its own
+        # -wal and -shm. Two participants can therefore agree on device, inode AND store id,
+        # and read a nonce one of them wrote, while still not writing into one live store - so
+        # this refuses even a found nonce. It is not the general answer: a bind mount reaches
+        # one inode at a second pathname without changing st_nlink, which is why an agreeing
+        # device and inode is graded as agreement rather than proof above. That last part is
+        # the documented behaviour of a mount entry rather than something measured here - this
+        # host refuses an unprivileged mount namespace - and the grading above does not depend
+        # on it: an agreeing pair is not proof whether or not the extra pathname is countable.
+        #
+        # Every count that was measured is consulted, not just the caller's. The nonce answer
+        # carries the count seen at ITS read, and grading only the earlier one took half of a
+        # fresher measurement and left the other half: a hardlink created between the two
+        # leaves device and inode untouched, so a stale count of one could not veto a nonce
+        # found through the original name. A second name at either moment is the same hazard.
+        counted = [count for count in (store.get("links"), (nonce or {}).get("links"))
+                   if count is not None]
+        if not counted:
+            reasons.append((
+                UNPROVEN, "the number of names this database has could not be measured",
+            ))
+        elif max(counted) > 1:
+            reasons.append((UNPROVEN, (
+                f"this database has {max(counted)} names, so a shared device and inode cannot"
+                " say which one the other participant opened, and each name carries its own"
+                " write-ahead log"
+            )))
 
     if not reasons:
         return {"sameStore": UNPROVEN, "detail": "no expectation was supplied to compare against"}
@@ -1100,10 +1269,14 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
             if verdict is PROVEN and any(g == UNPROVEN for g, _ in reasons):
                 continue
             return {"sameStore": verdict, "detail": "; ".join(matched)}
-    # Every expectation agreed, but none of them was physical or live evidence: an identical
-    # store id alone is satisfied by a copy of the file, so this is not proof.
+    # Every expectation agreed and none of them was live evidence. A copy of the file carries
+    # the store id, and an agreeing device and inode does not say the two participants opened
+    # one pathname for it, so neither is proof however they are combined.
+    agreed = [detail for grade, detail in reasons if grade is None]
     return {
         "sameStore": UNPROVEN,
-        "detail": "only the store id was compared, and copying a database copies it too;"
-                  " supply --expect-inode or a nonce for proof",
+        "detail": (
+            f"{'; '.join(agreed)}. Neither a store id nor a device and inode pair is live"
+            " evidence, so supply a nonce for proof"
+        ),
     }
