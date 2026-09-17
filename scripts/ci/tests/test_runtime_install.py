@@ -4,6 +4,7 @@ Every case here writes only into a temporary directory. None of it reads or chan
 Codex home, an installed runtime, an MCP registration or an operational database.
 """
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -476,6 +477,121 @@ class ReviewFixTests(unittest.TestCase):
         summary = scope.summarise(readings, env={"XDG_STATE_HOME": "/nowhere"})
         self.assertEqual(summary["stateDirectory"], "/s/scope")
         self.assertEqual(summary["socketConnect"], "ok")
+
+
+RELAY_CLI = ROOT / "packages/codex-session-relay/src/codex_session_relay/cli.py"
+
+
+def relay_required_arguments():
+    """Each relay subcommand's required options, read from the relay's own parser.
+
+    Read with `ast` over the source rather than by importing it. The relay declares a newer
+    `requires-python` than the interpreter this repository runs its own checks with, and
+    `scripts/ci/validate.py` already parses every tracked Python file this way on that
+    interpreter, so a static read is the version-safe way to ask the parser what it requires.
+    """
+    tree = ast.parse(RELAY_CLI.read_text(encoding="utf-8"))
+    builder = next(node for node in ast.walk(tree)
+                   if isinstance(node, ast.FunctionDef) and node.name == "build_parser")
+    names, required = {}, {}
+    for node in ast.walk(builder):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "add_parser"
+                and node.value.args
+                and isinstance(node.value.args[0], ast.Constant)):
+            names[node.targets[0].id] = node.value.args[0].value
+            required.setdefault(node.value.args[0].value, set())
+    for node in ast.walk(builder):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in names
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and str(node.args[0].value).startswith("--")):
+            if any(kw.arg == "required" and getattr(kw.value, "value", False) is True
+                   for kw in node.keywords):
+                required[names[node.func.value.id]].add(node.args[0].value)
+    return required
+
+
+class TrialArgumentTests(unittest.TestCase):
+    """The trial must satisfy the relay's own required arguments.
+
+    This is the check that was missing: the earlier test only asserted the wording of the
+    `not_applicable` message, so it never executed the trial path and a missing required
+    argument reached a green gate and twenty-six review threads untouched.
+    """
+
+    def steps(self):
+        import runtime_install
+
+        return runtime_install.trial_steps(
+            issue="JUN-104", parent_task="parent", child_task="child",
+            recipient="parent", artifact_root="/tmp/artifacts",
+            turn_thread="thread-1", turn_id="turn-1", host="a-host",
+        )
+
+    def test_the_relay_parser_is_readable_and_names_what_it_requires(self):
+        required = relay_required_arguments()
+        # Guards the reader itself: if this ever comes back empty the comparison below would
+        # pass vacuously, which is exactly the shape of failure this class exists to stop.
+        self.assertIn("generation-open", required)
+        self.assertIn("--dispatch-request-id", required["generation-open"])
+        self.assertIn("--relationship", required["generation-open"])
+        self.assertTrue(required["register"], "register declares required arguments")
+
+    def test_every_trial_invocation_supplies_every_required_argument(self):
+        required = relay_required_arguments()
+        for argv in self.steps():
+            subcommand = argv[0]
+            with self.subTest(subcommand=subcommand):
+                self.assertIn(subcommand, required,
+                              subcommand + " is not a relay subcommand")
+                supplied = {token for token in argv if str(token).startswith("--")}
+                missing = sorted(required[subcommand] - supplied)
+                self.assertEqual(missing, [],
+                                 subcommand + " omits required " + ", ".join(missing))
+
+    def test_the_trial_performs_the_whole_sequence_a_delivery_needs(self):
+        # Measured against a running App Server: a send is withheld until the recipient's
+        # settings are on record, a generation opened by register is unbound until it is
+        # bound to the dispatch turn, and a turn other than the anchor needs admission.
+        # Dropping any of these silently returns the trial to never being able to deliver.
+        import runtime_install
+
+        with_settings = runtime_install.trial_steps(
+            issue="JUN-104", parent_task="parent", child_task="child", recipient="parent",
+            artifact_root="/tmp/artifacts", turn_thread="thread-1", turn_id="turn-1",
+            host="a-host", artifacts=["/tmp/artifacts/result.txt"],
+            dispatch_turn_id="anchor-1", recipient_settings="@/tmp/settings.json",
+        )
+        self.assertEqual([argv[0] for argv in with_settings],
+                         ["settings-record", "register", "generation-open", "generation-bind",
+                          "admit-turn", "emit", "deliver"])
+        emit = next(argv for argv in with_settings if argv[0] == "emit")
+        self.assertIn("--artifact", emit,
+                      "a reviewable receipt whose manifest is empty is refused")
+
+    def test_the_settings_step_is_omitted_rather_than_sent_empty(self):
+        import runtime_install
+
+        without = runtime_install.trial_steps(
+            issue="JUN-104", parent_task="parent", child_task="child", recipient="parent",
+            artifact_root="/tmp/artifacts", turn_thread="thread-1", turn_id="turn-1",
+            host="a-host",
+        )
+        self.assertNotIn("settings-record", [argv[0] for argv in without])
+
+    def test_the_trial_reads_the_generation_field_the_relay_returns(self):
+        # register and generation-open both report the generation as executionGeneration.
+        # Reading generation or generationId yields None and sends --generation None.
+        import runtime_install
+
+        source = Path(runtime_install.__file__).read_text(encoding="utf-8")
+        self.assertIn("executionGeneration", source)
 
 
 if __name__ == "__main__":

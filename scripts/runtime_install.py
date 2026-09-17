@@ -424,12 +424,69 @@ def codex_cli_version():
     return done.stdout.strip() or None if done.returncode == 0 else None
 
 
+TRIAL_RELATIONSHIP = "<relationship>"
+TRIAL_GENERATION = "<generation>"
+TRIAL_EVENT = "<event>"
+
+
+def trial_request_id(issue):
+    return "jun104-trial-" + str(issue)
+
+
+def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
+                turn_thread, turn_id, host, artifacts=None, dispatch_turn_id=None,
+                turn_status="completed", recipient_settings=None):
+    """The exact relay invocations the trial makes, returned as data.
+
+    Kept as data rather than built inline so the argv this command sends can be checked
+    against the relay's own required arguments without performing a delivery. Identifiers
+    that only exist once an earlier step has run appear as placeholders and are substituted
+    at execution time.
+    """
+    request_id = trial_request_id(issue)
+    steps = []
+    if recipient_settings:
+        # A send is withheld until the recipient's authorized settings are on record, because
+        # preserving them is what the delivery has to check against.
+        steps.append(["settings-record", "--task", str(recipient),
+                      "--settings", str(recipient_settings)])
+    return steps + [
+        ["register", "--parent-task", str(parent_task), "--parent-host", str(host),
+         "--child-task", str(child_task), "--child-host", str(host),
+         "--issue", str(issue), "--artifact-root", str(artifact_root),
+         "--allowed-recipient", str(recipient), "--dispatch-request-id", request_id],
+        # The generation stays unbound until an exact dispatch turn id is supplied, and the
+        # relay refuses to emit against an unbound generation.
+        ["generation-open", "--relationship", TRIAL_RELATIONSHIP,
+         "--dispatch-request-id", request_id]
+        + (["--dispatch-turn-id", str(dispatch_turn_id)] if dispatch_turn_id else []),
+        # A reviewable receipt must carry a deliverable: the relay refuses one whose manifest
+        # is empty, because that is the no-deliverable sentinel.
+        # register opens the generation but leaves it unbound, and the relay refuses to emit
+        # against a generation with no anchor. Binding is its own step, not a flag on the open.
+        ["generation-bind", "--relationship", TRIAL_RELATIONSHIP,
+         "--generation", TRIAL_GENERATION, "--dispatch-turn-id", str(dispatch_turn_id)],
+        # Only the anchor turn is admitted by default. A turn the child actually ran is a
+        # continuation and needs an explicit admission naming the generation and an actor.
+        ["admit-turn", "--relationship", TRIAL_RELATIONSHIP, "--generation", TRIAL_GENERATION,
+         "--turn", str(turn_id), "--actor", str(child_task)],
+        ["emit", "--relationship", TRIAL_RELATIONSHIP, "--generation", TRIAL_GENERATION,
+         "--outcome", "ready_for_review", "--turn-thread", str(turn_thread),
+         "--turn-id", str(turn_id), "--turn-status", str(turn_status)]
+        + [token for artifact in (artifacts or []) for token in ("--artifact", str(artifact))],
+        ["deliver", "--event", TRIAL_EVENT],
+    ]
+
+
 def _trial(args, relay_executable):
-    """Register, emit, then a bounded deliver. Only this path creates work.
+    """Register, open the generation, emit, then a bounded deliver. Only this path creates work.
 
     The field's evidence is the delivery attempt's returned turn id. emit stores the receipt
     and enqueues it; the attempt itself happens in deliver, so an emitted receipt's own turn
     id never satisfies deliveryAccepted (OPS-6.1).
+
+    The invocations come from trial_steps so that what this sends is the same data a test can
+    check against the relay's own required arguments.
     """
     if not relay_executable:
         return check.field("not_verified", "trial requested but no relay executable was found",
@@ -448,62 +505,96 @@ def _trial(args, relay_executable):
             acting_process=acting_process(), measured_at=now(),
         )
 
-    host = socket.gethostname()
-    steps = []
+    steps = trial_steps(
+        issue=args.issue, parent_task=args.parent_task, child_task=args.child_task,
+        recipient=args.recipient, artifact_root=args.artifact_root,
+        turn_thread=args.turn_thread, turn_id=args.turn_id, host=socket.gethostname(),
+        artifacts=args.artifact, dispatch_turn_id=args.dispatch_turn_id,
+        turn_status=args.turn_status, recipient_settings=args.recipient_settings,
+    )
+    performed = []
+    resolved = {}
 
-    def call(command):
-        reading = scope.relay(command, executable=relay_executable, socket=args.socket,
+    def run_step(argv):
+        concrete = [resolved.get(token, token) for token in argv]
+        reading = scope.relay(concrete, executable=relay_executable, socket=args.socket,
                               state=args.state)
-        steps.append({"command": reading.get("command"), "ok": reading.get("ok"),
-                      "exitCode": reading.get("exitCode")})
+        performed.append({"command": reading.get("command"), "ok": reading.get("ok"),
+                          "exitCode": reading.get("exitCode")})
         return reading
 
-    registered = call([
-        "register", "--parent-task", args.parent_task, "--parent-host", host,
-        "--child-task", args.child_task, "--child-host", host, "--issue", args.issue,
-        "--artifact-root", args.artifact_root, "--allowed-recipient", args.recipient,
-        "--dispatch-request-id", "jun104-trial-" + args.issue,
-    ])
-    if not registered.get("ok"):
-        return check.field("not_verified", "the relationship could not be registered: "
-                           + str(registered.get("stderr") or registered.get("unreadable")),
-                           command=steps[-1]["command"], acting_process=acting_process(),
-                           measured_at=now())
-    relationship = ((registered.get("payload") or {}).get("relationship") or {}).get("id") \
-        or (registered.get("payload") or {}).get("relationshipId")
+    def refuse(step, reading):
+        return check.field(
+            "not_verified",
+            step + " did not succeed, so nothing later could be established: "
+            + str(reading.get("stderr") or reading.get("unreadable")
+                  or json.dumps(reading.get("payload"))[:300])
+            + ". Steps: " + json.dumps(performed),
+            command=json.dumps(performed[-1]["command"]) if performed else None,
+            acting_process=acting_process(), measured_at=now(),
+        )
 
-    opened = call(["generation-open", "--relationship", str(relationship)])
-    generation = ((opened.get("payload") or {}).get("generation") or {}).get("id") \
-        or (opened.get("payload") or {}).get("generationId")
+    by_name = {argv[0]: argv for argv in steps}
+    for argv in steps:
+        if argv[0] == "settings-record":
+            recorded = run_step(argv)
+            if not recorded.get("ok"):
+                return refuse("settings-record", recorded)
 
-    emitted = call([
-        "emit", "--relationship", str(relationship), "--generation", str(generation),
-        "--outcome", "ready_for_review", "--turn-thread", args.turn_thread,
-        "--turn-id", args.turn_id,
-    ])
-    event = ((emitted.get("payload") or {}).get("receipt") or {}).get("eventId") \
-        or (emitted.get("payload") or {}).get("eventId")
+    registered = run_step(by_name["register"])
+    payload = registered.get("payload") or {}
+    relationship = payload.get("relationshipId") or (payload.get("relationship") or {}).get("id")
+    if not registered.get("ok") or not relationship:
+        return refuse("register", registered)
+    resolved[TRIAL_RELATIONSHIP] = str(relationship)
+
+    # generation-open declares --dispatch-request-id required, and replaying the SAME id the
+    # registration used returns the generation it already opened rather than opening another.
+    opened = run_step(by_name["generation-open"])
+    payload = opened.get("payload") or {}
+    generation = payload.get("executionGeneration")
+    if generation is None:
+        generation = (payload.get("generation") or {}).get("executionGeneration")
+    if not opened.get("ok") or generation is None:
+        return refuse("generation-open", opened)
+    resolved[TRIAL_GENERATION] = str(generation)
+
+    bound = run_step(by_name["generation-bind"])
+    if not bound.get("ok"):
+        return refuse("generation-bind", bound)
+
+    admitted = run_step(by_name["admit-turn"])
+    if not admitted.get("ok"):
+        return refuse("admit-turn", admitted)
+
+    emitted = run_step(by_name["emit"])
+    payload = emitted.get("payload") or {}
+    receipt = payload.get("receipt") or {}
+    event = receipt.get("eventId") or payload.get("eventId") or receipt.get("id")
     if not emitted.get("ok") or not event:
-        return check.field("not_verified", "the receipt was not accepted, so nothing could be"
-                           " delivered: " + str(emitted.get("stderr") or emitted.get("unreadable")),
-                           command=steps[-1]["command"], acting_process=acting_process(),
-                           measured_at=now())
+        return refuse("emit", emitted)
+    resolved[TRIAL_EVENT] = str(event)
 
-    delivered = call(["deliver", "--event", str(event)])
-    attempt = (delivered.get("payload") or {}).get("attempt") or {}
+    delivered = run_step(by_name["deliver"])
+    payload = delivered.get("payload") or {}
+    attempt = payload.get("attempt") or {}
     turn = attempt.get("turnId") or (attempt.get("turn") or {}).get("id")
     if delivered.get("ok") and turn:
         return check.field(
             "verified",
             "the delivery attempt returned turn id " + str(turn) + " for event " + str(event)
-            + ". Recipient " + args.recipient + "; steps: " + json.dumps(steps),
-            command=steps[-1]["command"], acting_process=acting_process(), measured_at=now(),
+            + ", relationship " + str(relationship) + ", generation " + str(generation)
+            + ". Recipient " + str(args.recipient) + ". Steps: " + json.dumps(performed),
+            command=json.dumps(performed[-1]["command"]),
+            acting_process=acting_process(), measured_at=now(),
         )
     return check.field(
         "not_verified",
         "the delivery attempt recorded no returned turn id. A dispatch, a staged receipt or an"
-        " absent error does not establish this field. Attempt: " + json.dumps(attempt)[:400],
-        command=steps[-1]["command"], acting_process=acting_process(), measured_at=now(),
+        " absent error does not establish this field. Attempt: " + json.dumps(attempt)[:400]
+        + ". Steps: " + json.dumps(performed),
+        command=json.dumps(performed[-1]["command"]),
+        acting_process=acting_process(), measured_at=now(),
     )
 
 
@@ -862,6 +953,14 @@ def build_parser():
     diagnose.add_argument("--artifact-root", help="trial input: the artifact root")
     diagnose.add_argument("--turn-thread", help="trial input: the observed turn thread")
     diagnose.add_argument("--turn-id", help="trial input: the observed turn id")
+    diagnose.add_argument("--artifact", action="append",
+                          help="trial input: a deliverable for the reviewable receipt")
+    diagnose.add_argument("--dispatch-turn-id",
+                          help="trial input: the parent turn the generation binds to")
+    diagnose.add_argument("--recipient-settings",
+                          help="trial input: the recipient's authorized settings, JSON or @path")
+    diagnose.add_argument("--turn-status", default="completed",
+                          help="trial input: the status the child turn was observed in")
     diagnose.add_argument("--temporary", action="store_true",
                           help="record that this destination is temporary, not a host")
     diagnose.set_defaults(handler=cmd_diagnose)
