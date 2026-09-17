@@ -205,9 +205,7 @@ def test_a_repeated_key_is_refused_rather_than_silently_overwritten(tmp_path):
     with pytest.raises(ExecutionPolicyError, match="duplicate key 'allowed'"):
         ExecutionPolicy.from_file(path)
     nested = tmp_path / "nested.json"
-    nested.write_text(
-        '{"allowed": [{"model": "a", "efforts": ["x"], "model": "b"}]}'
-    )
+    nested.write_text('{"allowed": [{"model": "a", "efforts": ["x"], "model": "b"}]}')
     with pytest.raises(ExecutionPolicyError, match="duplicate key 'model'"):
         ExecutionPolicy.from_file(nested)
 
