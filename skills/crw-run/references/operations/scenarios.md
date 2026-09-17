@@ -206,8 +206,9 @@ user deliberately stopped is the one thing a retry cannot undo.
 A native subagent completes inside its parent's own turn and is not this independent-task case.
 The active CRW parent keeps its coordination record and continues bounded transport waits
 using actual child identifiers. The timeout does not finish the project or justify a resend.
-After verifying and integrating the child's delivery, it dispatches the next ready issue within
-the agreed scope. A blocked issue holds its dependents, not independent ready work. Without a
+After verifying and integrating the child's delivery, an owning Loop dispatches the next
+ready issue within its agreed scope. Plain Run fills only its recorded batch and reports
+newly unblocked successors as next actions unless wider delivery was explicitly requested. A blocked issue holds its dependents, not independent ready work. Without a
 usable observation path it records the blocker and resume step instead of promising automatic
 progress. A service installation or staged receipt alone does not qualify for idle handoff.
 
@@ -568,7 +569,9 @@ verifies their authorized delivery, then reports C as the next action. It create
 parent goal and does not dispatch C by default. Loop reads/creates or reuses its
 matching parent goal and repeats Run; when A lands and capacity is available it can
 start C without waiting for B. A pass's return does not finish Loop. Dispatch-only
-Run can hand off pending children; neither that handoff nor status-only Run promises
+Run can hand off pending children. After compaction or a resume request, plain Run
+recovers and finishes its recorded batch; if already delivered, it reports the next action
+without admitting C. Neither that handoff nor status-only Run promises
 or requests future wake-ups. Explicitly wider delivery scope is still honored.
 
 Preserved: one project parent, existing issue children and PRs, requested batch/merge

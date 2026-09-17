@@ -155,7 +155,7 @@ them. Higher-priority host/tool restrictions still apply.
 | Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Apply the current-pass default above, including fixed-parent designation and child creation/reuse, without a parent goal or automatic successor loop; host restrictions still apply |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
-| Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings from the coordination/recovery record; refresh ownership and prerequisites, then continue its next ready batch without repeating approval |
+| Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings from the coordination/recovery record; refresh ownership and prerequisites, then finish or report the recorded pass. Only an owning Loop or explicitly wider delivery scope advances to another batch; do not repeat approval already covering that scope |
 | Standalone short invocation such as `$crw-run 다음 작업 진행해줘`, with genuinely no creation intent in the conversation or prior authorization for this scope | Prepare the issue packet and inspect ownership; if a new task is needed and the host requires an explicit creation request, obtain only that missing request |
 
 Merely mentioning the skill's name, an unsubmitted UI default prompt, a quoted
@@ -197,15 +197,16 @@ work. Record a full baseline commit for each task and decide how any prerequisit
 changes will reach it. Do not push shared baseline commits through every task.
 
 At initial dispatch and after a completion, blocker, or integration, scan the
-remaining agreed scope for useful parallel work rather than selecting only the
-next issue. Check verified prerequisites, overlapping edit surfaces, existing
+selected Run batch for useful parallel work rather than selecting only the next issue.
+Only an owning Loop or explicitly wider delivery scope may admit newly unblocked
+successors outside that batch. A plain Run reports those successors as next actions. Check verified prerequisites, overlapping edit surfaces, existing
 writers, shared runtime resources, and available execution capacity. Dispatch
 the largest useful set of independent ready issues within explicit concurrency,
 budget, and host limits. A shared repository alone is not a reason to serialize;
 separate owned checkouts can carry independent changes.
 
 Do not wait for an entire batch to finish before filling available capacity with
-newly ready independent work. Independent issue statuses alone do not establish
+eligible independent work inside that boundary. Independent issue statuses alone do not establish
 independence: serialize shared schema, persistence, contract, or central UI changes
 when separation would cost more than it saves. Keep integration into a shared
 target serial and recheck each candidate against the updated base. Record a
@@ -421,7 +422,8 @@ write git metadata are in [Operations contract](references/operations.md).
 Report **verified**, **needs changes**, or **unverified**, with concrete evidence,
 and distinguish implementation, merge, and deployment. Start a successor
 only after its required contracts/revisions are verified and available in its
-checkout, and only within the authorized batch/run scope.
+checkout, and only within the selected batch or the owning Loop/explicitly wider delivery
+scope. Plain Run reports out-of-batch successors instead of dispatching them.
 
 After integration, apply [Implementation Done](../crw-plan/references/integrations.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery PR's
