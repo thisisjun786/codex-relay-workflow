@@ -2009,6 +2009,73 @@ class FourHourBoundary(ServiceTestCase):
         self.assertFalse(intent["enabled"], "the supervisor rewrote the owner's intent")
         self.assertEqual(intent["changedBy"], "owner")
 
+    def test_one_real_worker_reads_the_assignment_back_through_inherited_state(self):
+        """The boundary a scripted clock cannot cross: another process.
+
+        Every other test in this class drives FakeWorker, which never calls spawn_worker,
+        never adopts the inherited descriptors and never opens the store. Those show the
+        SUPERVISOR preserving the assignment across replacements; they cannot show a worker
+        reading it back, and would still pass if a real worker lost --state or opened a
+        different database. This runs one real boundary: the real supervisor, spawning the
+        real worker, which has to name the assignment it found.
+
+        Real time rather than the scripted clock, deliberately - one short segment, because
+        what is under test here is the process boundary and not the four-hour arithmetic.
+        """
+        import json
+
+        service = self.service("a")
+        service.enable(actor="test")
+        store, relationship_id = self.assignment(service)
+        before_id = service.store_id
+        before_generations = self.generations(store, relationship_id)
+        store.close()
+
+        # RelayService.spawn_worker itself, wrapped only to note the pid it returns.
+        spawned = []
+
+        def spawn(**call):
+            child = service.spawn_worker(**call)
+            spawned.append(child.pid)
+            return child
+
+        outcome = service.supervise(
+            allow_isolated=True, segment_seconds=1.0, max_segments=1, spawn=spawn,
+        )
+
+        log = (service.selection.path / "daemon.log").read_text(encoding="utf-8")
+        self.assertEqual(
+            outcome["segments"], [0],
+            f"the worker did not exit cleanly; its log said:\n{log}",
+        )
+        # The worker's own tick report, written by the child process into the state
+        # directory it was given.
+        report = json.loads(log)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(len(spawned), 1, spawned)
+        self.assertNotEqual(spawned[0], os.getpid(), "that was not a separate process")
+        # The report's own pid is not the worker's. `_run_bounded` returns `record["pid"]`
+        # from the record `owned_service` adopted, and in a supervised run that record was
+        # written by the supervisor - so this names the launch the worker belongs to.
+        self.assertEqual(report["pid"], os.getpid(), report)
+
+        # The assignment, named by the worker. DISPATCH_TURN appears nowhere in the argv or
+        # the environment spawn_worker builds - only inside the store - so a worker that had
+        # not read the inherited database could not have produced this line. The read fails
+        # because SOCKET does not exist, which is what makes it name the turn it was reaching
+        # for.
+        notes = " ".join(report["ticks"][0]["notes"])
+        self.assertIn(
+            "turn-dispatch-9", notes,
+            f"the worker never reached this assignment: {report['ticks'][0]}",
+        )
+
+        # And it left the store and the generation as it found them.
+        self.assertEqual(service.store_id, before_id)
+        reopened = Store(Path(service.selection.path) / "relay.sqlite3")
+        self.addCleanup(reopened.close)
+        self.assertEqual(self.generations(reopened, relationship_id), before_generations)
+
     def test_a_bound_past_four_hours_clamps_the_worker_that_would_outlive_it(self):
         """The last segment is shortened rather than allowed to run past the bound.
 

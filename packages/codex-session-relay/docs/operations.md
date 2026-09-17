@@ -338,12 +338,15 @@ And the deadline buys finiteness, not sufficiency. It is not an upper bound on a
 still making progress and cannot be turned into one by choosing a larger multiple: the same
 timer also covers the time this send spends waiting on that shared connect lock while a
 DIFFERENT recipient rebuilds, and a queue of rebuilds ahead of it has no constant bound. So
-the deadline can fire on a healthy send. When it does, nothing is lost and nothing is sent
-twice — the caller gave up at the RPC timeout plus its slack long before, and the ledger's
-request-id idempotency covers the retry — but what it decides is whether the bridge ledger
-ends up holding a real receipt for that request id or an uncertain one, which is what
-reconciliation reads later. Read it as a backstop against a write that never drains, not as a
-promise about how long a working send may take.
+the deadline can fire on a healthy send, and what it leaves behind is final: `_guarded_send`
+writes an `outcome_unknown` receipt on cancellation and re-raises, and nothing replaces that
+row later. Recovering the event from there is reconciliation's job under I-71 in
+[invariants.md](invariants.md), and what stops a second copy being sent is that `_settle`
+never reschedules `held_uncertain` — an unknown outcome waits to be reconciled instead of
+being retried. It is the delivery state machine that protects the event, not same-id replay:
+`derive_request_id` gives every attempt its own id, so a retry is a new id the retained
+receipt says nothing about. Read this bound as a backstop against a write that never drains,
+not as a promise about how long a working send may take.
 
 **A stale event is stopped before the send.** A generation that has moved on invalidates
 every outcome of the previous one, whether or not the new generation has produced a revision

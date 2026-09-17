@@ -876,6 +876,13 @@ def _access_receipt(services, report) -> dict:
     across that boundary. `store-challenge` and `doctor --expect-nonce` are what settle it
     there: a value one participant writes and another reads back proves a shared store however
     the paths and the mounts are arranged.
+
+    The identity and the participants come out of ONE read for the same reason. Collected by
+    two separate opens, an atomic replacement between them would pair one store's identity
+    with another store's participants and the receipt would say nothing about it - a mismatch
+    invisible in exactly the comparison this exists to support. One statement carries both,
+    and the store id it returns is checked against the one the probe stat'd: if those differ
+    the file moved mid-command, and that is reported instead of the participants.
     """
     from .store import read_only_rows
 
@@ -886,18 +893,35 @@ def _access_receipt(services, report) -> dict:
         # and migrate one, which is the side effect doctor promises not to have.
         rows = read_only_rows(
             services.selection,
-            "SELECT task_id, settings, source, recorded_at FROM authorized_settings"
-            " ORDER BY task_id",
+            "SELECT 'meta' AS kind, key AS task_id, value AS settings,"
+            "       NULL AS source, NULL AS recorded_at"
+            "  FROM schema_meta WHERE key = 'store_id'"
+            " UNION ALL"
+            " SELECT 'settings', task_id, settings, source, recorded_at"
+            "   FROM authorized_settings"
+            " ORDER BY kind, task_id",
         )
-        if rows["readable"] and not rows["detail"]:
-            recorded["available"] = True
-            recorded["participants"] = {
-                row["task_id"]: _sandbox_summary(row) for row in rows["rows"]
-            }
-        else:
+        if not rows["readable"] or rows["detail"]:
             recorded["detail"] = (
                 rows["detail"] or "the authorized settings could not be read"
             )
+        else:
+            seen = next(
+                (row["settings"] for row in rows["rows"] if row["kind"] == "meta"), None
+            )
+            if seen != store["storeId"]:
+                # The file this read opened is not the file the probe measured. Reporting
+                # both halves as one receipt is the failure; saying so is not.
+                recorded["detail"] = (
+                    f"the store changed under this command: identity {store['storeId']!r}"
+                    f" was measured, settings were read from {seen!r}"
+                )
+            else:
+                recorded["available"] = True
+                recorded["participants"] = {
+                    row["task_id"]: _sandbox_summary(row)
+                    for row in rows["rows"] if row["kind"] == "settings"
+                }
     return {
         "storeId": store["storeId"],
         "dbPath": store["dbPath"],
@@ -1703,11 +1727,16 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
     # it is the same string.
     try:
         resolved = Path(pinned).expanduser().resolve()
-    except RuntimeError:
+    except (OSError, RuntimeError, ValueError):
         # ~someone whose home this host cannot resolve. The variable is never validated at
         # startup when --state overrides it, so this is the first thing that touches it - and
         # a refusal payload that becomes a traceback leaves the operator with nothing at all.
         # Said rather than dropped: it is the value they set, and it is not usable.
+        #
+        # Wider than the one failure measured here, on purpose. Only RuntimeError reproduces
+        # on CPython 3.14.4 - an unsearchable parent returns the path rather than raising, and
+        # so does an over-long one - but resolve() touches the filesystem and this class of
+        # escape has already cost a refusal its whole payload once.
         lines.append(
             f"  {STATE_ENV} is set to {pinned!r}, which names a home directory that does not"
             " resolve on this host, so it is not offered as a candidate"

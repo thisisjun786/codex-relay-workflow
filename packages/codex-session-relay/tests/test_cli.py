@@ -1428,6 +1428,47 @@ class ParticipantAccessReceipts(CliBase):
         self.assertTrue(participants[PARENT]["readable"], participants[PARENT])
         self.assertIsNotNone(receipt["storeId"])
         self.assertTrue(receipt["observedAccess"]["read"])
+    def test_a_store_swapped_mid_command_is_reported_rather_than_paired(self):
+        """Identity and participants have to come from the same file, or say they did not.
+
+        Collected by two opens, an atomic replacement between them pairs one store's identity
+        with another store's participants, and nothing in the receipt would show it - a
+        mismatch invisible in exactly the comparison this exists to support. One statement
+        carries both now, and its store id is checked against the one the probe measured.
+
+        Driven at the function rather than through the CLI: the window is one command against
+        a database being swapped underneath it, which cannot be opened from outside the
+        process. The probe result is real; only the identity it reports is moved, which is
+        what a replacement between the two reads would have produced.
+        """
+        from codex_session_relay.cli import _access_receipt
+        from codex_session_relay.store import probe, resolve_state_dir
+
+        self.seeded()
+        selection = resolve_state_dir(self.tmp)
+        report = probe(selection)
+        self.assertTrue(report["access"]["dbReadable"], report)
+
+        class Services:
+            pass
+
+        services = Services()
+        services.selection = selection
+
+        honest = _access_receipt(services, report)
+        self.assertTrue(honest["recordedSandbox"]["available"], honest)
+        self.assertIn(PARENT, honest["recordedSandbox"]["participants"])
+
+        # Now the identity names a file the settings did not come from.
+        moved = dict(report, store=dict(report["store"], storeId="another-store-entirely"))
+        receipt = _access_receipt(services, moved)
+
+        recorded = receipt["recordedSandbox"]
+        self.assertFalse(recorded["available"], recorded)
+        self.assertEqual(recorded["participants"], {}, "mismatched participants were reported")
+        self.assertIn("changed under this command", recorded["detail"])
+        self.assertIn("another-store-entirely", recorded["detail"])
+
     def test_a_participant_on_another_store_is_refused_rather_than_called_healthy(self):
         """The failure this criterion is really about: agreeing while looking at two stores."""
         state = self.seeded()
