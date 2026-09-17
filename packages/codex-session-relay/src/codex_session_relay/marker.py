@@ -229,8 +229,16 @@ def publish(target, payload: dict, *, root=None) -> str:
     """
     target = Path(target)
     directory = target.parent
+    if root is not None:
+        # BEFORE mkdir, not after. Path.resolve() follows the symlinked components that already
+        # exist even when the leaf does not, so this refuses on the spelling as the filesystem
+        # reads it. Checking afterwards still created the external directories first and only then
+        # raised, which left the write refused and the mutation done.
+        confined(directory, root)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     if root is not None:
+        # Again afterwards, because a symlink could have been swapped in between. The window is
+        # small and this is defence in depth rather than a capability; see docs/invariants.md.
         confined(directory, root)
     temp = directory / (
         "." + target.name + ".tmp." + str(os.getpid()) + "." + uuid.uuid4().hex[:12]

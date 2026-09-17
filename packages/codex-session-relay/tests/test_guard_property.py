@@ -84,12 +84,23 @@ class NothingEscapes(GuardTestCase):
             target, error, declared = STAGE_INJECTIONS[stage]
             with self.subTest(stage=stage):
                 relationship = self.managed()
+                # Its own turn per stage: the marker is create-once, so a disposition published for
+                # one stage would otherwise still be standing for the next and change which stage is
+                # reached. The declaring stage keeps the anchor turn, because a receipt on any other
+                # turn needs an explicit continuation admission that is not what this is testing.
+                turn = DISPATCH_TURN if declared else "stage-" + stage
                 if declared:
-                    self.emit_ready(relationship)
+                    self.accept(
+                        self.ready_payload(
+                            relationship,
+                            [self.artifact("out-" + stage + ".txt", stage)],
+                            turn=self.assigned_turn("inProgress"),
+                        )
+                    )
                     self.dispose("ready_for_review")
                 with mock.patch(target, side_effect=error("injected at " + stage)):
                     verdict = guard.evaluate(
-                        self.markers, self.stop(), now=LATER, mode=guard.HOLD
+                        self.markers, self.stop(turn_id=turn), now=LATER, mode=guard.HOLD
                     )
                 self.assertEqual(verdict["observation"], guard.FAULTED, stage)
                 self.assertEqual(verdict["decision"], guard.RELEASE, stage)
@@ -417,6 +428,26 @@ class RecordedPathsAreConfined(unittest.TestCase):
             )
         self.assertFalse((outside / "sess" / "claim.json").exists())
 
+    def test_confinement_refuses_before_it_creates_anything(self):
+        """Checking after mkdir left the write refused and the mutation done.
+
+        A symlinked claims/ pointing outside meant publishing claims/sess/claim.json created the
+        external sess/ directory first and only then raised, so a writer with broader filesystem
+        access could still mutate paths outside the root despite the refusal.
+        """
+        root = self.tmp / "markers"
+        outside = self.tmp / "outside"
+        outside.mkdir(parents=True)
+        (root / "assignment").mkdir(parents=True)
+        os.symlink(outside, root / "assignment" / "claims")
+        with self.assertRaises(ValueError):
+            marker.publish(
+                root / "assignment" / "claims" / "sess" / "claim.json",
+                {"sessionId": "sess"},
+                root=root,
+            )
+        self.assertEqual(list(outside.iterdir()), [])
+
     def test_confinement_accepts_a_path_that_stays_inside(self):
         root = self.tmp / "markers"
         target = root / "assignment" / "intent.json"
@@ -514,6 +545,45 @@ class HoldReservation(GuardTestCase):
         self.assertEqual(counters["holdsThisGeneration"], 1)
         self.assertIsNone(corrupt)
         self.assertIsNone(unreadable)
+
+    def test_a_releasing_declaration_is_not_masked_by_unreadable_hold_history(self):
+        """User interruption always wins, and it must not be hidden by unrelated accounting.
+
+        Reading the hold history for every turn let an unreadable holds/ tree report
+        state_unreadable over a perfectly good declaration and send the coordinator to repair
+        something the child never depended on.
+        """
+        self.managed()
+        self.dispose("interrupted")
+        with mock.patch(
+            "codex_session_relay.guard.hold_counters",
+            return_value=({"holdsThisTurn": 0}, None, "holds"),
+        ) as counted:
+            verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_interrupted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        # And the budget was never read at all, because no omission was being weighed.
+        counted.assert_not_called()
+
+    def test_an_omission_still_reports_an_uncountable_budget(self):
+        self.managed()
+        with mock.patch(
+            "codex_session_relay.guard.hold_counters",
+            return_value=({"holdsThisTurn": 0}, None, "holds"),
+        ):
+            verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertIn("holds", verdict["reason"])
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_stop_identity_that_cannot_be_a_path_is_malformed_not_hold_in_flight(self):
+        """reserve_hold answers False for an unusable identity too, and treating that as a lost
+        race rewrote a holdable omission into a hold that was never in flight."""
+        self.managed()
+        verdict = self.evaluate(turn_id="../escape")
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertNotEqual(verdict["state"], "hold_in_flight")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
 
     def test_observe_only_never_reserves(self):
         self.managed()

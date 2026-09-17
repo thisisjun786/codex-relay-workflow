@@ -628,10 +628,15 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
     disposition = receipt = malformed_label = None
     counters = {}
     if directory is not None:
+        if not (valid_segment(session_id) and valid_segment(turn_id)):
+            # The delivered identity cannot be a directory name, so nothing can be recorded for it
+            # and no hold can be reserved against it. Reported as the malformed record it is,
+            # rather than being folded into a hold that is not in flight.
+            malformed_label = "stop_identity"
         disposition, readable = read_disposition(directory, session_id, turn_id)
         if not readable:
             unreadable.append("disposition")
-        malformed_label = intents.malformed_disposition(disposition)
+        malformed_label = malformed_label or intents.malformed_disposition(disposition)
         declared = (
             disposition.get("outcome")
             if not malformed_label
@@ -659,20 +664,6 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
             )
             if not readable:
                 unreadable.append("receipts")
-        counters, corrupt, unreadable_history = hold_counters(
-            directory,
-            session_id=session_id,
-            turn_id=turn_id,
-            now=now,
-            workspace_root=directory.parent,
-        )
-        if unreadable_history:
-            # A budget that could not be counted is not an empty budget. Reported here rather than
-            # absorbed, because the alternative is holding on a bound nobody actually checked.
-            unreadable.append(unreadable_history)
-        if corrupt:
-            counters = {"holdsThisTurn": None}
-
     observation = {
         "stop_input": stop,
         "marker": marker_facts,
@@ -682,7 +673,26 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
         "malformed": malformed_label,
         "now": now,
     }
-    verdict = decide(observation, counters=counters, mode=mode)
+    # Classified once with no budget, so a declaration that releases on its own never pays for the
+    # hold history at all. Only an omission is weighed against the bounds, and only then is the
+    # budget read - an unreadable holds/ tree must not be able to hide a declared interrupted turn.
+    verdict = decide(observation, counters={}, mode=mode)
+    if verdict["observation"] in OMISSIONS and directory is not None:
+        counters, corrupt, unreadable_history = hold_counters(
+            directory,
+            session_id=session_id,
+            turn_id=turn_id,
+            now=now,
+            workspace_root=directory.parent,
+        )
+        if unreadable_history:
+            # A budget that could not be counted is not an empty budget. Reported rather than
+            # absorbed, because the alternative is holding on a bound nobody actually checked.
+            unreadable.append(unreadable_history)
+            observation["store_unreadable"] = unreadable
+        if corrupt:
+            counters = {"holdsThisTurn": None}
+        verdict = decide(observation, counters=counters, mode=mode)
     if verdict["decision"] == BLOCK and directory is not None:
         # The counters were read before the decision, so two evaluations racing on one Stop can
         # both see an unspent budget. The reservation is the atomic part: exactly one of them wins
