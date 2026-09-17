@@ -1409,6 +1409,104 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _quote(value) -> str:
+    """Shell-safe, because these strings are printed to be pasted."""
+    import shlex
+
+    return shlex.quote(str(value))
+
+
+def _without_state_env(selection) -> str:
+    """A prefix that drops the state pin, but only when the pin is what went wrong.
+
+    A line that says "find the store that belongs to this socket" cannot do that while
+    CODEX_SESSION_RELAY_STATE still pins the selection to the store that produced the
+    refusal: pasting it would return the very same refusal and read as a dead end.
+
+    It is conditioned on the selection's own source, not merely on the variable being set.
+    When --state caused the refusal the variable may well point at the right store for this
+    socket, and dropping it there sends the operator to a default directory that usually
+    holds no database at all - a worse answer than the one it replaced.
+    """
+    import os
+
+    from .store import STATE_ENV
+
+    if getattr(selection, "source", None) != "env" or STATE_ENV not in os.environ:
+        return ""
+    return f"env -u {STATE_ENV} "
+
+
+def _program() -> str:
+    """How the operator invokes this CLI, so a printed command can be pasted.
+
+    Derived from argv rather than hardcoded, because the console script and
+    `python3 -m codex_session_relay.cli` are both ordinary ways to reach here and a recovery
+    list that names the wrong one is a recovery list the operator has to translate.
+    """
+    import os
+    import shlex
+    import sys
+
+    argv0 = sys.argv[0] or ""
+    name = os.path.basename(argv0)
+    if name in ("", "__main__.py", "cli.py", "-c"):
+        # The running interpreter, not a bare python3. The relay may be under a virtualenv or
+        # a versioned interpreter, and on a host where python3 is absent or resolves to a
+        # DIFFERENT interpreter the printed line reaches another installation, or nothing.
+        return f"{shlex.quote(sys.executable or 'python3')} -m codex_session_relay.cli"
+    # The directory is kept when there is one. A console script that is not on PATH renders as
+    # a bare name otherwise, and pasting that reaches a different installation or nothing.
+    return shlex.quote(argv0 if os.path.dirname(argv0) else name)
+
+
+def _recovery_commands(services, selection, contested: bool) -> list:
+    """Complete commands for an operator who has only this refusal to work from.
+
+    Every one of them READS. Provenance is recorded by opening a store with a socket, which
+    is exactly what the refusal prevented, so inspection is safe to repeat and none of these
+    adopts anything by running.
+
+    The socket travels on each command deliberately. Dropping it would compare the candidates
+    under different conditions from the ones that produced the refusal, and for the reason
+    the doctor exemption exists in the first place: the socket is what makes two stores
+    candidates for each other.
+    """
+    import shlex
+
+    program = _program()
+    # Quoted, every one of them. These are printed to be pasted, and a state directory or a
+    # socket path containing shell syntax would otherwise be executed by the operator doing
+    # exactly what the refusal told them to do.
+    socket = f" --socket {shlex.quote(str(services.socket_path))}" if services.socket_path else ""
+    lines = [
+        f"{program}{socket} doctor",
+        "  lists the candidates under siblingStores",
+    ]
+    for candidate in list(selection.ambiguous or selection.unidentified):
+        quoted = shlex.quote(str(candidate))
+        lines.append(f"{program} --state {quoted}{socket} doctor")
+        lines.append(f"{program} --state {quoted}{socket} service status")
+    lines.append(
+        "  service status groups by project, so the candidate holding the assignments you"
+        " expect is the one to keep"
+    )
+    if contested:
+        # Said in the payload, not only in the docs. Choosing one of two claiming stores does
+        # not retire the other, so the next default invocation is refused again and every
+        # participant has to be given the same directory until one store is gone.
+        lines.append(
+            "  then pass --state <the chosen directory> on EVERY participant of this"
+            " assignment: both stores still record this socket, so default discovery keeps"
+            " refusing until one of them is retired"
+        )
+    else:
+        lines.append(
+            f"  then pass --state {shlex.quote(str(selection.path))} once to create the new"
+            " store deliberately, or --state <the existing directory> to keep using it"
+        )
+    return lines
+
 def _refuse_ambiguous_state(services, args) -> None:
     """Two stores already record this socket, so opening one of them would be a guess.
 
@@ -1458,6 +1556,23 @@ def _refuse_ambiguous_state(services, args) -> None:
                 "recordedSocket": recorded,
                 "requestedSocket": wanted,
                 "stateDirectory": str(selection.path),
+                # No adoption list, and saying so explicitly. Using this store does not
+                # rewrite the socket it recorded, so there is nothing here to adopt: the fix
+                # is to point the command at the store that belongs to this socket, or at the
+                # socket that belongs to this store.
+                "recover": [
+                    f"{_program()} --state {_quote(selection.path)}"
+                    f" --socket {_quote(recorded)} doctor",
+                    "  reads this store under the socket it actually records",
+                    # The pin is dropped explicitly. This line has no --state to override it,
+                    # so an inherited CODEX_SESSION_RELAY_STATE would re-select the store that
+                    # just produced this refusal and hand back the same error.
+                    f"{_without_state_env(selection)}{_program()}"
+                    f" --socket {_quote(wanted)} doctor",
+                    "  finds the store that belongs to the socket you asked for",
+                ],
+                "note": "using a store does not rewrite the socket it recorded, so neither"
+                        " command here adopts anything; choose the matching pair",
             }, EXIT_REFUSED)
     if not (selection.ambiguous or selection.unidentified):
         return
@@ -1478,12 +1593,11 @@ def _refuse_ambiguous_state(services, args) -> None:
         "socketPath": services.socket_path,
         "candidates": list(selection.ambiguous or selection.unidentified),
         "wouldHaveCreated": str(selection.db_path),
-        "recover": [
-            "doctor lists the candidates",
-            "--state <candidate> doctor identifies the store",
-            "--state <candidate> service status shows which assignments it carries",
-            "--state <the directory above> once, to adopt it deliberately",
-        ],
+        # Complete commands, carrying the socket. An operator has only this payload to work
+        # from, and every one of these reads a store without recording anything, so they are
+        # safe to repeat: provenance is written by opening a store, which is what the
+        # refusal prevented.
+        "recover": _recovery_commands(services, selection, contested),
     }, EXIT_REFUSED)
 
 
