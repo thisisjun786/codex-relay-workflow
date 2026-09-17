@@ -652,10 +652,15 @@ than the host, so a lookup by issue happens before anything is created.
 ### OPS-8.1 Parent continuation and waiting
 
 Select the waiting mode from the parent's requested workflow and observed host capability.
-The default parent follows [crw-loop](../../crw-loop/SKILL.md); an explicitly chosen
-CXC parent follows its installed lifecycle. In active observation mode, keep the
+A plain Run executes the agreed project scope, including successors, without a parent
+goal. An explicitly requested [crw-loop](../../crw-loop/SKILL.md) adds the native parent
+goal and automatic host continuation to the same execution scope; a CXC parent follows
+its installed lifecycle.
+Goal/Stop hook compatibility must pass the Loop's preflight before activation. In active observation mode, keep the
 authorized run active, use bounded transport waits, inspect meaningful results and continue
-ready work. A child assignment or active child goal does not arm the parent's Loop. Do not
+ready work within that operation. Neither Run nor Loop stops just because the first
+ready batch finished when scoped successors remain. Explicit batch/dispatch-only limits
+still apply. A child assignment or active child goal does not arm the parent's Loop. Do not
 end the parent turn expecting a Stop hook or a relay to restart it; neither is guaranteed by
 these instructions. If the host releases the turn, preserve recovery evidence and report the
 interruption without calling the run complete.
@@ -679,7 +684,9 @@ been verified for its operating scope. A package installation, capability flag o
 alone does not establish that path. An explicitly chosen CXC parent must also satisfy its
 installed waiting rules; this clause does not override them. Otherwise use bounded observation through the transport's
 own wait during the authorized run. A timeout leaves the work running: refresh observations and
-wait again rather than ending the run, resending the prompt or creating another child. If no
+wait again within the requested delivery boundary rather than claiming completion, resending
+the prompt or creating another child. A dispatch-only Run may return an explicit pending-work
+handoff without claiming automatic resumption. If no
 usable wait or resume path exists, record the capability blocker and the exact manual resume step.
 
 Two mechanisms are distinct and are never described as one. A native subagent finishes inside its

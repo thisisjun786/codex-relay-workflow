@@ -206,8 +206,9 @@ user deliberately stopped is the one thing a retry cannot undo.
 A native subagent completes inside its parent's own turn and is not this independent-task case.
 The active CRW parent keeps its coordination record and continues bounded transport waits
 using actual child identifiers. The timeout does not finish the project or justify a resend.
-After verifying and integrating the child's delivery, it dispatches the next ready issue within
-the agreed scope. A blocked issue holds its dependents, not independent ready work. Without a
+After verifying and integrating the child's delivery, Run or Loop dispatches the next
+ready issue within its agreed project scope. An explicit batch-only limit excludes
+successors outside that batch in either mode. A blocked issue holds its dependents, not independent ready work. Without a
 usable observation path it records the blocker and resume step instead of promising automatic
 progress. A service installation or staged receipt alone does not qualify for idle handoff.
 
@@ -533,7 +534,8 @@ and the separation between entering review, being merge ready, and reporting an 
 
 ## S24 Parent coordination finishes without a local implementation diff
 
-Observed: a default CRW parent has no CXC implementation FSM. Every child in its agreed
+Observed: a CRW Loop parent has a verified active coordination goal on a host with
+compatible goal/continuation hooks, and no CXC implementation FSM. Every child in its agreed
 scope has delivered verified results, required PRs have landed, and no owned work or
 receipt remains pending. Its own checkout is unchanged. Separately, another parent
 explicitly chose CXC and has a blocked FSM with no supported transition to CRW.
@@ -541,8 +543,9 @@ explicitly chose CXC and has a blocked FSM with no supported transition to CRW.
 Clauses: OPS-8.1, OPS-8.4, OPS-10.1; lifecycle decisions belong to
 [crw-loop](../../../crw-loop/SKILL.md).
 
-Action: the default CRW parent completes its coordination record on the verified scoped
-deliveries, without manufacturing a parent-local code change. Child completion alone is
+Action: the CRW Loop parent completes its coordination record and matching host goal
+on the verified scoped deliveries, then reads back completion, without manufacturing
+a parent-local code change. Child completion alone is
 insufficient if any required result, correction, receipt or integration remains unresolved.
 The explicit CXC parent retains its installed lifecycle and cannot start CRW execution
 while its transition is unsupported. Record the transition blocker and exact supported
@@ -550,3 +553,71 @@ resume requirement; do not reset the FSM, edit phases or report a new loop as ar
 
 Preserved: child identities and delivery evidence, the distinct parent completion boundary,
 and the existing CXC parent's binding, goalplan, pending obligations and recovery evidence.
+
+## S25 Run and Loop share project scope but differ in parent goal ownership
+
+Observed: the user submits Run with a project link and no automatic-continuation
+request. A and B are ready; C depends on A. In another run the user explicitly submits
+Loop for the agreed A/B/C scope and its goal/hook preflight passes.
+
+Clauses: OPS-8.1, OPS-9.2; operation selection belongs to
+[crw-run](../../../crw-run/SKILL.md) and goal ownership to
+[crw-loop](../../../crw-loop/SKILL.md).
+
+Action: both record A/B/C as the agreed project scope and A/B as the initial ready
+batch. When A's prerequisite delivery is verified and available, both can start C
+without waiting for B if capacity permits. Run creates no parent goal; Loop creates
+or reuses the matching goal and preserves it across host continuations. An explicitly
+limited A/B batch excludes C in either mode. After compaction or a resume request,
+Run recovers the project scope and continues C rather than asking for a new batch
+authorization. If the host ends a Run turn before completion, it preserves the
+unfinished project and resume step without promising a future wake-up. Dispatch-only
+Run may hand off pending children; status-only Run reads without waking them.
+
+Preserved: one project parent, existing issue children and PRs, requested batch/merge
+limits, child CXC defaults, and the difference between parent and child goal authority.
+
+## S26 Goal conflicts and unsupported continuation do not become new goals
+
+Observed: Loop is requested. Variants are: a matching active goal; a matching blocked
+goal without an exposed resume control; a different unfinished goal; unreadable goal
+state; explicit no-goal; and a fresh parent whose Stop hook routes all active native
+goals into CXC implementation phases. An active compatible Loop later encounters its
+first blocker, with another independent issue still ready.
+
+Clauses: OPS-8.1, OPS-8.2, OPS-8.4; goal decisions belong to
+[Parent goal lifecycle](../../../crw-loop/references/parent-goal.md).
+
+Action: reuse only the matching active goal. Preserve the blocked/different/unreadable
+goal and resolve its specific resume/conflict/read requirement; do not create over it.
+No-goal prevents activation, and Run is used only if separately covered by the request.
+The incompatible Stop hook blocks activation before goal creation or new worker dispatch;
+record the supported host fix, without disabling hooks or faking PABCD. In the compatible
+active run, continue independent ready work; do not mark the whole goal blocked on a
+first failure. Use the real host threshold and observations for any eventual blocked
+transition. A paused goal resumes only through authorized supported controls.
+
+Preserved: existing goal identity/status, all child ownership, explicit user limits,
+CXC state and guards, and the difference between a created goal and observed auto-resume.
+
+## S27 Binding-only requests and retired Focus preserve ownership
+
+Observed: a user asks Run to connect this task to a project without executing it.
+The project already has a coordination document. Variants include the same parent
+binding, another active parent, and a temporary question about a different project.
+An installation still has an old Focus entry after updating the checkout.
+
+Clauses: OPS-2.3, OPS-7.1, OPS-7.2, OPS-8.1; binding decisions belong to
+[Project parent binding](../../../crw-plan/references/integrations.md#project-parent-binding).
+
+Action: reuse and verify the same parent binding and suitable coordination document.
+Apply supported title/pin changes only within the designation request. Do not create
+children or a goal. Inspect another parent's ownership without waking it; settle a
+material conflict before replacement. A temporary question does not switch the binding.
+Run or Loop execution requests do the same setup and then continue their requested
+operation. The installer reports the retired Focus entry and preserves it; the owner
+can move a verified owned link outside discovery, then recheck the seven current skills.
+It does not recreate Focus or replace foreign files/links.
+
+Preserved: stable project/task IDs, existing specifications and coordination history,
+active child ownership, explicit execution limits, old installation contents and runtime state.

@@ -7,7 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts/install.py"
-NAMES = ("crw-check", "crw-define", "crw-focus", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run")
+NAMES = ("crw-check", "crw-define", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run")
 SOURCES = [ROOT / "skills" / name for name in NAMES]
 
 
@@ -80,13 +80,13 @@ class InstallerTests(unittest.TestCase):
         self.assert_links(Path(self.env["CODEX_HOME"]) / "skills")
         self.assertFalse(self.dest.exists())
 
-    def test_legacy_entries_survive_apply_and_keep_check_nonzero(self):
+    def assert_retired_entry_preserved(self, name):
         for kind in ("file", "directory", "live-link", "dangling-link", "other-checkout"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory(dir=self.root) as folder:
                 self.dest = Path(folder) / "skills"
                 self.dest.mkdir()
-                legacy = self.dest / "linear-run"
-                target = Path(folder) / "old-checkout/skills/linear-run"
+                legacy = self.dest / name
+                target = Path(folder) / "old-checkout/skills" / name
                 if kind == "file":
                     legacy.write_text("user edits")
                 elif kind == "directory":
@@ -123,13 +123,19 @@ class InstallerTests(unittest.TestCase):
                 before = {p.name: p.lstat().st_ino for p in self.dest.iterdir()}
                 self.assertEqual(self.run_cli("--apply").returncode, 0)
                 self.assertEqual(before, {p.name: p.lstat().st_ino for p in self.dest.iterdir()})
-                legacy.rename(Path(folder) / "archived-linear-run")
+                legacy.rename(Path(folder) / ("archived-" + name))
                 self.assertEqual(self.run_cli("--check").returncode, 0)
                 self.assert_links(self.dest)
 
+    def test_legacy_entries_survive_apply_and_keep_check_nonzero(self):
+        self.assert_retired_entry_preserved("linear-run")
+
+    def test_retired_focus_preserved_and_not_reinstalled(self):
+        self.assert_retired_entry_preserved("crw-focus")
+
     def test_all_legacy_names_report_even_with_canonical_conflict(self):
         self.dest.mkdir(parents=True)
-        old_names = ("linear-check", "linear-focus", "linear-logic", "linear-next", "linear-plan", "linear-run")
+        old_names = ("linear-check", "linear-focus", "linear-logic", "linear-next", "linear-plan", "linear-run", "crw-focus")
         for name in old_names:
             (self.dest / name).symlink_to(self.root / "absent" / name)
         conflict = self.dest / "crw-run"

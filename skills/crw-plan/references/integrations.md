@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-define`, `crw-focus`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Resolve the project target
 
@@ -15,11 +15,121 @@ IDs using the supplied link, verified binding, and semantic scope. If same-name
 candidates remain ambiguous, ask before writing or binding; do not pick by
 title alone. A rename or changed initiative relation does not change a binding.
 
-Use [crw-focus](../../crw-focus/SKILL.md) to designate, record, restore,
+Use [Project parent binding](integrations.md#project-parent-binding) to designate, record, restore,
 or switch the fixed management task, including its app title and pin. Refresh
 volatile state before acting. An old or copied record locates context but does
 not transfer another task's ownership or execution permissions. Keep binding
-setup with `crw-focus` and the requested operation with its existing owner.
+setup in that shared procedure and the requested operation with its existing owner.
+Run and Loop perform this setup themselves. A binding-only request does not execute work.
+
+## Project parent binding
+
+Run and Loop use this shared setup and recovery procedure before execution.
+
+Make this Codex task the continuing management point for one Linear project.
+Preserve that target across follow-up requests and context recovery. This parent
+orchestrates one project; its independent children each orchestrate one issue
+under the shared [parent and child scope](#parent-and-child-scope).
+
+### Establish the link
+
+Resolve the actual current task ID, host when available, and cwd from the host's
+current identity and supported task tools. Resolve the supplied Linear project
+to its stable ID and URL; read its linked canonical documents and relevant
+current work. Inspect repository identity, applicable guidance, branch,
+worktrees, and dirty changes when a repository is involved. A folder, task
+title, or Desktop project ID is not a Linear project ID.
+
+Look for an existing management binding in the project's linked coordination
+record before changing anything. Match task, host, and project IDs. Reuse the
+same binding on repeated requests. If another task is already the coordinator,
+read its recorded ownership and current status without waking it. Ask only
+when the user has not resolved a material ownership conflict.
+
+An explicit replacement can update the coordinator link while preserving the
+previous binding and its history. It does not transfer active workers or
+execution permissions, message the old task, or unpin/archive it. A request to
+inspect another project temporarily does not replace the persistent focus.
+
+### Set the app presentation and record
+
+A request to make this the fixed management task covers its matching title,
+sidebar pin, and a compact Linear management record. Respect an explicit title,
+no-rename, unpinned, or read-only constraint.
+
+Use a concise project summary as the management task title. Preserve an explicit
+user title. Product family and initiative membership are context, not required
+title prefixes; no initiative or multiple initiatives needs no title-choice
+question. Resolve same-name projects by stable ID under the shared target rules
+before binding. If their management titles would be indistinguishable, append a
+short project-ID suffix. Do not rename the initiative or project itself. This
+convention names the management task; execution-task titles follow
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles).
+
+Discover the supported task rename and sidebar tools and their current schemas.
+Apply changes only to the verified current task, and check its resulting title
+and pin state in the app listing. If a capability is unavailable, complete the
+supported parts and report the gap. Do not edit a session database or global
+configuration to simulate a successful binding.
+
+Reuse a suitable linked coordination document. When only a canonical planning
+document exists, a compact management section there is sufficient. Read scoped,
+paginated document listings and candidate contents before creating a document.
+Create a small project-linked coordination document only if none is suitable.
+Preserve specifications, unrelated content, and existing human edits.
+
+Record only what supports recovery:
+
+- Stable Linear project ID/URL and canonical document links.
+- Actual management task ID, host when known, and observed task title.
+- Repository identity and checkout path when relevant.
+- Assignment, delivery limits, and the source/date of the user's designation.
+- Verified app title/pin results and any unsynced or unverified part.
+
+Read back the saved document and its project relation. Reconcile uncertain
+writes by reading before retrying; an accepted request is not a verified result.
+If Linear access is unavailable or writes are outside scope, retain a clearly
+unsynced summary in the task's permitted private location and return the missing
+step. Never store project bindings in installed skills, repository procedures,
+or global memory. A verified title/pin and a verified Linear record are separate
+claims; neither proves automatic wakeups or background execution.
+
+### Continue from the fixed project
+
+On recovery, locate this task's recorded binding and refresh live project,
+document, and managed-task state before acting. Use current assignment context
+and scoped recall to find a lost record. A copied binding for another task does
+not assign ownership here. Follow the shared target-resolution rules for
+explicit one-off targets and changes to the persistent link.
+
+Keep the recorded project ID when its name, product labels, or initiative
+relations change. Existing titles with an initiative prefix are presentation,
+not a reason to rebind or rename during recovery. Refresh the title only within
+an authorized presentation change; do not migrate existing bindings implicitly.
+
+Load the existing owner for the requested operation:
+
+| Request | Owner |
+|---|---|
+| Where to start or what to do next | [crw-next](../../crw-next/SKILL.md) |
+| Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
+| Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
+| Execute the project without a parent goal, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
+| Create/restore a parent goal for automatic project continuation | [crw-loop](../../crw-loop/SKILL.md) |
+| Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
+| Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
+
+Keep one operation owner and load only the helpers it needs. Jun need not name
+the skills. Binding alone does not launch the backlog, create workers or goals,
+activate a CXC Loop, change model settings, or install an automation. When the
+same request also authorizes execution, finish the link and continue through
+the requesting Run or Loop owner in that scope. Preserve an existing authorized run and its routine
+follow-up; a status question does not pause it. When another operation owner
+uses this reference for binding setup or recovery, return the result to that caller
+instead of recursively starting its operation.
+
+Return the linked project/document, actual app result, recorded scope, and one
+next step or meaningful gap. Distinguish completed binding from work execution.
 
 ## Linear operating model
 
@@ -225,14 +335,19 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations, `crw-loop` owns the default project parent lifecycle, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
-The default project parent follows [crw-loop](../../crw-loop/SKILL.md) using the existing
-coordination record, without initializing an implementation goalplan/FSM. Verified
-scoped deliveries establish its progress; parent-local source changes are not a
-completion condition. Children keep their own CXC lifecycle. Explicit parent workflow
-choices and existing CXC state require that workflow's supported transition, not a
-silent reset or guard bypass. `crw-loop` owns those entry and recovery rules.
+`crw-run` owns goal-free execution of one project's agreed scope, including parallel
+issue children, verification, integration and newly ready successors. A ready batch
+is a scheduling unit; only an explicit narrower request limits delivery to that batch.
+[crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of the native parent goal
+and automatic host continuation to the same Run execution and scope. Run alone does
+not create a parent goal or promise future wake-ups. Run inside Loop returns to the
+existing owner without another goal. Both reuse [Project parent binding](integrations.md#project-parent-binding).
+Verified scoped deliveries establish progress; parent-local source changes and CXC
+implementation phases are not completion conditions. Children keep their own CXC
+lifecycle. Explicit parent workflow choices and existing CXC state require supported
+transitions; `crw-loop` owns goal/hook preflight, activation and recovery rules.
 
 ### Completion follow-up in an existing execution workflow
 
