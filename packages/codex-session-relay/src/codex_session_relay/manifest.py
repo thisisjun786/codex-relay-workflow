@@ -7,6 +7,7 @@ relocation carries a frozen copy, and the frozen copy keeps the ORIGINAL declare
 so freezing never changes the digest.
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -132,19 +133,48 @@ def weakest_binding(bindings) -> PathBindingMode:
     return mode
 
 
-def verify_against_disk(entries, roots, *, allow_lease: bool = False):
-    """Re-hash every declared path and report what disagrees.
+# The errnos scope._walk_error gives a named meaning to. Everything else falls through to a
+# generic SCOPE_ESCAPE, which reads like a policy decision and is not one: it is an open that did
+# not work and nobody interpreted. That fallthrough is how a permission error came to be reported
+# as a deliverable that changed.
+_INTERPRETED_ERRNOS = frozenset({errno.ELOOP, errno.ENOTDIR, errno.ENOENT, errno.ESTALE})
 
-    A truncated or partially written artifact hashes differently, a vanished one reports
-    missing, and a path that escapes the authorized roots reports its refusal reason. The
-    caller never learns "verified" from anything but a full match.
+
+def _is_access_failure(error: ScopeError) -> bool:
+    """Was this refusal really an OSError nobody could interpret?
+
+    Read from the exception chain rather than from the message text, because scope raises its
+    refusals with the original OSError attached. A binding that could not be established counts
+    too: not verifying a path is not the same as deciding against it.
     """
-    problems, bindings = [], {}
+    if getattr(error, "reason", None) is RefusalReason.UNVERIFIABLE_PATH_BINDING:
+        return True
+    cause = getattr(error, "__cause__", None)
+    if not isinstance(cause, OSError):
+        return False
+    return cause.errno not in _INTERPRETED_ERRNOS
+
+
+def verify_against_disk_detailed(entries, roots, *, allow_lease: bool = False):
+    """verify_against_disk, and which of the problems were failures to READ.
+
+    Added beside verify_against_disk for the same reason verify_frozen_detailed was: the receipt
+    intake path depends on the two-value answer and its behaviour must not move. problems is built
+    exactly as it was in every branch, and unreadable is the subset naming the entries this process
+    could not open at all.
+
+    The distinction is invisible to an exception boundary, because the errors are caught here and
+    returned as text. A caller deciding whether a deliverable CHANGED has to ask for it by name.
+    """
+    problems, bindings, unreadable = [], {}, []
     for entry in entries:
         try:
             digest, size, binding = hash_path(entry.path, roots, allow_lease=allow_lease)
         except ScopeError as error:
-            problems.append(f"{entry.path}: {error.reason.value}: {error.detail}")
+            message = f"{entry.path}: {error.reason.value}: {error.detail}"
+            problems.append(message)
+            if _is_access_failure(error):
+                unreadable.append(message)
             continue
         except FileNotFoundError:
             problems.append(f"{entry.path}: missing")
@@ -156,6 +186,22 @@ def verify_against_disk(entries, roots, *, allow_lease: bool = False):
             )
         elif entry.bytes is not None and entry.bytes != size:
             problems.append(f"{entry.path}: size {size} but the manifest claims {entry.bytes}")
+    return problems, bindings, unreadable
+
+
+def verify_against_disk(entries, roots, *, allow_lease: bool = False):
+    """Re-hash every declared path and report what disagrees.
+
+    A truncated or partially written artifact hashes differently, a vanished one reports
+    missing, and a path that escapes the authorized roots reports its refusal reason. The
+    caller never learns "verified" from anything but a full match.
+
+    The two-value form the intake path has always called: the detailed one with the access
+    breakdown dropped, so every branch answers exactly what it answered before.
+    """
+    problems, bindings, _unreadable = verify_against_disk_detailed(
+        entries, roots, allow_lease=allow_lease
+    )
     return problems, bindings
 
 
@@ -219,15 +265,56 @@ def _read_frozen_blob(reference: Path, digest: str) -> tuple[str, int]:
         return hash_authorized(handle)
 
 
-def verify_frozen(manifest_ref: str, entries=None) -> tuple[str, list]:
-    """Verify a receipt against its frozen copy instead of files that may have moved."""
+def _frozen_document_access(document, manifest_ref) -> list:
+    """Why is_file() said no: absent, or out of reach? Returns the access failures, if any.
+
+    is_file() answers False for both, and they are different facts. A frozen copy that does not
+    exist is a receipt that never froze one; a frozen copy behind a permission or a vanished mount
+    is one nobody was able to check. Only the second means the verification did not happen.
+    """
+    try:
+        document.stat()
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        if error.errno in _INTERPRETED_ERRNOS:
+            # The same rule the blob handler applies: an errno scope gives a name to is an answer
+            # about the frozen copy, not a failure to reach it. A manifestRef traversing a regular
+            # file is a malformed reference, and reporting it unreadable would release a receipt
+            # whose snapshot is provably wrong.
+            return []
+        return [f"{manifest_ref}: the frozen manifest could not be reached: {error}"]
+    # It is there and it is not a regular file. That is a malformed frozen copy, not a failure to
+    # reach one, so it stays a content problem.
+    return []
+
+
+def verify_frozen_detailed(manifest_ref: str, entries=None) -> tuple[str, list, list]:
+    """verify_frozen, and which of the problems were failures to READ rather than disagreements.
+
+    Added alongside verify_frozen rather than folded into it. The receipt intake path depends on
+    the two-value answer and its behaviour must not move, so problems is computed exactly as it was
+    in every branch and unreadable is a subset of it naming the access failures. A caller that
+    wants the distinction asks for it; one that does not gets what it always got.
+
+    The distinction matters to a caller deciding whether a deliverable CHANGED or whether it could
+    not be compared at all. Reporting an unreachable frozen copy as a disagreement claims a
+    comparison against bytes nobody opened.
+    """
     reference = Path(manifest_ref)
     document = reference / "MANIFEST.json"
     if not document.is_file():
-        return "", [f"{manifest_ref}: no MANIFEST.json in the frozen copy"]
+        return (
+            "",
+            [f"{manifest_ref}: no MANIFEST.json in the frozen copy"],
+            _frozen_document_access(document, manifest_ref),
+        )
+    # A document that is not valid UTF-8 or not valid JSON raises, as it always has. Those bytes
+    # were readable and are not a manifest, which is a corrupt frozen copy rather than an access
+    # failure, and the intake path has always seen it as an exception.
     payload = json.loads(document.read_text())
     frozen = [Entry.from_record(record) for record in payload["entries"]]
-    problems = []
+    problems, unreadable = [], []
     if entries is not None:
         claimed = {(e.path, e.sha256) for e in entries}
         stored = {(e.path, e.sha256) for e in frozen}
@@ -250,10 +337,27 @@ def verify_frozen(manifest_ref: str, entries=None) -> tuple[str, list]:
         try:
             digest, size = _read_frozen_blob(reference, entry.sha256)
         except (ScopeError, OSError) as error:
-            problems.append(f"{entry.path}: frozen bytes unreadable for {entry.sha256}: {error}")
+            message = f"{entry.path}: frozen bytes unreadable for {entry.sha256}: {error}"
+            problems.append(message)
+            # The same discrimination the live path makes, applied here too. A blob that was
+            # DELETED raises PATH_CHANGED, which is a definitive answer about a broken snapshot
+            # rather than a failure to look, and calling it unreadable would release a turn whose
+            # frozen copy is provably incomplete. Only an error nobody could interpret counts.
+            if not isinstance(error, ScopeError) or _is_access_failure(error):
+                unreadable.append(message)
             continue
         if digest != entry.sha256:
             problems.append(f"{entry.path}: frozen bytes do not match {entry.sha256}")
         elif entry.bytes is not None and entry.bytes != size:
             problems.append(f"{entry.path}: frozen bytes are {size}, not the claimed {entry.bytes}")
-    return revision_hash(frozen), problems
+    return revision_hash(frozen), problems, unreadable
+
+
+def verify_frozen(manifest_ref: str, entries=None) -> tuple[str, list]:
+    """Verify a receipt against its frozen copy instead of files that may have moved.
+
+    The two-value form the intake path has always called. It is the detailed one with the access
+    breakdown dropped, so every branch answers exactly what it answered before.
+    """
+    digest, problems, _unreadable = verify_frozen_detailed(manifest_ref, entries)
+    return digest, problems

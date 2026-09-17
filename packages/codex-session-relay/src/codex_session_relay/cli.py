@@ -21,6 +21,7 @@ from .criteria import CriteriaService
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
+from . import guard, intent, marker
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -42,13 +43,20 @@ HOST_REQUIRED_COMMANDS = (
     "daemon", "deliver", "reconcile", "recover", "service run", "service start",
     "service restart", "verify-acks",
 )
+# Every command that touches the managed marker and nothing else. Listed once so the store-selection
+# refusal and the doctor reachability report cannot drift apart.
+MARKER_COMMANDS_BY_NAME = (
+    "intent-declare", "intent-attempt", "intent-bind", "intent-register", "intent-claim",
+    "intent-disposition", "intent-resolve", "intent-show", "guard-evaluate",
+)
+
 OFFLINE_COMMANDS = (
     "ack", "ack-proof", "admit-turn", "assignment-show", "claim", "criteria-register",
     "criteria-show", "doctor", "emit", "generation-bind", "generation-open", "register",
     "relationship-resume", "relationship-status", "revision-head", "settings-record",
     "settings-show", "show", "status", "store-challenge", "store-identity", "verdict",
     "service status", "service enable", "service disable", "service stop",
-)
+) + MARKER_COMMANDS_BY_NAME
 
 
 class _LazyAdapter:
@@ -1104,6 +1112,242 @@ def _reachability(services, report) -> dict:
     }
 
 
+# ------------------------------------------------------------------ managed marker
+
+# The marker is deliberately NOT reached through Services. Services exists to build a Store, and a
+# Store writes on open; every command below either writes only to the marker filesystem or reads the
+# relay database read-only. The state directory is still resolved, because the coordinator is the
+# party that knows where the store it registered against actually lives.
+
+
+def _marker_root(args):
+    return marker.resolve_marker_root(getattr(args, "marker_root", None)).path
+
+
+def _adjudicated(values):
+    entries = []
+    for value in values or []:
+        fact_id, _, digest = str(value).partition("=")
+        if not fact_id or not digest:
+            raise SystemExit2(
+                f"--adjudicate takes factId=digest, not {value!r}", EXIT_USAGE
+            )
+        entries.append({"factId": fact_id, "digest": digest})
+    return entries
+
+
+def cmd_intent_declare(services, args) -> dict:
+    return intent.declare_intent(
+        _marker_root(args),
+        workspace=args.workspace,
+        dispatch_request_id=args.dispatch_request_id,
+        issue_key=args.issue,
+        declared_at=args.declared_at or services.clock.iso(),
+        criteria_source=args.criteria_source,
+        baseline_revision=args.baseline_revision,
+        authorized_settings=json.loads(args.settings) if args.settings else None,
+        db_path=None if args.no_db_path else str(services.selection.db_path),
+    )
+
+
+def cmd_intent_attempt(services, args) -> dict:
+    return intent.record_attempt(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        outcome=args.outcome,
+        task_id=args.task_id,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_bind(services, args) -> dict:
+    return intent.bind(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        session_id=args.session,
+        task_id=args.task_id,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_register(services, args) -> dict:
+    return intent.register_relationship(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        relationship_id=args.relationship,
+        dispatch_request_id=args.dispatch_request_id,
+        at=services.clock.iso(),
+        # The relay is the only party that knows which relationship a dispatch actually opened,
+        # so registration is confirmed against it rather than taken on the caller's word.
+        db_path=args.db_path or str(services.selection.db_path),
+    )
+
+
+def cmd_intent_claim(services, args) -> dict:
+    return intent.publish_claim(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        session_id=args.session,
+        dispatch_request_id=args.dispatch_request_id,
+        first_turn_id=args.first_turn,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_disposition(services, args) -> dict:
+    return intent.publish_disposition(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        session_id=args.session,
+        turn_id=args.turn,
+        outcome=args.outcome,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_resolve(services, args) -> dict:
+    return intent.publish_resolution(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        chosen_task_id=args.chosen_task,
+        chosen_session_id=args.chosen_session,
+        reason=args.reason,
+        at=services.clock.iso(),
+        adjudicated=_adjudicated(args.adjudicate),
+    )
+
+
+def cmd_intent_show(services, args) -> dict:
+    """What the marker says about this workspace, without asking the relay anything.
+
+    This is the question a hook has that registered relationships cannot answer: an assignment whose
+    registration was never written has no row anywhere, and it is exactly the one worth finding.
+    """
+    root = _marker_root(args)
+    if args.assignment:
+        directory = marker.assignment_dir(root, args.workspace, args.assignment)
+        facts, unreadable = marker.read_assignment(directory)
+        if not unreadable and "intent" not in facts:
+            # Selection treats an assignment with no published intent as not selectable, so an
+            # explicit one has to read the same way. Reporting it managed and then deriving
+            # intent_declared out of nothing told a coordinator a failed declaration had landed.
+            #
+            # Absence is the test, not shape. read_assignment omits the key when the fact is not
+            # there and keeps it when it parsed into something that is not an object, so asking
+            # about shape here answered "unmanaged" for a corrupt intent and told an operator that
+            # a managed workspace was an ordinary one. The malformed report below is what that case
+            # is for, and it is the same answer the guard gives.
+            return {
+                "markerRoot": str(root),
+                "workspace": args.workspace,
+                "managed": False,
+                "assignmentId": directory.name,
+                "assignmentDir": str(directory),
+                "unreadable": [],
+                "detail": "no intent is published for this assignment",
+            }
+    else:
+        directory, facts, unreadable = intent.select_assignment(root, args.workspace, args.session)
+        if directory is None:
+            return {
+                "markerRoot": str(root),
+                "workspace": args.workspace,
+                "managed": False,
+                "unreadable": list(unreadable or []),
+            }
+    malformed = intent.malformed(facts) if facts else None
+    payload = {
+        "markerRoot": str(root),
+        "workspace": args.workspace,
+        "managed": True,
+        "assignmentId": directory.name,
+        "assignmentDir": str(directory),
+        "unreadable": list(unreadable or []),
+        "malformed": malformed,
+    }
+    if malformed or unreadable:
+        # Derivation follows the marker being readable. Summarising records that are not records is
+        # how a reader ends in a traceback and reports nothing at all.
+        return payload
+    payload["assignmentState"] = intent.derive_assignment_state(
+        facts, args.now or services.clock.iso()
+    )
+    payload["identityContested"] = intent.identity_contested(facts)
+    payload["intent"] = facts.get("intent")
+    payload["bound"] = facts.get("bound")
+    payload["relationship"] = facts.get("relationship")
+    payload["attempts"] = facts.get("attempts") or []
+    payload["claims"] = facts.get("claims") or []
+    payload["conflicts"] = facts.get("conflicts") or []
+    payload["resolutions"] = facts.get("resolutions") or []
+    return payload
+
+
+def cmd_guard_evaluate(services, args) -> dict:
+    """Decide one Stop and record the observation.
+
+    The Stop payload arrives as JSON on stdin, which is the shape the host delivers it in. Reading
+    it from a file is for replaying a captured payload, never for inventing one.
+    """
+    if args.stop_input and args.stop_input != "-":
+        try:
+            text = Path(args.stop_input).expanduser().read_text(encoding="utf-8")
+        except (OSError, ValueError) as error:
+            # A sibling of the marker decode fault: UnicodeDecodeError is a ValueError, so a replay
+            # file that is not UTF-8 would otherwise reach the generic handler and be reported as a
+            # host failure. It is a named file the operator typed.
+            raise SystemExit2(
+                f"the Stop payload file could not be read: {error}", EXIT_USAGE
+            ) from error
+    else:
+        text = sys.stdin.read()
+    try:
+        stop_input = json.loads(text)
+    except ValueError as error:
+        raise SystemExit2(f"the Stop payload is not JSON: {error}", EXIT_USAGE) from error
+    if not isinstance(stop_input, dict):
+        raise SystemExit2("the Stop payload must be a JSON object", EXIT_USAGE)
+    if args.mode == guard.HOLD and args.no_record:
+        # Refused here rather than downgraded silently. A hold is reserved, counted and released
+        # through the observation record, so asking for one without recording asks for a hold
+        # nothing can account for. evaluate() also downgrades and says so; an operator who typed
+        # this at a terminal should be told instead of handed a release they did not expect.
+        raise SystemExit2(
+            "--mode hold cannot be combined with --no-record: a hold that publishes no observation "
+            "cannot be released, counted against the bounds, or audited",
+            EXIT_USAGE,
+        )
+    return guard.evaluate(
+        _marker_root(args),
+        stop_input,
+        now=args.now or services.clock.iso(),
+        mode=guard.HOLD if args.mode == guard.HOLD else guard.OBSERVE,
+        # NOT "or the default": passing the resolved default here would make it always present and
+        # the intent's recorded dbPath unreachable, so a hook invoked without the coordinator's
+        # --state would silently read its own store. evaluate() owns the precedence.
+        db_path=args.db_path,
+        default_db_path=str(services.selection.db_path),
+        record=not args.no_record,
+    )
+
+
+
+# The same nine commands as MARKER_COMMANDS_BY_NAME, by handler, for the store-selection exemption.
+# Declared here because the handlers have to exist first, and checked against the names by a test so
+# adding one command in a single place cannot go unnoticed.
+MARKER_COMMANDS = (
+    cmd_intent_declare, cmd_intent_attempt, cmd_intent_bind, cmd_intent_register,
+    cmd_intent_claim, cmd_intent_disposition, cmd_intent_resolve, cmd_intent_show,
+    cmd_guard_evaluate,
+)
+
+
 # ----------------------------------------------------------------------- wiring
 
 
@@ -1406,6 +1650,97 @@ def build_parser() -> argparse.ArgumentParser:
     challenge.add_argument("--read")
     challenge.add_argument("--actor")
     challenge.set_defaults(handler=cmd_store_challenge)
+
+    def marker_command(name):
+        """One subparser shape for every marker command: a root and a workspace."""
+        command = subparsers.add_parser(name)
+        command.add_argument("--marker-root")
+        command.add_argument("--workspace", required=True)
+        return command
+
+    intent_declare = marker_command("intent-declare")
+    intent_declare.add_argument("--dispatch-request-id", required=True)
+    intent_declare.add_argument("--issue", required=True)
+    intent_declare.add_argument("--declared-at")
+    intent_declare.add_argument("--criteria-source")
+    intent_declare.add_argument("--baseline-revision")
+    intent_declare.add_argument("--settings", help="the authorised execution settings, as JSON")
+    intent_declare.add_argument(
+        "--no-db-path", action="store_true",
+        help="do not record where the relay store lives; the hook must then be told explicitly",
+    )
+    intent_declare.set_defaults(handler=cmd_intent_declare)
+
+    intent_attempt = marker_command("intent-attempt")
+    intent_attempt.add_argument("--assignment", required=True)
+    intent_attempt.add_argument("--outcome", required=True, choices=intent.ATTEMPT_OUTCOMES)
+    intent_attempt.add_argument("--task-id")
+    intent_attempt.set_defaults(handler=cmd_intent_attempt)
+
+    intent_bind = marker_command("intent-bind")
+    intent_bind.add_argument("--assignment", required=True)
+    intent_bind.add_argument("--session", required=True)
+    intent_bind.add_argument("--task-id", required=True)
+    intent_bind.set_defaults(handler=cmd_intent_bind)
+
+    intent_register = marker_command("intent-register")
+    intent_register.add_argument("--assignment", required=True)
+    intent_register.add_argument("--relationship", required=True)
+    intent_register.add_argument("--dispatch-request-id", required=True)
+    intent_register.add_argument(
+        "--db-path", help="the relay store to confirm this relationship against"
+    )
+    intent_register.set_defaults(handler=cmd_intent_register)
+
+    intent_claim = marker_command("intent-claim")
+    intent_claim.add_argument("--assignment", required=True)
+    intent_claim.add_argument("--session", required=True)
+    intent_claim.add_argument("--dispatch-request-id", required=True)
+    intent_claim.add_argument("--first-turn")
+    intent_claim.set_defaults(handler=cmd_intent_claim)
+
+    intent_disposition = marker_command("intent-disposition")
+    intent_disposition.add_argument("--assignment", required=True)
+    intent_disposition.add_argument("--session", required=True)
+    intent_disposition.add_argument("--turn", required=True)
+    intent_disposition.add_argument(
+        "--outcome", required=True, choices=intent.DISPOSITION_OUTCOMES
+    )
+    intent_disposition.set_defaults(handler=cmd_intent_disposition)
+
+    intent_resolve = marker_command("intent-resolve")
+    intent_resolve.add_argument("--assignment", required=True)
+    intent_resolve.add_argument("--chosen-task", required=True)
+    intent_resolve.add_argument("--chosen-session", required=True)
+    intent_resolve.add_argument("--reason", required=True)
+    intent_resolve.add_argument(
+        "--adjudicate", action="append", required=True,
+        help="factId=digest, repeatable; a resolution naming nothing adjudicates nothing",
+    )
+    intent_resolve.set_defaults(handler=cmd_intent_resolve)
+
+    intent_show = marker_command("intent-show")
+    intent_show.add_argument("--assignment")
+    intent_show.add_argument("--session")
+    intent_show.add_argument("--now")
+    intent_show.set_defaults(handler=cmd_intent_show)
+
+    guard_evaluate = subparsers.add_parser("guard-evaluate")
+    guard_evaluate.add_argument("--marker-root")
+    guard_evaluate.add_argument(
+        "--stop-input", default="-", help="the Stop payload as JSON; - reads stdin"
+    )
+    guard_evaluate.add_argument(
+        "--mode", default=guard.OBSERVE, choices=(guard.OBSERVE, guard.HOLD),
+        help="observe classifies and records without ever holding, which is the default because "
+             "holding depends on per-session write isolation the caller has to have granted",
+    )
+    guard_evaluate.add_argument("--db-path", help="the relay store to read receipts from")
+    guard_evaluate.add_argument("--now")
+    guard_evaluate.add_argument("--no-record", action="store_true")
+    guard_evaluate.set_defaults(handler=cmd_guard_evaluate)
+
+
     return parser
 
 
@@ -1567,6 +1902,29 @@ def _wrong_socket_recovery(selection, recorded, wanted) -> list:
         )
     return lines
 
+def _reads_no_selected_store(args) -> bool:
+    """Whether this command can answer without the store default discovery would pick.
+
+    The managed marker exists so that a hook can answer without asking the relay anything, and every
+    marker command writes or reads the marker root alone. Left inside the store-selection refusal,
+    an unrelated ambiguity in relay discovery made guard-evaluate exit 2 without classifying or
+    recording the Stop, even when --db-path named the receipt database explicitly: legacy state
+    nobody was using switched the hook off.
+
+    intent-declare is the one exception, because it RECORDS services.selection.db_path into the
+    intent for the hook to use later. Recording a path chosen by a guess is exactly what the
+    refusal prevents, so it stays guarded unless --no-db-path says not to record one.
+    """
+    handler = getattr(args, "handler", None)
+    if handler is cmd_intent_declare:
+        return bool(getattr(args, "no_db_path", False))
+    if handler is cmd_intent_register:
+        # It confirms the relationship against a store, so it is only marker-only when the caller
+        # named which store rather than letting discovery guess one.
+        return bool(getattr(args, "db_path", None))
+    return handler in MARKER_COMMANDS
+
+
 def _refuse_ambiguous_state(services, args) -> None:
     """Two stores already record this socket, so opening one of them would be a guess.
 
@@ -1605,6 +1963,7 @@ def _refuse_ambiguous_state(services, args) -> None:
         wanted = canonical_socket(services.socket_path)
         if recorded is not None and recorded != wanted and (
             getattr(args, "handler", None) not in (cmd_doctor, cmd_ack_proof)
+            and not _reads_no_selected_store(args)
         ):
             raise PayloadExit({
                 "error": "refused",
@@ -1625,7 +1984,9 @@ def _refuse_ambiguous_state(services, args) -> None:
             }, EXIT_REFUSED)
     if not (selection.ambiguous or selection.unidentified):
         return
-    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof):
+    if getattr(args, "handler", None) in (cmd_doctor, cmd_ack_proof) or _reads_no_selected_store(
+        args
+    ):
         return
     contested = bool(selection.ambiguous)
     raise PayloadExit({
