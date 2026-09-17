@@ -258,16 +258,17 @@ disposition is `verified`, every required criterion is recorded verified, the ev
 generation are the current head, the criteria digest bound at claim time is the digest in force now,
 and the acknowledgement was verified by a host rather than recorded offline as intent. It fails in
 three ways worth naming: a verdict of `unverified` or `aborted` is a real judgement that nothing was
-verified, so the field is not_verified rather than unknown; a verdict whose criteria digest no longer
-matches certified wording nobody is judging by now, so re-review runs under a fresh generation
-instead of the settled event being re-decided; and a verdict left with one required criterion at
-needs_changes withholds the whole field rather than covering the rest.
+verified, so the field is not_verified rather than unknown; a verdict whose criteria digest no
+longer matches certified wording nobody is judging by now, so it is re-reviewed against the set in
+force before the field passes; and a verdict left with one required criterion at needs_changes
+withholds the whole field rather than covering the rest.
 
 Integration is judged separately. Verified work may never be integrated and integrated work may
 never have carried this field, so neither is inferred from the other.
 
-Preserved: the settled verdict, which is immutable. Nothing here rewrites a judgement; a changed
-criteria set produces a new review context rather than a corrected old one.
+Preserved: the record of what was judged. A re-review replaces what the assignment stands on, not
+the history of deciding it: the replaced ruling keeps the set it was decided against and is
+journalled with both digests, so a later reader can still see which wording was certified when.
 
 ## S12 The review lands after the push
 
