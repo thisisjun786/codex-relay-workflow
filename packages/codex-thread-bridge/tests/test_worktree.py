@@ -3,6 +3,7 @@
 import subprocess
 
 import pytest
+from conftest import EFFORT, EXECUTION, MODEL
 
 
 def git(cwd, *args):
@@ -36,6 +37,9 @@ def repository(tmp_path):
         "worktree_mode": "bridge-managed-retained",
         "sandbox": "read-only",
         "expected_sandbox_policy": {"type": "readOnly", "networkAccess": False},
+        # Required at every mutation boundary now. Supplied once here so the worktree tests keep
+        # testing worktrees; the guard's own worktree cases leave the pair out on purpose.
+        **EXECUTION,
     }
 
 
@@ -64,7 +68,7 @@ async def test_readiness_launch_retains_exact_base_without_carrying_dirty_change
     assert "locked" in git(source, "worktree", "list", "--porcelain")
     assert receipt["creation"]["cwd"] == str(checkout)
     assert receipt["permissionReceipt"]["sandbox"] == repository["expected_sandbox_policy"]
-    assert receipt["creation"]["model"] == "configured-default"
+    assert receipt["creation"]["model"] == MODEL
     assert receipt["desktopProjectAssociation"]["status"] == "unverified"
     assert (await bridge.read_thread(receipt["threadId"]))["turnsPage"]["data"] == []
     assert (await bridge.get_goal(receipt["threadId"]))["goal"] is None
@@ -233,7 +237,12 @@ async def test_mcp_isolated_launch_and_followup_are_durable(fake_server, reposit
             receipts.append(receipt)
             followup = await session.call_tool(
                 "send_message_to_thread",
-                {"request_id": "followup", "thread_id": receipt["threadId"], "message": "FOLLOWUP"},
+                {
+                    "request_id": "followup",
+                    "thread_id": receipt["threadId"],
+                    "message": "FOLLOWUP",
+                    "expected_settings": {"model": "explicit-model", "reasoning_effort": "high"},
+                },
             )
             assert followup.structuredContent["status"] == "accepted"
             state = await session.call_tool("get_operation", {"request_id": args["request_id"]})
@@ -317,7 +326,7 @@ async def test_environment_mismatch_retains_actual_receipt_and_withholds_prompt(
     fake, _ = fake_server
     fake.override_creation = override
     receipt = await bridge.create_worktree_thread(
-        **repository, prompt="WITHHOLD", model="expected", reasoning_effort="high"
+        **{**repository, "prompt": "WITHHOLD", "model": "expected", "reasoning_effort": "high"}
     )
     assert receipt["status"] == "failed"
     assert receipt["initialPrompt"]["state"] == "not_sent"
@@ -487,10 +496,7 @@ async def test_a_dispatched_worktree_task_is_annotated_like_the_other_paths(
     before turn/start, so if any path needs the post-acceptance diagnostic it is this one.
     """
     result = await bridge.create_worktree_thread(
-        **repository,
-        prompt="do the work",
-        model="anthropic/claude-opus-5",
-        reasoning_effort="xhigh",
+        **{**repository, "prompt": "do the work", "model": MODEL, "reasoning_effort": EFFORT}
     )
     assert result["status"] == "accepted" and result["turnId"]
     assert result["settings"]["verification"] == "observed_at_creation"
@@ -516,6 +522,11 @@ async def test_a_retained_receipt_survives_validation_this_version_added(
         "request_id": "legacy-worktree",
         "expected_sandbox_policy": {"type": "readOnly", "networkAccess": True},
     }
+    # The retained receipt predates BOTH the transmittability check and the execution policy, so
+    # its arguments carried neither. A replay has to reproduce that exact shape, which is also the
+    # proof that the policy check runs after the ledger lookup rather than in front of it.
+    for retired in ("model", "reasoning_effort"):
+        legacy.pop(retired)
     params = {
         "source_repository": legacy["source_repository"],
         "starting_revision": legacy["starting_revision"],
@@ -556,4 +567,6 @@ async def test_a_retained_receipt_survives_validation_this_version_added(
 
     # The same policy in a FRESH request is still refused, before anything is created.
     with pytest.raises(ValueError, match="setting_untransmittable"):
-        await bridge.create_worktree_thread(**{**legacy, "request_id": "fresh-worktree"})
+        await bridge.create_worktree_thread(
+            **{**legacy, **EXECUTION, "request_id": "fresh-worktree"}
+        )

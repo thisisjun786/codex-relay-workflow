@@ -7,8 +7,15 @@ import pytest
 from websockets.asyncio.server import unix_serve
 
 from codex_thread_bridge.bridge import Bridge
+from codex_thread_bridge.execution import ExecutionPolicy
 from codex_thread_bridge.ledger import Ledger
 from codex_thread_bridge.rpc import AppServer
+
+# The pair the suite uses wherever the guard is not what is being tested. It is also what a
+# configured allowlist in these tests approves, so one constant covers both modes.
+MODEL = "anthropic/claude-opus-5"
+EFFORT = "xhigh"
+EXECUTION = {"model": MODEL, "reasoning_effort": EFFORT}
 
 
 class FakeServer:
@@ -208,3 +215,27 @@ async def bridge(fake_server, tmp_path):
     finally:
         await rpc.close()
         ledger.close()
+
+
+@pytest.fixture
+async def configured_bridge(fake_server, tmp_path):
+    """A bridge whose host configured an allowlist, built the way the real server builds one.
+
+    The policy arrives as a constructor argument, exactly as it does in main(), so these tests
+    exercise the same object a caller can never reach.
+    """
+    _, socket = fake_server
+    built = []
+
+    def build(mapping, *, digest="test-digest"):
+        rpc = AppServer(socket, timeout=1)
+        ledger = Ledger(tmp_path / "configured" / f"operations-{len(built)}.sqlite3")
+        built.append((rpc, ledger))
+        return Bridge(rpc, ledger, policy=ExecutionPolicy.from_mapping(mapping, digest=digest))
+
+    try:
+        yield build
+    finally:
+        for rpc, ledger in built:
+            await rpc.close()
+            ledger.close()

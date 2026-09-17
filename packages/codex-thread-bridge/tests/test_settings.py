@@ -15,11 +15,13 @@ fingerprint-replay compatibility test, which must pass on both sides.
 
 import pytest
 
+from codex_thread_bridge.execution import ExecutionRefused
 from codex_thread_bridge.settings import (
     SettingsContract,
     UntransmittableSetting,
     normalise_policy,
 )
+from conftest import EFFORT, EXECUTION, MODEL
 
 WRITE_POLICY = {
     "type": "workspaceWrite",
@@ -34,13 +36,26 @@ def sent(fake, method):
     return next(params for name, params in fake.calls if name == method)
 
 
-# --------------------------------------------------------------------------- creation
+# Every mutation must now state its model and reasoning effort, so these helpers supply the
+# approved pair once instead of at forty call sites. Tests about the guard itself call
+# bridge.create_thread and bridge.send_message_to_thread directly, with the pair left out,
+# blank or unapproved on purpose.
+async def create(bridge, *args, **kwargs):
+    return await bridge.create_thread(*args, **{**EXECUTION, **kwargs})
 
+
+async def send(bridge, request_id, thread_id, message, **kwargs):
+    carried = {**EXECUTION, **(kwargs.pop("expected_settings", None) or {})}
+    return await bridge.send_message_to_thread(request_id, thread_id, message, carried, **kwargs)
+
+
+# --------------------------------------------------------------------------- creation
 
 async def test_effort_is_transmitted_in_config_and_confirmed(bridge, fake_server, tmp_path):
     """RED: create_thread had no reasoning_effort parameter at all."""
     fake, _ = fake_server
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "effort", str(tmp_path), model="anthropic/claude-opus-5", reasoning_effort="xhigh"
     )
     assert sent(fake, "thread/start")["config"] == {"model_reasoning_effort": "xhigh"}
@@ -59,7 +74,8 @@ async def test_first_full_request_can_use_opus_and_xhigh(bridge, fake_server, tm
     turn used to work around a setting that could not be sent.
     """
     fake, _ = fake_server
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "opus",
         str(tmp_path),
         prompt="Do the actual work now.",
@@ -77,7 +93,8 @@ async def test_a_swapped_model_is_not_preserved_and_withholds_the_prompt(
     """RED: the old create_thread never compared the returned model at all."""
     fake, _ = fake_server
     fake.override_creation = {"model": "some-other-model"}
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "swap", str(tmp_path), prompt="hello", model="anthropic/claude-opus-5"
     )
     assert result["status"] == "failed"
@@ -93,7 +110,8 @@ async def test_a_setting_the_host_never_reports_is_unobservable_not_a_mismatch(
     """RED: an unreported setting is its own cause, and it withholds rather than warns."""
     fake, _ = fake_server
     fake.unreported = {missing}
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "silent",
         str(tmp_path),
         prompt="hello",
@@ -110,7 +128,8 @@ async def test_an_explicit_null_reads_the_same_as_an_absent_field(bridge, fake_s
     """RED: null says no more about what was applied than a missing key does."""
     fake, _ = fake_server
     fake.override_creation = {"reasoningEffort": None}
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "null-effort", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
     )
     assert result["rpcError"]["code"] == "setting_unobservable"
@@ -130,7 +149,8 @@ async def test_every_workspace_write_policy_field_is_serialised_into_config(
         "excludeTmpdirEnvVar": True,
         "excludeSlashTmp": True,
     }
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "policy", str(tmp_path), sandbox="workspace-write", expected_sandbox_policy=policy
     )
     assert sent(fake, "thread/start")["config"]["sandbox_workspace_write"] == {
@@ -149,7 +169,8 @@ async def test_a_default_valued_policy_field_is_still_transmitted(bridge, fake_s
     Sending nothing and comparing afterwards would discover the conflict and never resolve it.
     """
     fake, _ = fake_server
-    await bridge.create_thread(
+    await create(
+        bridge,
         "defaults",
         str(tmp_path),
         sandbox="workspace-write",
@@ -172,7 +193,8 @@ async def test_read_only_network_access_is_refused_before_any_request(
     """
     fake, _ = fake_server
     with pytest.raises(UntransmittableSetting) as raised:
-        await bridge.create_thread(
+        await create(
+        bridge,
             "ro-net",
             str(tmp_path),
             expected_sandbox_policy={"type": "readOnly", "networkAccess": True},
@@ -184,7 +206,8 @@ async def test_read_only_network_access_is_refused_before_any_request(
 
 async def test_filled_protocol_defaults_are_not_read_as_a_difference(bridge, tmp_path):
     """RED: the host fills every default in, and a bare expected type must still match."""
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "bare", str(tmp_path), sandbox="workspace-write", expected_sandbox_policy=dict(WRITE_POLICY)
     )
     assert result["status"] == "accepted"
@@ -193,31 +216,39 @@ async def test_filled_protocol_defaults_are_not_read_as_a_difference(bridge, tmp
 
 async def test_the_receipt_never_claims_more_than_the_observation(bridge, tmp_path):
     """RED: nothing says "verified"; the claim is scoped to the observation point."""
-    result = await bridge.create_thread("claim", str(tmp_path), reasoning_effort="xhigh")
+    result = await create(bridge, "claim", str(tmp_path), reasoning_effort="xhigh")
     settings = result["settings"]
     assert settings["verification"] == "observed_at_creation"
     assert "verified" not in settings["verification"].split("_at_")[0].replace("observed", "")
     assert "no host-side exclusivity" in settings["observationLimits"]
 
 
-async def test_nothing_requested_transmits_nothing_and_claims_nothing(
+async def test_only_the_required_pair_is_requested_when_nothing_else_is(
     bridge, fake_server, tmp_path
 ):
-    """RED for the receipt, COMPATIBILITY for the wire: defaults stay, and unasked-for
-    settings are reported without being claimed about."""
+    """RED for the receipt, COMPATIBILITY for the wire.
+
+    The previous contract was that a creation asking for nothing transmitted nothing and reported
+    the host's own model as the actual value without claiming anything about it. Model and effort
+    can no longer be left unasked. Roots and the sandbox policy still can, and they keep exactly
+    the old behaviour: reported, never claimed about.
+    """
     fake, _ = fake_server
-    result = await bridge.create_thread("plain", str(tmp_path))
+    result = await create(bridge, "plain", str(tmp_path))
     start = sent(fake, "thread/start")
-    assert "config" not in start and "runtimeWorkspaceRoots" not in start
+    assert start["model"] == MODEL
+    assert start["config"] == {"model_reasoning_effort": EFFORT}
+    assert "runtimeWorkspaceRoots" not in start
     settings = result["settings"]
-    # cwd and sandbox are inherent to creating a thread, so they are always requested and
-    # always checked. Model, effort and roots were not asked for: they are reported as the
-    # host's actual values but claimed about in no way.
-    assert sorted(settings["requested"]) == ["cwd", "sandbox"]
+    # cwd and sandbox are inherent to creating a thread; model and effort are now required. Roots
+    # were not asked for, so they are reported as the host's actual value and claimed about in no
+    # way.
+    assert sorted(settings["requested"]) == ["cwd", "model", "reasoningEffort", "sandbox"]
     assert settings["verification"] == "observed_at_creation"
-    assert settings["verified"] == ["cwd", "sandbox"]
-    assert settings["actual"]["model"] == "configured-default"
-    assert "model" not in settings["requested"]
+    assert settings["verified"] == ["cwd", "model", "reasoningEffort", "sandbox"]
+    assert settings["actual"]["model"] == MODEL
+    assert "runtimeWorkspaceRoots" not in settings["requested"]
+    assert settings["actual"]["runtimeWorkspaceRoots"] == [str(tmp_path)]
 
 
 # ----------------------------------------------------------------------------- resume
@@ -231,24 +262,33 @@ def carried(**overrides):
     }
 
 
-async def test_resume_without_settings_is_byte_identical_to_the_old_behaviour(
+async def test_a_resume_always_carries_the_authorized_pair(
     bridge, fake_server, tmp_path
 ):
-    """COMPATIBILITY for the resume params, RED for the receipt.
+    """The old contract was that omitting expected_settings kept the resume byte-identical.
 
-    The resume params assertion is the guarantee that MCP is not forced to become the only
-    transmission path; test_bridge.py pins the same params independently of this file.
+    That is deliberately retired. A turn on an existing thread costs what a new one costs, so a
+    send without a stated pair is refused before the thread is even read, and a send with one
+    carries it. test_bridge.py pins the same params independently of this file.
     """
     fake, _ = fake_server
-    created = await bridge.create_thread("c", str(tmp_path))
-    result = await bridge.send_message_to_thread("m", created["threadId"], "hello")
+    created = await create(bridge, "c", str(tmp_path))
+    settled = len(fake.calls)
+    with pytest.raises(ExecutionRefused) as raised:
+        await bridge.send_message_to_thread("bare", created["threadId"], "hello")
+    assert raised.value.code == "execution_setting_missing"
+    assert fake.calls[settled:] == [], "a send with no stated pair must not reach the host"
+    result = await send(bridge, "m", created["threadId"], "hello")
     assert sent(fake, "thread/resume") == {
         "threadId": created["threadId"],
         "excludeTurns": True,
+        "approvalPolicy": "never",
+        "model": MODEL,
+        "config": {"model_reasoning_effort": EFFORT},
     }
     assert result["status"] == "accepted" and result["turnId"]
-    assert result["settings"]["verification"] == "not_requested"
-    assert result["settings"]["requested"] == {}
+    assert result["settings"]["verification"] == "observed_at_resume"
+    assert result["settings"]["requested"] == {"model": MODEL, "reasoningEffort": EFFORT}
     # Silence is reported as silence: the observed values are there, unclaimed.
     assert result["settings"]["actual"]["approvalPolicy"] == "never"
 
@@ -256,7 +296,8 @@ async def test_resume_without_settings_is_byte_identical_to_the_old_behaviour(
 async def test_resume_carries_the_settings_it_can_express(bridge, fake_server, tmp_path):
     """RED: the old resume deliberately supplied no cwd, model, sandbox or reasoning at all."""
     fake, _ = fake_server
-    created = await bridge.create_thread(
+    created = await create(
+        bridge,
         "c",
         str(tmp_path),
         sandbox="workspace-write",
@@ -264,7 +305,8 @@ async def test_resume_carries_the_settings_it_can_express(bridge, fake_server, t
         reasoning_effort="xhigh",
         expected_sandbox_policy=dict(WRITE_POLICY),
     )
-    await bridge.send_message_to_thread(
+    await send(
+        bridge,
         "m",
         created["threadId"],
         "hello",
@@ -285,10 +327,11 @@ async def test_a_widened_sandbox_withholds_the_message_before_any_turn(
 ):
     """RED: this is the failure the whole issue exists for."""
     fake, _ = fake_server
-    created = await bridge.create_thread("c", str(tmp_path), sandbox="workspace-write")
+    created = await create(bridge, "c", str(tmp_path), sandbox="workspace-write")
     fake.override_resume = {"sandbox": {"type": "dangerFullAccess"}}
     before = fake.count("turn/start")
-    result = await bridge.send_message_to_thread(
+    result = await send(
+        bridge,
         "m", created["threadId"], "hello", expected_settings=carried()
     )
     assert result["status"] == "failed"
@@ -300,8 +343,9 @@ async def test_a_widened_sandbox_withholds_the_message_before_any_turn(
 async def test_a_clean_resume_starts_its_turn_with_no_overrides(bridge, fake_server, tmp_path):
     """RED: turn/start reports only the turn, so the bridge binds nothing it cannot read back."""
     fake, _ = fake_server
-    created = await bridge.create_thread("c", str(tmp_path), sandbox="workspace-write")
-    result = await bridge.send_message_to_thread(
+    created = await create(bridge, "c", str(tmp_path), sandbox="workspace-write")
+    result = await send(
+        bridge,
         "m", created["threadId"], "hello", expected_settings=carried()
     )
     assert result["status"] == "accepted"
@@ -312,10 +356,11 @@ async def test_a_clean_resume_starts_its_turn_with_no_overrides(bridge, fake_ser
 async def test_an_interactive_approval_policy_still_decides_alone(bridge, fake_server, tmp_path):
     """RED: a permanently closed channel must not be shadowed by a generic mismatch."""
     fake, _ = fake_server
-    created = await bridge.create_thread("c", str(tmp_path), sandbox="workspace-write")
+    created = await create(bridge, "c", str(tmp_path), sandbox="workspace-write")
     fake.approval_policy = "on-request"
     fake.override_resume = {"sandbox": {"type": "dangerFullAccess"}}
-    result = await bridge.send_message_to_thread(
+    result = await send(
+        bridge,
         "m", created["threadId"], "hello", expected_settings=carried()
     )
     assert result["rpcError"]["code"] == "unsupported_approval_policy"
@@ -331,12 +376,14 @@ async def test_a_reused_id_replays_without_dispatching_again(bridge, fake_server
     A retry must never create new duplicate work.
     """
     fake, _ = fake_server
-    created = await bridge.create_thread("c", str(tmp_path), sandbox="workspace-write")
-    first = await bridge.send_message_to_thread(
+    created = await create(bridge, "c", str(tmp_path), sandbox="workspace-write")
+    first = await send(
+        bridge,
         "same", created["threadId"], "hello", expected_settings=carried()
     )
     turns = fake.count("turn/start")
-    again = await bridge.send_message_to_thread(
+    again = await send(
+        bridge,
         "same", created["threadId"], "hello", expected_settings=carried()
     )
     assert again["replayed"] and again["turnId"] == first["turnId"]
@@ -345,16 +392,18 @@ async def test_a_reused_id_replays_without_dispatching_again(bridge, fake_server
 
 async def test_a_reused_id_with_changed_settings_is_rejected(bridge, tmp_path):
     """RED: supplied settings are part of the request identity."""
-    created = await bridge.create_thread("c", str(tmp_path), sandbox="workspace-write")
-    await bridge.send_message_to_thread(
+    created = await create(bridge, "c", str(tmp_path), sandbox="workspace-write")
+    await send(
+        bridge,
         "same", created["threadId"], "hello", expected_settings=carried()
     )
     with pytest.raises(ValueError, match="different arguments"):
-        await bridge.send_message_to_thread(
+        await send(
+        bridge,
             "same",
             created["threadId"],
             "hello",
-            expected_settings=carried(model="anthropic/claude-opus-5"),
+            expected_settings=carried(model="openai/gpt-5.6-sol"),
         )
 
 
@@ -383,6 +432,7 @@ async def test_an_omitted_setting_keeps_the_pre_upgrade_fingerprint(bridge, tmp_
         ),
     )
     bridge.ledger.db.commit()
+    # The pre-upgrade arguments carried no model and no effort, so the replay must not either.
     replayed = await bridge.create_thread("retained", cwd)
     assert replayed["replayed"] and replayed["threadId"] == "older-thread"
 
@@ -395,7 +445,8 @@ async def test_the_annotation_records_what_the_thread_reported_after_dispatch(
 ):
     """RED: the only signal available about a concurrent change around dispatch."""
     fake, _ = fake_server
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "annotated", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
     )
     note = result["settingsAfterDispatch"]
@@ -414,13 +465,15 @@ async def test_a_field_missing_after_dispatch_is_unobserved_not_unchanged(
     Dropping it silently would leave it listed as covered while concurrentChange said false.
     """
     fake, _ = fake_server
-    created = await bridge.create_thread(
+    created = await create(
+        bridge,
         "vanish", str(tmp_path), prompt="hello", model="anthropic/claude-opus-5"
     )
     assert created["settingsAfterDispatch"]["unobserved"] == []
 
     fake.threads[created["threadId"]]["model"] = None
-    second = await bridge.create_thread(
+    second = await create(
+        bridge,
         "vanish-2", str(tmp_path), prompt="hello", model="anthropic/claude-opus-5"
     )
     fake.threads[second["threadId"]]["model"] = None
@@ -438,13 +491,15 @@ async def test_a_failing_annotation_cannot_downgrade_an_accepted_turn(
 ):
     """RED: a diagnostic that could strand an acknowledged dispatch would be worse than none."""
     fake, _ = fake_server
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "c", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
     )
     assert result["status"] == "accepted"
 
     fake.reject["thread/read"] = {"code": -32000, "message": "nope"}
-    second = await bridge.create_thread(
+    second = await create(
+        bridge,
         "annot-fail", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
     )
     assert second["status"] == "accepted" and second["turnId"]
@@ -463,15 +518,17 @@ async def test_a_misspelled_setting_key_is_refused_not_discarded(bridge, fake_se
     goes out under a "not_requested" receipt while the caller believes the setting was enforced.
     """
     fake, _ = fake_server
-    created = await bridge.create_thread("c", str(tmp_path), sandbox="workspace-write")
+    created = await create(bridge, "c", str(tmp_path), sandbox="workspace-write")
     before = fake.count("turn/start")
     with pytest.raises(ValueError, match="unknown keys"):
-        await bridge.send_message_to_thread(
+        await send(
+        bridge,
             "typo", created["threadId"], "hello", expected_settings={"reasoningEffort": "xhigh"}
         )
     assert fake.count("turn/start") == before, "nothing may be dispatched"
     with pytest.raises(ValueError, match="unknown keys"):
-        await bridge.send_message_to_thread(
+        await send(
+        bridge,
             "typo2",
             created["threadId"],
             "hello",
@@ -488,13 +545,15 @@ async def test_a_replay_answers_from_the_ledger_without_touching_the_host(
     the dispatch, and overwrite the original annotation with that later observation.
     """
     fake, _ = fake_server
-    first = await bridge.create_thread(
+    first = await create(
+        bridge,
         "replayed", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
     )
     assert first["settingsAfterDispatch"]["concurrentChange"] is False
     calls_before = len(fake.calls)
 
-    again = await bridge.create_thread(
+    again = await create(
+        bridge,
         "replayed", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
     )
     assert again["replayed"]
@@ -505,11 +564,13 @@ async def test_a_replay_answers_from_the_ledger_without_touching_the_host(
 async def test_a_replay_is_answered_even_when_the_host_has_gone_away(bridge, fake_server, tmp_path):
     """Offline recovery is the case the ledger exists for; it must not wait on a read."""
     fake, _ = fake_server
-    first = await bridge.create_thread(
+    first = await create(
+        bridge,
         "offline", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
     )
     fake.reject["thread/read"] = {"code": -32000, "message": "server is gone"}
-    again = await bridge.create_thread(
+    again = await create(
+        bridge,
         "offline", str(tmp_path), prompt="hello", reasoning_effort="xhigh"
     )
     assert again["replayed"] and again["turnId"] == first["turnId"]
@@ -527,7 +588,7 @@ async def test_a_cancelled_annotation_propagates_instead_of_completing(
     import asyncio
 
     fake, _ = fake_server
-    created = await bridge.create_thread("cancel-prep", str(tmp_path), prompt="hello")
+    created = await create(bridge, "cancel-prep", str(tmp_path), prompt="hello")
     assert created["status"] == "accepted"
 
     receipt = {
@@ -575,7 +636,7 @@ async def test_an_unreadable_sandbox_answer_is_a_refusal_not_a_crash(
     """
     fake, _ = fake_server
     fake.override_creation = {"sandbox": malformed}
-    result = await bridge.create_thread("unreadable", str(tmp_path), prompt="hello")
+    result = await create(bridge, "unreadable", str(tmp_path), prompt="hello")
     assert result["status"] == "failed", "never outcome_unknown"
     assert result["rpcError"]["code"] == "settings_not_preserved"
     assert result["settings"]["findings"][0]["field"] == "sandbox"
@@ -609,7 +670,8 @@ async def test_a_matching_mode_does_not_rescue_an_unreadable_policy(bridge, fake
     """
     fake, _ = fake_server
     fake.override_creation = {"sandbox": {"type": "workspaceWrite", "writableRoots": None}}
-    result = await bridge.create_thread(
+    result = await create(
+        bridge,
         "mode-only", str(tmp_path), prompt="hello", sandbox="workspace-write"
     )
     assert result["status"] == "failed"

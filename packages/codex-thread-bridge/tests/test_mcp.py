@@ -80,7 +80,13 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
         caps = await session.call_tool("get_capabilities", {})
         assert not caps.isError
         assert caps.structuredContent["capabilities"]["desktopManagedWorktrees"] is False
-        args = {"request_id": "mcp-create", "cwd": str(tmp_path), "prompt": "READY"}
+        args = {
+            "request_id": "mcp-create",
+            "cwd": str(tmp_path),
+            "prompt": "READY",
+            "model": "anthropic/claude-opus-5",
+            "reasoning_effort": "xhigh",
+        }
         result = await session.call_tool("create_thread", args)
         assert not result.isError
         receipt = result.structuredContent
@@ -93,6 +99,10 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
                 "request_id": "mcp-send",
                 "thread_id": receipt["threadId"],
                 "message": "FOLLOWUP",
+                "expected_settings": {
+                    "model": "anthropic/claude-opus-5",
+                    "reasoning_effort": "xhigh",
+                },
             },
         )
         sent = followup.structuredContent
@@ -140,6 +150,8 @@ async def test_mcp_socket_alias_restart_does_not_repeat_creation(fake_server, tm
                     "request_id": "stable-create",
                     "cwd": str(tmp_path),
                     "prompt": "READY",
+                    "model": "anthropic/claude-opus-5",
+                    "reasoning_effort": "xhigh",
                 },
             )
             assert not result.isError
