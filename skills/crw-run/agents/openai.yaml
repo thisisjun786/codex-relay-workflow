@@ -1,6 +1,6 @@
 interface:
   display_name: "CRW Run"
-  short_description: "Linear 프로젝트·마일스톤·이슈를 독립 하위 작업으로 실행하고 검증"
+  short_description: "목표 생성 없이 현재 이슈·배치를 독립 자식에게 배정하고 검증"
   default_prompt: "$crw-run [Linear 프로젝트 링크]"
 policy:
   allow_implicit_invocation: true
