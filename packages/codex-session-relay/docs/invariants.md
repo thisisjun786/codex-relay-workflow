@@ -91,7 +91,8 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-76 | The reverse direction is stored as a relay-internal record, outside the parent-shaped schemas | delivery rows carry a kind; conformance validation partitions by kind | implemented |
 | I-77 | Acknowledgement and disposition evaluation are unreachable for a revision request | kind guards raise | implemented |
 | I-143 | A verified acknowledgement is settled, and a competing disposition cannot replace it | `ack.acknowledge` re-reads the acknowledgement as the first statement inside its write transaction and returns the stored record whatever the caller asked for | implemented |
-| I-144 | A criteria edit is re-reviewable exactly where the view calls it re_review_needed: a verified ruling, or a claimed review, on the revision this generation still stands on | `ack._re_review_open`, the single condition both `claim_verification` and `record_verdict` read | implemented |
+| I-144 | A criteria edit reopens a review only on the revision this generation still stands on, under an active relationship, and only where any ruling already recorded is a verified one | `ack._re_review_open`, read by `claim_verification` against the bound digest and by `record_verdict` against the digest the recorded ruling was decided on | implemented |
+| I-144b | Reopening a review clears its binding instead of moving it, so a caller still holding findings made against the old wording cannot be certified by somebody else's re-claim; the ruling names the set it read | `ack.claim_verification` deletes `claim_context` without rebinding, and `criteria.coverage` then requires a stated digest | implemented |
 | I-145 | A re-review replaces what the assignment stands on, never the record of deciding it | `ack.record_verdict` journals `verdict_superseded` with the replaced ruling and both criteria digests | implemented |
 
 ## Bounds

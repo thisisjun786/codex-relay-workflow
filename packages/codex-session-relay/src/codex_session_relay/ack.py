@@ -104,6 +104,15 @@ class AckService:
         assignment stayed blocked until the child changed a byte it had no reason to change.
         Re-claiming is allowed exactly where the set moved and nothing else did, so a duplicate
         delivery still cannot obtain the claim (I-54).
+
+        Re-claiming CLEARS the binding rather than moving it. An original claim pins the set
+        because the relay watched that review start; once the set has been edited it cannot tell
+        whether the caller that rules next is the one that re-read the artifact. Moving the
+        binding would have let a caller still holding findings made against the old wording be
+        certified by somebody else's re-claim, which is the very substitution the invalidation
+        exists to prevent. Unbound, the ruling has to name the set it read - the alternative
+        criteria.coverage already provides for - and a stale caller has nothing it can
+        truthfully name.
         """
         now = self.clock.iso()
         with self.store.transaction() as db:
@@ -122,22 +131,18 @@ class AckService:
                     " WHERE event_id = ?",
                     (turn_id, now, event_id),
                 )
-                # bind_review is INSERT OR IGNORE, so the stale binding has to go first. The
-                # whole point of re-claiming is to pin the review to the set in force NOW.
                 db.execute("DELETE FROM claim_context WHERE event_id = ?", (event_id,))
                 reclaimed = True
-            if claimed or reclaimed:
+                self.store.journal(
+                    "review_reclaimed", event_id, {"claimTurnId": turn_id}, at=now
+                )
+            if claimed:
                 event = self.intake.row(event_id)
                 if event is not None:
                     # Bind this review to the criteria set as it stands now. Editing a
                     # criterion's text later then invalidates the review instead of being
                     # silently certified by findings made against the earlier wording.
-                    digest = self.criteria.bind_review(db, event["relationship_id"], event_id)
-                    if reclaimed:
-                        self.store.journal(
-                            "review_reclaimed", event_id,
-                            {"setDigest": digest, "claimTurnId": turn_id}, at=now,
-                        )
+                    self.criteria.bind_review(db, event["relationship_id"], event_id)
         # "proceed" either way: a re-claim means the caller holds the review and may rule on
         # it, which is exactly what this word tells every existing caller. That a review was
         # reopened is recorded in the journal rather than smuggled into a return value callers
