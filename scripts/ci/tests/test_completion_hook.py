@@ -852,6 +852,33 @@ class TheConfigOverrideIsSettledToo(unittest.TestCase):
                                               str(named)),
                 named)
 
+    def test_status_reads_the_file_the_registered_hook_reads(self):
+        """An install that used an override embedded the resolved path in its command, and
+        hook-status has no reason to be running under the same environment."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            named = home / "named-settings.json"
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                apply=True, isolation_asserted_by=None)
+            with mock.patch.object(runtime_install, "emit"), \
+                 mock.patch.dict(os.environ, {completion.CONFIG_ENV: str(named)}):
+                runtime_install.cmd_hook(args)
+            self.assertTrue(named.is_file(), "the install wrote the override's file")
+            # Deliberately without the override: a later reader has no reason to carry it.
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["configuration"], str(named))
+        self.assertEqual(found["configuration"]["configurationSource"], "the registered command")
+        self.assertEqual(found["configuration"]["value"], reading.PRESENT,
+                         "reporting config_absent here would leave the relay, marker and"
+                         " firing cells unread about a hook that is working")
+        self.assertEqual(found["relayExecutable"]["value"], reading.PRESENT)
+
     def test_the_entry_point_uses_the_path_it_was_given(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

@@ -1150,6 +1150,11 @@ different directories and under two different values of `CODEX_HOME`, and the se
 is the one that decides what every Stop reads. The install decided which file it wrote, so the
 install is what says which file to read.
 
+`hook-status` reads that same word rather than resolving a path of its own, and reports which
+of the two it used. Recomputing it would answer about a file the hook may never open: an install
+that used the override embedded the resolved path in its command, and a later diagnosis has no
+reason to be running under the same environment.
+
 The interpreter in the registered command is settled the same way, and a bare name is looked up
 at install time, on the machine doing the install. That is the only moment the lookup means
 anything, because the hook runs later from each session's own workspace.

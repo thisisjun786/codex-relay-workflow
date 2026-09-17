@@ -725,10 +725,16 @@ def adapter_entries(document, event):
             command = str((entry or {}).get("command") or "")
             target = names_this_adapter(command)
             if target is not None:
+                words = registered_argv(command) or []
+                after = words.index(target) + 1
                 found.append({
                     "identity": hooks.identity(hooks.SOURCE, event, matcher_index, hook_index),
                     "command": command, "timeout": (entry or {}).get("timeout"),
-                    "target": target})
+                    "target": target,
+                    # The settings this registration actually reads, taken from the command
+                    # rather than recomputed. A reader that resolves its own path answers about
+                    # a file the hook may never open.
+                    "settings": words[after] if after < len(words) else None})
     return found
 
 
@@ -1093,32 +1099,20 @@ def presence(path, what, *, directory=False):
     return _cell(reading.PRESENT, what, path=str(path))
 
 
-def _registration(codex_home, event, command_fragment):
+def _registration(codex_home, event):
     path = Path(codex_home) / "hooks.json"
     found = hooks.read(path)
     if not found.usable:
         return _cell(found.state, "the hook file could not be read", hookFile=str(path),
                      reading=found.refusal()), None
     entries = hooks.inventory(found.value, event)
-    ours = []
-    for entry in _commands(found.value, event):
-        target = names_this_adapter(entry["command"])
-        if target is not None:
-            ours.append({**entry, "target": target})
+    # The same reader the installer's duplicate check uses. Two loops over the same hook file
+    # asking the same question is how the settings word came to exist in one answer and not in
+    # the other, so there is one.
+    ours = adapter_entries(found.value, event)
     return _cell(str(len(entries)), "hooks registered for " + event + " in the user hook file",
                  hookFile=str(path), identities=[entry["identity"] for entry in entries],
                  thisAdapter=ours), ours
-
-
-def _commands(document, event):
-    found = []
-    for matcher_index, group in enumerate((document.get("hooks") or {}).get(event) or []):
-        for hook_index, entry in enumerate((group or {}).get("hooks") or []):
-            found.append({"identity": hooks.identity(hooks.SOURCE, event, matcher_index,
-                                                     hook_index),
-                          "command": str((entry or {}).get("command") or ""),
-                          "timeout": (entry or {}).get("timeout")})
-    return found
 
 
 def _offers_guard(executable, timeout):
@@ -1208,9 +1202,16 @@ def status(codex_home=None, environ=None, event=EVENT):
     """
     environ = os.environ if environ is None else environ
     home = Path(codex_home or environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
-    path = configuration_path(home, environ)
+    registration, ours = _registration(home, event)
+    # The file the registered hook actually reads, taken from the registration when there is
+    # one. Recomputing it here would answer about a file the hook may never open: an install
+    # that used an override embedded the resolved path in its command, and this command has no
+    # reason to be running under the same environment.
+    carried = [entry["settings"] for entry in (ours or []) if entry.get("settings")]
+    path = Path(carried[0]) if carried else configuration_path(home, environ)
+    source = ("the registered command" if carried
+              else "this command's own resolution; no registration named one")
     config, failed, detail, found = read_configuration(path)
-    registration, ours = _registration(home, event, ENTRY_POINT_NAME)
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     if ours:
@@ -1221,7 +1222,8 @@ def status(codex_home=None, environ=None, event=EVENT):
                        probes=probes)
 
     if failed is not None:
-        settings = _cell(failed, detail or "", configuration=str(path))
+        settings = _cell(failed, detail or "", configuration=str(path),
+                         configurationSource=source)
         relay = _cell(NOT_READ, "no usable configuration names a runtime")
         offers = _cell(NOT_READ, "no usable configuration names a runtime")
         marker = _cell(NOT_READ, "no usable configuration names a marker root")
@@ -1232,7 +1234,9 @@ def status(codex_home=None, environ=None, event=EVENT):
         firing = _cell(NOT_READ, "no usable configuration names a journal to read")
     else:
         settings = _cell(found.state, "settings read", configuration=str(path),
-                         mode=config.get("mode"), dbPath=config.get("dbPath"))
+                         configurationSource=source, mode=config.get("mode"),
+                         dbPath=config.get("dbPath"),
+                         isolationAssertedBy=config.get("isolationAssertedBy"))
         executable = Path(config["relayExecutable"])
         relay = presence(executable, "the configured runtime")
         offers = (_offers_guard(executable, config.get("timeoutSeconds")
