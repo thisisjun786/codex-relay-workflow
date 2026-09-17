@@ -309,9 +309,17 @@ Give every finding a note.
 What the child actually reads is the RENDERED revision request, which is not the whole verdict. On
 the version named above the renderer emits only the first ten findings and adds no notice that it
 dropped the rest, so a finding past that point is delivered nowhere and looks delivered from the
-parent's side. Anything the child must receive, the restoration block included, goes in the first
-finding, and the parent confirms it by reading the queued revision request rather than by trusting
-its own placement. Treat the limit as this version's behaviour rather than a constant.
+parent's side. A size budget can go further and drop the findings section outright, first entry
+included. So putting what the child must receive in the first finding is a precaution and not a
+guarantee, and no arrangement of the verdict makes one: the verdict is a single transaction that
+has already opened the next generation before anything can be read back.
+
+Confirmation therefore comes from a dispatched attempt and what the child actually received. A
+queued rendering is the bytes the next attempt would send, not evidence that any send happened,
+and reading it settles nothing about delivery. Where the content did not arrive, that is an
+undelivered correction to record and report on the assignment, recovered on the child's own task
+the way an unemitted receipt is. Treat all of these limits as this version's behaviour rather than
+constants.
 
 Queued is not sent. That revision request travels the same way a completion does, so the
 host-capable `deliver`, or a `daemon` already running, is what puts it in front of the child. A

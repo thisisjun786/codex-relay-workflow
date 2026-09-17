@@ -272,14 +272,23 @@ only remaining routes are the ones this workflow forbids, and write the generati
 verdict is about to open rather than the one still current as you write. Those two are
 never the same on a correction, and the child acts on the one it was given.
 
-Put it in the first finding, and then confirm it actually arrived by reading the
-delivered revision request rather than trusting where you put it. A renderer decides
-what of a verdict the child sees, it can carry fewer findings than the verdict holds,
-and it need not say that it dropped any; [codex-session-relay](relay.md#the-parent-verifies)
-records what the measured version does. Placement is the precaution and the readback
-is the evidence, because the block is only useful if the child received it, and which
-position survives is a property of whatever relay is installed rather than of this
-instruction.
+Put it in the first finding. That is a precaution and not a guarantee, and the
+difference matters here. The renderer decides what of a verdict the child sees, it can
+carry fewer findings than the verdict holds, it need not say it dropped any, and on the
+measured version a size budget can drop the findings section entirely;
+[codex-session-relay](relay.md#the-parent-verifies) records what that version does.
+The verdict is also one transaction that has already opened the next generation by the
+time anything could discover the block missing.
+
+So delivery of the block is a claim that needs evidence rather than a consequence of
+placement. Confirm it from a dispatched attempt and what the child actually received,
+never from a queued rendering, which is the bytes a next attempt would send rather than
+proof of a send. Where the block did not arrive, record an undelivered correction on
+that assignment and recover the child on its own task, the way an unemitted receipt is
+recovered; do not open the parallel route to compensate. Whether an installed relay can
+carry a restoration block at all is a property of that package, `unmeasured` for any
+version but the one relay.md names, and where it cannot the gap is reported rather than
+quietly skipped.
 
 ## Coordination record
 
