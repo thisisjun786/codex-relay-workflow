@@ -29,6 +29,7 @@ separate questions, answered separately by status().
 import errno
 import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -193,6 +194,12 @@ CONFIG_OUTCOMES = {
 # top-level Stop decision.
 BLOCK = "block"
 
+# The name this writer gives a journal record: a random hex name and nothing else. Matched
+# rather than assumed when counting, so a file somebody else left under the journal root is
+# never counted as an invocation this hook recorded.
+JOURNAL_NAME = re.compile(r"^[0-9a-f]{32}\.json$")
+JOURNAL_DAY = re.compile(r"^[0-9]{8}$")
+
 # The answers a configuration write gives about the file it found. The same shape hooks.install
 # uses, in this module's own words rather than its words, so an answer about these settings can
 # never be read as an answer about the hook file. The reason for the shape is the same one: a
@@ -274,13 +281,27 @@ def complaints(document):
     found = []
     if not isinstance(document, dict):
         return ["the configuration is a " + type(document).__name__ + ", not an object"]
+    if document.get("configVersion") != CONFIG_VERSION:
+        # Checked rather than merely recorded. A version nothing reads is not a compatibility
+        # boundary, and a later document shape would otherwise be acted on by this reader as
+        # though it said what this one means.
+        found.append("configVersion must be " + str(CONFIG_VERSION) + ", found "
+                     + repr(document.get("configVersion")))
     for field in ("relayExecutable", "markerRoot"):
         value = document.get(field)
         if not isinstance(value, str) or not value.strip():
             found.append(field + " must be a non-empty string")
+        elif not os.path.isabs(value):
+            # This hook runs with the session's own workspace as its directory, so a relative
+            # path resolves somewhere the install never named. A bare name is worse still: it
+            # falls back to PATH, which is the resolution this adapter exists not to do.
+            found.append(field + " must be an absolute path, because this hook runs in the"
+                                 " session's workspace and a relative path resolves there")
     database = document.get("dbPath")
     if database is not None and (not isinstance(database, str) or not database.strip()):
         found.append("dbPath must be a non-empty string when it is present at all")
+    elif isinstance(database, str) and database.strip() and not os.path.isabs(database):
+        found.append("dbPath must be an absolute path")
     if document.get("mode") not in MODES:
         found.append("mode must be one of " + ", ".join(MODES))
     policy = document.get("journalPolicy")
@@ -293,6 +314,8 @@ def complaints(document):
     root = document.get("journalRoot")
     if root is not None and (not isinstance(root, str) or not root.strip()):
         found.append("journalRoot must be a non-empty string when it is present at all")
+    elif isinstance(root, str) and root.strip() and not os.path.isabs(root):
+        found.append("journalRoot must be an absolute path")
     return found
 
 
@@ -446,9 +469,40 @@ def outcome_of(ending, said, value):
         # A verdict printed by a run the relay then failed. The verdict is not honoured,
         # because the process disagrees with it, and the disagreement is what gets reported.
         return GUARD_ENDED_UNEXPECTEDLY
-    if not isinstance((value or {}).get("hook_output"), dict):
+    if verdict_complaints(value):
         return GUARD_VERDICT_INCOMPLETE
     return GUARD_ANSWERED
+
+
+def verdict_complaints(verdict):
+    """Whether a verdict agrees with itself, asked before any part of it is acted on.
+
+    Both cells are read, because reading one to answer for the other is how an answer nobody
+    gave gets delivered. A verdict whose own decision releases while its hook_output holds did
+    not come from the guard, and rebuilding a block out of the nested half alone would let this
+    adapter manufacture a hold from output it cannot account for.
+    """
+    if not isinstance(verdict, dict):
+        return ["the guard's answer is not an object"]
+    answer = verdict.get("hook_output")
+    decision = verdict.get("decision")
+    if not isinstance(answer, dict):
+        return ["the verdict carries no hook_output object"]
+    if not answer:
+        return (["the verdict holds and carries nothing for the host to act on"]
+                if decision == BLOCK else [])
+    found = []
+    if decision != BLOCK:
+        found.append("the verdict decides " + repr(decision) + " while its hook_output holds")
+    if answer.get("decision") != BLOCK:
+        found.append("hook_output carries a decision this host does not accept: "
+                     + repr(answer.get("decision")))
+    if answer.get("continue") is not True:
+        found.append("hook_output does not ask for a continuation")
+    reason = answer.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        found.append("a block carrying no prompt is reported by the host as a failed run")
+    return found
 
 
 def hook_output(verdict):
@@ -460,14 +514,9 @@ def hook_output(verdict):
     An empty answer is a release and prints nothing at all.
     """
     answer = (verdict or {}).get("hook_output")
-    if not isinstance(answer, dict) or not answer:
+    if verdict_complaints(verdict) or not answer:
         return None
-    if answer.get("decision") != BLOCK:
-        return None
-    reason = answer.get("reason")
-    if not isinstance(reason, str) or not reason.strip():
-        return None
-    return json.dumps({"decision": BLOCK, "reason": reason, "continue": True})
+    return json.dumps({"decision": BLOCK, "reason": answer["reason"], "continue": True})
 
 
 # ------------------------------------------------------------------ the registered command
@@ -628,7 +677,19 @@ def default_marker_root(environ=None):
     environ = os.environ if environ is None else environ
     state = environ.get("XDG_STATE_HOME")
     base = Path(state).expanduser() if state else Path.home() / ".local" / "state"
-    return base / MARKER_DIRECTORY_NAME
+    return _settled(base / MARKER_DIRECTORY_NAME)
+
+
+def _settled(path):
+    """An absolute path, with any link along it left alone.
+
+    Absolute because this hook runs with the session's own workspace as its directory, so a
+    relative path recorded at install time would resolve somewhere the install never named, and
+    a bare name would be looked up on PATH. Not resolved, though: the runtime is named through a
+    pointer on purpose, and following it here would record today's target and leave the next
+    update moving a link nothing reads.
+    """
+    return Path(os.path.abspath(str(Path(path).expanduser())))
 
 
 def relay_through_pointer(destination):
@@ -639,7 +700,7 @@ def relay_through_pointer(destination):
     installed anywhere. The pointer is the indirection the installer already owns, so an update
     moves it and this configuration keeps naming the right runtime.
     """
-    return Path(destination).expanduser() / pointer.POINTER_NAME / "bin" / "codex-session-relay"
+    return _settled(Path(destination) / pointer.POINTER_NAME / "bin" / "codex-session-relay")
 
 
 def configuration(*, destination=None, relay=None, marker_root=None, database=None,
@@ -649,7 +710,7 @@ def configuration(*, destination=None, relay=None, marker_root=None, database=No
     environ = os.environ if environ is None else environ
     home = Path(codex_home or environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
     if relay:
-        executable = Path(relay).expanduser()
+        executable = _settled(relay)
     elif destination:
         executable = relay_through_pointer(destination)
     else:
@@ -659,13 +720,13 @@ def configuration(*, destination=None, relay=None, marker_root=None, database=No
         "configVersion": CONFIG_VERSION,
         "event": EVENT,
         "relayExecutable": str(executable),
-        "markerRoot": str(Path(marker_root).expanduser() if marker_root
+        "markerRoot": str(_settled(marker_root) if marker_root
                           else default_marker_root(environ)),
-        "dbPath": str(Path(database).expanduser()) if database else None,
+        "dbPath": str(_settled(database)) if database else None,
         "mode": mode,
         "timeoutSeconds": timeout,
-        "journalRoot": str(Path(journal_root).expanduser() if journal_root
-                           else home / JOURNAL_DIRECTORY_NAME / "journal"),
+        "journalRoot": str(_settled(journal_root) if journal_root
+                           else _settled(home / JOURNAL_DIRECTORY_NAME / "journal")),
         "journalPolicy": EVERY_INVOCATION,
         "installedBy": issue,
     }
@@ -818,7 +879,29 @@ def _offers_guard(executable, timeout):
                  stderr=_text(finished.stderr)[:400])
 
 
+def _budget_cell(config, ours):
+    """The adapter's own wall clock against the timeout it is registered with.
+
+    Reported rather than asserted. Installation refuses a budget the registered timeout does not
+    exceed, but how much room is left over is a question about this host: process start, reading
+    the marker and writing the record all cost time nobody here can measure at install time. So
+    both numbers are shown with the margin between them, and every invocation journals its own
+    elapsed milliseconds, which is the distribution an operator would actually tune against.
+    """
+    budget = (config or {}).get("timeoutSeconds")
+    registered = sorted({entry.get("timeout") for entry in (ours or [])
+                         if isinstance(entry.get("timeout"), (int, float))})
+    if budget is None or not registered:
+        return _cell(NOT_READ, "both numbers are needed and one of them was not read",
+                     guardBudgetSeconds=budget, registeredTimeoutSeconds=registered or None)
+    return _cell(str(min(registered) - budget),
+                 "seconds between this adapter's own budget and the timeout the host registered"
+                 " it with; measured cost per invocation is journalled as elapsedMs",
+                 guardBudgetSeconds=budget, registeredTimeoutSeconds=registered)
+
+
 def _journal_cell(config):
+    """What this hook recorded about its own invocations."""
     root = (config or {}).get("journalRoot")
     policy = (config or {}).get("journalPolicy") or EVERY_INVOCATION
     if not root:
@@ -834,10 +917,12 @@ def _journal_cell(config):
     except OSError as error:
         return _cell(reading.ACCESS_ERROR, "the journal could not be listed: " + str(error),
                      journalRoot=str(directory), journalPolicy=policy)
+    days = [day for day in days if JOURNAL_DAY.match(day)]
     counted = 0
     for day in days:
         try:
-            counted += sum(1 for entry in os.scandir(str(directory / day)) if entry.is_file())
+            counted += sum(1 for entry in os.scandir(str(directory / day))
+                           if entry.is_file() and JOURNAL_NAME.match(entry.name))
         except OSError:
             return _cell(reading.ACCESS_ERROR, "a journal day could not be listed",
                          journalRoot=str(directory), journalPolicy=policy, days=days)
@@ -908,6 +993,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         "guardEvaluateOffered": offers,
         "markerRoot": marker,
         "firingJournal": firing,
+        "budget": _budget_cell(config, ours),
         "guardRecords": _cell(NOT_READ, "the guard's own per-observation records live in the"
                                         " marker and belong to the relay, not to this command"),
         "daemon": _cell(NOT_READ, "the Stop path reads the marker and a read-only database and"

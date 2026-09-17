@@ -156,7 +156,126 @@ class TheCallToTheGuard(unittest.TestCase):
                        {"decision": "block", "reason": "   ", "continue": True},
                        {"decision": "allow", "reason": "x"}):
             with self.subTest(answer=answer):
-                self.assertIsNone(completion.hook_output({"hook_output": answer}))
+                self.assertIsNone(completion.hook_output({"decision": "block",
+                                                          "hook_output": answer}))
+
+
+class OnlyAVerdictThatAgreesWithItselfIsActedOn(unittest.TestCase):
+    """Both cells are read. Answering one question from the other's reading is how this adapter
+    would deliver a hold nobody decided."""
+
+    def test_a_verdict_that_releases_while_its_answer_holds_is_not_honoured(self):
+        verdict = {"decision": "release",
+                   "hook_output": {"decision": "block", "reason": "retry", "continue": False}}
+        self.assertTrue(completion.verdict_complaints(verdict))
+        self.assertIsNone(completion.hook_output(verdict),
+                          "the nested half alone must not become a block")
+        self.assertEqual(
+            completion.outcome_of({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
+                                  *completion.read_guard_stdout(json.dumps(verdict))),
+            completion.GUARD_VERDICT_INCOMPLETE)
+
+    def test_a_continuation_is_never_manufactured(self):
+        verdict = {"decision": "block",
+                   "hook_output": {"decision": "block", "reason": "r", "continue": False}}
+        self.assertTrue(completion.verdict_complaints(verdict))
+        self.assertIsNone(completion.hook_output(verdict))
+
+    def test_a_hold_with_nothing_for_the_host_to_act_on_is_a_disagreement(self):
+        self.assertTrue(completion.verdict_complaints({"decision": "block", "hook_output": {}}))
+
+    def test_the_release_the_guard_actually_produces_still_agrees(self):
+        self.assertEqual(completion.verdict_complaints(RELEASED), [])
+        self.assertEqual(completion.verdict_complaints(HELD), [])
+        self.assertIsNotNone(completion.hook_output(HELD))
+
+
+class EveryRecordedPathIsAbsolute(unittest.TestCase):
+    """This hook runs in the session's workspace, not where it was installed from."""
+
+    def test_installation_settles_every_path_it_records(self):
+        document = completion.configuration(
+            relay="./bin/codex-session-relay", marker_root="./markers",
+            database="./relay.sqlite", journal_root="./journal",
+            codex_home="/home/x/.codex", environ={})
+        for field in ("relayExecutable", "markerRoot", "dbPath", "journalRoot"):
+            with self.subTest(field=field):
+                self.assertTrue(os.path.isabs(document[field]), document[field])
+
+    def test_a_relative_path_is_refused_rather_than_resolved_in_the_workspace(self):
+        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
+                                            environ={})
+        document["relayExecutable"] = "codex-session-relay"
+        found = completion.complaints(document)
+        self.assertTrue(found)
+        self.assertIn("absolute", found[0])
+
+    def test_the_pointer_is_recorded_as_a_pointer_and_not_as_its_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dest = Path(temporary) / "dest"
+            (dest / "runtime-a" / "bin").mkdir(parents=True)
+            (dest / "runtime-a" / "bin" / "codex-session-relay").write_text("", encoding="utf-8")
+            (dest / "current").symlink_to(dest / "runtime-a")
+            document = completion.configuration(destination=str(dest), marker_root="/m",
+                                                codex_home="/h", environ={})
+        self.assertEqual(document["relayExecutable"],
+                         str(dest / "current" / "bin" / "codex-session-relay"),
+                         "following the link here would record today's target and leave the"
+                         " next update moving a pointer nothing reads")
+
+
+class TheSettingsVersionIsAnActualBoundary(unittest.TestCase):
+    def test_a_document_from_another_version_is_malformed_rather_than_acted_on(self):
+        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
+                                            environ={})
+        self.assertEqual(completion.complaints(document), [])
+        document["configVersion"] = completion.CONFIG_VERSION + 1
+        self.assertTrue(completion.complaints(document))
+        del document["configVersion"]
+        self.assertTrue(completion.complaints(document))
+
+
+class TheJournalCountMeansInvocations(unittest.TestCase):
+    def test_a_file_this_hook_did_not_write_is_not_counted_as_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            root = Path(temporary) / "journal"
+            day = sorted(root.glob("*"))[0]
+            (day / "notes.txt").write_text("someone else's", encoding="utf-8")
+            (day / "readme.json").write_text("{}", encoding="utf-8")
+            (root / "scratch").mkdir()
+            (root / "scratch" / "x.json").write_text("{}", encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["firingJournal"]["value"], "1",
+                         "the count is labelled invocations this hook recorded, so it counts"
+                         " the records this hook writes and nothing else")
+
+
+class TheBudgetMarginIsShownRatherThanAsserted(unittest.TestCase):
+    def test_both_numbers_and_their_margin_are_reported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
+            with mock.patch.object(runtime_install, "emit"):
+                runtime_install.cmd_hook(args)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["budget"]["value"], "5")
+        self.assertEqual(found["budget"]["guardBudgetSeconds"], 5)
+        self.assertEqual(found["budget"]["registeredTimeoutSeconds"], [10])
+
+    def test_with_no_registration_the_margin_is_not_read_rather_than_guessed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["budget"]["value"], completion.NOT_READ)
 
 
 class NoTurnIsEverCostByThisAdapter(unittest.TestCase):

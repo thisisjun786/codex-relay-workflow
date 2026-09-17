@@ -1132,6 +1132,17 @@ predates the guard: the file is there, it runs, and it rejects the call. That th
 exists and that it offers `guard-evaluate` are two questions, and `hook-status` answers them
 as two cells for that reason.
 
+Every path the settings record is made absolute when they are written and required to be
+absolute when they are read, because this hook runs with the session's own workspace as its
+directory: a relative path would resolve somewhere the install never named, and a bare name
+would be looked up on `PATH`. The pointer itself is not followed, so an update moves the link
+and these settings keep naming the runtime that is actually selected.
+
+Only a verdict that agrees with itself is acted on. Both halves are read: a verdict whose own
+decision releases while its `hook_output` holds did not come from the guard, and rebuilding a
+block out of the nested half alone would let this adapter deliver a hold nobody decided. Any
+disagreement reads as `guard_verdict_incomplete` and releases.
+
 Failures keep their own names. A runtime that could not be run carries its `errno`, because a
 moved pointer and a file that cannot be executed are different repairs. An exit of 2 carrying the
 relay's own error record is the relay declining a request it understood; an exit of 2 carrying
