@@ -661,6 +661,69 @@ class ContestedSocket(CliBase):
         self.assertIn(second, joined, "no command looks for the socket that was asked for")
         self.assertIn("does not rewrite", refused["note"])
 
+    def test_recovery_commands_are_safe_to_paste(self):
+        """These strings exist to be pasted, so a path carrying shell syntax is executable.
+
+        A state directory or socket path with a substitution in it would run as the operator
+        did exactly what the refusal told them to do.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "quoted-home")
+        root = os.path.join(home, ".local", "state", "codex-session-relay")
+        # A socket whose name would run a command if it were pasted unquoted.
+        socket = os.path.join(self.tmp, "sock$(touch /tmp/pwned);x.sock")
+        for directory in ("aaaa555555555555", "bbbb555555555555"):
+            os.makedirs(os.path.join(root, directory))
+            Store(Path(root) / directory / "relay.sqlite3", socket_path=socket).close()
+
+        refused = self.run_in_home(home, "--socket", socket, "status", expect=2)
+
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        self.assertTrue(commands)
+        for command in commands:
+            # The real property is the round trip: the shell must hand the socket back as ONE
+            # intact argument rather than splitting it or running the substitution in it.
+            words = shlex.split(command)
+            self.assertIn(
+                socket, words,
+                f"the socket did not survive a shell round trip intact: {command}",
+            )
+            self.assertFalse(
+                [w for w in words if "$(" in w and w != socket],
+                f"a substitution escaped quoting: {command}",
+            )
+
+    def test_the_wrong_socket_recovery_is_quoted_too(self):
+        """The other refusal prints commands as well, and paths reach it the same way."""
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "quoted state")
+        first = os.path.join(self.tmp, "first$(id).sock")
+        second = os.path.join(self.tmp, "second.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=first).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", state,
+             "--socket", second, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        self.assertTrue(commands)
+        words = [word for command in commands for word in shlex.split(command)]
+        self.assertIn(first, words, "the recorded socket did not survive a shell round trip")
+        self.assertIn(state, words, "the state directory did not survive a shell round trip")
+
     def test_an_explicit_state_directory_resolves_the_contest(self):
         home, root, socket = self.contested("contested-explicit")
         chosen = os.path.join(root, "aaaa444444444444")

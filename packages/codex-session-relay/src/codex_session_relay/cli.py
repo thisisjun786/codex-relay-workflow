@@ -1409,6 +1409,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _quote(value) -> str:
+    """Shell-safe, because these strings are printed to be pasted."""
+    import shlex
+
+    return shlex.quote(str(value))
+
+
 def _program() -> str:
     """How the operator invokes this CLI, so a printed command can be pasted.
 
@@ -1417,12 +1424,16 @@ def _program() -> str:
     list that names the wrong one is a recovery list the operator has to translate.
     """
     import os
+    import shlex
     import sys
 
-    name = os.path.basename(sys.argv[0] or "")
+    argv0 = sys.argv[0] or ""
+    name = os.path.basename(argv0)
     if name in ("", "__main__.py", "cli.py", "-c"):
         return "python3 -m codex_session_relay.cli"
-    return name
+    # The directory is kept when there is one. A console script that is not on PATH renders as
+    # a bare name otherwise, and pasting that reaches a different installation or nothing.
+    return shlex.quote(argv0 if os.path.dirname(argv0) else name)
 
 
 def _recovery_commands(services, selection, contested: bool) -> list:
@@ -1437,15 +1448,21 @@ def _recovery_commands(services, selection, contested: bool) -> list:
     the doctor exemption exists in the first place: the socket is what makes two stores
     candidates for each other.
     """
+    import shlex
+
     program = _program()
-    socket = f" --socket {services.socket_path}" if services.socket_path else ""
+    # Quoted, every one of them. These are printed to be pasted, and a state directory or a
+    # socket path containing shell syntax would otherwise be executed by the operator doing
+    # exactly what the refusal told them to do.
+    socket = f" --socket {shlex.quote(str(services.socket_path))}" if services.socket_path else ""
     lines = [
         f"{program}{socket} doctor",
         "  lists the candidates under siblingStores",
     ]
     for candidate in list(selection.ambiguous or selection.unidentified):
-        lines.append(f"{program} --state {candidate}{socket} doctor")
-        lines.append(f"{program} --state {candidate}{socket} service status")
+        quoted = shlex.quote(str(candidate))
+        lines.append(f"{program} --state {quoted}{socket} doctor")
+        lines.append(f"{program} --state {quoted}{socket} service status")
     lines.append(
         "  service status groups by project, so the candidate holding the assignments you"
         " expect is the one to keep"
@@ -1461,8 +1478,8 @@ def _recovery_commands(services, selection, contested: bool) -> list:
         )
     else:
         lines.append(
-            f"  then pass --state {selection.path} once to create the new store"
-            " deliberately, or --state <the existing directory> to keep using it"
+            f"  then pass --state {shlex.quote(str(selection.path))} once to create the new"
+            " store deliberately, or --state <the existing directory> to keep using it"
         )
     return lines
 
@@ -1520,9 +1537,10 @@ def _refuse_ambiguous_state(services, args) -> None:
                 # is to point the command at the store that belongs to this socket, or at the
                 # socket that belongs to this store.
                 "recover": [
-                    f"{_program()} --state {selection.path} --socket {recorded} doctor",
+                    f"{_program()} --state {_quote(selection.path)}"
+                    f" --socket {_quote(recorded)} doctor",
                     "  reads this store under the socket it actually records",
-                    f"{_program()} --socket {wanted} doctor",
+                    f"{_program()} --socket {_quote(wanted)} doctor",
                     "  finds the store that belongs to the socket you asked for",
                 ],
                 "note": "using a store does not rewrite the socket it recorded, so neither"
