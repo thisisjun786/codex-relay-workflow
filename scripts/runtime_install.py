@@ -1946,8 +1946,25 @@ def cmd_install(args):
                         "stagingReason": why, "protection": protection, "plan": plan,
                         "outgoing": outgoing}
             if decision == staging.SETTLED:
+                # The claim and the selection say this environment is installed and in use.
+                # They say nothing about the path a host actually reaches it through, and
+                # reporting an installation while the registered command dangles or resolves
+                # somewhere else is a success claim about something nobody read.
+                reaches = pointer.names(pointer_path, environment)
+                if reaches is not True:
+                    emit(dict(standing, alreadyInstalled=False,
+                              pointer=dict(pointer.read(pointer_path),
+                                           namesThisEnvironment=reaches),
+                              refused="this environment is installed and selected, but the"
+                                      " owned pointer does not name it, so the command a host"
+                                      " reaches is not the runtime that is selected",
+                              note="nothing was built and nothing was written. Run"
+                                   " register-mcp against the pointer, or rerun once the"
+                                   " pointer can be read."))
+                    return EXIT_REFUSED
                 emit(dict(standing, alreadyInstalled=True,
                           selected=record.get("selected") or {},
+                          pointer={"path": str(pointer_path), "target": str(environment)},
                           note="nothing was built and nothing was written."))
                 return EXIT_OK
             if decision == staging.RESUME:
@@ -2173,6 +2190,16 @@ def cmd_install(args):
         # differently on a later run is a different string for the same directory.
         bridge_entry = str(pointer_path / "bin" / component_of(data, BRIDGE)["consoleScript"])
         registration = registration_state(codex_home, bridge_entry, [], compare_args=False)
+        # A host installed before the pointer existed registers a CONCRETE entry point, and
+        # comparing it against the pointer reads as a conflict. It is not one: it is this
+        # command's own previous registration, recorded in the host record, and treating it as
+        # somebody else's would refuse every upgrade of exactly the installed base the pointer
+        # exists to unpin. Ownership is established positively from the record, never from the
+        # shape of the path.
+        inherited = _inherited_registration(registration, staged.value, data)
+        if inherited:
+            registration = dict(registration, outcome=codexconfig.LINKED,
+                                detail=inherited["detail"], inherited=inherited)
         # And what the pointer itself names, which the registration stopped being able to say.
         pointer_read = pointer_state(destination, staged.value, data)
         verdicts = {}
@@ -2220,6 +2247,21 @@ def cmd_install(args):
                     return _install_failed(record_path, data["definitionVersion"], performed,
                                            environment, owned, pointer_path=pointer_path,
                                            failed_step="read the owned pointer")
+                # A link is not this command's merely because it is a link. Renaming over one
+                # succeeds whoever made it, so ownership is established from the record: a
+                # pointer this command placed is recorded when it is placed, and a link nobody
+                # recorded belongs to somebody else.
+                recorded_pointer = (staged.value.get("pointer") or {}).get("path")
+                if before["state"] == pointer.LINK and not recorded_pointer:
+                    performed.append({"step": "establish the pointer is this command's",
+                                      "ok": False,
+                                      "detail": "a symbolic link is already at " + str(pointer_path)
+                                                + " and this host record has never recorded"
+                                                  " placing one there"})
+                    return _install_failed(
+                        record_path, data["definitionVersion"], performed, environment, owned,
+                        pointer_path=pointer_path,
+                        failed_step="establish the pointer is this command's")
 
                 # Only the components this run installed. A whole selection map would re-assert
                 # entries read before the installation as though they were current.
@@ -2365,6 +2407,46 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
                    " move the pointer. Nothing was rebuilt and nothing was removed: the missing"
                    " half of that promotion was written and the claim settled."))
     return EXIT_OK
+
+
+def _inherited_registration(registration, record, data):
+    """Whether a CONFLICT is really this command's own earlier registration.
+
+    Returns a note when the registered command is an entry point the host record recorded for
+    an install of ours, and nothing otherwise. That is positive proof of ownership: a path that
+    merely looks like ours proves nothing, and a registration nobody recorded stays the conflict
+    it is.
+
+    Recognising it is not migrating it. The configuration still names the predecessor, which is
+    preserved and still works, and moving the registration onto the pointer is a separate
+    operation with its own contract; this only stops an inherited registration from refusing an
+    update and destroying the candidate it built.
+    """
+    if not registration or registration.get("outcome") != codexconfig.CONFLICT:
+        return None
+    registered = (registration.get("registered") or {}).get("command")
+    if not registered:
+        return None
+    recorded = []
+    for component in data["components"]:
+        entry = ((record or {}).get("components", {}).get(component["component"]) or {})
+        for install in entry.get("installs") or []:
+            if install.get("entryPoint"):
+                recorded.append(str(install["entryPoint"]))
+    if str(registered) not in recorded:
+        return None
+    return {
+        "registeredCommand": str(registered),
+        "recordedInstall": True,
+        "detail": (
+            "the configuration registers " + str(registered) + ", which this host record"
+            " recorded as an entry point of an install this command made. It is this command's"
+            " own earlier registration rather than a foreign one, so it does not refuse the"
+            " update. It is NOT moved onto the pointer here: the configuration still names the"
+            " predecessor, which is preserved and still works, and re-registering is a separate"
+            " operation."
+        ),
+    }
 
 
 def _names_environment(record, environment, data):

@@ -5529,9 +5529,14 @@ class _Host:
             })
         record["selected"] = {c["component"]: str(self.previous_site / c["module"])
                               for c in self.data["components"]}
-        hostrecord.save(self.record_path, record)
-
         self.pointer_path = pointer.pointer_path(self.destination)
+        # Recorded as well as placed, which is what a previous run of this command does. A
+        # pointer on disk that the record never recorded is somebody else's link, and the
+        # install refuses to replace one -- so a fixture that placed it without recording it
+        # would be modelling a state this command never produces.
+        record["pointer"] = {"path": str(self.pointer_path), "recordedAt": "2026-09-18T00:00:00Z",
+                             "recordedBy": "CRW-49"}
+        hostrecord.save(self.record_path, record)
         pointer.place(self.pointer_path, self.previous)
 
         self.codex_home = self.root / "codex"
@@ -6299,6 +6304,96 @@ class RollbackRaceTests(unittest.TestCase):
 
         self.assertEqual(after, {"codex-session-relay": "/old/pkg"})
         self.assertEqual(answer["restored"], ["codex-session-relay"])
+
+
+
+class InheritedRegistrationTests(unittest.TestCase):
+    """The installed base this change exists to unpin must be able to take it.
+
+    A host installed before the pointer existed registers a concrete entry point. Compared with
+    the pointer that reads as a conflict, and a conflict refuses the update AND deletes the
+    candidate -- so the very hosts whose pinned registration the pointer fixes could never
+    receive the fix.
+    """
+
+    def test_a_predecessors_own_registration_does_not_refuse_the_update(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            bridge = component_of_for_test(host.data, "codex-thread-bridge")
+            legacy = str(host.previous / "bin" / bridge["consoleScript"])
+            # Exactly what a host installed by the parent version carries.
+            host.config.write_text(
+                '[mcp_servers.codex-thread-bridge]' + chr(10)
+                + 'command = "' + legacy + '"' + chr(10), encoding="utf-8")
+
+            code, payload = UpdateRecoveryTests()._run(host)
+            survived = host.previous.is_dir()
+            config_after = host.config.read_bytes()
+
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertTrue(payload["promoted"], "the installed base can take the update")
+        self.assertTrue(survived, "and the runtime its configuration still names is preserved")
+        self.assertIn(b"command", config_after,
+                      "the configuration is not rewritten by an install")
+
+    def test_a_registration_nobody_recorded_is_still_a_conflict(self):
+        import runtime_install
+
+        data = definition.load()
+        record = hostrecord.empty(1)
+        hostrecord.put_install(record, "codex-thread-bridge",
+                               {"location": "/ours/pkg", "environment": "/ours",
+                                "entryPoint": "/ours/bin/codex-thread-bridge"})
+        conflict = {"outcome": codexconfig.CONFLICT, "detail": "differs",
+                    "registered": {"command": "/somebody/else/bin/codex-thread-bridge"}}
+        self.assertIsNone(runtime_install._inherited_registration(conflict, record, data),
+                          "a path that merely looks like ours proves nothing")
+
+        ours = {"outcome": codexconfig.CONFLICT, "detail": "differs",
+                "registered": {"command": "/ours/bin/codex-thread-bridge"}}
+        found = runtime_install._inherited_registration(ours, record, data)
+        self.assertIsNotNone(found)
+        self.assertIn("separate operation", found["detail"],
+                      "recognising an inherited registration is not migrating it")
+
+
+class SettledPointerTests(unittest.TestCase):
+    def test_already_installed_is_not_reported_when_the_pointer_does_not_reach_it(self):
+        """The claim and the selection say it is installed. Neither says anything about the
+        path a host actually reaches it through."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, _ = UpdateRecoveryTests()._run(host)
+            self.assertEqual(code, 0, "the first run installs")
+
+            # The pointer is repointed away from the installed runtime.
+            pointer.place(host.pointer_path, host.previous)
+            again, payload = UpdateRecoveryTests()._run(host)
+
+        self.assertEqual(again, 1)
+        self.assertFalse(payload["alreadyInstalled"],
+                         "reporting an installation a host cannot reach is a success claim"
+                         " about something nobody read")
+        self.assertIn("does not name it", payload["refused"])
+
+
+class PointerOwnershipTests(unittest.TestCase):
+    def test_a_link_this_command_never_recorded_is_not_replaced(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # A link the user made, which this record has never recorded placing.
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record.pop("pointer", None)
+            hostrecord.save(host.record_path, record)
+
+            code, payload = UpdateRecoveryTests()._run(host)
+            still_theirs = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["failedStep"], "establish the pointer is this command's")
+        self.assertEqual(still_theirs, str(host.previous),
+                         "renaming over a link succeeds whoever made it, so ownership is"
+                         " established from the record rather than from the shape of the path")
 
 
 if __name__ == "__main__":
