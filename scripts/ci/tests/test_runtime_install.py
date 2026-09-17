@@ -4240,6 +4240,12 @@ class OwnReadingTests(unittest.TestCase):
         with contextlib.ExitStack() as entered:
             entered.enter_context(mock.patch.dict(
                 os.environ, dict(os.environ, PYTHONPATH=site), clear=True))
+            # The Codex CLI is a dimension of the combination, and a host without it on PATH
+            # makes every classification unreadable before any case here has said anything.
+            # Supplied as a baseline so the cases decide the outcome; the case that breaks this
+            # reading enters its own patch afterwards and wins.
+            entered.enter_context(mock.patch.object(
+                runtime_install, "codex_cli_version", return_value="0.0.0-for-this-case"))
             for patch in patches:
                 entered.enter_context(patch)
             return runtime_install.classify_component(
@@ -4650,8 +4656,14 @@ class LinkConflictTests(unittest.TestCase):
         import runtime_install
 
         component = definition.load()["components"][0]
-        return runtime_install.classify_component(
-            component, record=hostrecord.empty(1), app_server="a-server", links=links)
+        # Every other signal is supplied or absent by construction, so the link reading is what
+        # decides. Without this the case passed only on a host with the Codex CLI on PATH and
+        # failed in CI, which is the same "answered by the host rather than by the case" the
+        # checks here exist to stop.
+        with mock.patch.object(runtime_install, "codex_cli_version",
+                               return_value="0.0.0-for-this-case"):
+            return runtime_install.classify_component(
+                component, record=hostrecord.empty(1), app_server="a-server", links=links)
 
     def test_a_foreign_skill_path_makes_the_component_a_conflict(self):
         classified = self._classified({"conflict": ["/home/someone/.codex/skills/crw-run"],
