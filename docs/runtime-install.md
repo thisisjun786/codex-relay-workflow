@@ -611,14 +611,20 @@ definition carries no measured points, a host install whose bytes match still cl
 intended answer, not a gap to close by relaxing the rule: OPS-1.3 refuses to let a matching digest
 stand in for a run nobody performed. `measure` is the supported way out, and it is the only one.
 
-Nothing outside a recorded path is ever overwritten. A foreign relay, a local fork, an existing
+Nothing outside a recorded path is ever overwritten, and no predecessor is removed: an
+environment a previous install built stays on disk after the pointer moves off it, which is
+what lets a process already running from it keep running. A foreign relay, a local fork, an existing
 directory, an existing link and an MCP name already registered with a different command are each
 reported with both values, and the run changes nothing.
 
 ## MCP registration
 
 The server is registered as `[mcp_servers.<name>]` in `<CODEX_HOME>/config.toml`, the supported
-configuration path, through `runtime_install.py register-mcp`. Registration is append-only and
+configuration path, through `runtime_install.py register-mcp`. What it registers is the owned
+pointer, `<destination>/current/bin/<console script>`, and not the environment underneath it,
+so an update moves the pointer and this file is never written a second time. The two are
+separate claims and stay separately reported: the registration says which command Codex will
+spawn, and the link target says which runtime that command reaches. Registration is append-only and
 idempotent: an identical registration is reported `LINKED` and nothing is written, an absent one is
 appended, and a different command or argument list is reported `CONFLICT` and nothing is written.
 Every other table in the file, including other MCP servers and hook settings, is preserved byte for
@@ -842,3 +848,11 @@ evidence about a host's real Codex home, its installed runtime, its MCP registra
 operational database. `installed`, `mcpExposed`, `connected`, `deliveryAccepted`,
 `verificationComplete` and `alwaysActive` are six separate facts under OPS-6.1, and `imported` and
 `settingsPreserved` are two more beside them. None of the eight is read from another.
+
+A successful update is not one of them either. That the pointer moved, that the gate found the
+daemon stopped and no attempt open, and that the store's tables were compatible are three
+readings taken at one moment, about one destination. They say a swap was permitted and
+performed; they do not say the new runtime works, and the point that would say so is measured
+before the swap rather than after it. Nor does a refused update establish that a store is
+healthy: the gate reads whether it is safe to replace a runtime, and reads nothing about
+whether the data in the store is correct.
