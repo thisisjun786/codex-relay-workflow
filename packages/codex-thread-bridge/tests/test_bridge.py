@@ -654,3 +654,44 @@ async def test_a_goal_that_moved_under_the_pause_is_a_known_failure(
     assert receipt["status"] == "failed" and receipt["rpcError"]["code"] == code
     assert receipt["goalBefore"]["objective"] == "original"
     assert receipt["goalAfter"] and receipt.get("delivery") != "applied_by_host"
+
+
+async def test_a_lost_steer_response_is_unknown_and_never_sent_again(bridge, fake_server, tmp_path):
+    fake, _ = fake_server
+    thread_id = await running(bridge, fake, tmp_path)
+    # The host applies the steer and the response never arrives, which is the case a blind
+    # resend would turn into two instructions in one turn.
+    fake.drop_after = "turn/steer"
+    lost = await bridge.steer_thread("lost-steer", thread_id, "turn-1", "one instruction")
+    assert lost["status"] == "outcome_unknown"
+    # The correlation id is retained, so the turn's own record settles what happened.
+    assert lost["clientUserMessageId"] == "steer:lost-steer"
+
+    fake.drop_after = None
+    replay = await bridge.steer_thread("lost-steer", thread_id, "turn-1", "one instruction")
+    assert replay["replayed"] and replay["status"] == "outcome_unknown"
+    assert fake.count("turn/steer") == 1
+
+
+async def test_a_lost_pause_response_is_unknown_and_never_sent_again(bridge, fake_server, tmp_path):
+    fake, _ = fake_server
+    created = await bridge.create_thread("create", str(tmp_path), prompt="work")
+    fake.goal = {"objective": "o", "status": "active", "tokenBudget": None}
+    fake.drop_after = "thread/goal/set"
+    lost = await bridge.pause_goal("lost-pause", created["threadId"])
+    assert lost["status"] == "outcome_unknown"
+
+    fake.drop_after = None
+    replay = await bridge.pause_goal("lost-pause", created["threadId"])
+    assert replay["replayed"] and fake.count("thread/goal/set") == 1
+
+
+def test_a_version_is_identified_by_token_not_by_substring():
+    from codex_thread_bridge.bridge import TESTED_HOST_VERSION, host_versions
+
+    real = "Codex Desktop/0.154.0 (Ubuntu 26.4.0; x86_64) unknown (codex_thread_bridge; 0.1.0)"
+    assert TESTED_HOST_VERSION in host_versions(real)
+    # A longer version that merely contains the tested one is not the tested host.
+    assert TESTED_HOST_VERSION not in host_versions("Codex Desktop/10.154.0 (linux)")
+    assert host_versions("codex-cli 10.154.0") == set()
+    assert host_versions("") == set()

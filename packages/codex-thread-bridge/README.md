@@ -249,11 +249,12 @@ steer changes no acknowledgement, receipt or verification contract.
 `pause_goal` sends only `status`, so it cannot rewrite an objective or restore a
 stale one, and it compares the goal the host returns against the one it read a
 moment earlier. It refuses a thread with no goal, returns `already_paused` without
-calling the host, and refuses any other status naming what it saw, so a goal that
-already ended is never reopened as paused. Two limits are reported rather than
-worked around: the protocol offers no expected-status precondition on
-`thread/goal/set`, so the pause is not atomic and the goal should be read again
-afterwards; and pausing a goal does not stop a turn already in flight. To stop
+calling the host, and refuses any other status naming what it saw. Two limits are
+reported rather than worked around: the protocol offers no expected-status
+precondition on `thread/goal/set`, so those refusals rest on the status read a
+moment earlier and narrow rather than close the window in which a goal that ended
+could be overwritten as paused, and the goal should be read again afterwards; and
+pausing a goal does not stop a turn already in flight. To stop
 work, pause the goal, re-read the active turn, and steer that turn to finish
 safely. "Goal paused" and "turn stopped" stay separate claims.
 

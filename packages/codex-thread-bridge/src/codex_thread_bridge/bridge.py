@@ -1,6 +1,7 @@
 """Tool behavior, independent of MCP transport and the installed client."""
 
 import asyncio
+import re
 from pathlib import Path
 
 from .ledger import Ledger
@@ -30,6 +31,16 @@ ACTIVE_TURN_STATUSES = frozenset({"inProgress"})
 # may well support them; this bridge does not probe for them, so it reports unknown rather than
 # letting its own tool list stand in for a statement about that host.
 TESTED_HOST_VERSION = "0.154.0"
+
+
+def host_versions(user_agent: str):
+    """The complete version tokens a user agent declares, as product/version pairs.
+
+    Substring matching is not identification: "0.154.0" occurs inside "10.154.0", which would
+    turn an unrecognised server into a tested one. Only a whole token counts.
+    """
+    return set(re.findall(r"/(\d+(?:\.\d+)+)", user_agent or ""))
+
 
 # Why a thread cannot be steered, named by the exact status the host reported. Collapsing these
 # into one "not active" answer is how a system error gets handled as though it were an idle peer,
@@ -172,7 +183,11 @@ class Bridge:
             "hostSupport": {
                 "testedHost": f"codex-cli {TESTED_HOST_VERSION}",
                 "observedServer": observed,
-                "state": "tested" if TESTED_HOST_VERSION in observed else "unknown_host_version",
+                "state": (
+                    "tested"
+                    if TESTED_HOST_VERSION in host_versions(observed)
+                    else "unknown_host_version"
+                ),
                 "steerActiveTurn": "turn/steer, requires expectedTurnId",
                 "goalPause": "thread/goal/set, status paused",
                 "note": "Generated from the tested host's protocol. No live capability probe is "
@@ -591,7 +606,10 @@ class Bridge:
                     "thread/read",
                     {
                         "code": "thread_busy",
-                        "message": "Thread is active; message withheld. Wait for completion.",
+                        "message": "Thread is active; message withheld. This path starts a new "
+                        "turn and an active thread already has one. To instruct the turn that "
+                        "is running, read get_active_turn and call steer_thread with that turn "
+                        "id. Waiting is for when there is nothing to say yet.",
                     },
                 )
             # Resume is an explicit part of messaging, never part of discovery. It carries the
@@ -788,8 +806,11 @@ class Bridge:
             # Reading first narrows that window; nothing available here closes it.
             receipt["concurrency"] = "no_host_precondition_for_goal_status"
             receipt["concurrencyMeaning"] = (
-                "thread/goal/set takes no expected status, so this pause is not atomic. Read the "
-                "goal again afterwards rather than trusting this receipt as exclusive."
+                "thread/goal/set takes no expected status, so this pause is not atomic. The "
+                "refusals above are judged on the status read a moment earlier: a goal that "
+                "ended in between could still have been overwritten by this write, and the "
+                "goal returned cannot show whether it did. Read the goal again afterwards "
+                "rather than trusting this receipt as exclusive."
             )
             self.ledger.save(receipt)
             moved = [

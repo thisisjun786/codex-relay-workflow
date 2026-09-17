@@ -255,8 +255,10 @@ def make_server(bridge: Bridge):
         Requires user authorization and an explicit pause request; ordinary communication must
         never change a peer's goal. Sends only status, so it cannot rewrite an objective or write
         back a stale one. Refuses a thread with no goal, returns already_paused without calling
-        the host when it is paused, and refuses any other status naming what it observed, so a
-        goal that already ended is never quietly reopened as paused.
+        the host when it is paused, and refuses any other status naming what it observed. Those
+        refusals are judged on the goal read a moment earlier, so they narrow the window in which
+        a goal that ended could be overwritten as paused without closing it; the host offers no
+        expected-status precondition and the returned goal cannot show whether it did.
 
         Pausing does not stop a turn that is already running. To stop work, pause and then steer
         the observed turn to finish safely; "goal paused" and "turn stopped" stay separate claims.
