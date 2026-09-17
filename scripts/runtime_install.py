@@ -2119,7 +2119,7 @@ def cmd_install(args):
         performed.append({"step": "read whether it is safe to swap", "ok": True,
                           "detail": gate["verdict"]})
 
-        # The selection moves only to something this command own classification calls own.
+        # The selection moves only to something this command's own classification calls own.
         # Validated against the STAGED record, before the pointer changes, because recovery
         # deliberately keeps a selected candidate: promoting first and checking afterwards
         # would leave an invalid runtime selected and protected from cleanup.

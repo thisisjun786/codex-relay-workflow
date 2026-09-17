@@ -484,7 +484,7 @@ unlinked inode while the next reader opens the new one and finds it free. That r
 build as abandoned, and the next run deleted a directory somebody was still building. It is two
 files because of that.
 
-Removing anything needs positive proof of ownership, so the claim has to carry this command own
+Removing anything needs positive proof of ownership, so the claim has to carry this command's own
 marker, its claim version, and a state from the declared set. Readable JSON at that path is not
 proof; a file somebody else left is left alone.
 
