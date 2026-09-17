@@ -615,10 +615,24 @@ Inventing a state for it and filing it under the nearest existing one fail the s
 produce a record that reads as something a contract can act on when nothing in it can.
 
 Keep them in separate fields, so that a reader does not have to guess which vocabulary a word came
-from: what the turn did, what state the assignment is in, and the blocker where one applies. A
-child waiting on a person is a turn disposition of `blocked_needs_input` recorded beside whatever
-the assignment's own state actually is. Writing `blocked_needs_input` as that assignment state
-invents a state the relay does not have, which is the specific mistake this clause exists to stop.
+from: what the turn did, what state the assignment is in, and the blocker where one applies. The
+shape is written out here rather than described, because a shape that is only described is a shape
+somebody invents at the moment they need it. Illustrative values, not a measured record: a child
+that has stopped to ask a person something, on an assignment the relay still shows as awaiting its
+revision.
+
+```json
+{"turnDisposition": "blocked_needs_input",
+ "assignmentState": "needs_changes",
+ "blocker": "child asked which of two migration orders to take; no answer yet"}
+```
+
+Three fields because these are three different facts. The turn stopped, which is what
+`turnDisposition` carries. The delivery did not move, which is what `assignmentState` carries,
+read from the assignment rather than chosen to match the turn. And what is wanted from a human is
+prose, because no contract here has a word for it. Writing `blocked_needs_input` into
+`assignmentState` is the specific error this clause exists to stop: it reads as a relay state, the
+relay has no such state, and a parent acting on it waits for a transition that cannot arrive.
 
 ### OPS-6.3 Installing a Linear hook
 
