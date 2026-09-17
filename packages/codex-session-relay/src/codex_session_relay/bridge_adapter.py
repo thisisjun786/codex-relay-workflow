@@ -258,20 +258,36 @@ def _item_id(entry) -> str:
 class _Transport:
     """Owns one worker thread, and everything that must live on it.
 
-    Two constraints shape this. A sqlite connection belongs to the thread that created it, and
-    the bridge's ledger is a sqlite connection the bridge touches from inside its coroutines, so
-    building it on the caller's thread and using it on the worker's fails on the first send
-    before a single RPC goes out. And on this host asyncio's cross-thread wakeup does not
-    arrive: a coroutine submitted with run_coroutine_threadsafe to a run_forever loop in another
-    thread never completes, measured on both CPython 3.13 and 3.14 here. So work is handed over
-    through an ordinary queue that the worker polls, which depends on nothing but the loop's own
-    timer.
+    A sqlite connection belongs to the thread that created it, and the bridge's ledger is a
+    sqlite connection the bridge touches from inside its coroutines, so building it on the
+    caller's thread and using it on the worker's fails on the first send before a single RPC
+    goes out. That is why there is a worker thread at all, and it is unchanged.
+
+    Work is handed over through an ordinary queue the worker polls. An earlier note here said
+    that was forced - that a coroutine submitted with run_coroutine_threadsafe to a
+    run_forever loop in another thread never completes on this host, measured on CPython 3.13
+    and 3.14. Re-measured against the same shape on 2026-09-17: it completes and overlaps on
+    both 3.13.14 and 3.14.4. Whatever that was, it is not true now, and the note is corrected
+    rather than left to send the next reader down a road that is no longer closed. The queue
+    stays because it depends on nothing but the loop's own timer, not because it has to.
+
+    Submissions do NOT serialise. Each is dispatched as its own task, because awaiting them
+    one at a time meant a send whose caller had already given up still held the dequeue until
+    its own RPC chain ended - so the next parent's send waited out the abandoned one. Two
+    bounds keep that from becoming a different problem: one mutation at a time per recipient,
+    and a deadline on every executing submission.
     """
 
     POLL_SECONDS = 0.005
+    # How long in-flight work gets to finish on the way out before it is cancelled.
+    DRAIN_SECONDS = 5.0
+    # How much longer than the RPC timeout a caller waits before giving up. It was written
+    # inline; it is named here because it is also the bound on how long a submission may wait
+    # for its recipient's turn, and a bound nobody can set is a bound nobody can test.
+    CALLER_SLACK_SECONDS = 10.0
 
     def __init__(self, socket_path, timeout, *, app_server_factory=None, bridge_factory=None,
-                 ledger_factory=None):
+                 ledger_factory=None, drain_seconds=None, caller_slack=None):
         import concurrent.futures
         import queue
         import threading
@@ -280,6 +296,19 @@ class _Transport:
         self.timeout = timeout
         self._inbox = queue.Queue()
         self._stopping = False
+        self._accepting = True
+        # Held across the acceptance check AND the enqueue, and taken again by close() to
+        # flip acceptance. Checking a flag and then queueing are two steps, and a submission
+        # that passed the check but queued after the drain had already run left its future
+        # with nobody to answer it: the caller then waited out its whole budget and read a
+        # timeout, which says "outcome unknown" about work that was never started.
+        self._admission = threading.Lock()
+        self._drain_seconds = self.DRAIN_SECONDS if drain_seconds is None else drain_seconds
+        self._caller_slack = (
+            self.CALLER_SLACK_SECONDS if caller_slack is None else caller_slack
+        )
+        # One asyncio.Lock per recipient, created on the worker's loop as sends arrive.
+        self._locks = {}
         self._state = {}
         self._started = threading.Event()
         self._failure = None
@@ -325,38 +354,171 @@ class _Transport:
             self._started.set()
             return
         self._started.set()
+        inflight = set()
         while True:
             try:
-                work, future = self._inbox.get_nowait()
+                (work, future, recipient, expires_at,
+                 withheld, replay) = self._inbox.get_nowait()
             except queue.Empty:
-                if self._stopping:
-                    return
+                # No _stopping shortcut here. close() cannot set a flag and queue the sentinel
+                # in one step, so an idle worker could see the flag first and leave through
+                # this branch - never running _shut_down, never settling the sentinel, never
+                # closing the rpc or the ledger. The sentinel is the only way out.
                 await asyncio.sleep(self.POLL_SECONDS)
                 continue
             if work is None:
-                future.set_result(None)
+                await self._shut_down(inflight, future)
                 return
+            # Dispatched, not awaited. Awaiting here is what let one stalled send hold the
+            # dequeue: the caller gives up after its own budget, but that abandonment never
+            # released this loop, so the NEXT submission - a different recipient, a different
+            # parent - waited out the abandoned send's whole RPC chain rather than its own.
+            task = asyncio.ensure_future(
+                self._run(work, future, recipient, expires_at, withheld, replay)
+            )
+            inflight.add(task)
+            task.add_done_callback(inflight.discard)
+
+    async def _run(self, work, future, recipient, expires_at, withheld, replay=None):
+        """One submission, bounded twice: by its recipient's turn and by its own deadline."""
+        import asyncio
+        import time
+
+        held = None
+        if replay is not None:
+            # Asked BEFORE the recipient is considered. A replay of a request the ledger has
+            # already settled makes no RPC and mutates nothing, so refusing it as a busy
+            # recipient would hide a known outcome behind a retry - the opposite of what
+            # request-id idempotency is for. A lookup that raises is the ledger rejecting the
+            # same id under different arguments, and that rejection is the point.
             try:
-                result = await work()
+                retained = replay()
             except BaseException as error:  # noqa: BLE001 - returned to the caller
-                # Hand over the failure, but not this worker's own frame. The traceback
-                # starts at the `await work()` line above, inside a coroutine that is
-                # still suspended and still serving the queue. A caller is entitled to
-                # clear the frames of what it catches, and unittest's assertRaises does
-                # exactly that; on CPython 3.11 clearing this frame finalizes the worker
-                # mid-flight, so every later submit waits out its timeout against a loop
-                # that no longer reads its inbox. Dropping one frame keeps the type, the
-                # message and every frame from inside the operation, which is what the
-                # caller actually needs to debug it.
-                # Through the built-in, never `error.with_traceback(...)`. A subclass can
-                # override that method, and running its code here — inside the handler
-                # whose whole job is to keep this worker alive — would reintroduce the
-                # failure this guards against.
-                inner = error.__traceback__
-                BaseException.with_traceback(error, inner.tb_next if inner else None)
-                future.set_exception(error)
-            else:
-                future.set_result(result)
+                self._settle(future, error=error)
+                return
+            if retained is not None:
+                self._settle(future, result=retained)
+                return
+        if recipient is not None:
+            # One mutation at a time per recipient, and exactly one. _guarded_send reads the
+            # thread, resumes it and starts a turn across separate awaits, so a second
+            # concurrent send to the same thread can pass the idle check before the first
+            # reaches turn/start, and both would start a turn. Request-id idempotency does
+            # not catch that: the two requests are genuinely different. Different recipients
+            # overlap freely, which is the whole point of this change.
+            lock = self._locks.get(recipient)
+            if lock is None:
+                lock = self._locks[recipient] = asyncio.Lock()
+            if time.monotonic() >= expires_at:
+                # The caller has already given up. Starting a send now would occupy this
+                # recipient on behalf of nobody, which is the accumulation a bound exists to
+                # prevent, so expired work is answered and never dispatched late.
+                self._settle(
+                    future,
+                    error=RuntimeError(
+                        "the relay transport gave up on this submission before sending it"
+                    ),
+                )
+                return
+            if lock.locked():
+                # Reported immediately rather than queued behind the turn in flight. A turn is
+                # a real agent run, so waiting for one only converts a fast, accurate "busy"
+                # into a slow one - and waiters are exactly what would pile up unbounded.
+                # NOTHING was sent, and that is worth saying precisely: raising here would be
+                # classified as outcome_unknown, which parks the delivery as possibly
+                # delivered and blocks a clean retry. A recipient whose turn is already in
+                # flight is busy in the sense the delivery layer already backs off from.
+                self._settle(future, result=withheld())
+                return
+            # Free, and this is the only coroutine that could have taken it since the check:
+            # acquiring an unlocked asyncio.Lock completes without yielding to the loop.
+            await lock.acquire()
+            held = lock
+        try:
+            # The chain is three sequential RPCs, each bounded by the bridge's own wait_for,
+            # plus a connect bounded the same way. Four budgets give a legitimate send room to
+            # finish. The bound exists because rpc.py awaits ws.send() OUTSIDE its response
+            # timeout, so without it a write that never drains would hold this recipient's
+            # turn forever. Cancellation reaches _guarded_send, which records its own
+            # outcome_unknown receipt before re-raising.
+            result = await asyncio.wait_for(work(), self.timeout * 4)
+        except BaseException as error:  # noqa: BLE001 - returned to the caller
+            # Hand over the failure, but not this worker's own frame. The traceback starts at
+            # the await above, inside a coroutine that is still suspended and still serving
+            # the queue. A caller is entitled to clear the frames of what it catches, and
+            # unittest's assertRaises does exactly that; on CPython 3.11 clearing this frame
+            # finalizes the worker mid-flight, so every later submit waits out its timeout
+            # against a loop that no longer reads its inbox. Dropping one frame keeps the
+            # type, the message and every frame from inside the operation, which is what the
+            # caller actually needs to debug it.
+            # Through the built-in, never the bound with_traceback method. A subclass can
+            # override that method, and running its code here - inside the handler whose
+            # whole job is to keep this worker alive - would reintroduce the failure this
+            # guards against.
+            inner = error.__traceback__
+            BaseException.with_traceback(error, inner.tb_next if inner else None)
+            self._settle(future, error=_for_a_caller(error))
+        else:
+            self._settle(future, result=result)
+        finally:
+            if held is not None:
+                held.release()
+
+    @staticmethod
+    def _settle(future, *, result=None, error=None) -> None:
+        """A caller that gave up leaves a future nobody reads, never a broken one."""
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result)
+
+    async def _shut_down(self, inflight, sentinel) -> None:
+        """Ordered, and finite at every step.
+
+        Closing resources used to be ordinary queued work, which under concurrent dispatch
+        could close the ledger while a send still needed to save its receipt. So: stop taking
+        work, answer what is still queued without running it, give what is in flight a
+        bounded chance to finish, then cancel it WHILE THE LEDGER IS STILL OPEN - that is
+        what lets a cancelled send record its own outcome_unknown - and only then close.
+        """
+        import asyncio
+        import queue
+
+        self._accepting = False
+        while True:
+            try:
+                work, future, *_rest = self._inbox.get_nowait()
+            except queue.Empty:
+                break
+            if work is None:
+                self._settle(future, result=None)
+                continue
+            self._settle(
+                future,
+                error=RuntimeError("the relay transport is shutting down; nothing was sent"),
+            )
+        if inflight:
+            await asyncio.wait(set(inflight), timeout=self._drain_seconds)
+            remaining = [task for task in inflight if not task.done()]
+            for task in remaining:
+                task.cancel()
+            if remaining:
+                await asyncio.gather(*remaining, return_exceptions=True)
+        rpc = self._state.get("rpc")
+        if rpc is not None and hasattr(rpc, "close"):
+            try:
+                await rpc.close()
+            except Exception:  # noqa: BLE001 - shutdown has nobody to report to
+                pass
+        ledger = self._state.get("ledger")
+        if ledger is not None:
+            try:
+                ledger.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._settle(sentinel, result=None)
 
     async def _build(self, socket_path, app_server_factory, bridge_factory, ledger_factory):
         from pathlib import Path
@@ -385,22 +547,68 @@ class _Transport:
 
     # ------------------------------------------------------------- caller side
 
-    def _submit(self, work):
+    def _submit(self, work, *, recipient=None, withheld=None, replay=None):
+        import time
+
         if not self.thread.is_alive():
             raise RuntimeError("the relay transport worker is not running")
+        budget = self.timeout + self._caller_slack
         future = self._futures.Future()
-        self._inbox.put((work, future))
-        return future.result(self.timeout + 10)
+        # The deadline travels WITH the submission. A caller that gives up leaves work whose
+        # only remaining purpose would be to occupy its recipient, so waiting work that has
+        # outlived its caller is answered rather than dispatched late.
+        with self._admission:
+            # Under the same lock close() uses, so a submission is either in the queue before
+            # acceptance ends - and therefore drained and answered - or refused outright.
+            if not self._accepting:
+                raise RuntimeError("the relay transport is shutting down; nothing was sent")
+            self._inbox.put(
+                (work, future, recipient, time.monotonic() + budget, withheld, replay)
+            )
+        return future.result(budget)
 
     def call(self, method, params):
+        # No recipient key: reads must stay available while a send to some thread is stalled.
         return self._submit(lambda: self._state["rpc"].call(method, params))
 
     def send(self, request_id, thread_id, message, settings):
+        def withheld():
+            return {
+                "requestId": request_id,
+                "status": "failed",
+                "error": (
+                    "this relay already has a turn in flight for the recipient; message"
+                    " withheld without being sent"
+                ),
+                "rpcError": {
+                    "code": "thread_busy",
+                    "message": (
+                        "another send to this thread is still in flight in this process"
+                    ),
+                },
+            }
+
+        def replay():
+            # Runs on the worker thread, which owns the ledger's sqlite connection, and is
+            # consulted before the recipient lock. A request the ledger has already settled
+            # has an answer; refusing it as a busy recipient would replace that answer with a
+            # retry and lose it. Raises when the id was reused with different arguments, which
+            # the caller needs to see rather than a busy report.
+            retained = self._state["ledger"].lookup(
+                request_id, *_send_identity(thread_id, message)
+            )
+            if retained is None:
+                return None
+            return {**retained, "replayed": True}
+
         return self._submit(
             lambda: _guarded_send(
                 self._state["rpc"], self._state["ledger"],
                 request_id, thread_id, message, settings,
-            )
+            ),
+            recipient=thread_id,
+            withheld=withheld,
+            replay=replay,
         )
 
     def ledger_get(self, request_id):
@@ -412,22 +620,54 @@ class _Transport:
     def close(self):
         if not self.thread.is_alive():
             return
-
-        async def shutdown():
-            rpc = self._state.get("rpc")
-            if rpc is not None and hasattr(rpc, "close"):
-                await rpc.close()
-            ledger = self._state.get("ledger")
-            if ledger is not None:
-                ledger.close()
-
+        # Stop accepting BEFORE the sentinel is queued, so nothing joins the queue behind a
+        # shutdown that will refuse to run it. Resources are closed inside the worker, after
+        # the drain - submitting their closure as ordinary work is what allowed the ledger to
+        # be closed under a send that still needed it.
+        with self._admission:
+            self._accepting = False
+        self._stopping = True
+        future = self._futures.Future()
+        self._inbox.put((None, future, None, 0.0, None, None))
         try:
-            self._submit(shutdown)
-        finally:
-            self._stopping = True
-            future = self._futures.Future()
-            self._inbox.put((None, future))
-            self.thread.join(timeout=10)
+            future.result(self._drain_seconds + self.timeout + self._caller_slack)
+        except Exception:  # noqa: BLE001 - the join below is the real answer
+            pass
+        self.thread.join(timeout=self._drain_seconds + 10)
+
+
+class _ShutdownCancelled(Exception):
+    """Cancellation, in a shape an ordinary `except Exception` can catch.
+
+    `asyncio.CancelledError` inherits from BaseException, so handing it across the thread
+    boundary unchanged walks it straight past the delivery layer's `except Exception` around
+    the send. The tick unwinds and the delivery it had already claimed is left leased, in
+    `sending`, with an attempt row nothing ever settles - which is the opposite of what the
+    diagnostics contract asks for and leaves a restart with a claim it cannot account for.
+
+    The outcome genuinely is unknown rather than "nothing was sent": `_shut_down` cancels
+    only work that outlived the drain window, so the write may well have reached the host
+    before the cancel landed. This says that, and the delivery layer renders it as the
+    `outcome_unknown` receipt it already knows how to settle.
+    """
+
+
+def _for_a_caller(error):
+    """Translate what a caller cannot catch; pass everything else through untouched.
+
+    The original is kept as `__cause__` with the trimmed traceback already applied, so the
+    reason a send ended is still readable from the exception that reaches the caller.
+    """
+    import asyncio
+
+    if not isinstance(error, asyncio.CancelledError):
+        return error
+    translated = _ShutdownCancelled(
+        "the relay transport was shut down while this send was in flight;"
+        " outcome unknown, do not resend under a new request id"
+    )
+    translated.__cause__ = error
+    return translated
 
 
 class _Refusal(Exception):
@@ -441,6 +681,16 @@ class _Refusal(Exception):
         self.method = method
         self.error = error
         super().__init__(f"{method}: {error.get('message', error.get('code', 'refused'))}")
+
+
+def _send_identity(thread_id, message):
+    """The ledger identity of one send: its operation name and argument fingerprint.
+
+    Defined once because two places ask the ledger the same question - the replay precheck
+    before the recipient lock, and the send itself. If they ever disagreed the precheck would
+    quietly stop matching and replays would go back to being refused as busy.
+    """
+    return "send_message_to_thread", {"threadId": thread_id, "message": message}
 
 
 async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
@@ -463,8 +713,7 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
     """
     import asyncio
 
-    method = "send_message_to_thread"
-    params = {"threadId": thread_id, "message": message}
+    method, params = _send_identity(thread_id, message)
 
     # Raises when the id was used with different arguments. That rejection is the point.
     retained = ledger.lookup(request_id, method, params)
