@@ -129,6 +129,16 @@ it is nested at `creation.thread.environments`, so read it from there. When the 
 the key a later resume is checked against. Never ask a worker to echo its own settings back, and
 never widen a task's permissions to make a later send connect.
 
+Carry that value WHOLE. The later check is object equality against what the resume reports, so a
+record holding only the profile's id can never match: the comparison sees an id-shaped object
+against the full one and reports `UNVERIFIABLE_PERMISSION_PROFILE` with both sides, on a task
+whose permissions never changed at all. Copy the object the response gave you, including fields
+that look like they carry nothing, because an absent `extends` and an `extends` that is null are
+different objects to an equality check. The bridge offers no help here and is not meant to: it
+passes the profile through without interpreting it and leaves it out of the settings it compares,
+so it arrives raw at `creation.activePermissionProfile` or `resumed.activePermissionProfile`, and
+inside `permissionReceipt` on the worktree path. Measured against the version named above.
+
 `--parent-settings` and `--child-settings` are optional. Leaving them off still registers the
 relationship, and either side can be recorded afterwards with
 `settings-record --task <id> --settings @file.json`. What is validated is the RECORD, so an
@@ -295,6 +305,22 @@ The correction is the other verdict:
 A `needs_changes` verdict IS the correction: it opens the next generation and queues the revision
 request to the same registered child, carrying the superseded event, its digest and the findings.
 Give every finding a note.
+
+What the child actually reads is the RENDERED revision request, which is not the whole verdict. On
+the version named above the renderer emits only the first ten findings and adds no notice that it
+dropped the rest, so a finding past that point is delivered nowhere and looks delivered from the
+parent's side. A size budget can go further and drop the findings section outright, first entry
+included. So putting what the child must receive in the first finding is a precaution and not a
+guarantee, and no arrangement of the verdict makes one: the verdict is a single transaction that
+has already opened the next generation before anything can be read back.
+
+Confirmation therefore comes from a dispatched attempt and what the child actually received. A
+queued rendering is the bytes the next attempt would send, not evidence that any send happened,
+and reading it settles nothing about delivery. Where the content did not arrive there is no second
+correction to send: the verdict does not resend, and this workflow forbids the route around it. So
+it is recorded as an undelivered correction on the assignment and handed to the coordinator to
+decide, rather than repaired here. Treat all of these limits as this version's behaviour rather
+than constants.
 
 Queued is not sent. That revision request travels the same way a completion does, so the
 host-capable `deliver`, or a `daemon` already running, is what puts it in front of the child. A

@@ -339,6 +339,16 @@ another parent's in-flight delivery requires the scope operator, not whichever p
 finish first. This is the rule that makes sharing safe, and without it the first parent to finish
 silently breaks everyone else.
 
+A bounded run of that service is not an exception to this. Where a parent starts the delivery loop
+under its own tick or deadline bound, what it started is still the scope's one service for as long
+as it runs, serving whatever assignments are in the store rather than only that parent's. Letting
+it reach its own bound is a process end under OPS-4.3; ending it early is the prohibited act,
+however short the bound was and however finished that parent's own work is. The only daemon a run
+owns outright is one attached to an OPS-3.2 test or evidence store, which is not the scope's store
+and carries nobody else's assignments; that one it cleans up with the rest of its evidence, and a
+report says which of the two it was rather than leaving a reader to infer it. Whether the scope
+should run a supervised service of its own instead is arbitration under OPS-4.6, and proposed.
+
 The MCP server process is a separate case: Codex spawns and restarts it from its registration, not
 the scope operator, and it keeps its own ledger as OPS-3.3 describes.
 
@@ -526,6 +536,29 @@ Settings are applied through the creation tool's real arguments and the returned
 back and compared, because a prompt asking for capability is not capability. A setting the creation
 path cannot apply is settled before the task exists rather than downgraded silently.
 
+That comparison covers the workspace as well as the profile, and it asks one question rather than
+running a containment test. A child is assigned a checkout under OPS-5.2, an evidence root under
+OPS-5.4, the git metadata belonging to that checkout, and where it uses the relay directly a state
+directory under OPS-3.5. For each of those the question is whether this child can actually write
+there, and it is answered from the effective sandbox and permission profile, because those are the
+only things that constrain a task at all. `runtimeWorkspaceRoots` is one input the receipt reports,
+not the boundary: a child with unrestricted access needs no containment test, and one whose sandbox
+already makes the original repository writable commits normally while the returned roots name only
+its checkout. A path outside those roots is a reason to look, never the verdict.
+
+The git metadata earns its own line because it is the one invisible from the checkout. For a linked
+worktree the common directory, the per-worktree index and the reference files sit under the
+original repository, which `git rev-parse --absolute-git-dir`, `--git-common-dir` and
+`--git-path index` resolve; the writes a branch or a commit performs land there rather than under
+the working tree. Without that check the assignment reads as perfectly satisfiable until the
+child's first commit, which is the case OPS-5.3 measures.
+
+Settle all of this before the task is created, in the creation arguments, because creation carries
+the full work prompt and the receipt arrives with the turn already started. The receipt is then the
+check on what was asked for rather than the first look: where it contradicts the assignment,
+reconcile on that same task as above, and where the profile genuinely excludes a path the child
+needs, assign the OPS-5.3 fallback deliberately. Widening a task afterwards is never the answer.
+
 Tasks that are already running keep the settings they were created with. This clause describes how
 the next child is created; it is not authority to widen a live task, to alter its profile
 mid-assignment, or to work around a sandbox. A running task that cannot commit uses the OPS-5.3
@@ -565,6 +598,43 @@ an admitted gap because a later reader cannot tell the difference.
 An example record is labelled as one. A worked example carries illustrative values, so it says so at
 the top and a consumer can tell it apart from a record measured on a host. An unlabelled example is
 indistinguishable from evidence the moment it is copied out of context.
+
+The same discipline governs the words and not only the times. A condition is reported in the
+vocabulary its own contract defines, so that one word means one thing across the layers, which is
+what OPS-2.3 already requires of the install outcomes. Two vocabularies are in play here and they
+are not interchangeable. A turn's disposition says what that turn did, and `in_progress`,
+`ready_for_review`, `blocked_needs_input`, `interrupted` and `failed` are its words, defined
+in [Turn disposition](hook-contract.md#turn-disposition). An assignment's state says where the
+delivery stands, and where a relay holds the assignment its states are that vocabulary. A child
+waiting on a person is `blocked_needs_input` on its turn; that is not a new assignment state, and
+an assignment whose child is waiting has not thereby changed what it owes. Report both, in
+separate fields, citing each rather than paraphrasing it, because collapsing them loses exactly
+the distinction between a turn that stopped and a delivery that moved. Only a condition neither
+vocabulary has a word for is reported as a named blocker against the state that does apply.
+Inventing a state for it and filing it under the nearest existing one fail the same way: both
+produce a record that reads as something a contract can act on when nothing in it can.
+
+Keep them in separate fields, so that a reader does not have to guess which vocabulary a word came
+from: what the turn did, where the delivery stands, and the blocker where one applies. What decides
+the field is the contract the value came from, and there are four of them rather than the two this
+clause started by naming. Each already owns a field, so a report uses that field rather than a name
+chosen for the occasion. Two rounds of review found that every convenient key was already taken.
+
+| Fact | Owner and its field | Example value |
+|---|---|---|
+| What this turn did | [Turn disposition](hook-contract.md#turn-disposition) | `blocked_needs_input` |
+| Whether the relationship is registered and bound | the managed hook's own `assignmentState` | `relationship_registered` |
+| Where the delivery stands | `assignment-show`'s `state`, in [relay usage](relay.md#verify-the-current-revision) | `needs_changes` |
+| What one transport attempt did | the delivery attempt's `deliveryState` | `dispatched` |
+| What a person is being asked | no contract has a word for it, so prose | free text |
+
+A child that stopped to ask someone a question is `blocked_needs_input` on its turn, on an
+assignment whose `state` is still whatever it was, with the question itself written out. Four
+different facts, four fields, and the last one in prose precisely because nothing defines it.
+Putting `needs_changes` in `deliveryState`, or `blocked_needs_input` in either state field, is the
+error this clause exists to stop: it reads as a value some contract defines, that contract defines
+something else by it, and a consumer either rejects the record or acts on the wrong fact. This
+contract does not mint a record shape of its own for these; OPS-10.3 is why.
 
 ### OPS-6.3 Installing a Linear hook
 
@@ -622,6 +692,13 @@ workspace-qualified issue document or issue record as that reference. The bundle
 `--scope-ref` as descriptive context and routes on the exact `--issue` string and task IDs;
 it does not validate Linear membership. Any command accepting a display key needs enough
 identity to resolve it unambiguously before registration. See [relay registration](relay.md#register-the-assignment).
+
+Registering an assignment binds that one assignment and enrols nothing else. Naming a workspace or
+a project in the scope reference describes where the issue lives; it does not put that project
+under this parent, and it does not bring the project's other issues into the store. A project whose
+issues hold no registered assignment simply has none, which is a fact about the store rather than a
+gap for a parent to close on its own initiative. An assignment another parent registered is read
+and never adopted, for the same reason: the lookup names its owner, and that owner is the answer.
 
 ### OPS-7.2 Never route on a display name or a working directory
 
@@ -694,6 +771,19 @@ the prompt or creating another child. A dispatch-only Run may return an explicit
 handoff without claiming automatic resumption. If no
 usable wait or resume path exists, record the capability blocker and the exact manual resume step.
 
+Once that readiness holds for this assignment, the handoff is the point of it: the parent stops
+polling and returns idle rather than continuing to watch a path it has just confirmed will reach
+it. What the confirmation has to cover is every disposition the parent is waiting on and not only
+completion. A finished generation travels as a receipt, and OPS-7.3 routes it to this assignment's
+registered parent. A child that stops for a person is the case to check rather than assume:
+recording `blocked_needs_input` on the turn releases the hook, and whether anything then enqueues
+a delivery is a property of the installed runtime and `unmeasured` here. Where it does not, the
+readiness this clause is conditioned on has not been established for that disposition, and the
+parent either requires the child to emit under it or keeps a bounded observation path for it.
+Returning idle on the unchecked half of that is how a blocked child strands its coordinator, and
+the strand is silent. Returning idle ends that parent's observation and nothing else: it closes no
+assignment, releases no issue, and touches no service another parent is using.
+
 Two mechanisms are distinct and are never described as one. A native subagent finishes inside its
 parent's own turn, and the parent observes that completion directly. When an independent task is
 relay-managed, its completion travels as a relay receipt, which is staged when the emitting
@@ -728,9 +818,18 @@ end a turn already running. Record "goal paused" and "turn stopped" separately; 
 other. Where the goal pause carries no host-side precondition, it is not atomic, so read the goal
 again rather than treating the receipt as exclusive.
 
-Whether a tool exposes steering, pausing or interrupting is a separate question from whether the
-host supports it. Establish each on its own evidence, use only paths whose permission and support
-are confirmed, and never report a missing tool as a missing host capability.
+Whether a tool exposes steering, pausing or interrupting, whether the build actually installed on
+this host exposes it, and whether the host supports it are three separate questions rather than
+two. Establish each on its own evidence, use only paths whose permission and support are confirmed,
+and never report a missing tool as a missing host capability. A path a reference describes but the
+running server does not offer has more than one explanation, and the installed build lagging that
+reference is one of them rather than the presumed one; it is classified under OPS-2.2. Establish
+which explanation holds before reporting anything as a host limit.
+
+What a hook did or did not say divides the same way. A task that received no hook guidance is
+missing a notice, not stranded: the skill pointers its packet carries are what it reads directly
+instead. That is a different condition from state it genuinely cannot recover, and reporting the
+first as the second turns an ordinary gap into a blocker nobody needs to clear.
 
 ### OPS-8.3 Fairness, limits and error isolation, proposed
 
@@ -879,6 +978,11 @@ Managed execution here always runs with the CXC workflow alongside it, so a miss
 absent contract, or an incompatible version is a condition to report, not something to route around
 while calling the run normal. Quietly proceeding without it produces work that looks ordinary and
 carries none of the evidence the workflow exists to produce.
+
+That reading belongs to the assignment's first turn, taken inside the task, where the installation
+actually is. A coordinator cannot establish it from its own host, and a transport's capability list
+is not it. Taken later it arrives after the work it was meant to govern, which is the one moment
+the answer stops changing anything.
 
 Saying so does not require anyone to install, upgrade, or test anything in the middle of a running
 assignment, and it changes no permission. Receipt reading, acknowledgement and recovery keep working
