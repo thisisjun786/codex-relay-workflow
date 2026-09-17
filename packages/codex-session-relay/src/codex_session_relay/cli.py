@@ -806,6 +806,14 @@ def _sandbox_summary(row) -> dict:
     as a comparison against a fixed value in the resume verification, so the recorded value is
     compared against that same value instead.
 
+    The two are reported in different fields because they decide different things. A failing
+    transformation settles the send on the row alone - no host can consume
+    `runtimeWorkspaceRoots: 7` - so it makes `deliverable` false. A violated value constraint
+    settles only what a host that reports the setting BACK will do, and a host that replaces
+    it proceeds, so it lands in `refusedIfPreserved` and leaves `deliverable` describing the
+    preparation. Collapsing them cost a round in the other direction: the receipt denied a
+    send that today's delivery completes when the host normalises the value.
+
     Five versions of this field were wrong the same way before those two sentences could be
     written: each named the answer after the members it had been shown - the sandbox type,
     then `require_usable()`, then the params construction, then the post-response half, then
@@ -813,6 +821,12 @@ def _sandbox_summary(row) -> dict:
     `test_every_transformation_a_send_applies_to_the_record_is_covered` (tests/test_cli.py)
     derives both kinds from those two modules and fails if a member of either is added that
     this does not reach.
+
+    What it does NOT answer is whether the host accepts the parameters. The App Server's own
+    schema is not in this repository, so nothing here can say what it does with a recorded
+    `cwd: 7`: the params are built and sent, and the answer comes back from the wire.
+    `deliverable` is about the constraints delivery imposes on the row, and typing the
+    recorded fields locally would belong in `require_usable()` beside the policy rule.
     """
     import json
 
@@ -853,30 +867,43 @@ def _sandbox_summary(row) -> dict:
         # environment selection raises here, one that reports null withholds the send as
         # environments_unknown - so no send completes for such a row either way.
         normalise_environments(settings.get("environments"))
-        # The constraint kind, and the reason the first extraction could not see it: there is
-        # no call to put the field into. `mismatches` refuses any returned approvalPolicy that
-        # is not this one (settings.py), and a host that preserves what it was asked for
-        # returns what was recorded - so a row recording anything else cannot complete a send.
-        # Measured: a host echoing "on-request" produces unsupported_approval_policy and no
-        # turn, while a host that answers "never" regardless proceeds, which is why this is
-        # reported as unsendable rather than left to the host to decide.
-        if settings.get("approvalPolicy") != AUTHORIZED_APPROVAL_POLICY:
-            raise DeliveryRefused(
-                RefusalReason.UNSUPPORTED_APPROVAL_POLICY,
-                f"the recorded approvalPolicy is {settings.get('approvalPolicy')!r}; a resume"
-                f" that reports it back is refused, so only"
-                f" {AUTHORIZED_APPROVAL_POLICY!r} can be carried",
-            )
     except DeliveryRefused as refusal:
         refused = refusal
     except Exception as error:  # noqa: BLE001 - total, like everything else in this helper
         # The validator is not written to be fed hand-edited rows, and a diagnosis must not
         # die on one. An unexpected failure is still a refusal, reported as what it was.
         refused = DeliveryRefused(None, f"{type(error).__name__}: {error}")
+
+    # The constraint kind, reported BESIDE deliverable rather than folded into it, because it
+    # decides something different. A transformation that fails decides the send on the row
+    # alone: no host can rescue `runtimeWorkspaceRoots: 7`. This one does not. Measured: a
+    # resume that reports "on-request" back produces unsupported_approval_policy and no turn,
+    # while a host that answers "never" regardless returns no findings and the send proceeds.
+    # So a row recording another policy cannot be carried AS RECORDED, and folding that into
+    # `deliverable` would have the receipt deny a send that today's delivery would complete
+    # against a host that replaces the value.
+    recorded_policy = settings.get("approvalPolicy")
+    preserved = None
+    if recorded_policy != AUTHORIZED_APPROVAL_POLICY:
+        preserved = {
+            "field": "approvalPolicy",
+            # The finding code the resume verification reports for this, so a receipt and a
+            # delivery journal name it alike.
+            "refusedBy": RefusalReason.UNSUPPORTED_APPROVAL_POLICY.value,
+            "detail": (
+                f"the recorded approvalPolicy is {recorded_policy!r}; a resume that reports it"
+                f" back is refused, so only {AUTHORIZED_APPROVAL_POLICY!r} can be carried as"
+                " recorded and this row completes a send only against a host that replaces it"
+            ),
+        }
     cwd = settings.get("cwd")
     return {
         "readable": True,
         "deliverable": refused is None,
+        # The other kind of constraint: null when nothing in the row would be refused after a
+        # host reports it back, and otherwise the field, the code and why. Separate from
+        # `deliverable` on purpose - see the comment above the check.
+        "refusedIfPreserved": preserved,
         # Which gate refused, in delivery's own vocabulary, so a receipt and a delivery
         # journal name the same thing.
         "refusedBy": None if refused is None else (

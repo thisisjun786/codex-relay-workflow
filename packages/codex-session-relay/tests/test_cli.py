@@ -1439,20 +1439,29 @@ class ParticipantAccessReceipts(CliBase):
         A VALUE CONSTRAINT cannot. It exists only as a comparison against a fixed value -
         `mismatches` refuses any returned `approvalPolicy` that is not the authorized one -
         and a host that preserves what it was asked for returns what was recorded, so a row
-        recording anything else can never complete a send. Nothing raises on such a row, which
-        is why the first extraction cannot see it: there is no call to put the field into. That
-        member was found by review rather than by this test, and the second extraction below is
-        the answer to that rather than another hand-added case.
+        recording anything else cannot be carried AS RECORDED. Nothing raises on such a row,
+        which is why the first extraction cannot see it: there is no call to put the field
+        into. That member was found by review rather than by this test, and the second
+        extraction below is the answer to that rather than another hand-added case.
 
         Each derived field is then mutated with the mutant its kind needs - a value no
         transformation can consume, or a well-typed value that is not the authorized literal -
-        and the receipt must not advertise that participant as deliverable. A new member of
+        and the receipt must report it in the field its kind belongs to. A failing
+        transformation settles the send on the row alone, so it makes `deliverable` false. A
+        violated constraint settles only what a host reporting the setting back will do, and a
+        host that replaces it proceeds, so it lands in `refusedIfPreserved`. A new member of
         either kind joins the derived set and fails here until the probe reaches it, which is
         the property a written-down list cannot have.
 
-        The two floor assertions are not the definition. They guard the extractor: an AST walk
-        that silently matched nothing would run zero mutations and pass, which is how this kind
-        of test goes green while holding nothing.
+        Both extractions are syntactic and recognize the shapes that are there: a positional
+        `self.data["<field>"]` argument, and a name bound from `get("<field>")` on something
+        other than `self.data` and then compared against a literal or a module constant. A
+        field reached through an alias, a keyword argument, or a helper these do not follow
+        would escape both, so passing this is not a proof of total coverage.
+
+        The floor assertions are not the definition either. They guard the extractors: an AST
+        walk that silently matched nothing would run zero mutations and pass, which is how
+        this kind of test goes green while holding nothing.
         """
         import ast
         import inspect
@@ -1590,13 +1599,33 @@ class ParticipantAccessReceipts(CliBase):
                     "doctor", state=self.tmp, pin=self.tmp,
                 )["accessReceipt"]["recordedSandbox"]["participants"][CHILD]
 
-                self.assertIsNot(
-                    child.get("deliverable"), True,
-                    f"no send can carry this {field!r}, and the receipt advertised one",
-                )
-                if child["readable"]:
-                    self.assertTrue(child["refusedBy"], child)
-                    self.assertTrue(child["detail"], child)
+                if field in fields:
+                    # A transformation cannot consume it, so no host can either: the row
+                    # itself settles the send.
+                    self.assertIsNot(
+                        child.get("deliverable"), True,
+                        f"no send can carry this {field!r}, and the receipt advertised one",
+                    )
+                    if child["readable"]:
+                        self.assertTrue(child["refusedBy"], child)
+                        self.assertTrue(child["detail"], child)
+                else:
+                    # A host reporting it back refuses it, one replacing it proceeds. The
+                    # receipt has to say that rather than deny the send outright.
+                    self.assertIs(
+                        child.get("deliverable"), True,
+                        f"the receipt denied a send for {field!r} that delivery completes"
+                        " today against a host that replaces the value",
+                    )
+                    refused = child.get("refusedIfPreserved")
+                    self.assertTrue(
+                        refused,
+                        f"a resume reporting this {field!r} back is refused, and the receipt"
+                        " said nothing about it",
+                    )
+                    self.assertEqual(refused["field"], field, refused)
+                    self.assertTrue(refused["refusedBy"], refused)
+                    self.assertTrue(refused["detail"], refused)
 
     def test_a_store_replaced_by_a_copy_under_the_read_is_reported_not_served(self):
         """The receipt's own mid-command replacement check, against the case it missed.
