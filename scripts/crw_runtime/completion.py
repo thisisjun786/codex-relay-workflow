@@ -287,8 +287,16 @@ def stop_input(payload):
 # ------------------------------------------------------------------ this hook's own settings
 
 
-def configuration_path(codex_home=None, environ=None):
-    """Where this hook's settings live. Its own file, never another hook's."""
+def configuration_path(codex_home=None, environ=None, settings=None):
+    """Where this hook's settings live. Its own file, never another hook's.
+
+    Precedence: a path this caller was handed, then the environment override, then the Codex
+    home. The first exists because the registered command carries the path the install resolved,
+    and a value the install already decided must not be decided again somewhere else, in another
+    directory, under another CODEX_HOME.
+    """
+    if settings:
+        return _settled(settings)
     environ = os.environ if environ is None else environ
     override = environ.get(CONFIG_ENV)
     if override:
@@ -596,7 +604,7 @@ def hook_output(verdict):
 # ------------------------------------------------------------------ the registered command
 
 
-def command_for(interpreter, script):
+def command_for(interpreter, script, settings=None):
     """The registered command, quoted so the host runs the two words this names.
 
     A hook file carries a command line, not an argv, so the two are joined with shell quoting.
@@ -604,8 +612,16 @@ def command_for(interpreter, script):
     a space is delivered as more words than it is, and a path holding shell syntax is delivered
     as syntax and runs on every Stop with the user's own privileges. Ordinary paths come back
     from the quoting unchanged.
+
+    The settings path is carried here rather than left to be resolved again at every Stop.
+    Resolving it twice means resolving it in two different directories and against two different
+    values of CODEX_HOME: the install decided which file it wrote, so the install is what should
+    say which file to read.
     """
-    return shlex.join([str(interpreter), str(script)])
+    words = [str(interpreter), str(script)]
+    if settings:
+        words.append(str(settings))
+    return shlex.join(words)
 
 
 def interpreter_for(python, *, run=True):
@@ -781,7 +797,7 @@ def journal(config, record):
     return str(target)
 
 
-def run(payload, codex_home=None, environ=None):
+def run(payload, codex_home=None, environ=None, settings=None):
     """Decide one Stop and return the text to print, or None.
 
     Never raises and never holds on its own. Every path ends in a recorded outcome and a
@@ -800,7 +816,7 @@ def run(payload, codex_home=None, environ=None):
         record["sessionId"] = stop.get("session_id")
         record["turnId"] = stop.get("turn_id")
         record["stopHookActive"] = stop.get("stop_hook_active")
-        path = configuration_path(codex_home, environ)
+        path = configuration_path(codex_home, environ, settings)
         record["configuration"] = str(path)
         config, failed, detail, _found = read_configuration(path)
         if failed is not None:

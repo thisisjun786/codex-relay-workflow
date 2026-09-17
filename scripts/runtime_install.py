@@ -1949,8 +1949,10 @@ def cmd_hook(args):
                   "hookFile": str(path), "settings": None, "result": None,
                   "note": "nothing was written: every precondition is checked first."})
             return EXIT_USAGE
+        configuration = completion.configuration_path(codex_home)
         command = completion.command_for(interpreter,
-                                         ROOT / "scripts" / completion.ENTRY_POINT_NAME)
+                                         ROOT / "scripts" / completion.ENTRY_POINT_NAME,
+                                         configuration)
         already = hooks.read(path)
         if not already.usable:
             emit({"command": "hook", "adapter": adapter, "hookFile": str(path),
@@ -1970,7 +1972,7 @@ def cmd_hook(args):
         # a hook registered against settings that are not there releases on every Stop and says
         # so nowhere, while settings with no hook cost nothing at all.
         settings = completion.write_configuration(
-            completion.configuration_path(codex_home), wanted, apply=args.apply)
+            configuration, wanted, apply=args.apply)
         if settings["outcome"] not in completion.CONFIG_SETTLED:
             emit({"command": "hook", "adapter": adapter, "settings": settings,
                   "hookFile": str(path), "result": None,

@@ -33,7 +33,12 @@ def main():
         payload = None
     from crw_runtime import completion
 
-    answer = completion.run(payload)
+    # Read positionally and never parsed. The installer puts the settings path it resolved here
+    # so this process does not resolve it again in a different directory, and an argument parser
+    # is exactly what must not appear in this file: argparse exits 2 on anything it does not
+    # recognise, and the host reads exit 2 as a request to hold the turn.
+    settings = sys.argv[1] if len(sys.argv) > 1 else None
+    answer = completion.run(payload, settings=settings)
     if answer:
         sys.stdout.write(answer)
 

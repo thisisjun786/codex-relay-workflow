@@ -820,6 +820,59 @@ class TheConfigOverrideIsSettledToo(unittest.TestCase):
         self.assertTrue(os.path.isabs(str(found)), found)
         self.assertEqual(Path(found).name, "crw-hook.json")
 
+    def test_the_install_decides_the_file_and_the_hook_does_not_decide_it_again(self):
+        """Resolving twice means resolving in two directories and under two values of
+        CODEX_HOME, so the install carries the path it wrote into the registered command."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                apply=True, isolation_asserted_by=None)
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                runtime_install.cmd_hook(args)
+            document = json.loads((home / "hooks.json").read_text(encoding="utf-8"))
+            command = document["hooks"][completion.EVENT][0]["hooks"][0]["command"]
+            words = completion.registered_argv(command)
+            self.assertEqual(len(words), 3, words)
+            self.assertEqual(words[2], str(completion.configuration_path(home)))
+            self.assertTrue(Path(words[2]).is_file(), "and that file is the one written")
+
+    def test_the_carried_path_wins_over_the_environment_and_the_codex_home(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            named = home / "named-settings.json"
+            self.assertEqual(
+                completion.configuration_path("/some/other/home",
+                                              {completion.CONFIG_ENV: "/an/override.json"},
+                                              str(named)),
+                named)
+
+    def test_the_entry_point_uses_the_path_it_was_given(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            elsewhere = home / "elsewhere"
+            elsewhere.mkdir()
+            fake_relay(temporary, stdout=json.dumps(HELD))
+            document = completion.configuration(
+                relay=str(home / "codex-session-relay"), marker_root=str(home / "marker"),
+                journal_root=str(home / "journal"), codex_home=str(home), issue="CRW-37")
+            named = elsewhere / "named.json"
+            named.write_text(json.dumps(document), encoding="utf-8")
+            done = subprocess.run(
+                [sys.executable, str(ENTRY_POINT), str(named)],
+                input=json.dumps(STOP).encode("utf-8"), stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, timeout=60, cwd=str(elsewhere),
+                env={k: v for k, v in os.environ.items() if k != "CODEX_HOME"})
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(json.loads(done.stdout)["decision"], "block",
+                         "with no CODEX_HOME and a different working directory, the settings"
+                         " the install named are still the ones read")
+
 
 class AnUnknownDecisionIsNotARelease(unittest.TestCase):
     def test_a_verdict_deciding_something_else_entirely_is_incomplete(self):

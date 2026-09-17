@@ -1144,6 +1144,12 @@ directory: a relative path would resolve somewhere the install never named, and 
 would be looked up on `PATH`. The pointer itself is not followed, so an update moves the link
 and these settings keep naming the runtime that is actually selected.
 
+The registered command carries the settings path the install resolved, as a third word the entry
+point reads positionally and never parses. Otherwise the path would be resolved twice, in two
+different directories and under two different values of `CODEX_HOME`, and the second resolution
+is the one that decides what every Stop reads. The install decided which file it wrote, so the
+install is what says which file to read.
+
 The interpreter in the registered command is settled the same way, and a bare name is looked up
 at install time, on the machine doing the install. That is the only moment the lookup means
 anything, because the hook runs later from each session's own workspace.
