@@ -757,10 +757,16 @@ usable wait or resume path exists, record the capability blocker and the exact m
 
 Once that readiness holds for this assignment, the handoff is the point of it: the parent stops
 polling and returns idle rather than continuing to watch a path it has just confirmed will reach
-it. Completion, failure and a child blocked on input all travel to the assignment's own registered
-parent under OPS-7.3, so none of them depends on some parent still observing. Returning idle ends
-that parent's observation and nothing else: it closes no assignment, releases no issue, and
-touches no service another parent is using.
+it. What the confirmation has to cover is every disposition the parent is waiting on and not only
+completion. A finished generation travels as a receipt, and OPS-7.3 routes it to this assignment's
+registered parent. A child that stops for a person is the case to check rather than assume:
+recording `blocked_needs_input` on the turn releases the hook, and whether anything then enqueues
+a delivery is a property of the installed runtime and `unmeasured` here. Where it does not, the
+readiness this clause is conditioned on has not been established for that disposition, and the
+parent either requires the child to emit under it or keeps a bounded observation path for it.
+Returning idle on the unchecked half of that is how a blocked child strands its coordinator, and
+the strand is silent. Returning idle ends that parent's observation and nothing else: it closes no
+assignment, releases no issue, and touches no service another parent is using.
 
 Two mechanisms are distinct and are never described as one. A native subagent finishes inside its
 parent's own turn, and the parent observes that completion directly. When an independent task is
