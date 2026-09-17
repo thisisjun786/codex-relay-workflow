@@ -73,10 +73,14 @@ that, so inspection is safe to repeat.
 Two things this recovery does not do. Selecting one of two claiming stores does not remove
 the ambiguity — both still record the socket, so the next invocation that relies on default
 discovery is refused again, and every participant of that assignment has to pass the same
-explicit `--state` until one of the stores is retired. And the different-socket refusal
-prints no recovery list, because there is nothing to adopt: the store's recorded socket is
-not rewritten by using it, so the fix is to point the command at the store that belongs to
-the socket, or at the socket that belongs to the store.
+explicit `--state` until one of the stores is retired. And the different-socket refusal's
+own recovery list adopts nothing: using a store does not rewrite the socket it recorded, so
+the two commands it prints only read the mismatched pair apart — this store under the socket
+it actually records, and the socket you asked for under whichever store belongs to it. The
+fix is to choose the matching pair; no command in that list makes the mismatch go away. When
+`CODEX_SESSION_RELAY_STATE` is what pinned the selection, the socket-first line is printed
+with `env -u CODEX_SESSION_RELAY_STATE`, because otherwise it would re-select the store that
+produced the refusal and return it again.
 
 `doctor` and `ack-proof` are exempt from these three guards, for opposite reasons: `doctor`
 is how the candidates are found in the first place, and `ack-proof` derives a value from its
@@ -167,9 +171,12 @@ operator's next step differs.
 | `replaced_by_new_launch` | the daemon lock could not be taken after both recorded processes were confirmed gone, or a new record appeared during the stop | the service is **not** stopped, and the launch this command started from may already have been terminated. Re-inspect ownership before doing anything else; do not read the failure as "nothing happened" |
 | `supervised_store_mismatch` | a worker's own store does not match the `storeId` its supervisor recorded | the database moved or was replaced under a running service. Reconcile which store was intended before restarting — a restart does not repair this, and the check permits a record that carries no store id at all and cannot detect a copy that kept one |
 
-Status: implemented. Each refusal is returned before the command takes its action, so a
-refused stop leaves the supervisor untouched and a refused disable leaves the shared intent
-as the owner wrote it. The windows this does not close - a lock probe that cannot
+Status: implemented, with one exception named in the table above. `replaced_by_new_launch` is
+decided after a stop has already run, which is why it reports that the service is not stopped
+while the launch the command started from may already have been terminated; it is a refusal
+to claim success, not a refusal to act. The others are returned before the command takes its
+action, so a refused stop leaves the supervisor untouched and a refused disable leaves the
+shared intent as the owner wrote it. The windows this does not close - a lock probe that cannot
 open the file, an intent write during a holder handoff, a start confirmed from a record and a
 separate probe - are recorded under "Recorded limits" in [invariants.md](invariants.md).
 

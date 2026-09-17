@@ -1416,6 +1416,21 @@ def _quote(value) -> str:
     return shlex.quote(str(value))
 
 
+def _without_state_env() -> str:
+    """A prefix that drops the state pin, for a recovery line that selects by socket.
+
+    Only when the variable is actually set, so the ordinary case prints a plain command. A
+    line that says "find the store that belongs to this socket" cannot do that while
+    CODEX_SESSION_RELAY_STATE still pins the selection to the store that produced the
+    refusal: pasting it would return the very same refusal and read as a dead end.
+    """
+    import os
+
+    from .store import STATE_ENV
+
+    return f"env -u {STATE_ENV} " if STATE_ENV in os.environ else ""
+
+
 def _program() -> str:
     """How the operator invokes this CLI, so a printed command can be pasted.
 
@@ -1430,7 +1445,10 @@ def _program() -> str:
     argv0 = sys.argv[0] or ""
     name = os.path.basename(argv0)
     if name in ("", "__main__.py", "cli.py", "-c"):
-        return "python3 -m codex_session_relay.cli"
+        # The running interpreter, not a bare python3. The relay may be under a virtualenv or
+        # a versioned interpreter, and on a host where python3 is absent or resolves to a
+        # DIFFERENT interpreter the printed line reaches another installation, or nothing.
+        return f"{shlex.quote(sys.executable or 'python3')} -m codex_session_relay.cli"
     # The directory is kept when there is one. A console script that is not on PATH renders as
     # a bare name otherwise, and pasting that reaches a different installation or nothing.
     return shlex.quote(argv0 if os.path.dirname(argv0) else name)
@@ -1540,7 +1558,10 @@ def _refuse_ambiguous_state(services, args) -> None:
                     f"{_program()} --state {_quote(selection.path)}"
                     f" --socket {_quote(recorded)} doctor",
                     "  reads this store under the socket it actually records",
-                    f"{_program()} --socket {_quote(wanted)} doctor",
+                    # The pin is dropped explicitly. This line has no --state to override it,
+                    # so an inherited CODEX_SESSION_RELAY_STATE would re-select the store that
+                    # just produced this refusal and hand back the same error.
+                    f"{_without_state_env()}{_program()} --socket {_quote(wanted)} doctor",
                     "  finds the store that belongs to the socket you asked for",
                 ],
                 "note": "using a store does not rewrite the socket it recorded, so neither"

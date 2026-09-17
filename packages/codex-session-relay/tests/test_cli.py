@@ -724,6 +724,105 @@ class ContestedSocket(CliBase):
         self.assertIn(first, words, "the recorded socket did not survive a shell round trip")
         self.assertIn(state, words, "the state directory did not survive a shell round trip")
 
+    def test_the_wrong_socket_recovery_drops_a_state_pin_that_would_reselect_it(self):
+        """The socket-first line carries no --state, so an inherited pin overrides its intent.
+
+        CODEX_SESSION_RELAY_STATE is one of the two ways to reach this refusal, and it is the
+        way that turns the recovery line into a dead end: pasted with the pin still set,
+        "find the store that belongs to this socket" re-selects the store that produced the
+        refusal and hands back the same error. This runs the printed command rather than
+        matching its text, because what matters is where pasting it actually lands.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "pinned-home")
+        os.makedirs(home)
+        state = os.path.join(self.tmp, "pinned-state")
+        recorded = os.path.join(self.tmp, "pinned-recorded.sock")
+        wanted = os.path.join(self.tmp, "pinned-wanted.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=recorded).close()
+
+        # HOME is pinned to a temporary directory: the recovery command falls back to default
+        # discovery once the pin is dropped, and that must not reach the real user state.
+        environment = dict(
+            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
+            CODEX_SESSION_RELAY_STATE=state,
+        )
+        environment.pop("XDG_STATE_HOME", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--socket", wanted, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+
+        socket_first = [
+            line for line in refused["recover"]
+            if not line.startswith("  ") and wanted in line
+        ]
+        self.assertEqual(len(socket_first), 1, refused["recover"])
+
+        replayed = subprocess.run(
+            shlex.split(socket_first[0]),
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+
+        # doctor is exempt from this guard, so it does not hand the refusal back - it does
+        # something quieter and worse. With the pin still set it reports the very store that
+        # produced the refusal, while its caption says it finds the store belonging to the
+        # socket. That is what the assertion has to catch.
+        selection = json.loads(replayed.stdout)["stateSelection"]
+        self.assertNotEqual(
+            selection["path"], state,
+            "the recovery command re-selected the store the refusal was about",
+        )
+        self.assertNotEqual(
+            selection["source"], "env",
+            "the state pin survived into the command printed to look past it",
+        )
+
+    def test_the_printed_command_names_the_interpreter_that_is_running(self):
+        """These lines are pasted into a shell where python3 may be absent or different.
+
+        The relay can be running under a virtualenv or a versioned interpreter. A bare
+        python3 there reaches another installation, or nothing.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "interpreter-state")
+        recorded = os.path.join(self.tmp, "interpreter-recorded.sock")
+        wanted = os.path.join(self.tmp, "interpreter-wanted.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=recorded).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
+        environment.pop("CODEX_SESSION_RELAY_STATE", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", state,
+             "--socket", wanted, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        self.assertTrue(commands)
+        for command in commands:
+            self.assertEqual(
+                shlex.split(command)[0], sys.executable,
+                f"this line names an interpreter that may not be the running one: {command}",
+            )
+        self.assertNotIn(
+            "env -u", " ".join(commands),
+            "no pin is set here, so there is nothing to drop and nothing to explain",
+        )
+
     def test_an_explicit_state_directory_resolves_the_contest(self):
         home, root, socket = self.contested("contested-explicit")
         chosen = os.path.join(root, "aaaa444444444444")
