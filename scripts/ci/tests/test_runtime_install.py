@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
-                         reading, scope)
+                         pointer, reading, scope, staging, swapgate)
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
@@ -1873,6 +1873,12 @@ class InstallOrderTests(unittest.TestCase):
                 "".join(c["sourceDigest"] for c in data["components"]).encode()).hexdigest()[:12]
             environment = destination / ("env-" + str(data["definitionVersion"]) + "-" + combined)
             environment.mkdir(parents=True)
+            # Somebody else's files, and no claim from this command. An EMPTY directory is a
+            # different case now: it carries nothing to lose, so it is reclaimed rather than
+            # refused, which is what stops a hard-killed run refusing its own destination for
+            # ever. What must still be refused, and refused before anything is written, is a
+            # directory holding work this command cannot account for.
+            (environment / "somebody-elses-file").write_text("not ours", encoding="utf-8")
 
             record_path = Path(temporary) / "record.json"
             hostrecord.save(record_path, hostrecord.empty(1))
@@ -1882,7 +1888,8 @@ class InstallOrderTests(unittest.TestCase):
                        "--apply")
             self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
             payload = json.loads(done.stdout)
-            self.assertIn("already exists", payload["refused"])
+            self.assertEqual(payload["stagingDecision"], staging.FOREIGN)
+            self.assertIn("belongs to somebody else", payload["refused"])
             self.assertEqual(record_path.read_bytes(), before,
                              "a run refused for want of a destination writes nothing")
 
@@ -3394,7 +3401,8 @@ class DeclaredSetReferenceTests(unittest.TestCase):
         """
         modules = {"check": check, "codexconfig": codexconfig, "definition": definition,
                    "hooks": hooks, "hostrecord": hostrecord, "ownership": ownership,
-                   "reading": reading, "scope": scope}
+                   "pointer": pointer, "reading": reading, "scope": scope,
+                   "staging": staging, "swapgate": swapgate}
         trees = _runtime_trees()
         declared_by_module = _declared_by_module(trees)
         computed = set()
@@ -4847,7 +4855,7 @@ class ConflictCallerTests(unittest.TestCase):
                   "    return classify_component(c, record=r, links=l)\n")
         callers = _classify_callers(ast.parse(source))
         absent = set(runtime_install.CONFLICT_READINGS) - callers[0][2]
-        self.assertEqual(sorted(absent), ["registration"])
+        self.assertEqual(sorted(absent), ["pointer", "registration"])
 
     def test_the_classification_reports_which_readings_were_made(self):
         import runtime_install
@@ -4858,7 +4866,9 @@ class ConflictCallerTests(unittest.TestCase):
             both = runtime_install.classify_component(
                 component, record=hostrecord.empty(1), app_server="a-server",
                 registration={"outcome": reading.PRESENT, "detail": "read", "registered": {}},
-                links={"conflict": [], "linked": [], "missing": [], "legacy": []})
+                links={"conflict": [], "linked": [], "missing": [], "legacy": []},
+                pointer={"state": pointer.NO_POINTER, "target": None, "agrees": None,
+                         "detail": "no pointer is placed here"})
             neither = runtime_install.classify_component(
                 component, record=hostrecord.empty(1), app_server="a-server")
         self.assertEqual(both["conflictsRead"],

@@ -111,6 +111,9 @@ def shape(record):
     selected = record.get("selected")
     if selected is not None and not isinstance(selected, dict):
         raise TypeError("selected is an object, found " + type(selected).__name__)
+    owned = record.get("pointer")
+    if owned is not None and not isinstance(owned, dict):
+        raise TypeError("pointer is an object, found " + type(owned).__name__)
     return record
 
 
@@ -285,7 +288,7 @@ class Locked:
 # ------------------------------------------------------------------ the one way to write
 
 def update(path, definition_version, *, installs=None, points=None, select=None,
-           component_facts=None, outgoing=None, drop_environment=None):
+           component_facts=None, outgoing=None, drop_environment=None, pointer=None):
     """Apply narrow deltas to state this helper loads itself, inside the lock, at write time.
 
     The helper never accepts a record, and that is the whole point. A caller that loads a
@@ -320,6 +323,12 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
                                      if i.get("environment") != str(drop_environment)]
         if outgoing is not None:
             record["outgoing"] = outgoing
+        if pointer is not None:
+            # The owned pointer's path, recorded when it is first placed. The registration
+            # compares command strings, so an expectation rebuilt from a destination argument
+            # spelled differently on a later run is a different string for the same directory.
+            # Reading it back from here is what keeps one installation's registration valid.
+            record.setdefault("pointer", {}).update(pointer)
         if select:
             # Only the assignments this run made. A whole selection map would carry back
             # entries the caller read before its slow work and re-assert them as current.
@@ -341,7 +350,7 @@ def _under(location, environment):
     return candidate == root or root in candidate.parents
 
 
-def release_candidate(path, definition_version, environment):
+def release_candidate(path, definition_version, environment, *, pointer_names=None):
     """Drop the install records for an environment, unless it is the selected one.
 
     Returns (reading, decision). The decision is READ from the record under the lock rather
@@ -369,6 +378,18 @@ def release_candidate(path, definition_version, environment):
             if any(_under(location, environment) for location in selected.values() if location):
                 return current, ("kept: this environment is the selected one, so the run that"
                                  " promoted it committed before it failed")
+            # The second truth. The selection and the pointer are written one after the other,
+            # so a run can commit one and fail at the next, and removing an environment the
+            # pointer still names would leave the registered command aimed at nothing. The
+            # caller reads the pointer and passes what it read; None means it could not, and a
+            # pointer nobody could read says nothing about what it names.
+            if pointer_names is not False:
+                if pointer_names:
+                    return current, ("kept: the owned pointer names this environment, so the"
+                                     " command a host reaches still resolves into it")
+                return current, ("kept: whether the owned pointer names this environment could"
+                                 " not be established, and an unread pointer is not a pointer"
+                                 " aimed elsewhere")
             for name in list(record.get("components") or {}):
                 entry = record["components"][name]
                 entry["installs"] = [i for i in entry.get("installs") or []

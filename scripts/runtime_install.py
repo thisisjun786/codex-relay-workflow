@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
-                         reading, scope)
+                         pointer, reading, scope, staging, swapgate)
 from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +91,10 @@ SIGNAL_READINGS = {
     # "no conflict". A reading that could not be made goes to the collector instead.
     "registration_conflict": (SIGNAL_NEGATIVE, (("runtime_install", "registration_state", None),)),
     "link_conflict": (SIGNAL_NEGATIVE, (("runtime_install", "skill_links", None),)),
+    # The owned pointer took a question off the registration. Once the configuration names a
+    # stable pointer, LINKED says the configuration names the pointer and no longer says which
+    # runtime that is, so this cell asks what the registration stopped asking.
+    "pointer_conflict": (SIGNAL_NEGATIVE, (("runtime_install", "pointer_state", None),)),
     # The collector itself, not a cell.
     "unreadable": (SIGNAL_NOT_A_READING, ()),
 }
@@ -108,7 +112,7 @@ SIGNAL_SUBJECT_PREFIXES = ("has_",)
 # checked, and install still promoted over a conflict because it passed neither of these. A
 # caller may pass None -- the MCP registration is the bridge's and means nothing for the relay --
 # but it says so by passing the keyword, and the classification reports which readings were made.
-CONFLICT_READINGS = ("registration", "links")
+CONFLICT_READINGS = ("registration", "links", "pointer")
 UNUSABLE_REGISTRATIONS = tuple(dict.fromkeys(reading.UNUSABLE + (codexconfig.UNREADABLE,)))
 
 # register-mcp's own three answers, beside the ones those modules own. A partial application is
@@ -227,6 +231,208 @@ def link_conflict_of(links):
         return None, None
     return ("scripts/install.py --check reports a foreign skill path: "
             + "; ".join(str(path) for path in found)), None
+
+
+# ------------------------------------------------------------------- the owned pointer
+
+def pointer_conflict_of(read):
+    """Whether the owned pointer names something the record does not select.
+
+    Returns (conflict, unreadable), the shape link_conflict_of uses, because the two cells
+    answer the same kind of question and a caller that made no reading is distinguishable from
+    one that found no conflict either way.
+    """
+    if read is None:
+        return None, None
+    state = read.get("state")
+    if state == pointer.NO_POINTER:
+        # No pointer has been placed here. That is a host this command has not registered a
+        # stable path for, and it is an answer rather than a gap.
+        return None, None
+    if not pointer.usable(state):
+        return None, ("the owned pointer (" + str(state) + "): " + str(read.get("detail")))
+    if read.get("agrees") is None:
+        return None, ("the owned pointer names " + str(read.get("target")) + " and whether the"
+                      " recorded selection lies under it could not be established: "
+                      + str(read.get("detail")))
+    if read.get("agrees"):
+        return None, None
+    return ("the owned pointer names " + str(read.get("target")) + ", which does not contain"
+            " the runtime this host record selects (" + ", ".join(read.get("outside") or [])
+            + "), so the command a host reaches is not the one that was promoted"), None
+
+
+def pointer_state(destination, record, data):
+    """Read the owned pointer, and compare what it names with what the record selects.
+
+    The question is deliberately about the pointer against the RECORD and not against whatever
+    a run is about to promote. Before a swap the pointer still names the predecessor, which the
+    record also selects, so the two agree; a pointer somebody repointed by hand disagrees at
+    every moment. Asked the other way the cell would report a conflict during every update.
+    """
+    path = pointer.pointer_path(destination)
+    read = dict(pointer.read(path))
+    read["pointer"] = str(path)
+    read["agrees"] = None
+    read["outside"] = []
+    if read["state"] != pointer.LINK:
+        return read
+    try:
+        root = Path(read["target"])
+        if not root.is_absolute():
+            root = Path(path).parent / root
+        root = root.resolve()
+    except (OSError, ValueError) as error:
+        read["detail"] = ("the pointer's target could not be resolved: "
+                          + type(error).__name__ + ": " + str(error))
+        return read
+    read["targetResolves"] = str(root)
+
+    selected = (record or {}).get("selected") or {}
+    named = [selected.get(c["component"]) for c in data["components"]]
+    named = [location for location in named if location]
+    if not named:
+        # A pointer exists and this record selects nothing for it to agree with. That is not
+        # agreement and it is not a clean host: it is a pointer this command cannot account
+        # for, and repointing one of those is how somebody else's link gets hijacked.
+        read["detail"] = ("a pointer is placed here and the host record selects no runtime for"
+                          " it, so what it names could not be checked against anything")
+        return read
+    outside = []
+    for location in named:
+        try:
+            if not within(Path(location).resolve(), root):
+                outside.append(str(location))
+        except (OSError, ValueError) as error:
+            read["detail"] = ("a recorded selection could not be resolved: "
+                              + type(error).__name__ + ": " + str(error))
+            return read
+    read["outside"] = outside
+    read["agrees"] = not outside
+    return read
+
+
+def protected_environment(record, environment, destination, data):
+    """Whether an environment is in use, so a later run must not remove it.
+
+    Two readings and they are reported as two: the record's selection, and the pointer on disk.
+    Either of them naming the environment protects it, and so does either of them failing to
+    answer, because an environment nobody could establish as free is not an environment that is
+    free. That direction is the safe one: the cost of keeping a directory is a named residual
+    path, and the cost of removing a live one is the accident this exists to prevent.
+    """
+    selects = None
+    if record is not None:
+        selected = (record.get("selected") or {}).values()
+        try:
+            root = Path(environment).resolve()
+            selects = any(within(Path(location).resolve(), root)
+                          for location in selected if location)
+        except (OSError, ValueError):
+            selects = None
+    names = pointer.names(pointer.pointer_path(destination), environment)
+    protected = selects is not False or names is not False
+    return protected, {
+        "recordSelectsIt": selects,
+        "pointerNamesIt": names,
+        "detail": (
+            "the host record selects it" if selects else
+            "the owned pointer names it" if names else
+            "neither the record nor the pointer could be read for it" if (
+                selects is None or names is None) else
+            "neither the record nor the pointer names it"
+        ),
+    }
+
+
+# --------------------------------------------------------- what the store and candidate hold
+
+# Read read-only through the relay's own reader, which opens the database with mode=ro and runs
+# no schema script, so asking the question does not create the store the question is about.
+# Absence is established by looking at the path FIRST: a failed open also answers for a
+# permission failure and for a locked database, and neither of those means nothing is there.
+_STORE_TABLES_PROGRAM = """
+import json, os, sys
+from codex_session_relay.store import resolve_state_dir, read_only_rows
+
+selection = resolve_state_dir(sys.argv[1] or None, sys.argv[2] or None)
+database = selection.db_path
+try:
+    os.lstat(str(database))
+except FileNotFoundError:
+    print(json.dumps({"readable": True, "present": False, "dbPath": str(database),
+                      "tables": None, "detail": None}))
+    raise SystemExit(0)
+except OSError as error:
+    print(json.dumps({"readable": False, "present": None, "dbPath": str(database),
+                      "tables": None,
+                      "detail": type(error).__name__ + ": " + str(error)}))
+    raise SystemExit(0)
+answer = read_only_rows(
+    selection,
+    "SELECT name FROM sqlite_master WHERE type = 'table'"
+    " AND name NOT LIKE 'sqlite_%' ORDER BY name",
+)
+if not answer["readable"] or answer["detail"]:
+    print(json.dumps({"readable": False, "present": True, "dbPath": str(database),
+                      "tables": None,
+                      "detail": answer["detail"] or "the store could not be read"}))
+    raise SystemExit(0)
+print(json.dumps({"readable": True, "present": True, "dbPath": str(database),
+                  "tables": [row["name"] for row in answer["rows"]], "detail": None}))
+"""
+
+# The candidate's tables come from its own DDL applied to an in-memory database, so nothing is
+# created anywhere and the answer is the schema that relay would actually install.
+_CANDIDATE_TABLES_PROGRAM = """
+import json, sqlite3
+from codex_session_relay import store
+
+database = sqlite3.connect(":memory:")
+database.executescript(store.DDL)
+rows = database.execute(
+    "SELECT name FROM sqlite_master WHERE type = 'table'"
+    " AND name NOT LIKE 'sqlite_%' ORDER BY name",
+).fetchall()
+print(json.dumps({"readable": True, "tables": [row[0] for row in rows],
+                  "schemaVersion": store.SCHEMA_VERSION, "detail": None}))
+"""
+
+
+def _asked(argv, what, timeout=120):
+    """Run one probe and return its parsed answer, or say why there is none."""
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"readable": False, "command": argv, "tables": None, "present": None,
+                "detail": what + " could not be asked: " + type(error).__name__ + ": "
+                          + error.__str__()}
+    try:
+        answer = json.loads(done.stdout)
+    except ValueError:
+        return {"readable": False, "command": argv, "tables": None, "present": None,
+                "detail": what + " did not answer with JSON: "
+                          + (done.stderr or done.stdout).strip()[-400:]}
+    answer["command"] = argv
+    return answer
+
+
+def store_tables(interpreter, state=None, socket_path=None):
+    """The tables the store actually holds, read under the relay that owns the rule.
+
+    Asked of this checkout instead, the answer would describe a copy of a schema the selected
+    installation owns rather than the schema it will run.
+    """
+    argv = [str(interpreter), "-c", _STORE_TABLES_PROGRAM, str(state or ""),
+            str(socket_path or "")]
+    return _asked(argv, "the store's tables")
+
+
+def candidate_tables(interpreter):
+    """The tables the candidate declares, read under the candidate's own interpreter."""
+    argv = [str(interpreter), "-c", _CANDIDATE_TABLES_PROGRAM]
+    return _asked(argv, "the candidate's declared tables")
+
 
 
 # ------------------------------------------------------------------------- ownership
@@ -430,7 +636,7 @@ def instrument_digest(component):
 
 
 def classify_component(component, *, record, entry_override=None, registration=None,
-                       record_state=None, app_server=None, links=None):
+                       record_state=None, app_server=None, links=None, pointer=None):
     """Gather the four OPS-2.1 signals and classify."""
     # Every signal below is filled by the reading its own question produced. A reading that did
     # not answer leaves its cell empty and names itself here instead of being flattened into a
@@ -540,6 +746,14 @@ def classify_component(component, *, record, entry_override=None, registration=N
     if link_unreadable:
         judged.note(link_unreadable)
 
+    # The owned pointer, read by the caller and passed here the way the other conflict readings
+    # are. A pointer that names something the record does not select is a user-facing command
+    # resolving into a runtime this command never promoted, which is the OPS-2.1 conflict the
+    # registration comparison stopped being able to see.
+    pointer_conflict, pointer_unreadable = pointer_conflict_of(pointer)
+    if pointer_unreadable:
+        judged.note(pointer_unreadable)
+
     signals = ownership.Signals(
         entry_point_recorded=entry_recorded,
         commit_matches=commit_matches,
@@ -549,6 +763,7 @@ def classify_component(component, *, record, entry_override=None, registration=N
         has_point=bool(points),
         registration_conflict=conflict,
         link_conflict=link_conflict,
+        pointer_conflict=pointer_conflict,
         unreadable=unreadable,
     )
     classification, reasons = ownership.classify(signals)
@@ -563,10 +778,17 @@ def classify_component(component, *, record, entry_override=None, registration=N
         "interpreterPath": python,
         "interpreterFrom": interpreter_from,
         "linkConflict": link_conflict,
+        "pointerConflict": pointer_conflict,
+        # Three separate fields, because registering a pointer split one question into three.
+        # What the configuration registers, what the pointer names, and where the entry point
+        # actually resolves are no longer the same fact and none of them is read from another.
+        "pointerTarget": (pointer or {}).get("target"),
+        "pointerState": (pointer or {}).get("state"),
         # Which conflict readings this caller made at all. "No conflict was found" and "nobody
         # looked" are different answers, and one hand-written flag for one cell did not
         # generalise: the caller that moves the selection was passing neither.
-        "conflictsRead": {"registration": registration is not None, "links": links is not None},
+        "conflictsRead": {"registration": registration is not None, "links": links is not None,
+                          "pointer": pointer is not None},
         "importedLocation": location,
         "importError": import_error,
         "importCommand": import_command,
@@ -674,6 +896,11 @@ def cmd_diagnose(args):
     # --check and reported the result; it just did so once the classes were decided, so a
     # foreign skill path never reached the conflict signal it exists to raise.
     links = skill_links(codex_home)
+    # The owned pointer, where a destination was named. Without one there is no pointer in
+    # scope to read, and the caller says so by passing None rather than by omitting the
+    # keyword: no conflict found and nobody looked are different answers.
+    destination = getattr(args, "dest", None)
+    pointer_read = pointer_state(destination, record, data) if destination else None
     try:
         classes = {
             c["component"]: classify_component(
@@ -685,6 +912,9 @@ def cmd_diagnose(args):
                 # diagnosed were about two different files.
                 entry_override=getattr(args, COMMAND_OVERRIDES[c["component"]], None),
                 registration=registration if c["component"] == MCP_NAME else None,
+                # The pointer is the destination's and says nothing about one component rather
+                # than another, so both components are classified against the same reading.
+                pointer=pointer_read,
             )
             for c in data["components"]
         }
@@ -981,7 +1211,8 @@ TRIAL_PREFLIGHT_INPUTS = dict(TRIAL_REQUIRED_INPUTS, **TRIAL_ACKNOWLEDGED_INPUTS
 # question whose answer the SELECTED relay will act on, so each runs that relay's interpreter.
 # A probe running sys.executable asks this checkout instead, and a checkout whose rule differs
 # from the installed relay's accepts what the relay refuses -- after four mutating steps.
-PREFLIGHT_PROBES = ("settings_usable", "values_usable", "_relay_normalizes")
+PREFLIGHT_PROBES = ("settings_usable", "values_usable", "_relay_normalizes",
+                    "store_tables", "candidate_tables")
 
 # Every presence question this command asks, paired with the reader whose own sentinel answers
 # it. Deciding presence here instead means deciding it by whatever predicate this module wrote,
@@ -1674,6 +1905,45 @@ def cmd_install(args):
     except reading.Refused as stop:
         return refused("install", stop.reading, hostRecord=str(record_path))
 
+    # An environment directory that already exists is READ before it is refused. The name is
+    # derived from the digests, so it is deterministic, and a run killed outright used to leave
+    # one behind that refused every retry of this destination for ever. Each input below is one
+    # reading's answer; nothing here is inferred from a neighbour.
+    pointer_path = Path((record.get("pointer") or {}).get("path")
+                        or pointer.pointer_path(destination))
+    if environment.exists():
+        protected, protection = protected_environment(record, environment, destination, data)
+        decision, why = staging.decide(
+            staging.read_claim(environment),
+            staging.owner_liveness(environment)[0],
+            occupied=staging.directory_occupied(environment)[0],
+            protected=protected)
+        standing = {"command": "install", "applied": False, "environment": str(environment),
+                    "stagingDecision": decision, "stagingReason": why,
+                    "protection": protection, "plan": plan, "outgoing": outgoing}
+        if decision == staging.SETTLED:
+            emit(dict(standing, alreadyInstalled=True, selected=record.get("selected") or {},
+                      note="nothing was built and nothing was written."))
+            return EXIT_OK
+        if decision not in staging.REMOVES:
+            emit(dict(standing, refused=why,
+                      note="an existing environment is never overwritten, and only a directory"
+                           " carrying this command own claim whose owner is established gone is"
+                           " removed. Nothing was written to the host record."))
+            return EXIT_REFUSED
+        try:
+            shutil.rmtree(str(environment))
+        except OSError as error:
+            emit(dict(standing, refused="the abandoned staging could not be removed: "
+                                        + type(error).__name__ + ": " + str(error),
+                      residualPaths=[str(environment)]))
+            return EXIT_REFUSED
+        if environment.exists():
+            emit(dict(standing, refused="the abandoned staging is still there after removal",
+                      residualPaths=[str(environment)]))
+            return EXIT_REFUSED
+        performed.append({"step": "reclaim abandoned staging", "ok": True, "detail": why})
+
     # Exclusive: this fails if the directory exists, which is what proves the run owns it and
     # may therefore remove it on failure. An exists() test before a separate create does not.
     try:
@@ -1691,6 +1961,16 @@ def cmd_install(args):
     # an escaping exception used to leave the deterministic environment name behind, and the
     # next run then refused that destination for ever.
     try:
+        # Claimed before anything else is done in it, so a run killed a moment later leaves a
+        # directory this command can still recognise as its own rather than one that refuses
+        # the destination for ever. The advisory lock is held for the RUN, and the operating
+        # system releases it when this process ends however it ends, which is exactly the
+        # question a later run asks.
+        staging.Held(environment).take()
+        staging.write_claim(environment, staging.STAGING, issue=args.issue,
+                            run=str(os.getpid()))
+        performed.append({"step": "claim the staging directory", "ok": True,
+                          "claim": str(staging.claim_path(environment))})
 
         # Ownership is proven, so this run may record what it observed on the way in.
         staged = hostrecord.update(record_path, data["definitionVersion"], outgoing=outgoing)
@@ -1785,7 +2065,38 @@ def cmd_install(args):
                               or "the candidate was not exercised successfully"})
             return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
 
-        # The selection moves only to something this command's own classification calls own.
+        # OPS-4.4 decides whether a runtime may be replaced AT ALL, and it is read here:
+        # after the candidate is exercised, before anything owned moves. The daemon and the
+        # store are the outgoing runtime's, so they are asked of the selected relay where
+        # there is one; on a first install there is none and the candidate answers for a host
+        # that has neither. This command never starts or stops a service (OPS-4.1).
+        outgoing_relay = _selected_install(record, RELAY)
+        gate_relay = (outgoing_relay or {}).get("entryPoint") or str(environment / "bin" / RELAY)
+        gate_python = (outgoing_relay or {}).get("interpreterPath") or str(python)
+        gate = swapgate.decide({
+            "daemon": swapgate.daemon_cell(scope.relay(
+                ["service", "status"], executable=gate_relay, socket=args.socket,
+                state=args.state)),
+            "inFlight": swapgate.inflight_cell(scope.relay(
+                ["doctor"], executable=gate_relay, socket=args.socket, state=args.state)),
+            "storeTables": swapgate.tables_cell(
+                store_tables(gate_python, args.state, args.socket),
+                candidate_tables(python)),
+        })
+        if gate["verdict"] != swapgate.ALLOWED:
+            # The existing installation is kept exactly as it stands. A cell that could not be
+            # read keeps it for the same reason a refusal does.
+            performed.append({"step": "read whether it is safe to swap", "ok": False,
+                              "detail": json.dumps({"verdict": gate["verdict"],
+                                                    "blockedBy": gate["blockedBy"],
+                                                    "unreadable": gate["unreadable"]})})
+            return _install_failed(record_path, data["definitionVersion"], performed,
+                                   environment, owned, pointer_path=pointer_path,
+                                   failed_step="read whether it is safe to swap", gate=gate)
+        performed.append({"step": "read whether it is safe to swap", "ok": True,
+                          "detail": gate["verdict"]})
+
+        # The selection moves only to something this command own classification calls own.
         # Validated against the STAGED record, before the pointer changes, because recovery
         # deliberately keeps a selected candidate: promoting first and checking afterwards
         # would leave an invalid runtime selected and protected from cleanup.
@@ -1800,8 +2111,16 @@ def cmd_install(args):
         # knows which entry point it installed and knows nothing about the arguments a host
         # chose; an empty argument list would be an expectation, not the absence of one.
         links = skill_links(codex_home)
-        bridge_entry = installs[component_of(data, BRIDGE)["component"]]["entryPoint"]
+        # The registration names the owned POINTER, which is stable across updates, and not the
+        # environment underneath it, which changes every time the sources do. Compared against
+        # the environment, an installation registered by its predecessor read as a conflict and
+        # every later update refused to promote. The path comes from the record where one is
+        # recorded, because this comparison is string equality and a destination spelled
+        # differently on a later run is a different string for the same directory.
+        bridge_entry = str(pointer_path / "bin" / component_of(data, BRIDGE)["consoleScript"])
         registration = registration_state(codex_home, bridge_entry, [], compare_args=False)
+        # And what the pointer itself names, which the registration stopped being able to say.
+        pointer_read = pointer_state(destination, staged.value, data)
         verdicts = {}
         for component in data["components"]:
             name = component["component"]
@@ -1811,6 +2130,7 @@ def cmd_install(args):
                 # The MCP registration is the bridge's, and says nothing about the relay.
                 registration=registration if name == MCP_NAME else None,
                 links=links,
+                pointer=pointer_read,
                 # Freshly observed by the measurement this promotion is about, so measurement,
                 # classification and promotion all speak about the same App Server.
                 app_server=measurement.get("appServer"))
@@ -1828,21 +2148,82 @@ def cmd_install(args):
             return _install_failed(record_path, data["definitionVersion"], performed,
                                    environment, owned)
 
+        # The pointer is read BEFORE the selection is committed, so a pointer this command may
+        # not replace refuses while nothing has moved. A real directory there belongs to
+        # somebody else and a reading that failed established nothing; neither is placed over.
+        before = pointer.read(pointer_path)
+        if not pointer.usable(before["state"]):
+            performed.append({"step": "read the owned pointer", "ok": False,
+                              "detail": before["detail"]})
+            return _install_failed(record_path, data["definitionVersion"], performed,
+                                   environment, owned, pointer_path=pointer_path,
+                                   failed_step="read the owned pointer")
+
         # Only the components this run installed. A whole selection map would re-assert entries
         # read before the installation as though they were current.
+        #
+        # The selection is committed BEFORE the pointer moves, and that order is the safety
+        # argument. Reversed, a run can land the symlink, fail at the record, and have recovery
+        # read a selection that does not name this environment, remove it, and leave the
+        # registered command aimed at a directory that no longer exists. OPS-4.4 requires every
+        # state transition to be committed before its side effect.
         promoted = hostrecord.update(
             record_path, data["definitionVersion"],
-            select={name: install["location"] for name, install in installs.items()})
+            select={name: install["location"] for name, install in installs.items()},
+            pointer={"path": str(pointer_path), "recordedAt": now(), "recordedBy": args.issue})
         if not promoted.usable:
             return _install_failed(record_path, data["definitionVersion"], performed, environment,
-                                   owned, failed_reading=promoted)
+                                   owned, failed_reading=promoted, pointer_path=pointer_path)
         record = promoted.value
+
+        try:
+            with hostrecord.Locked(pointer_path):
+                pointer.place(pointer_path, environment)
+        except OSError as error:
+            # The selection landed and the pointer did not, so the selection goes back where it
+            # was for the components this run moved and the record agrees with the disk again.
+            performed.append({"step": "replace the owned pointer", "ok": False,
+                              "detail": type(error).__name__ + ": " + error.__str__()})
+            return _install_failed(
+                record_path, data["definitionVersion"], performed, environment, owned,
+                pointer_path=pointer_path, failed_step="replace the owned pointer",
+                restored=_restore_selection(record_path, data["definitionVersion"], previous,
+                                            installs))
+        performed.append({"step": "replace the owned pointer", "ok": True,
+                          "previousTarget": before.get("target"),
+                          "target": str(environment)})
+
+        # Read back rather than trusted. A swap reported as done that did not land is the one
+        # failure that would leave the record naming a runtime no host can reach.
+        if pointer.names(pointer_path, environment) is not True:
+            performed.append({"step": "read the owned pointer back", "ok": False,
+                              "detail": pointer.read(pointer_path).get("detail")})
+            if before["state"] == pointer.LINK and before.get("target"):
+                with hostrecord.Locked(pointer_path):
+                    pointer.place(pointer_path, before["target"])
+            return _install_failed(
+                record_path, data["definitionVersion"], performed, environment, owned,
+                pointer_path=pointer_path, failed_step="read the owned pointer back",
+                restored=_restore_selection(record_path, data["definitionVersion"], previous,
+                                            installs))
+
+        # The claim settles last. It says this staging finished, and until the selection and the
+        # pointer both name it there is nothing finished to say.
+        staging.write_claim(environment, staging.COMPLETE, issue=args.issue,
+                            run=str(os.getpid()))
 
         emit({
             "command": "install", "applied": True, "environment": str(environment),
             "hostRecord": str(record_path), "steps": performed, "installs": installs,
             "measurement": measurement,
             "promoted": True,
+            "swapGate": gate,
+            "pointer": {"path": str(pointer_path), "target": str(environment),
+                        "previousTarget": before.get("target"),
+                        "meaning": "the registered command reaches a runtime through this path."
+                                   " It is a way to reach one and never an identity: a console"
+                                   " script keeps its absolute shebang, so a process already"
+                                   " spawned goes on running the environment it started in."},
             "classification": {n: v["class"] for n, v in verdicts.items()},
             "selected": record.get("selected") or {},
             "previousSelection": previous,
@@ -1864,6 +2245,45 @@ def cmd_install(args):
     except Exception as error:                                   # noqa: BLE001
         return _install_failed(record_path, data["definitionVersion"], performed, environment,
                                owned, failed_error=error)
+
+
+def _selected_install(record, name):
+    """The install record for the runtime currently selected for this component, or None.
+
+    The selected runtime owns the daemon and the store, so it is the one the swap gate asks.
+    On a first install nothing is selected and the answer is None, which is an answer.
+    """
+    location = ((record or {}).get("selected") or {}).get(name)
+    if not location:
+        return None
+    for install in ((record or {}).get("components", {}).get(name) or {}).get("installs", []):
+        if install.get("location") == location:
+            return install
+    return None
+
+
+def _restore_selection(record_path, definition_version, previous, installs):
+    """Put back the selection this run just moved, for the components it moved.
+
+    Narrow on purpose. Re-asserting a whole selection map would carry back entries read before
+    the slow work and re-assert them as current, which is the staleness the single-writer helper
+    exists to prevent. This re-asserts only the components this run changed, and only where
+    there was a previous value. A component that was never selected cannot be unselected through
+    a delta, and saying so is better than reporting a restoration that did not happen.
+    """
+    back = {name: previous[name] for name in installs if previous.get(name)}
+    missing = sorted(name for name in installs if not previous.get(name))
+    if not back:
+        return {"selection": None, "restored": [], "withoutPrevious": missing,
+                "detail": "nothing was selected before this run, so there was nothing to put"
+                          " back; the components above were selected for the first time"}
+    written = hostrecord.update(record_path, definition_version, select=back)
+    return {"selection": back if written.usable else None,
+            "restored": sorted(back) if written.usable else [],
+            "withoutPrevious": missing,
+            "detail": ("the previous selection was put back" if written.usable
+                       else "the previous selection could not be put back: "
+                            + str(written.detail))}
 
 
 def _selected_digest(location):
@@ -1895,7 +2315,8 @@ def _outgoing_runtime(record, data):
 
 
 def _install_failed(record_path, definition_version, performed, environment, owned=None,
-                    failed_reading=None, failed_error=None):
+                    failed_reading=None, failed_error=None, pointer_path=None,
+                    failed_step=None, restored=None, gate=None):
     """Release a destination this run created, and report whether it is retriable.
 
     Two outcomes, because saying "refused" does not delete a directory. When removal is
@@ -1911,8 +2332,12 @@ def _install_failed(record_path, definition_version, performed, environment, own
     The store is never removed, moved or recreated: update failure and store loss are
     different accidents.
     """
+    # The second truth about whether this environment is in use. A caller with no pointer in
+    # scope passes none, and that is False rather than None: there being no pointer to consult
+    # is an established answer, while a pointer that could not be read is not.
+    reached = False if pointer_path is None else pointer.names(pointer_path, environment)
     dropped, decision = hostrecord.release_candidate(
-        record_path, definition_version, environment)
+        record_path, definition_version, environment, pointer_names=reached)
     keeping = not text_prefix(decision, "dropped")
 
     removed, residue, cleanup_error = False, None, None
@@ -1939,6 +2364,17 @@ def _install_failed(record_path, definition_version, performed, environment, own
         "removedCandidate": str(owned) if removed else None,
         "cleanupError": cleanup_error,
         "retriable": retriable,
+        # Which step failed, not merely that one did. The steps above say what ran; this names
+        # the boundary the run stopped at, so a reader does not have to infer it from the tail.
+        "failedStep": failed_step or next(
+            (step.get("step") for step in reversed(performed) if step.get("ok") is False), None),
+        "pointer": None if pointer_path is None else {
+            "path": str(pointer_path), "namesThisEnvironment": reached,
+            "restored": restored,
+            "meaning": ("the pointer was not moved by this run unless 'restored' says so."
+                        " Whatever a host reached before this run, it still reaches"),
+        },
+        "swapGate": gate,
         "residualPaths": [str(owned)] if (owned is not None and not removed) else [],
         "recoveryRequires": None if retriable else (
             ("this environment is selected, so it was kept deliberately and the destination"
@@ -2357,6 +2793,9 @@ def build_parser():
 
     diagnose = sub.add_parser("diagnose")
     diagnose.add_argument("--codex-home")
+    diagnose.add_argument("--dest",
+                          help="the destination whose owned pointer is read; without it no"
+                               " pointer is in scope and the reading is reported as not made")
     diagnose.add_argument("--record")
     diagnose.add_argument("--socket")
     diagnose.add_argument("--state")
