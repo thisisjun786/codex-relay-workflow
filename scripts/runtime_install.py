@@ -1913,62 +1913,89 @@ def cmd_install(args):
     pointer_path = Path((record.get("pointer") or {}).get("path")
                         or pointer.pointer_path(destination))
     if environment.exists():
-        protected, protection = protected_environment(record, environment, destination, data)
-        decision, why = staging.decide(
-            staging.read_claim(environment),
-            staging.owner_liveness(environment)[0],
-            occupied=staging.directory_occupied(environment)[0],
-            protected=protected,
-            # The narrow half of the same reading. Removing asks the conservative question and
-            # writing a pointer asks this one, because a reading that failed must not authorise
-            # a write.
-            selected=protection["recordSelectsIt"])
-        standing = {"command": "install", "applied": False, "environment": str(environment),
-                    "stagingDecision": decision, "stagingReason": why,
-                    "protection": protection, "plan": plan, "outgoing": outgoing}
-        if decision == staging.SETTLED:
-            emit(dict(standing, alreadyInstalled=True, selected=record.get("selected") or {},
-                      note="nothing was built and nothing was written."))
-            return EXIT_OK
-        if decision == staging.RESUME:
-            # A previous run committed this environment as selected and did not live to move
-            # the pointer. Rebuilding is the wrong repair: the runtime is built and is already
-            # selected, so the half that was never written is written instead.
-            return _finish_promotion(record_path, data, environment, pointer_path, standing,
-                                     issue=args.issue)
-        if decision == staging.ADOPT:
-            # rmdir, never rmtree. It succeeds only on an empty directory, so the operation
-            # itself is the proof that nothing was destroyed, and the exclusive mkdir below
-            # still establishes ownership the same way it always did.
-            try:
-                os.rmdir(str(environment))
-            except OSError as error:
-                emit(dict(standing, refused="the empty staging directory could not be taken"
-                                            " over: " + type(error).__name__ + ": " + str(error),
-                          residualPaths=[str(environment)]))
-                return EXIT_REFUSED
-            performed.append({"step": "take over an empty staging directory", "ok": True,
-                              "detail": why})
-        elif decision in staging.REMOVES:
-            try:
-                shutil.rmtree(str(environment))
-            except OSError as error:
-                emit(dict(standing, refused="the abandoned staging could not be removed: "
-                                            + type(error).__name__ + ": " + str(error),
-                          residualPaths=[str(environment)]))
-                return EXIT_REFUSED
-            if environment.exists():
-                emit(dict(standing, refused="the abandoned staging is still there after"
-                                            " removal", residualPaths=[str(environment)]))
-                return EXIT_REFUSED
-            performed.append({"step": "reclaim abandoned staging", "ok": True, "detail": why})
-        else:
-            emit(dict(standing, refused=why,
-                      note="an existing environment is never overwritten. Only a directory"
-                           " carrying a claim this command wrote, whose owner is established"
-                           " gone and which nothing is using, is removed. Nothing was written"
-                           " to the host record."))
+        # Deciding and acting are one step, held under a lock beside the directory. Read first
+        # and act later and two retries can both decide RECLAIM: the first deletes, recreates
+        # and takes its own lock, and the second then deletes that live build on the strength
+        # of a decision it made before any of that happened. Re-reading inside the lock is what
+        # makes the second run see a live directory instead of its own stale answer.
+        try:
+            entered = hostrecord.Locked(environment).__enter__()
+        except TimeoutError as error:
+            # A lock another run holds establishes nothing about this directory, which is the
+            # same answer release_candidate gives for a record it cannot read. Letting it out
+            # would report a competing run as an internal defect in this command.
+            emit({"command": "install", "applied": False, "environment": str(environment),
+                  "refused": "another run is deciding what to do with this directory: "
+                             + str(error),
+                  "note": "nothing was read, nothing was removed and nothing was written."})
             return EXIT_REFUSED
+        try:
+            protected, protection = protected_environment(record, environment, destination,
+                                                          data)
+            decision, why = staging.decide(
+                staging.read_claim(environment),
+                staging.owner_liveness(environment)[0],
+                occupied=staging.directory_occupied(environment)[0],
+                protected=protected,
+                # The narrow half of the same reading. Removing asks the conservative question;
+                # reporting an installation and writing a pointer ask this one, because a
+                # reading that failed must authorise neither.
+                selected=protection["recordSelectsIt"])
+            standing = {"command": "install", "applied": False,
+                        "environment": str(environment), "stagingDecision": decision,
+                        "stagingReason": why, "protection": protection, "plan": plan,
+                        "outgoing": outgoing}
+            if decision == staging.SETTLED:
+                emit(dict(standing, alreadyInstalled=True,
+                          selected=record.get("selected") or {},
+                          note="nothing was built and nothing was written."))
+                return EXIT_OK
+            if decision == staging.RESUME:
+                # A previous run committed this environment as selected and did not live to
+                # move the pointer. Rebuilding is the wrong repair: it is built, it is already
+                # selected, and a process may be running out of it.
+                return _finish_promotion(record_path, data, environment, pointer_path, standing,
+                                         issue=args.issue)
+            if decision == staging.ADOPT:
+                # rmdir, never rmtree. It succeeds only on an empty directory, so the call is
+                # its own proof that nothing was destroyed, and the exclusive mkdir below still
+                # establishes ownership the way it always did.
+                try:
+                    os.rmdir(str(environment))
+                except OSError as error:
+                    emit(dict(standing, refused="the empty staging directory could not be"
+                                                " taken over: " + type(error).__name__ + ": "
+                                                + str(error),
+                              residualPaths=[str(environment)]))
+                    return EXIT_REFUSED
+                performed.append({"step": "take over an empty staging directory", "ok": True,
+                                  "detail": why})
+            elif decision in staging.REMOVES:
+                try:
+                    shutil.rmtree(str(environment))
+                except OSError as error:
+                    emit(dict(standing, refused="the abandoned staging could not be removed: "
+                                                + type(error).__name__ + ": " + str(error),
+                              residualPaths=[str(environment)]))
+                    return EXIT_REFUSED
+                if environment.exists():
+                    emit(dict(standing, refused="the abandoned staging is still there after"
+                                                " removal", residualPaths=[str(environment)]))
+                    return EXIT_REFUSED
+                performed.append({"step": "reclaim abandoned staging", "ok": True,
+                                  "detail": why})
+            else:
+                emit(dict(standing, refused=why,
+                          note="an existing environment is never overwritten. Only a directory"
+                               " carrying a claim this command wrote, whose owner is"
+                               " established gone and which nothing is using, is removed."
+                               " Nothing was written to the host record."))
+                return EXIT_REFUSED
+        finally:
+            # Released on every path, including the returns above. It guards the decision and
+            # the act, not the build: the exclusive mkdir below is what a competing run loses
+            # to once this one is past here.
+            entered.__exit__()
 
     # Exclusive: this fails if the directory exists, which is what proves the run owns it and
     # may therefore remove it on failure. An exists() test before a separate create does not.
@@ -2224,7 +2251,7 @@ def cmd_install(args):
                 record_path, data["definitionVersion"], performed, environment, owned,
                 pointer_path=pointer_path, failed_step="replace the owned pointer",
                 restored=_restore_selection(record_path, data["definitionVersion"], previous,
-                                            installs))
+                                            installs, pointer_path))
 
         # Read back rather than trusted. A swap reported as done that did not land is the one
         # failure that would leave the record naming a runtime no host can reach.
@@ -2238,7 +2265,7 @@ def cmd_install(args):
                 record_path, data["definitionVersion"], performed, environment, owned,
                 pointer_path=pointer_path, failed_step="read the owned pointer back",
                 restored=_restore_selection(record_path, data["definitionVersion"], previous,
-                                            installs))
+                                            installs, pointer_path))
         performed.append({"step": "replace the owned pointer", "ok": True,
                           "previousTarget": before.get("target"),
                           "target": str(environment)})
@@ -2348,8 +2375,10 @@ def _names_environment(record, environment, data):
     """
     selected = (record or {}).get("selected") or {}
     named = [selected.get(c["component"]) for c in data["components"]]
-    named = [location for location in named if location]
-    if not named:
+    if not all(named):
+        # An update moves a whole verified combination (OPS-2.4). A record naming one component
+        # here and nothing for the other is not a promotion this run may finish: moving the
+        # shared pointer on it would aim every command at a combination nobody selected.
         return False
     try:
         root = Path(environment).resolve()
@@ -2373,7 +2402,7 @@ def _selected_install(record, name):
     return None
 
 
-def _restore_selection(record_path, definition_version, previous, installs):
+def _restore_selection(record_path, definition_version, previous, installs, pointer_path):
     """Put back the selection this run just moved, for the components it moved.
 
     Narrow on purpose. Re-asserting a whole selection map would carry back entries read before
@@ -2382,16 +2411,36 @@ def _restore_selection(record_path, definition_version, previous, installs):
     there was a previous value. A component that was never selected cannot be unselected through
     a delta, and saying so is better than reporting a restoration that did not happen.
     """
-    back = {name: previous[name] for name in installs if previous.get(name)}
     missing = sorted(name for name in installs if not previous.get(name))
-    if not back:
-        return {"selection": None, "restored": [], "withoutPrevious": missing,
-                "detail": "nothing was selected before this run, so there was nothing to put"
-                          " back; the components above were selected for the first time"}
-    written = hostrecord.update(record_path, definition_version, select=back)
+    with hostrecord.Locked(pointer_path):
+        # Held under the promotion's own lock, and only for entries that still name what THIS
+        # run wrote. A blind put-back would undo a promotion another run committed in the
+        # meantime, which is the staleness the single-writer helper exists to prevent -- and
+        # rolling back on top of somebody else's success is a worse outcome than the failure
+        # being rolled back.
+        current = hostrecord.load(record_path, definition_version)
+        if not current.usable:
+            return {"selection": None, "restored": [], "withoutPrevious": missing,
+                    "detail": "the host record could not be read, so the previous selection"
+                              " could not be put back: " + str(current.detail)}
+        selected = (current.value.get("selected") or {})
+        back, moved_on = {}, []
+        for name, install in installs.items():
+            if selected.get(name) != install["location"]:
+                moved_on.append(name)
+                continue
+            if previous.get(name):
+                back[name] = previous[name]
+        if not back:
+            return {"selection": None, "restored": [], "withoutPrevious": missing,
+                    "movedOnByAnotherRun": sorted(moved_on),
+                    "detail": "there was nothing of this run's left to put back: either nothing"
+                              " was selected before it, or another run has since moved the"
+                              " selection on"}
+        written = hostrecord.update(record_path, definition_version, select=back)
     return {"selection": back if written.usable else None,
             "restored": sorted(back) if written.usable else [],
-            "withoutPrevious": missing,
+            "withoutPrevious": missing, "movedOnByAnotherRun": sorted(moved_on),
             "detail": ("the previous selection was put back" if written.usable
                        else "the previous selection could not be put back: "
                             + str(written.detail))}

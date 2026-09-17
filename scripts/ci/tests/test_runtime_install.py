@@ -13,11 +13,13 @@ import json
 import os
 import stat
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import hashlib
 import sqlite3
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -6081,6 +6083,207 @@ class InterruptedPromotionTests(unittest.TestCase):
                         "and the selection is committed before the pointer moves, because a"
                         " pointer moved first can be deleted by recovery reading the other"
                         " truth")
+
+
+
+class ReclaimRaceTests(unittest.TestCase):
+    """Deciding and acting are one step, or a stale decision deletes a live build.
+
+    The scenario an independent review reproduced: two retries both read an abandoned staging
+    and both decide to reclaim it. The first deletes it, recreates it and starts building; the
+    second then deletes that live directory on the strength of a decision it made before any of
+    it happened. This exercises it concurrently rather than asserting on source text.
+    """
+
+    def test_a_stale_decision_cannot_delete_a_directory_somebody_has_taken_over(self):
+        """The reproduced scenario, made deterministic.
+
+        A first reading finds the staging abandoned. Before anything acts on it, another run
+        takes the directory over and starts building. The reading that said DEAD is now stale,
+        and acting on it deletes a live build. The decision is therefore taken again inside the
+        lock, immediately before the removal, so what gets acted on is what is there now.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "leftover").write_text("abandoned", encoding="utf-8")
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="dead")
+
+            # The stale reading: at this moment reclaiming really would be correct.
+            stale, _why = staging.decide(
+                staging.read_claim(host.candidate),
+                staging.owner_liveness(host.candidate)[0],
+                occupied=True, protected=False, selected=False)
+            self.assertEqual(stale, staging.RECLAIM, "the first reading does say reclaim")
+
+            # Another run now takes it over and is building in it.
+            held = staging.Held(host.candidate).take()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="rival")
+            (host.candidate / "rival-work").write_text("building", encoding="utf-8")
+            try:
+                code, payload = UpdateRecoveryTests()._run(host)
+            finally:
+                held.__exit__()
+            survived = (host.candidate / "rival-work").exists()
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.OCCUPIED,
+                         "the run must act on what it reads now, not on the earlier answer")
+        self.assertTrue(survived, "a live build must never be deleted by a competing run")
+
+    def test_a_directory_another_run_is_deciding_about_is_left_alone(self):
+        """Two runs cannot decide at once. The loser reports that and touches nothing."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "leftover").write_text("abandoned", encoding="utf-8")
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="dead")
+            decision_lock = hostrecord.Locked(host.candidate, timeout=0.1).__enter__()
+            try:
+                with mock.patch.object(runtime_install.hostrecord, "LOCK_TIMEOUT_SECONDS", 0.1):
+                    code, payload = UpdateRecoveryTests()._run(host)
+            finally:
+                decision_lock.__exit__()
+            survived = (host.candidate / "leftover").exists()
+
+        self.assertEqual(code, 1)
+        self.assertIn("another run is deciding", payload["refused"])
+        self.assertTrue(survived, "a lock this run could not take establishes nothing")
+
+    def test_the_decision_and_the_removal_happen_under_one_lock(self):
+        source = RUNTIME.read_text(encoding="utf-8")
+        body = source[source.index("    if environment.exists():"):
+                      source.index("    # Exclusive: this fails if the directory exists")]
+        self.assertIn("hostrecord.Locked(environment)", body)
+        self.assertLess(body.index("hostrecord.Locked(environment)"),
+                        body.index("staging.decide("),
+                        "the decision is taken inside the lock, not carried into it")
+        self.assertLess(body.index("staging.decide("), body.index("shutil.rmtree("),
+                        "and the removal follows that same decision")
+
+
+class SchemaComparisonTests(unittest.TestCase):
+    """A schema difference reported as agreement is the one direction this cell must not fail
+    in, so normalisation stops exactly where meaning starts."""
+
+    def _answer(self, store, candidate):
+        return swapgate.tables_cell(
+            {"readable": True, "present": True, "tables": store, "dbPath": "/d"},
+            {"readable": True, "tables": candidate})["answer"]
+
+    def test_a_literal_that_differs_only_in_case_is_a_difference(self):
+        self.assertEqual(
+            self._answer({"a": "CREATE TABLE a (x TEXT DEFAULT 'A')"},
+                         {"a": "CREATE TABLE a (x TEXT DEFAULT 'a')"}),
+            swapgate.DIFFERS, "lowercasing the whole statement hid this")
+
+    def test_whitespace_inside_a_literal_is_a_difference(self):
+        self.assertEqual(
+            self._answer({"a": "CREATE TABLE a (x TEXT DEFAULT 'a  b')"},
+                         {"a": "CREATE TABLE a (x TEXT DEFAULT 'a b')"}),
+            swapgate.DIFFERS, "collapsing whitespace inside quotes hid this")
+
+    def test_formatting_outside_quotes_is_not_a_difference(self):
+        self.assertEqual(
+            self._answer({"a": "CREATE TABLE a (x TEXT)"},
+                         {"a": "CREATE  TABLE" + chr(10) + "  a (x TEXT)"}),
+            swapgate.AGREES, "SQLite keeps the original text, so formatting drifts")
+
+    def test_a_reading_carrying_only_names_cannot_answer_this_cell(self):
+        cell = swapgate.tables_cell(
+            {"readable": True, "present": True, "tables": ["a"], "dbPath": "/d"},
+            {"readable": True, "tables": ["a"]})
+        self.assertFalse(cell["readable"],
+                         "two name-only readings agree while a column differs, so answering on"
+                         " names is answering a different question")
+        self.assertEqual(
+            swapgate.decide(
+                {"daemon": swapgate.daemon_cell({"ok": True, "payload": {"running": False}}),
+                 "inFlight": swapgate.inflight_cell(
+                     {"ok": True, "payload": {"contents": {"available": True,
+                                                           "openAttempts": 0}}}),
+                 "storeTables": cell})["verdict"],
+            swapgate.UNESTABLISHED)
+
+
+class NarrowReadingTests(unittest.TestCase):
+    """Two questions that must not be answered by the conservative reading."""
+
+    def test_already_installed_is_never_reported_from_a_reading_that_failed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            environment.mkdir()
+            staging.write_claim(environment, staging.COMPLETE, issue="CRW-49", run="1")
+            claim = staging.read_claim(environment)
+            settled, _ = staging.decide(claim, staging.DEAD, occupied=True,
+                                        protected=True, selected=True)
+            unread, why = staging.decide(claim, staging.DEAD, occupied=True,
+                                         protected=True, selected=None)
+        self.assertEqual(settled, staging.SETTLED)
+        self.assertEqual(unread, staging.KEEP, why)
+        self.assertNotEqual(unread, staging.SETTLED,
+                            "reporting success from a reading nobody made is worse than"
+                            " reporting that nobody could read it")
+
+    def test_a_partial_selection_does_not_authorise_moving_the_shared_pointer(self):
+        import runtime_install
+
+        data = definition.load()
+        environment = Path("/somewhere/env")
+        whole = {c["component"]: str(environment / "site" / c["module"])
+                 for c in data["components"]}
+        partial = dict(whole)
+        partial.pop(sorted(partial)[0])
+        self.assertTrue(runtime_install._names_environment({"selected": whole}, environment,
+                                                           data))
+        self.assertFalse(
+            runtime_install._names_environment({"selected": partial}, environment, data),
+            "an update moves a whole verified combination (OPS-2.4), so half a record is not"
+            " a promotion to finish")
+
+
+class RollbackRaceTests(unittest.TestCase):
+    def test_a_rollback_never_undoes_a_promotion_another_run_committed(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            record_path = Path(temporary) / "record.json"
+            hostrecord.save(record_path, hostrecord.empty(1))
+            pointer_path = Path(temporary) / "current"
+            previous = {"codex-session-relay": "/old/pkg"}
+            installs = {"codex-session-relay": {"location": "/mine/pkg"}}
+
+            # Another run has since promoted something else entirely.
+            hostrecord.update(record_path, 1, select={"codex-session-relay": "/theirs/pkg"})
+            answer = runtime_install._restore_selection(record_path, 1, previous, installs,
+                                                        pointer_path)
+            after = hostrecord.load(record_path, 1).value["selected"]
+
+        self.assertEqual(after, {"codex-session-relay": "/theirs/pkg"},
+                         "a rollback on top of somebody else's success is worse than the"
+                         " failure being rolled back")
+        self.assertEqual(answer["restored"], [])
+        self.assertEqual(answer["movedOnByAnotherRun"], ["codex-session-relay"])
+
+    def test_a_rollback_does_undo_its_own_write(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            record_path = Path(temporary) / "record.json"
+            hostrecord.save(record_path, hostrecord.empty(1))
+            pointer_path = Path(temporary) / "current"
+            previous = {"codex-session-relay": "/old/pkg"}
+            installs = {"codex-session-relay": {"location": "/mine/pkg"}}
+
+            hostrecord.update(record_path, 1, select={"codex-session-relay": "/mine/pkg"})
+            answer = runtime_install._restore_selection(record_path, 1, previous, installs,
+                                                        pointer_path)
+            after = hostrecord.load(record_path, 1).value["selected"]
+
+        self.assertEqual(after, {"codex-session-relay": "/old/pkg"})
+        self.assertEqual(answer["restored"], ["codex-session-relay"])
 
 
 if __name__ == "__main__":

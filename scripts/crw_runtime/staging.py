@@ -308,9 +308,14 @@ def decide(claim, liveness, *, occupied, protected, selected):
                       " owner nobody could establish is not an owner that is gone")
 
     if state == COMPLETE:
+        if selected is True:
+            return SETTLED, ("this combination is already installed here and selected, so"
+                             " there is nothing to build")
         if protected:
-            return SETTLED, ("this combination is already installed here and in use, so there"
-                             " is nothing to build")
+            return KEEP, ("this environment finished and something may be using it, but the"
+                          " host record could not be read to confirm it selects this one, so"
+                          " reporting it as already installed would be a success claim from a"
+                          " reading that failed")
         return KEEP, ("this environment was promoted once and finished. Nothing selects it now,"
                       " but a process started from it may still be running out of it, so it is"
                       " reported rather than removed")

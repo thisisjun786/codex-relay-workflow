@@ -155,12 +155,21 @@ def tables_cell(store_answer, candidate_answer):
                             + str(store_answer.get("detail")))
 
     candidate = _schema(candidate_answer.get("tables"))
+    if candidate is None:
+        return _cell(reading.UNREADABLE, readable=False,
+                     command=candidate_answer.get("command"),
+                     detail="the candidate reported table names without their definitions, so"
+                            " the schemas could not be compared on anything but names")
     if store_answer.get("present") is False:
         return _cell(NO_STORE, readable=True, command=store_answer.get("command"),
                      evidence={"dbPath": store_answer.get("dbPath")},
                      detail=("no store exists at the resolved selection, so there is nothing"
                              " whose schema could disagree. That is absence and not agreement"))
     held = _schema(store_answer.get("tables"))
+    if held is None:
+        return _cell(reading.UNREADABLE, readable=False, command=store_answer.get("command"),
+                     detail="the store reported table names without their definitions, so the"
+                            " schemas could not be compared on anything but names")
     lost = sorted(set(held) - set(candidate))
     added = sorted(set(candidate) - set(held))
     changed = sorted(name for name in set(held) & set(candidate)
@@ -193,22 +202,56 @@ def tables_cell(store_answer, candidate_answer):
 
 
 def _schema(tables):
-    """Table name -> its CREATE statement, from either side's reading.
+    """Table name -> its CREATE statement, or None when the reading cannot answer this cell.
 
-    A reading that reports only names still compares, on names alone; the missing statements
-    simply cannot disagree. That keeps an older probe readable instead of unreadable, without
-    letting it claim more than it saw.
+    A reading that carries only names is not a weaker version of this comparison, it is a
+    different one: two name-only readings agree while a column differs, and reporting that as
+    agreement is the defect the statement comparison exists to remove. So a reading without
+    statements leaves the cell unanswered rather than answering it on less.
     """
-    if isinstance(tables, dict):
-        return {str(name): value for name, value in tables.items()}
-    return {str(name): None for name in (tables or [])}
+    if not isinstance(tables, dict):
+        return None
+    return {str(name): value for name, value in tables.items()}
 
 
 def _normalised(statement):
-    """A CREATE statement compared on its tokens, so whitespace is not a schema change."""
+    """A CREATE statement compared with whitespace collapsed OUTSIDE quoted text.
+
+    Not lowercased, and not touched inside quotes. SQLite stores the original CREATE text
+    verbatim, so formatting differs between a store written long ago and a candidate's current
+    DDL, and collapsing runs of whitespace is what makes that not a schema change. Going
+    further is not free: lowercasing made DEFAULT 'A' and DEFAULT 'a' compare equal, and
+    collapsing inside quotes made 'a  b' and 'a b' compare equal. Both are real schema
+    differences reported as agreement, which is the one direction this cell must never fail in.
+
+    What remains is stated rather than implied: two statements that mean the same thing and are
+    written differently -- a reordered constraint, a changed identifier quoting style -- are
+    reported as a difference. That refuses an update, which keeps the previous installation, and
+    the refusal names the table so it can be settled deliberately.
+    """
     if statement is None:
         return None
-    return " ".join(str(statement).split()).lower()
+    text = str(statement)
+    out, quote, space = [], None, False
+    for char in text:
+        if quote is not None:
+            out.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in "\'\"" + chr(96) + "[":
+            quote = "]" if char == "[" else char
+            out.append(char)
+            space = False
+            continue
+        if char.isspace():
+            space = True
+            continue
+        if space and out:
+            out.append(" ")
+        space = False
+        out.append(char)
+    return "".join(out)
 
 
 def blocking(name, cell):

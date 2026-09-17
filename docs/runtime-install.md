@@ -511,6 +511,14 @@ The lock's lifetime is the run's. The operating system releases it when the proc
 it ends, which is what makes a killed run readable as abandoned, and a run that reaches an end of
 its own releases it rather than leaving the answer to exit.
 
+Deciding and acting are one step, under a second lock beside the directory. Reading first and
+acting later is not safe even with everything above: two retries can both find the same
+abandoned staging and both decide to reclaim it, and the first then deletes it, recreates it and
+starts building while the second deletes that live build on the strength of an answer it got
+before any of it happened. So the reading is taken again inside that lock, immediately before the
+removal, and a run that cannot take the lock reports that and touches nothing. Past this point
+the exclusive `mkdir` is what a competing run loses to, as it always was.
+
 ### Reading whether it is safe to swap
 
 OPS-4.4 sequences an update around a daemon that is not running and open attempts that have been
@@ -544,7 +552,15 @@ So the cell compares what actually differs: each table's `CREATE` statement in t
 `sqlite_master` against the statements the candidate relay declares. Statements and not names,
 because names agree while a column, a constraint or a default differs, and that difference is a
 schema change the new runtime would apply the first time it opens the store for writing.
-Whitespace is normalised away; nothing else is.
+Runs of whitespace **outside** quoted text are normalised away, because SQLite keeps the original
+CREATE text verbatim and formatting drifts between a store written long ago and a candidate's
+current DDL. Nothing else is. Going further is not free: lowercasing the statement made
+`DEFAULT 'A'` and `DEFAULT 'a'` compare equal, and collapsing whitespace inside quotes made
+`'a  b'` and `'a b'` compare equal, and both are real schema differences reported as agreement.
+What remains is stated rather than implied: two statements that mean the same thing written
+differently are reported as a difference, which refuses an update and therefore keeps the
+previous installation. A reading that carries table names without their statements cannot answer
+this cell at all and says so, because names agree while a column differs.
 
 | Answer | Observed | Decision |
 | --- | --- | --- |
@@ -587,8 +603,10 @@ refuses to remove an environment the pointer names, so neither truth alone can a
 a runtime the other one is still using.
 
 Holding one lock across both writes is what keeps two runs of this command from interleaving there
-and finishing with the record selecting one runtime while the pointer reaches another. It cannot
-stop the process being killed, and a kill inside that window leaves a runtime that is selected and
+and finishing with the record selecting one runtime while the pointer reaches another. It is a lock
+between runs of this command and nothing more: an editor or another tool that does not take it is
+not coordinated with, exactly as the configuration writer says of its own. And it cannot stop the
+process being killed, so a kill inside that window leaves a runtime that is selected and
 unreachable. That state is recognisable rather than fatal: the claim is unsettled and the
 environment is selected, so the next run finishes the promotion instead of rebuilding it.
 Rebuilding would be the wrong repair, because the runtime is built, it is already selected, and a
@@ -608,6 +626,14 @@ A failed update leaves the previous runtime selected, the previous pointer targe
 owned configuration untouched, and the store exactly as it was. The result says which step failed
 rather than only that something did: `failedStep` names the step and the boundary it was at, and
 `restored` names the selection that was put back or says there was none to put back.
+
+"Restores the previous selection" is narrower than it sounds, and deliberately. The rollback runs
+under the promotion's own lock and puts back only the entries that still name what **this** run
+wrote. If another run has promoted something else in the meantime, that entry is left alone and
+the result says so in `movedOnByAnotherRun`: rolling back on top of somebody else's success is a
+worse outcome than the failure being rolled back. A component that had no previous selection
+cannot be unselected through a delta either, and the result names it rather than reporting a
+restoration that did not happen.
 
 The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
 destination is retriable; removal that could not finish reports the residual path, what recovery
