@@ -797,26 +797,29 @@ def _sandbox_summary(row) -> dict:
     never made. So the recorded values are still shown, because they are the only clue to WHY
     delivery refuses this participant, and `deliverable` says whether a send can carry them.
 
-    It is computed by RUNNING those transformations, not by describing them, and the set is
-    the transformations delivery applies to the RECORDED row before turn/start:
-    `TaskSettings.require_usable()` in `DeliveryService._settings_for` (delivery.py), the
-    resume-params construction in `_guarded_send` (bridge_adapter.py), and the recorded half
-    of the verification that follows the response, where `normalise_environments` is the one
-    transformation the first two do not already reach. The first refusal any of them raises is
-    what the receipt reports.
+    The set is the constraints delivery imposes on the RECORDED row before turn/start, and it
+    has two kinds of member. A TRANSFORMATION can fail on the row by raising, so it is RUN
+    here rather than described: `TaskSettings.require_usable()` in
+    `DeliveryService._settings_for` (delivery.py), the resume-params construction in
+    `_guarded_send` (bridge_adapter.py), and `normalise_environments`, which is the one the
+    first two do not already reach. A VALUE CONSTRAINT cannot fail by raising: it exists only
+    as a comparison against a fixed value in the resume verification, so the recorded value is
+    compared against that same value instead.
 
-    Four versions of this field were wrong the same way before that sentence could be
-    written: each named the answer after the steps it had counted, and each stopped one step
-    short - the sandbox type, then `require_usable()`, then the params construction, then the
-    post-response half. The set is no longer kept by hand here either.
+    Five versions of this field were wrong the same way before those two sentences could be
+    written: each named the answer after the members it had been shown - the sandbox type,
+    then `require_usable()`, then the params construction, then the post-response half, then
+    the constraint that raises nothing at all. The set is not kept by hand here.
     `test_every_transformation_a_send_applies_to_the_record_is_covered` (tests/test_cli.py)
-    derives it from those two modules and fails if a transformation is added that this does
-    not reach.
+    derives both kinds from those two modules and fails if a member of either is added that
+    this does not reach.
     """
     import json
 
-    from .errors import DeliveryRefused
-    from .settings import TaskSettings, normalise_environments, normalise_policy
+    from .errors import DeliveryRefused, RefusalReason
+    from .settings import (
+        AUTHORIZED_APPROVAL_POLICY, TaskSettings, normalise_environments, normalise_policy,
+    )
 
     try:
         settings = json.loads(row["settings"])
@@ -850,6 +853,20 @@ def _sandbox_summary(row) -> dict:
         # environment selection raises here, one that reports null withholds the send as
         # environments_unknown - so no send completes for such a row either way.
         normalise_environments(settings.get("environments"))
+        # The constraint kind, and the reason the first extraction could not see it: there is
+        # no call to put the field into. `mismatches` refuses any returned approvalPolicy that
+        # is not this one (settings.py), and a host that preserves what it was asked for
+        # returns what was recorded - so a row recording anything else cannot complete a send.
+        # Measured: a host echoing "on-request" produces unsupported_approval_policy and no
+        # turn, while a host that answers "never" regardless proceeds, which is why this is
+        # reported as unsendable rather than left to the host to decide.
+        if settings.get("approvalPolicy") != AUTHORIZED_APPROVAL_POLICY:
+            raise DeliveryRefused(
+                RefusalReason.UNSUPPORTED_APPROVAL_POLICY,
+                f"the recorded approvalPolicy is {settings.get('approvalPolicy')!r}; a resume"
+                f" that reports it back is refused, so only"
+                f" {AUTHORIZED_APPROVAL_POLICY!r} can be carried",
+            )
     except DeliveryRefused as refusal:
         refused = refusal
     except Exception as error:  # noqa: BLE001 - total, like everything else in this helper

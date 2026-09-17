@@ -1427,17 +1427,28 @@ class ParticipantAccessReceipts(CliBase):
         First the sandbox type, then `require_usable()`, then the params construction - and
         the fourth instance, `environments`, arrived the same way the first three did.
 
-        So the set is derived here instead of listed. It is the transformations delivery
-        applies to the RECORDED settings before turn/start, and it comes out of the source in
-        two steps: the `TaskSettings` methods the send path calls, read from `delivery.py` and
-        `bridge_adapter.py`, and then every recorded field handed to a call inside those
-        methods. Today that is `normalise_policy(sandbox)`, `list(runtimeWorkspaceRoots)` and
-        `normalise_environments(environments)`.
+        So the set is derived here instead of listed. It is the constraints delivery imposes
+        on the RECORDED settings before turn/start, and it has two kinds of member, both read
+        out of the source. Both start from the `TaskSettings` methods the send path calls,
+        taken from `delivery.py` and `bridge_adapter.py`.
 
-        Each derived field is mutated to a value its transformation cannot consume, and the
-        receipt must not advertise that participant as deliverable. A fifth transformation
-        added to the send path joins the derived set and fails here until the probe reaches
-        it, which is the property a written-down list cannot have.
+        A TRANSFORMATION can fail on the row by raising: every recorded field handed to a
+        call inside those methods. Today `normalise_policy(sandbox)`,
+        `list(runtimeWorkspaceRoots)`, `normalise_environments(environments)`.
+
+        A VALUE CONSTRAINT cannot. It exists only as a comparison against a fixed value -
+        `mismatches` refuses any returned `approvalPolicy` that is not the authorized one -
+        and a host that preserves what it was asked for returns what was recorded, so a row
+        recording anything else can never complete a send. Nothing raises on such a row, which
+        is why the first extraction cannot see it: there is no call to put the field into. That
+        member was found by review rather than by this test, and the second extraction below is
+        the answer to that rather than another hand-added case.
+
+        Each derived field is then mutated with the mutant its kind needs - a value no
+        transformation can consume, or a well-typed value that is not the authorized literal -
+        and the receipt must not advertise that participant as deliverable. A new member of
+        either kind joins the derived set and fails here until the probe reaches it, which is
+        the property a written-down list cannot have.
 
         The two floor assertions are not the definition. They guard the extractor: an AST walk
         that silently matched nothing would run zero mutations and pass, which is how this kind
@@ -1491,7 +1502,55 @@ class ParticipantAccessReceipts(CliBase):
                     fields |= transformed_fields(node.func.attr, seen)
             return fields
 
+        def constant(node):
+            """A string literal, or a module constant that holds one."""
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, ast.Name):
+                return getattr(settings_module, node.id, None)
+            return None
+
+        def literal_constraints(name, seen=None):
+            """Response fields this method compares against a fixed value.
+
+            The recorded row cannot fail one of these by raising, so it is the recorded
+            VALUE that has to be compared. Read in two passes rather than one, so a
+            comparison is never reached before the name it compares was bound.
+            """
+            seen = set() if seen is None else seen
+            if name in seen or name not in defined:
+                return set()
+            seen.add(name)
+            body = list(ast.walk(defined[name]))
+            bound = {}
+            for node in body:
+                if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Name)):
+                    continue
+                read = node.value
+                if (isinstance(read, ast.Call) and isinstance(read.func, ast.Attribute)
+                        and read.func.attr == "get" and len(read.args) == 1
+                        and isinstance(read.args[0], ast.Constant)
+                        and isinstance(read.args[0].value, str)
+                        and not (isinstance(read.func.value, ast.Attribute)
+                                 and read.func.value.attr == "data")):
+                    bound[node.targets[0].id] = read.args[0].value
+            found = set()
+            for node in body:
+                if (isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
+                        and node.left.id in bound):
+                    for comparator in node.comparators:
+                        literal = constant(comparator)
+                        if isinstance(literal, str):
+                            found.add((bound[node.left.id], literal))
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "self"):
+                    found |= literal_constraints(node.func.attr, seen)
+            return found
+
         fields = set().union(*(transformed_fields(name) for name in called))
+        constraints = set().union(*(literal_constraints(name) for name in called))
 
         self.assertGreaterEqual(
             called, {"require_usable", "resume_params", "mismatches"},
@@ -1501,14 +1560,23 @@ class ParticipantAccessReceipts(CliBase):
             fields, {"sandbox", "runtimeWorkspaceRoots", "environments"},
             "the extraction found fewer transformations than are known to be there",
         )
+        self.assertGreaterEqual(
+            constraints, {("approvalPolicy", "never")},
+            "the value-constraint extraction found less than is known to be there",
+        )
+
+        # One mutant per kind, each derived from what the kind is. A transformation cannot
+        # consume 7 - not a mapping, not a sequence, and present, so the completeness gate
+        # hands it straight on. A value constraint needs a well-typed value that is simply
+        # not the authorized one, taken from the literal itself rather than invented.
+        mutants = {field: 7 for field in fields}
+        mutants.update({field: f"not-{literal}" for field, literal in constraints})
 
         self.seeded()
-        for field in sorted(fields):
-            with self.subTest(transforms=field):
-                # A value no transformation in the set can consume: not a mapping, not a
-                # sequence, and present, so the completeness gate hands it straight on.
+        for field, mutant in sorted(mutants.items()):
+            with self.subTest(constrains=field):
                 stale = dict(self.settings(self.root))
-                stale[field] = 7
+                stale[field] = mutant
                 store = Store(Path(self.tmp) / "relay.sqlite3")
                 with store.transaction() as db:
                     db.execute(
@@ -1524,7 +1592,7 @@ class ParticipantAccessReceipts(CliBase):
 
                 self.assertIsNot(
                     child.get("deliverable"), True,
-                    f"no send can transform this {field!r}, and the receipt advertised one",
+                    f"no send can carry this {field!r}, and the receipt advertised one",
                 )
                 if child["readable"]:
                     self.assertTrue(child["refusedBy"], child)
