@@ -64,6 +64,8 @@ Context:
 - Coordinator: [task ID; context only, never a CXC session binding]
 - Responsible child: [existing independent task/host ID, or newly created task from the launch receipt]
 - Assignment route: [reuse / create; current writer state and authorization source]
+- Management marker: [the stable creation request id this launch was issued under, per
+  [Prepare and dispatch](../SKILL.md#prepare-and-dispatch)]
 - Relay assignment, when one holds this issue: [shared state directory, set as BOTH
   `--state` and `CODEX_SESSION_RELAY_STATE` on every process that reaches the socket,
   and the exact issue identity registration was given, not a display key that differs from it;
@@ -138,6 +140,19 @@ Execution:
   creation tool's supported skill field, and run this bounded objective under it and
   `cxc-pabcd` using your own session binding, host goal, and goalplan.
   If a required loop capability is absent, report the exact gap before starting.
+  On a correction or a resume, read whether that goal and goalplan exist before making
+  either. Usually they do, and the work is to continue them: opening a second goal for
+  the same assignment is a duplicate rather than a resume, and the coordinator reads it
+  as one. Where activation never succeeded there is nothing to continue, and starting it
+  then is the activation that was owed rather than a duplicate. Say which of the two
+  happened, because from the outside they produce the same new goal.
+  Confirming identity means reading it rather than assuming it: your own native task id,
+  the native working directory you are actually in, the source checkout that directory
+  belongs to, and your real recorded workflow state. Those four can disagree after a
+  resume or a compaction, and the disagreement is the thing worth catching. A session
+  binding is identity, not proof that a hook ran. Where a relay holds the assignment its
+  generation is read from the assignment by lookup, never inferred from your own state
+  and never copied from the coordinator's.
 - [For an explicit non-Loop or no-goal alternative:] omit that invocation and keep
   the agreed workflow. Assignment alone does not create a goal or activate a Loop.
 - Apply the agreed permissions and delivery scope. Do not modify global model or
@@ -202,6 +217,80 @@ Relay, if used: [exact issue identity, scope reference, real coordinator/child I
   and digest under an authorized root; current generation/receipt outcome]
 Stop after this issue; do not start another issue or create an empty PR.
 ```
+
+## Restoration block
+
+Every message into a task that is already running carries this block: a needs-changes
+correction, a review fix, a resume the coordinator publishes after handling something
+on the task's behalf, and a restart after that task was compacted. The first work
+prompt stated the assignment once. Ten turns, one compaction and three review rounds
+later, none of it is reliably still in the task's context, and a correction that
+assumes otherwise is answered from whatever the task still happens to remember.
+
+Keep it short. It restates what the COORDINATOR holds and what the task cannot
+reconstruct alone:
+
+- The skills this task runs under, as pointers to the installed skill, not their text.
+  On context loss the task re-reads the owning skill from those pointers; it does not
+  reload every skill it once had, and an unrelated reference is not part of recovery.
+- The effective workflow, restated. A transport carries model and effort as settings
+  and has no field for the workflow, so a send that omits it has silently dropped it.
+- Assignment identity: the issue, this task's own id, and where a relay holds the
+  assignment its relationship id and the generation to emit under, read from the
+  assignment rather than copied from the coordinator's own state. On a needs-changes
+  correction that is the generation the verdict opens and not the one being superseded,
+  because the verdict is what opens it: a block composed beforehand that names the
+  current generation names the one the child has just stopped working in, and a receipt
+  emitted under it is refused. The relay carries the superseded event and its digest
+  itself, so the block does not repeat them.
+- The delivery artifact as it stands now: pull request URL, base and head, and which
+  required checks and reviews are outstanding on that head.
+- The unresolved findings, each with what would settle it.
+- The single next action this message is asking for.
+- Durable locators for the work the task itself owns: where its plan, its ledger and its
+  evidence live, with the identifiers and current revisions the coordinator already holds.
+  These are pointers to that task's own records rather than copies of them, and they are what
+  lets a task that lost its context find its record instead of starting a second one.
+
+What the block carries about those records is their location and identity, never their
+contents. The plan, the ledger, the phase and the goal belong to the task and to its own
+workflow skills, they are durable on that task's side, and this repository deliberately
+does not define their shape
+([OPS-10.3](operations.md#ops-103-where-the-packet-and-report-formats-are-defined)).
+Pointing at a record is not defining it; rewriting one is. A coordinator that reconstructs
+a child's plan from its own view has replaced that child's record with a guess, and the
+child will trust the guess over the record it could have re-read.
+
+The block is context for resuming work already authorized. It requests no new approval,
+asks for no readiness-only turn spent confirming receipt, and re-opens nothing the
+assignment already settled.
+
+Where a relay holds the assignment there is no second channel to put it on: the
+needs-changes verdict is the correction, so the block travels in that verdict's own
+findings and notes. Compose it before recording the verdict, because afterwards the
+only remaining routes are the ones this workflow forbids, and write the generation the
+verdict is about to open rather than the one still current as you write. Those two are
+never the same on a correction, and the child acts on the one it was given.
+
+Put it in the first finding. That is a precaution and not a guarantee, and the
+difference matters here. The renderer decides what of a verdict the child sees, it can
+carry fewer findings than the verdict holds, it need not say it dropped any, and on the
+measured version a size budget can drop the findings section entirely;
+[codex-session-relay](relay.md#the-parent-verifies) records what that version does.
+The verdict is also one transaction that has already opened the next generation by the
+time anything could discover the block missing.
+
+So delivery of the block is a claim that needs evidence rather than a consequence of
+placement. Confirm it from a dispatched attempt and what the child actually received,
+never from a queued rendering, which is the bytes a next attempt would send rather than
+proof of a send. Where the block did not arrive, say so plainly: there is no supported
+way to send it again, because the verdict does not resend and the parallel route stays
+forbidden. Record it as an undelivered correction on that assignment and hand it to the
+coordinator, whose decision it is — to let the child proceed on the context it has, or
+to change the relay so the section cannot be dropped. Do not invent a transport to close
+the gap, and do not describe that correction as delivered. Whether an installed relay
+can carry a restoration block at all is a property of that package and `unmeasured` for
+any version but the one relay.md names.
 
 ## Coordination record
 

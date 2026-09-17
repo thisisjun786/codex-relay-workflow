@@ -57,7 +57,9 @@ A request to make this the fixed management task covers its matching title,
 sidebar pin, and a compact Linear management record. Respect an explicit title,
 no-rename, unpinned, or read-only constraint.
 
-Use a concise project summary as the management task title. Preserve an explicit
+Use a concise project summary as the management task title: the short outcome the
+project exists for, named so the title also reads as the task that manages it.
+Preserve an explicit
 user title. Product family and initiative membership are context, not required
 title prefixes; no initiative or multiple initiatives needs no title-choice
 question. Resolve same-name projects by stable ID under the shared target rules
@@ -375,6 +377,7 @@ The coordinator applies the effective settings through the creation tool's real 
 - A setting the creation path cannot apply is settled before the task exists: use an already-permitted path or effective configuration that applies the requested values, or report the concrete unsupported capability. Never create a task already known to carry the wrong setting, and never silently downgrade it or claim the requested value.
 - A mismatch observed after creation is reconciled on that same task.
 - A user correction to model, effort, or workflow adjusts the same task where the transport supports it, and is reported otherwise, keeping stable IDs, unchanged permissions, and preserved progress, reconciled before any resend.
+- The effective workflow is restated in every later send to that task, not only in the first one. A transport carries model and effort as settings it can check and has no field for the workflow, so a correction or a resume that omits it drops the one setting nothing else restores. Long work, a compaction, and a mid-work instruction each put distance between the original prompt and the task acting on it, and the restatement is what closes that distance. [Task packet](../../crw-run/references/task-packet.md#restoration-block) holds what travels with it.
 
 ### Publish for review when the work is reviewable
 
