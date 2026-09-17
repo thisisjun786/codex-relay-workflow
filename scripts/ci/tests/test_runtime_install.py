@@ -526,13 +526,28 @@ class TrialArgumentTests(unittest.TestCase):
     """
 
     def steps(self):
+        """Every invocation the trial can make, so the comparison covers all of them.
+
+        The fixture supplies every optional input on purpose. Built without them,
+        trial_steps omits settings-record, and a comparison run over the shortened list
+        would report success while that command's required arguments were never checked.
+        """
         import runtime_install
 
         return runtime_install.trial_steps(
             issue="JUN-104", parent_task="parent", child_task="child",
             recipient="parent", artifact_root="/tmp/artifacts",
             turn_thread="thread-1", turn_id="turn-1", host="a-host",
+            artifacts=["/tmp/artifacts/result.txt"], dispatch_turn_id="anchor-1",
+            recipient_settings="@/tmp/settings.json",
         )
+
+    def test_the_comparison_covers_every_command_the_trial_can_send(self):
+        # Guards the fixture itself. If trial_steps grows a command, or the fixture stops
+        # producing one, the comparison silently stops covering it.
+        self.assertEqual([argv[0] for argv in self.steps()],
+                         ["settings-record", "register", "generation-open", "generation-bind",
+                          "admit-turn", "emit", "deliver"])
 
     def test_the_relay_parser_is_readable_and_names_what_it_requires(self):
         required = relay_required_arguments()
@@ -586,12 +601,57 @@ class TrialArgumentTests(unittest.TestCase):
         self.assertNotIn("settings-record", [argv[0] for argv in without])
 
     def test_the_trial_reads_the_generation_field_the_relay_returns(self):
-        # register and generation-open both report the generation as executionGeneration.
-        # Reading generation or generationId yields None and sends --generation None.
+        """The generation the relay reports must reach the commands that need it.
+
+        register and generation-open both report it as executionGeneration; reading
+        generation or generationId yields None and sends the literal "--generation None".
+        Checked by driving _trial with stubbed relay responses rather than by looking for
+        the field name in the source, which a comment alone would satisfy.
+        """
         import runtime_install
 
-        source = Path(runtime_install.__file__).read_text(encoding="utf-8")
-        self.assertIn("executionGeneration", source)
+        payloads = {
+            "settings-record": {"ok": True, "payload": {"recorded": True}},
+            "register": {"ok": True, "payload": {"relationshipId": "rel-1",
+                                                 "executionGeneration": 7}},
+            "generation-open": {"ok": True, "payload": {"executionGeneration": 7}},
+            "generation-bind": {"ok": True, "payload": {"bound": True}},
+            "admit-turn": {"ok": True, "payload": {"admitted": True}},
+            "emit": {"ok": True, "payload": {"receipt": {"eventId": "ev-1"}}},
+            "deliver": {"ok": True, "payload": {"attempt": {"turnId": "turn-9"}}},
+        }
+        sent = []
+
+        def fake_relay(command, **kwargs):
+            sent.append(list(command))
+            reading = dict(payloads[command[0]])
+            reading["command"] = list(command)
+            return reading
+
+        class Args:
+            issue = "JUN-104"
+            parent_task = child_task = recipient = "parent"
+            artifact_root = "/tmp/artifacts"
+            artifact = ["/tmp/artifacts/result.txt"]
+            dispatch_turn_id = "anchor-1"
+            recipient_settings = "@/tmp/settings.json"
+            turn_thread = "thread-1"
+            turn_id = "turn-1"
+            turn_status = "completed"
+            socket = state = None
+
+        original = runtime_install.scope.relay
+        runtime_install.scope.relay = fake_relay
+        try:
+            result = runtime_install._trial(Args(), "/opt/relay")
+        finally:
+            runtime_install.scope.relay = original
+
+        self.assertEqual(result["value"], "verified", result["evidence"])
+        self.assertIn("turn-9", result["evidence"])
+        emitted = next(argv for argv in sent if argv[0] == "emit")
+        self.assertIn("7", emitted, "the reported generation must reach emit")
+        self.assertNotIn("None", emitted)
 
 
 if __name__ == "__main__":
