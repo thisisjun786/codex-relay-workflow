@@ -12,13 +12,12 @@ including standalone issues and explicit current-task work. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
-Keep the CXC harness in both coordinator and child tasks. Load the installed
-`codexclaw:cxc-dev` and relevant surface skills in each task for its work.
-When CXC Loop is the effective workflow, the child loads the installed
-`codexclaw:cxc-loop` and `codexclaw:cxc-pabcd` and runs its own goal, goalplan,
-and phases under them. Resolve current installed paths; never copy a plugin
-version from old records. Those skills own CXC phases and subagent routing. This
-skill does not replace their FSM or create a second orchestration system.
+Use [crw-loop](../crw-loop/SKILL.md) for the default project parent's lifecycle.
+Load the installed `codexclaw:cxc-dev` and relevant surface skills for development
+and review work. A child whose effective workflow is CXC Loop loads the installed
+`codexclaw:cxc-loop` and `codexclaw:cxc-pabcd` and owns its goal, goalplan and phases.
+Resolve current installed paths; never copy plugin versions from old records.
+CXC owns those phases and subagent routing; the parent does not adopt a child's FSM.
 
 Read [Integrations](../crw-plan/references/integrations.md) for Linear document
 authority, tools, and Paperthin invocation rules. Use the available Linear tools
@@ -32,7 +31,7 @@ needs a refreshed briefing. Route roadmap authoring to
 When the user submits `$crw-run <Linear project link>` as the execution request,
 with no narrower operation, treat it as the full project-run request: designate
 this task as the fixed parent through `crw-focus`, run the agreed project scope
-with CXC Loop, reuse each issue's responsible child or create an independent
+with CRW Loop, reuse each issue's responsible child or create an independent
 child when needed, verify its delivery, perform authorized integration, and
 continue with ready work. This submitted shorthand requests those actions; no
 expanded prompt or creation keyword is needed. Resolve ownership and agreed
@@ -72,47 +71,18 @@ title, and sidebar pin, then continue the authorized execution here.
 
 ## Keep a project run moving
 
-For a requested project Loop, load the installed `cxc-loop` and `cxc-pabcd`
-in this coordinator too. Under their current host/session rules, inspect and
-reuse its matching goal and plan, or establish them when authorized. The parent's
-objective is coordination and verified delivery of the agreed project scope;
-each child retains its separate issue goal, session and phases. Never borrow a
-child's state as proof of the parent's Loop. Missing required Loop capability
-is a reported gap, not an ordinary turn relabeled as an armed Loop. Plain
-dispatch, status, binding, and discussion of a future Loop do not arm one.
+Route the project parent to [crw-loop](../crw-loop/SKILL.md), which owns repeated
+scheduling, observation, continuation, stop and recovery decisions. Keep this same
+parent and use the operations below; do not create another coordinator. The shorthand
+needs no additional invocation. Scoped milestone/batch runs use the same lifecycle
+with their narrower finish boundary. Single-issue dispatch and status operations
+retain their requested scope and do not activate a project-wide run.
 
-Record the selected project, authorized issue/milestone scope, delivery limits,
-active child IDs, and next dependency in the existing coordination record.
-Newly discovered work must fit that scope; an overnight run is not authority to
-adopt every future issue or another project's backlog. Preserve explicit batch,
-no-goal, no-merge, pause and resource limits.
-
-Repeat within that scope: refresh ownership and prerequisites, actively look
-for independent ready issues using the [parallel scheduling rules](#establish-the-project-baseline), dispatch ready
-issue packets, observe their actual results, verify and integrate permitted
-deliveries, then release the next ready work. A blocked issue holds only its
-dependents; continue independent authorized work. Keep each implementation issue
-with its own child and delivery PR, and serialize integrations into a shared
-target. Non-PR work completes on its verified result.
-
-Choose and record the observation mode before creating or registering children, using
-[OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting)
-to check active-parent receipt compatibility. Refresh existing assignments first;
-do not switch a registered issue to another delivery path. An active parent Loop
-uses bounded transport waits and continues
-after timeouts; it does not rely on a hook or an unverified relay to wake it after
-ending its turn. Report meaningful progress while respecting host communication
-limits. A quiet worker, elapsed wait or empty ready queue is not completion while
-owned work is still running. Do not resend work or create replacement writers
-because a wait expired.
-
-Finish only after the agreed scope is verified, the user stops it, a stated
-resource limit is reached, or no authorized action remains because of a concrete
-blocker. Record unfinished issues, responsible tasks and the exact resume step;
-keep host goal completion/blocked rules with CXC and the host tools. Never mark
-the project complete merely because the current batch ended. If the host ends
-the turn or no supported observation/resume path remains, report continuity as
-unverified or interrupted rather than promising unattended progress.
+`crw-loop` preserves existing CXC parent state and explicit workflow choices; it does
+not silently migrate active goals or bypass their guards. Children keep their own
+implementation workflow. Choose a compatible observation and delivery mode before
+creating or registering children under
+[OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting).
 
 ## Independent implementation tasks
 
