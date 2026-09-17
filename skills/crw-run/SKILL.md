@@ -500,8 +500,11 @@ The restoration block rides inside that payload rather than beside it. The findi
 their notes are what the relay actually delivers to the child, so that is where the
 block goes, and a verdict is not issued until it is there. Where the installed relay
 cannot carry it, that is a limitation recorded and reported on the assignment, and it
-is still not a reason to open the parallel path the sentence above forbids: a child
-that resumed without it is recovered on its own task, the way an unemitted receipt is.
+is still not a reason to open the parallel path the sentence above forbids. Nor is
+there a supported way to send it again afterwards: the verdict does not resend. Record
+it as an undelivered correction and hand the decision to whoever owns the assignment,
+per [codex-session-relay](references/relay.md#the-parent-verifies) and
+[the restoration block](references/task-packet.md#restoration-block).
 
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, workflow,
