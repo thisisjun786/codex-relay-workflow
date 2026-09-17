@@ -133,7 +133,8 @@ class TheCallToTheGuard(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             seen = Path(temporary) / "seen.json"
             fake_relay(temporary, stdout=json.dumps(RELEASED), record=seen)
-            settings(temporary, dbPath="/tmp/relay.sqlite", mode=completion.HOLD)
+            settings(temporary, dbPath="/tmp/relay.sqlite", mode=completion.HOLD,
+                     isolationAssertedBy="the coordinator, for this test")
             completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
             call = json.loads(seen.read_text(encoding="utf-8"))
         self.assertIn("--db-path", call["argv"])
@@ -621,15 +622,173 @@ class TheInstallerSeam(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             self._install(home)
-            code, payload = self._install(home, mode=completion.HOLD)
+            code, payload = self._install(home, db_path=str(home / "relay.sqlite"))
             document = json.loads(completion.configuration_path(home).read_text(encoding="utf-8"))
             registered = hooks.inventory(hooks.read(home / "hooks.json").value, completion.EVENT)
         self.assertEqual(code, 1)
         self.assertEqual(payload["settings"]["outcome"], completion.CONFIG_DIFFERS)
-        self.assertIn("mode", payload["settings"]["differingFields"])
+        self.assertIn("dbPath", payload["settings"]["differingFields"])
         self.assertIsNone(payload["result"], "no hook is appended when its settings were refused")
-        self.assertEqual(document["mode"], completion.OBSERVE, "the mode was not changed silently")
+        self.assertIsNone(document["dbPath"], "the settings were not changed silently")
         self.assertEqual(len(registered), 1, "and no second registration was added")
+
+
+class HoldingNeedsTheGrantItDependsOn(unittest.TestCase):
+    """The contract makes per-session write isolation a prerequisite for holding. An installer
+    that sets the mode without it turns an unstated premise into an enforcement decision."""
+
+    def test_hold_without_a_stated_grant_is_malformed(self):
+        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
+                                            mode=completion.HOLD, environ={})
+        found = completion.complaints(document)
+        self.assertTrue(found)
+        self.assertIn("isolationAssertedBy", found[0])
+
+    def test_hold_with_a_stated_grant_records_who_stated_it(self):
+        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
+                                            mode=completion.HOLD, isolation="CRW-37 operator",
+                                            environ={})
+        self.assertEqual(completion.complaints(document), [])
+        self.assertEqual(document["isolationAssertedBy"], "CRW-37 operator")
+
+    def test_observing_needs_nothing_which_is_why_it_is_the_default(self):
+        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
+                                            environ={})
+        self.assertEqual(document["mode"], completion.OBSERVE)
+        self.assertEqual(completion.complaints(document), [])
+
+
+class TheMarkerRootFollowsTheRelay(unittest.TestCase):
+    """A default that skips the relay's own override is not a default, it is a disagreement."""
+
+    def test_the_environment_override_the_relay_reads_is_read_here_too(self):
+        found = completion.default_marker_root({completion.MARKER_ENV: "/somewhere/else"})
+        self.assertEqual(str(found), "/somewhere/else",
+                         "the coordinator publishes intents under the tree it named, and a hook"
+                         " looking elsewhere reads every managed turn as unmanaged")
+
+    def test_the_override_wins_over_xdg_and_home(self):
+        found = completion.default_marker_root({completion.MARKER_ENV: "/named",
+                                                "XDG_STATE_HOME": "/xdg"})
+        self.assertEqual(str(found), "/named")
+        self.assertEqual(str(completion.default_marker_root({"XDG_STATE_HOME": "/xdg"})),
+                         "/xdg/" + completion.MARKER_DIRECTORY_NAME)
+
+    def test_an_install_under_the_override_records_that_root(self):
+        document = completion.configuration(relay="/r", codex_home="/h",
+                                            environ={completion.MARKER_ENV: "/named"})
+        self.assertEqual(document["markerRoot"], "/named")
+
+
+class AnUnusableInterpreterIsRefused(unittest.TestCase):
+    def test_a_file_without_execute_permission_is_not_registered(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            candidate = Path(temporary) / "python-ish"
+            candidate.write_text("", encoding="utf-8")
+            candidate.chmod(0o600)
+            with self.assertRaises(ValueError) as raised:
+                completion.interpreter_for(str(candidate))
+        self.assertIn("executable", str(raised.exception))
+
+    def test_a_missing_interpreter_stops_the_install(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"),
+                python=str(home / "no-such-interpreter"),
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                apply=True, isolation_asserted_by=None)
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+            self.assertFalse((home / "hooks.json").exists())
+        self.assertEqual(code, 2)
+
+
+class OneAdapterIsRegisteredOnce(unittest.TestCase):
+    """Installation appends and never removes, so a changed timeout would leave two copies
+    running on every Stop rather than replacing one."""
+
+    def test_a_second_registration_that_differs_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+
+            def install(**extra):
+                args = argparse.Namespace(
+                    codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                    dest=None, relay_command=str(home / "codex-session-relay"),
+                    marker_root=str(home / "marker"), db_path=None,
+                    journal_root=str(home / "journal"), python=sys.executable,
+                    mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                    apply=True, isolation_asserted_by=None)
+                for name, value in extra.items():
+                    setattr(args, name, value)
+                emitted = []
+                with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                    return runtime_install.cmd_hook(args), emitted[0]
+
+            install()
+            code, payload = install(timeout=20)
+            document = json.loads((home / "hooks.json").read_text(encoding="utf-8"))
+        self.assertEqual(code, 1)
+        self.assertIsNone(payload["result"])
+        self.assertIn("already registered", payload["error"])
+        self.assertEqual(len(document["hooks"][completion.EVENT]), 1,
+                         "a second copy would run on every Stop beside the first")
+
+    def test_installing_the_identical_registration_again_is_not_a_duplicate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                apply=True, isolation_asserted_by=None)
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                runtime_install.cmd_hook(args)
+                code = runtime_install.cmd_hook(args)
+        self.assertEqual(code, 0)
+        self.assertEqual(emitted[1]["result"]["outcome"], hooks.LINKED)
+
+
+class AnUnknownDecisionIsNotARelease(unittest.TestCase):
+    def test_a_verdict_deciding_something_else_entirely_is_incomplete(self):
+        self.assertTrue(completion.verdict_complaints({"decision": "banana",
+                                                       "hook_output": {}}))
+        self.assertEqual(
+            completion.outcome_of({"ending": completion.EXITED, "code": completion.GUARD_EXIT_OK},
+                                  *completion.read_guard_stdout(
+                                      json.dumps({"decision": "banana", "hook_output": {}}))),
+            completion.GUARD_VERDICT_INCOMPLETE,
+            "recording an incompatible runtime as having answered is the one reading that"
+            " hides the incompatibility")
+        self.assertEqual(completion.verdict_complaints({"decision": completion.RELEASE,
+                                                        "hook_output": {}}), [])
+
+
+class TheInstallerSeamContinued(unittest.TestCase):
+    """The rest of the installer seam. Same _install helper, kept beside its cases."""
+
+    def _install(self, home, **overrides):
+        args = argparse.Namespace(
+            codex_home=str(home), event=None, hook_command=None, adapter="completion",
+            dest=None, relay_command=str(Path(home) / "codex-session-relay"),
+            marker_root=str(Path(home) / "marker"), db_path=None,
+            journal_root=str(Path(home) / "journal"), python=sys.executable,
+            mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True,
+            isolation_asserted_by=None)
+        for name, value in overrides.items():
+            setattr(args, name, value)
+        emitted = []
+        with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            code = runtime_install.cmd_hook(args)
+        return code, emitted[0]
 
     def test_installing_the_same_thing_twice_settles_without_a_second_hook(self):
         with tempfile.TemporaryDirectory() as temporary:

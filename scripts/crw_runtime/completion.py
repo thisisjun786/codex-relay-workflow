@@ -194,6 +194,8 @@ CONFIG_OUTCOMES = {
 # What the guard puts in hook_output when it holds. The only value the host accepts for a
 # top-level Stop decision.
 BLOCK = "block"
+RELEASE = "release"
+DECISIONS = (BLOCK, RELEASE)
 
 # The name this writer gives a journal record: a random hex name and nothing else. Matched
 # rather than assumed when counting, so a file somebody else left under the journal root is
@@ -313,6 +315,12 @@ def complaints(document):
         found.append("dbPath must be an absolute path")
     if document.get("mode") not in MODES:
         found.append("mode must be one of " + ", ".join(MODES))
+    if document.get("mode") == HOLD:
+        asserted = document.get("isolationAssertedBy")
+        if not isinstance(asserted, str) or not asserted.strip():
+            found.append("holding requires isolationAssertedBy to name who established that a"
+                         " held child cannot write the facts the decision reads; observing"
+                         " requires nothing, which is why it is the default")
     policy = document.get("journalPolicy")
     if policy is not None and policy not in JOURNAL_POLICIES:
         found.append("journalPolicy must be one of " + ", ".join(JOURNAL_POLICIES))
@@ -498,8 +506,15 @@ def verdict_complaints(verdict):
     if not isinstance(answer, dict):
         return ["the verdict carries no hook_output object"]
     if not answer:
-        return (["the verdict holds and carries nothing for the host to act on"]
-                if decision == BLOCK else [])
+        if decision == BLOCK:
+            return ["the verdict holds and carries nothing for the host to act on"]
+        if decision not in DECISIONS:
+            # An unknown decision is not a release. Reading it as one would record an
+            # incompatible runtime as having answered, which is the single reading that hides
+            # the incompatibility instead of reporting it.
+            return ["the verdict decides " + repr(decision) + ", which is neither answer this"
+                    " contract has"]
+        return []
     found = []
     if decision != BLOCK:
         found.append("the verdict decides " + repr(decision) + " while its hook_output holds")
@@ -557,9 +572,14 @@ def interpreter_for(python):
     if found:
         return _settled(found)
     settled = _settled(python)
-    if settled.is_file():
+    probe = presence(settled, "an interpreter")
+    if probe["value"] == reading.PRESENT and os.access(str(settled), os.X_OK):
         return settled
+    if probe["value"] == reading.PRESENT:
+        raise ValueError(str(settled) + " is not executable; every Stop would fail before the"
+                                        " adapter starts, evaluating and journalling nothing")
     raise ValueError("no interpreter was found at " + str(python)
+                     + " (" + probe["evidence"] + ")"
                      + "; the hook runs from each session's workspace, so this has to name one"
                        " that can be found from anywhere")
 
@@ -588,6 +608,42 @@ def names_this_adapter(command):
         if Path(word).name == ENTRY_POINT_NAME:
             return word
     return None
+
+
+def adapter_entries(document, event):
+    """Every registration in this hook file that runs this adapter, with its parsed target."""
+    found = []
+    for matcher_index, group in enumerate((document.get("hooks") or {}).get(event) or []):
+        for hook_index, entry in enumerate((group or {}).get("hooks") or []):
+            command = str((entry or {}).get("command") or "")
+            target = names_this_adapter(command)
+            if target is not None:
+                found.append({
+                    "identity": hooks.identity(hooks.SOURCE, event, matcher_index, hook_index),
+                    "command": command, "timeout": (entry or {}).get("timeout"),
+                    "target": target})
+    return found
+
+
+def duplicate_complaints(document, event, command, timeout):
+    """Whether appending would leave two of this adapter registered on one event.
+
+    Installation appends and never removes, because removing renumbers every later hook and
+    detaches the trusted hash Codex recorded against it. So a second registration that differs
+    only in its timeout is not a correction, it is a second copy: both run on every Stop, both
+    ask the guard, and the turn's one hold goes to whichever wins the reservation. Refused here
+    rather than appended, and the existing identity is named so the operator can edit it.
+    """
+    already = adapter_entries(document, event)
+    same = [entry for entry in already
+            if entry["command"] == command and entry["timeout"] == timeout]
+    if same or not already:
+        return []
+    return ["this adapter is already registered for " + event + " as "
+            + ", ".join(entry["identity"] for entry in already)
+            + " with different settings; appending would run two copies on every " + event
+            + ", and removal renumbers later identities so this command does not perform one."
+            " Edit or remove that registration first"]
 
 
 # ------------------------------------------------------------------ this hook's own record
@@ -700,11 +756,25 @@ def _release(config, record, outcome, detail, started):
 # relay command prints its resolved root, and stated here rather than guessed at a call site so
 # status() can show the operator the value this install actually wrote.
 MARKER_DIRECTORY_NAME = "codex-session-marker"
+# The relay's own override, spelled the same. Read at install time so the recorded root is the
+# one the coordinator is actually publishing under.
+MARKER_ENV = "CODEX_SESSION_RELAY_MARKER_ROOT"
 JOURNAL_DIRECTORY_NAME = "crw-completion-hook"
 
 
 def default_marker_root(environ=None):
+    """The root the relay would resolve, by the relay's own precedence minus the flag.
+
+    The environment override is read here because the relay reads it, and a default that skips
+    it is not a default but a disagreement: a coordinator that sets the variable publishes its
+    intents under one tree while this hook would look under another, and every managed turn
+    would read as unmanaged with nothing recorded. It is settled now, at install time, rather
+    than left to be re-resolved from whatever environment the host hands a hook.
+    """
     environ = os.environ if environ is None else environ
+    override = environ.get(MARKER_ENV)
+    if override:
+        return _settled(override)
     state = environ.get("XDG_STATE_HOME")
     base = Path(state).expanduser() if state else Path.home() / ".local" / "state"
     return _settled(base / MARKER_DIRECTORY_NAME)
@@ -735,7 +805,7 @@ def relay_through_pointer(destination):
 
 def configuration(*, destination=None, relay=None, marker_root=None, database=None,
                   mode=OBSERVE, timeout=DEFAULT_TIMEOUT_SECONDS, journal_root=None,
-                  codex_home=None, environ=None, issue=None):
+                  codex_home=None, environ=None, issue=None, isolation=None):
     """The settings document, built once so install and diagnosis cannot disagree about it."""
     environ = os.environ if environ is None else environ
     home = Path(codex_home or environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
@@ -759,6 +829,11 @@ def configuration(*, destination=None, relay=None, marker_root=None, database=No
                            else _settled(home / JOURNAL_DIRECTORY_NAME / "journal")),
         "journalPolicy": EVERY_INVOCATION,
         "installedBy": issue,
+        # Who asserted that a held child cannot forge the facts the decision reads. The contract
+        # makes that grant a prerequisite for holding and not for observing, so it is recorded
+        # where a later reader can see whose assertion it was, rather than being inferred from
+        # the mode having been set.
+        "isolationAssertedBy": isolation,
     }
 
 

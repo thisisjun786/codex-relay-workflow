@@ -1935,6 +1935,7 @@ def cmd_hook(args):
                 destination=args.dest, relay=args.relay_command, marker_root=args.marker_root,
                 database=args.db_path, mode=args.mode, timeout=args.guard_timeout,
                 journal_root=args.journal_root, codex_home=codex_home, issue=args.issue,
+                isolation=getattr(args, "isolation_asserted_by", None),
             )
         except ValueError as error:
             emit({"command": "hook", "adapter": adapter, "error": str(error)})
@@ -1951,6 +1952,14 @@ def cmd_hook(args):
         command = completion.command_for(interpreter,
                                          ROOT / "scripts" / completion.ENTRY_POINT_NAME)
         event = args.event or completion.EVENT
+        already = hooks.read(path)
+        if already.usable:
+            duplicate = completion.duplicate_complaints(already.value, event, command,
+                                                        args.timeout)
+            if duplicate:
+                emit({"command": "hook", "adapter": adapter, "settings": settings,
+                      "hookFile": str(path), "result": None, "error": "; ".join(duplicate)})
+                return EXIT_REFUSED
     else:
         command = args.hook_command
         event = args.event or SESSION_START
@@ -3551,6 +3560,10 @@ def build_parser():
                       help="observe classifies and records and never holds, which is the"
                            " default because holding depends on per-session write isolation"
                            " the caller has to have granted")
+    hook.add_argument("--isolation-asserted-by",
+                      help="who established that a held child cannot write the facts the"
+                           " decision reads; required by --mode hold and recorded in the"
+                           " settings, because the contract makes that grant a prerequisite")
     hook.add_argument("--guard-timeout", type=int, default=completion.DEFAULT_TIMEOUT_SECONDS,
                       help="the adapter's own budget for one guard call, kept under --timeout")
     hook.add_argument("--timeout", type=int, default=10)

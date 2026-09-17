@@ -1148,6 +1148,20 @@ The interpreter in the registered command is settled the same way, and a bare na
 at install time, on the machine doing the install. That is the only moment the lookup means
 anything, because the hook runs later from each session's own workspace.
 
+The marker root follows the relay's own resolution, including
+`CODEX_SESSION_RELAY_MARKER_ROOT`. A default that skipped it would not be a default but a
+disagreement: the coordinator would publish its intents under one tree while this hook looked
+under another, and every managed turn would read as unmanaged with nothing recorded.
+
+`--mode hold` additionally requires `--isolation-asserted-by`, recorded in the settings and
+shown by `hook-status`. The contract makes per-session write isolation a prerequisite for
+holding and not for observing, so the assertion is a named record rather than something
+inferred from the mode having been set.
+
+A second registration of this adapter that differs from the one already there is refused rather
+than appended. Installation appends and never removes, so appending would leave two copies
+running on every `Stop`; the existing identity is named so it can be edited.
+
 `hook-status` probes these paths through the four reading states rather than asking whether a
 file is there. A runtime behind a permission wall and one that was never installed answer
 differently, because they are repaired in different places, and a runtime that could not be
