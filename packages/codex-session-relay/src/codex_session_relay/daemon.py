@@ -185,7 +185,8 @@ class RelayDaemon:
                         error=error, now=now,
                     )
                 continue
-            self.delivery.clear_intent(event_id)
+            # enqueue() clears the intent inside the transaction that inserts the delivery, so
+            # there is nothing left to clear here.
             report.requeued += 1
 
     def _verify_acks(self, report, now) -> None:

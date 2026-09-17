@@ -873,3 +873,215 @@ class MirrorMatchesTheBridge(unittest.TestCase):
     def test_the_resume_config_agrees_on_every_key(self):
         relay_config = AUTHORIZED.resume_params("thread-1")["config"]
         self.assertEqual(relay_config, self._bridge_contract().config())
+
+
+class TransportIsolation(RelayTestCase):
+    """One recipient must not be able to hold the transport against another.
+
+    Criterion 8 asks for bounded connection wait, retry and error isolation. The scheduler
+    half shipped in #9; this is the transport half. Everything here drives the REAL
+    BridgeHostAdapter and its real worker thread, with the stall injected at the RPC boundary
+    through _build's app_server_factory seam - fakehost.py cannot reach _Transport at all,
+    because it is a separate implementation over its own in-memory state.
+    """
+
+    TIMEOUT = 0.25
+    SLACK = 0.75
+
+    def setUp(self):
+        super().setUp()
+        try:
+            import codex_thread_bridge.ledger  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+
+    def adapter(self, app_server, **options):
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        socket = Path(self.tmp) / "socket"
+        built = BridgeHostAdapter(
+            str(socket),
+            timeout=self.TIMEOUT,
+            caller_slack=self.SLACK,
+            app_server_factory=lambda canonical: app_server,
+            ledger_factory=lambda: (socket, Ledger(Path(self.tmp) / "operations.sqlite3")),
+            **options,
+        )
+        self.addCleanup(built.close)
+        return built
+
+    def barrier_server(self):
+        """An App Server that answers normally, except for threads told to hold."""
+        import asyncio
+        import threading
+
+        class Barrier:
+            def __init__(self):
+                self.socket_path = None
+                self.info = {}
+                self.entered = {}
+                self.release = {}
+                self.starts = []
+                self.lock = threading.Lock()
+                self.hold = set()
+
+            async def call(self, method, params):
+                thread_id = params.get("threadId")
+                if thread_id in self.hold:
+                    with self.lock:
+                        event = self.entered.setdefault(thread_id, threading.Event())
+                    event.set()
+                    gate = self.release.setdefault(thread_id, asyncio.Event())
+                    await gate.wait()
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response(thread={"id": thread_id})
+                if method == "turn/start":
+                    with self.lock:
+                        self.starts.append(params.get("threadId"))
+                    return {"turn": {"id": f"turn-{len(self.starts)}"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                return None
+
+        return Barrier()
+
+    def send_in_background(self, built, request_id, thread_id):
+        """Start a send on its own thread and hand back somewhere to read its outcome."""
+        import threading
+
+        outcome = {}
+
+        def run():
+            try:
+                outcome["receipt"] = built.send_message(
+                    request_id, thread_id, "hello", AUTHORIZED,
+                )
+            except BaseException as error:  # noqa: BLE001 - the test reads it
+                outcome["error"] = error
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread, outcome
+
+    def test_a_stalled_recipient_does_not_hold_another_recipients_send(self):
+        """The defect, and the assertion is causal rather than a stopwatch.
+
+        B is asserted to complete WHILE A is still held at its RPC. Before this change the
+        worker awaited one submission at a time, so B never even reached the RPC until A's
+        chain ended - A's caller had already given up by then and released nothing.
+        """
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = self.adapter(server)
+
+        thread, _outcome = self.send_in_background(built, "req-a", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", __import__("threading").Event()).wait(5),
+            "A never reached the RPC boundary",
+        )
+
+        receipt = built.send_message("req-b", "thread-b", "hello", AUTHORIZED)
+
+        self.assertEqual(receipt["status"], "accepted", receipt)
+        self.assertIn("thread-b", server.starts)
+        self.assertNotIn(
+            "thread-a", server.starts,
+            "B was only served after A finished, which is the thing being fixed",
+        )
+        thread.join(timeout=10)
+
+    def test_a_second_send_to_one_recipient_is_withheld_rather_than_started(self):
+        """Two turns for one thread is the failure a bare concurrency change would cause.
+
+        _guarded_send reads the thread, resumes it and starts a turn across separate awaits,
+        so without a per-recipient bound both sends pass the idle check and both start. The
+        second is withheld WITHOUT being sent, which is why it is reported as a busy recipient
+        rather than an unknown outcome: it stays retry-safe.
+        """
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = self.adapter(server)
+
+        thread, _outcome = self.send_in_background(built, "req-a1", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", __import__("threading").Event()).wait(5),
+        )
+
+        second = built.send_message("req-a2", "thread-a", "hello", AUTHORIZED)
+
+        self.assertEqual(second["status"], "failed", second)
+        self.assertEqual(second["rpcError"]["code"], "thread_busy")
+        self.assertEqual(server.starts, [], "a second turn was started for one thread")
+        thread.join(timeout=10)
+
+    def test_a_withheld_send_classifies_as_busy_and_retry_safe(self):
+        """Nothing was sent, so the delivery layer must be able to say that precisely."""
+        from codex_session_relay.transport import DEFERRED_BUSY, classify_operation_receipt
+
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = self.adapter(server)
+        thread, _outcome = self.send_in_background(built, "req-c1", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", __import__("threading").Event()).wait(5),
+        )
+
+        facts = classify_operation_receipt(
+            built.send_message("req-c2", "thread-a", "hello", AUTHORIZED)
+        )
+
+        self.assertEqual(facts.delivery_state, DEFERRED_BUSY)
+        self.assertEqual(facts.send_attempted, "no")
+        self.assertTrue(facts.retry_safe, "a send that never happened must stay retryable")
+        thread.join(timeout=10)
+
+    def test_the_worker_survives_an_abandoned_send_and_keeps_serving(self):
+        """A's work outlives its caller. The worker must not be one of the casualties."""
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = self.adapter(server)
+
+        thread, outcome = self.send_in_background(built, "req-d1", "thread-a")
+        thread.join(timeout=10)
+        self.assertFalse(thread.is_alive(), "A's caller never gave up")
+        self.assertIn("error", outcome, f"A was expected to be abandoned, got {outcome}")
+
+        receipt = built.send_message("req-d2", "thread-b", "hello", AUTHORIZED)
+
+        self.assertEqual(receipt["status"], "accepted", receipt)
+
+    def test_closing_while_a_send_is_stalled_still_ends_the_worker(self):
+        """Cancelled while the ledger is still open, so the send records its own outcome."""
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = BridgeHostAdapter(
+            str(__import__("pathlib").Path(self.tmp) / "socket"),
+            timeout=self.TIMEOUT,
+            caller_slack=self.SLACK,
+            drain_seconds=0.2,
+            app_server_factory=lambda canonical: server,
+            ledger_factory=lambda: (
+                __import__("pathlib").Path(self.tmp) / "socket",
+                __import__("codex_thread_bridge.ledger", fromlist=["Ledger"]).Ledger(
+                    __import__("pathlib").Path(self.tmp) / "operations.sqlite3"
+                ),
+            ),
+        )
+        thread, _outcome = self.send_in_background(built, "req-e1", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", __import__("threading").Event()).wait(5),
+        )
+
+        worker = built._transport.thread
+        built.close()
+
+        self.assertFalse(
+            worker.is_alive(),
+            "the worker thread outlived close() with work still in flight",
+        )
+        thread.join(timeout=10)
