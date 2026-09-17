@@ -875,6 +875,35 @@ class OneAdapterIsRegisteredOnce(unittest.TestCase):
         self.assertEqual(
             completion.duplicate_complaints(unconditional, completion.EVENT, command, 10), [])
 
+    def test_an_append_that_cannot_be_found_afterwards_is_refused(self):
+        """A writer that does not take this lock can replace the file after the append, and
+        then the command would claim an installation nobody can find."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                apply=True, isolation_asserted_by=None)
+            real = runtime_install.hooks.read
+            calls = []
+
+            def wiped(path):
+                calls.append(path)
+                if len(calls) > 1:  # the read-back, after somebody else replaced the file
+                    return reading.Reading(value={"hooks": {}}, state=reading.PRESENT,
+                                           source=path)
+                return real(path)
+
+            emitted = []
+            with mock.patch.object(runtime_install.hooks, "read", side_effect=wiped), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+        self.assertEqual(code, 1)
+        self.assertIn("registered 0 times", emitted[0]["error"])
+
     def test_a_registration_naming_relative_settings_is_reported_not_guessed_at(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

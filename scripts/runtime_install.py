@@ -1994,15 +1994,23 @@ def cmd_hook(args):
         after = hooks.read(path)
         if after.usable:
             landed = completion.adapter_entries(after.value, event)
-            if len(landed) > 1:
+            # Exactly one, and the append confirmed. Zero means the file was replaced after the
+            # append by a writer that does not take this lock; a false read-back means the
+            # append itself was not confirmed. Both leave this command claiming an installation
+            # nobody can find, which is the same shape as reporting settled settings that were
+            # never read back.
+            if len(landed) != 1 or result.get("readBack") is False:
                 emit({"command": "hook", "adapter": adapter, "settings": settings,
                       "hookFile": str(path), "result": result,
                       "registrations": [entry["identity"] for entry in landed],
-                      "error": "this adapter is now registered more than once for " + event
-                               + "; another run appended between this one's check and its"
-                                 " append. Reduce it to one registration by editing the hook"
-                                 " file, which this command does not do because removal"
-                                 " renumbers later identities."})
+                      "error": ("this adapter is registered " + str(len(landed)) + " times for "
+                                + event + " after the append"
+                                + ("" if result.get("readBack") is not False
+                                   else ", and the append was not read back")
+                                + "; the hook file changed under this run or the write could"
+                                  " not be confirmed. Reconcile it by editing the hook file,"
+                                  " which this command does not do because removal renumbers"
+                                  " later identities.")})
                 return EXIT_REFUSED
     emit({
         "command": "hook",
