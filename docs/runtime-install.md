@@ -630,6 +630,16 @@ its side effect, and this is that rule applied to the two halves of one promotio
 refuses to remove an environment the pointer names, so neither truth alone can authorise deleting
 a runtime the other one is still using.
 
+Every judgment the promotion makes is decided on state read INSIDE that lock, and that rule is
+declared rather than remembered. Three separate review findings turned out to be one defect
+arriving three times: the swap gate ran against the record loaded before the build, the rollback
+baseline was captured before the build, and the classification read a pointer at the destination
+rather than the one the record names and the swap replaces. Each is the same shape, a decision
+taken in the critical section on a value read outside it, and each was reported on its own
+because nothing was looking at the class. `PROMOTION_FRESH` names the set and a check fails any
+member read there without being read fresh there, so a fourth fails a test instead of arriving as
+another round.
+
 Holding one lock across both writes is what keeps two runs of this command from interleaving there
 and finishing with the record selecting one runtime while the pointer reaches another. It is a lock
 between runs of this command and nothing more: an editor or another tool that does not take it is
