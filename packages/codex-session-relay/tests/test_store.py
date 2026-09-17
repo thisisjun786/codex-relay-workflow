@@ -722,6 +722,58 @@ class Identity(unittest.TestCase):
             (answer["device"], answer["inode"]), (measured["device"], measured["inode"]),
         )
 
+    def test_a_name_that_goes_away_during_the_read_is_still_counted(self):
+        """Both of the read's own observations, not just the one it finished with.
+
+        `nonce_lookup` stats the path before it opens and after it closes. A second name
+        present at the open and unlinked before the close leaves both the caller's count and
+        the closing count at one, while the opening count saw two - and a peer that already
+        opened the removed alias can hold that connection and keep writing through its own
+        write-ahead log. Carrying only the closing count kept half of what the function
+        measured.
+
+        The unlink is injected at the seam rather than raced: both stats are real stats of the
+        real file, and the wrapper only decides WHEN the alias goes away, because the window
+        is inside one call.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        measured = probe(resolve_state_dir(self.a))["store"]
+        self.assertEqual(measured["links"], 1, "the caller has to see one name")
+
+        alias = os.path.join(self.tmp, "vanishing.sqlite3")
+        os.link(os.path.join(self.a, "relay.sqlite3"), alias)
+
+        from codex_session_relay import store as store_module
+
+        real = store_module._path_identity
+        seen = []
+
+        def observe(path):
+            answer = real(path)
+            seen.append(answer)
+            if len(seen) == 1:
+                os.unlink(alias)
+            return answer
+
+        store_module._path_identity = observe
+        try:
+            answer = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+        finally:
+            store_module._path_identity = real
+
+        graded = compare_store(measured, nonce=answer)
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "a name seen only at the open did not veto the nonce",
+        )
+        self.assertIn("names", graded["detail"], graded)
+
+        # The case is the one described: two real observations, two then one.
+        self.assertEqual([count["links"] for count in seen], [2, 1], seen)
+        self.assertTrue(answer["found"], answer)
+        self.assertEqual(answer["links"], 2, answer)
+
     def test_a_store_with_no_identity_is_never_proven_equal(self):
         """Absence must not become agreement; an old store predates the identity rows."""
         self.assertEqual(

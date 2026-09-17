@@ -1122,9 +1122,14 @@ def nonce_lookup(selection: StateSelection, nonce: str) -> dict:
         # Unreadable rather than absent, for the reason above: an answer that cannot be
         # attributed to a file is not an answer about any store.
         return {**unknown, "nonce": nonce, "found": False, "readable": False, "detail": moved}
+    # Both of this read's own observations, carried as the larger count. A second name present
+    # at the open and unlinked before the close leaves the closing count at one, and a peer
+    # that already opened the removed alias can hold that connection and keep writing through
+    # its own write-ahead log. Reporting only the closing count kept half of what was measured.
+    seen = {**closed, "links": max(opened["links"], closed["links"])}
     if row is None:
-        return {**closed, "nonce": nonce, "found": False, "readable": True, "detail": None}
-    return {**closed, "nonce": nonce, "found": True, "readable": True, "detail": None,
+        return {**seen, "nonce": nonce, "found": False, "readable": True, "detail": None}
+    return {**seen, "nonce": nonce, "found": True, "readable": True, "detail": None,
             "writtenBy": row["written_by"], "writtenAt": row["written_at"]}
 
 
