@@ -1,0 +1,672 @@
+"""Management intent: what a coordinator publishes before the task it is about exists.
+
+The relay's own tables cannot hold this. A relationship row needs a real child task id, and
+relationship_id() refuses an empty one, so a record about a task nobody has created yet has nowhere
+to live there. That is precisely the gap this module fills: the intent is declared first, the real
+native task id is bound to it afterwards, and the binding is a create-once publication, so it is
+atomic against a concurrent coordinator and idempotent against a replay.
+
+The assignment state is DERIVED from which facts exist, never stored. A stored state would need
+every writer to agree on transition rules, and every delayed writer would then be a regression risk.
+Presence is monotonic, so a late fact can never move the state backwards and no interleaving needs a
+special case.
+
+Rules and precedence are fixed by skills/crw-run/references/hook-contract.md.
+"""
+
+import hashlib
+from datetime import timedelta
+
+import os
+from pathlib import Path
+
+from .errors import RefusalReason, RegistrationError
+from .marker import (
+    assignment_dir,
+    assignment_id,
+    PUBLISHED,
+    fact_digest,
+    named,
+    publish,
+    read_assignment,
+    same_identity,
+)
+from .marker import list_assignments as _list_assignments
+
+BINDING_WINDOW_MINUTES = 30
+
+RELATIONSHIP_REGISTERED = "relationship_registered"
+IDENTITY_BOUND = "identity_bound"
+AMBIGUOUS_IDENTITY = "ambiguous_identity"
+INTENT_EXPIRED = "intent_expired"
+CREATION_UNKNOWN = "creation_unknown"
+CREATION_ACCEPTED = "creation_accepted"
+INTENT_DECLARED = "intent_declared"
+
+ATTEMPT_OUTCOMES = ("accepted", "unknown", "failed")
+
+# Exhaustive, not illustrative. An outcome outside this vocabulary is not a declaration at all:
+# reading anything that is not ready_for_review as a release would let a typo buy one, which is
+# the single way this design could fail open.
+DISPOSITION_OUTCOMES = (
+    "in_progress",
+    "blocked_needs_input",
+    "interrupted",
+    "failed",
+    "ready_for_review",
+)
+
+RELEASING_OUTCOMES = ("in_progress", "blocked_needs_input", "interrupted", "failed")
+
+BOUND = "bound"
+UNCHANGED = "unchanged"
+CONFLICT = "conflict"
+
+# Every identity slot a fact may carry. A present value here must be a string: an array, an object
+# or an explicit null is malformed, and it is reported rather than read through, because a set built
+# out of unhashable values ends the reader in a traceback and a traceback records nothing at all.
+IDENTITY_FIELDS = {
+    "intent": ("dispatchRequestIdHash",),
+    "bound": ("sessionId", "taskId"),
+    "relationship": ("relationshipId",),
+    "attempts": ("taskId", "outcome"),
+    "claims": ("sessionId", "dispatchRequestId"),
+    "conflicts": ("attemptedSessionId", "attemptedTaskId"),
+    "resolutions": ("chosenTaskId", "chosenSessionId"),
+}
+
+SINGLE = ("intent", "bound", "relationship")
+LISTED = ("attempts", "claims", "conflicts", "resolutions")
+
+
+def _moment(value):
+    from datetime import datetime, timezone
+
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    # A naive timestamp is read as UTC rather than compared against an aware one, because mixing
+    # the two raises rather than answering.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+# Public name for the one timestamp reader every module in this pair shares. Duplicating it would
+# be the easiest way for two readers to disagree about what an undated record means.
+moment = _moment
+
+
+# ---------------------------------------------------------------- shape
+
+
+def malformed(marker) -> str | None:
+    """The first published record that is not the shape a fact must be, or None.
+
+    Read straight through, one wrongly typed value ends the reader in a traceback, which records
+    nothing at all: a single bad byte would switch detection off for the whole workspace. So the
+    shape is checked before any derivation, and a record that cannot be read as a fact is reported
+    rather than guessed at.
+    """
+    for key in SINGLE:
+        if key in marker and not isinstance(marker[key], dict):
+            return key
+    for key in LISTED:
+        if key not in marker:
+            continue
+        items = marker[key]
+        if not isinstance(items, list):
+            return key
+        for item in items:
+            if not isinstance(item, dict):
+                return key
+    for key in SINGLE + LISTED:
+        if key not in marker:
+            continue
+        items = marker[key] if key in LISTED else [marker[key]]
+        for item in items:
+            for field in IDENTITY_FIELDS.get(key, ()):
+                if field in item and not isinstance(item[field], str):
+                    return key + "." + field
+            # The adjudication list is READ to decide coverage, so validating the resolution and
+            # not its nested list leaves the same silent failure one level down.
+            if key in ("resolutions",) and "adjudicated" in item:
+                entries = item["adjudicated"]
+                if not isinstance(entries, list):
+                    return key + ".adjudicated"
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        return key + ".adjudicated"
+    return None
+
+
+def malformed_counters(counters) -> str | None:
+    """Validate a hold budget only where one is actually weighed.
+
+    A count that is not a count says the store it was counted from is wrong. Reported rather than
+    read as zero, which would quietly hand back a full hold budget. Only an ABSENT optional counter
+    defaults to zero; a present null or a negative one is corruption.
+    """
+    if counters is None:
+        return None
+    if not isinstance(counters, dict):
+        return "counters"
+    for key, value in counters.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return "counters." + key
+    return None
+
+
+# ---------------------------------------------------------------- coverage
+
+
+def _resolutions(marker):
+    """Every adjudication on record. They accumulate; none replaces another."""
+    return list(marker.get("resolutions") or [])
+
+
+def covered(fact, resolutions) -> bool:
+    """Is this exact fact adjudicated by one of these resolutions?
+
+    Coverage is by identity AND digest together: the id selects the fact, the digest confirms the
+    content equals what was recorded. Timestamps are never read, because publication order is not
+    timestamp order and a backdated fact would otherwise be covered with nobody having reviewed it.
+    A fact carrying no factId can never be covered, deliberately: unidentified evidence must not be
+    able to disappear.
+    """
+    fact_id = fact.get("factId")
+    if not named(fact_id):
+        return False
+    digest = fact_digest(fact)
+    for resolution in resolutions:
+        for entry in resolution.get("adjudicated") or []:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("factId") == fact_id and entry.get("digest") == digest:
+                return True
+    return False
+
+
+def claimant(claim):
+    """The session a claim belongs to, taken from the path that authorised the write.
+
+    A child may write inside claims/<own session>/, so the directory carries an identity the
+    filesystem enforced, while the body carries one anybody holding that directory can type.
+    Selecting on the body would let a later assignment's child name an earlier session and capture
+    that session's Stop.
+
+    The body is required too, not merely required to agree: the path proves who COULD have written
+    the record, and only the body says the writer meant to claim this assignment. A claim naming
+    nobody owns nothing, and it still competes, so refusing to read an identity out of it never
+    deletes it as evidence.
+    """
+    parts = str(claim.get("factId") or "").split("/")
+    if len(parts) != 3 or parts[0] != "claims" or parts[2] != "claim.json":
+        return None
+    owner = parts[1]
+    if owner in (".", "..") or not named(owner):
+        return None
+    body = claim.get("sessionId")
+    if not named(body) or body != owner:
+        return None
+    return owner
+
+
+def _accepted_tasks(marker):
+    return {
+        attempt.get("taskId")
+        for attempt in marker.get("attempts") or []
+        if attempt.get("outcome") == "accepted" and named(attempt.get("taskId"))
+    }
+
+
+def _competing_facts(marker):
+    bound = marker.get("bound") or {}
+    facts = [
+        attempt
+        for attempt in marker.get("attempts") or []
+        if attempt.get("outcome") == "accepted"
+        and named(attempt.get("taskId"))
+        and not same_identity(attempt.get("taskId"), bound.get("taskId"))
+    ]
+    # A claim competes unless it VERIFIABLY belongs to the bound session, and the owner comes from
+    # the path rather than the body. same_identity rather than != is what keeps a claim naming
+    # nobody, against a bind naming nobody, inside this list: compared with !=, two absences match
+    # and the claim drops out, leaving the contest invisible and clearing the way for a verdict over
+    # evidence nobody adjudicated.
+    facts += [
+        claim
+        for claim in marker.get("claims") or []
+        if not same_identity(claimant(claim), bound.get("sessionId"))
+    ]
+    return facts + list(marker.get("conflicts") or [])
+
+
+def _ambiguity_resolved(marker) -> bool:
+    """Pre-bind, an adjudication clears ambiguity only by agreeing and by covering everything.
+
+    Two resolutions can each cover every ambiguous fact while naming different identities. That is a
+    coordinator contradiction rather than a decision, so ambiguity survives it. Identity means the
+    whole task and session pair; agreeing on the task alone is not agreement.
+    """
+    resolutions = [
+        resolution
+        for resolution in _resolutions(marker)
+        if named(resolution.get("chosenTaskId")) and named(resolution.get("chosenSessionId"))
+    ]
+    if not resolutions:
+        return False
+    pairs = {(r.get("chosenTaskId"), r.get("chosenSessionId")) for r in resolutions}
+    if len(pairs) != 1:
+        return False
+    chosen_task, chosen_session = next(iter(pairs))
+    # A taskId on a failed or unknown attempt does not establish an accepted creation. Counting it
+    # would let a resolution select an unconfirmed task and wrongly clear the ambiguity.
+    sessions = {claimant(claim) for claim in marker.get("claims") or []}
+    sessions.discard(None)
+    if chosen_task not in _accepted_tasks(marker) or chosen_session not in sessions:
+        return False
+    facts = [
+        attempt
+        for attempt in marker.get("attempts") or []
+        if attempt.get("outcome") == "accepted" and named(attempt.get("taskId"))
+    ]
+    facts += list(marker.get("claims") or [])
+    return all(covered(fact, resolutions) for fact in facts)
+
+
+def identity_contested(marker) -> bool:
+    """A competing fact after a bind that no applicable resolution has adjudicated.
+
+    Only a resolution naming the BOUND identity applies after a bind: one choosing a competitor must
+    not authorise a verdict merely because it covers that competitor's evidence. Compared through
+    same_identity, so a resolution naming nobody cannot become applicable to a bind naming nobody.
+    """
+    bound = marker.get("bound") or {}
+    if not bound:
+        return False
+    applicable = [
+        resolution
+        for resolution in _resolutions(marker)
+        if same_identity(resolution.get("chosenSessionId"), bound.get("sessionId"))
+        and same_identity(resolution.get("chosenTaskId"), bound.get("taskId"))
+    ]
+    return any(not covered(fact, applicable) for fact in _competing_facts(marker))
+
+
+# ---------------------------------------------------------------- state
+
+
+def derive_assignment_state(marker, now=None) -> str:
+    """The contract's precedence table, in its order.
+
+    Expiry sits between ambiguity and the creation outcomes deliberately. An unresolved identity
+    needs a decision from the coordinator whether or not the window has closed, while an intent that
+    never got an acceptance must still be able to expire, which an acceptance-derived anchor could
+    never reach.
+    """
+    intent = marker.get("intent") or {}
+    attempts = marker.get("attempts") or []
+    claims = marker.get("claims") or []
+    if marker.get("bound"):
+        return RELATIONSHIP_REGISTERED if marker.get("relationship") else IDENTITY_BOUND
+    resolved = _ambiguity_resolved(marker)
+    accepted = [a for a in attempts if a.get("outcome") == "accepted"]
+    if not resolved and (len(_accepted_tasks(marker)) > 1 or len(claims) > 1):
+        return AMBIGUOUS_IDENTITY
+    # Anchored on declaredAt and on nothing else. Any acceptance-derived anchor can be moved later
+    # by a fact that arrives later, which would let an already expired intent revive; an anchor that
+    # never moves is the only way to keep expiry monotonic without storing a state nobody may
+    # rewrite.
+    anchor, seen = _moment(intent.get("declaredAt")), _moment(now)
+    if anchor and seen and seen > anchor + timedelta(minutes=BINDING_WINDOW_MINUTES):
+        return INTENT_EXPIRED
+    if not resolved and not accepted and any(a.get("outcome") == "unknown" for a in attempts):
+        return CREATION_UNKNOWN
+    return CREATION_ACCEPTED if accepted else INTENT_DECLARED
+
+
+def correlated(marker, session_id) -> bool:
+    """Whether this session presented the dispatch request id the intent was declared with.
+
+    Replayable evidence, not authentication: the intent stores only the hash, but the child's own
+    claim necessarily stores the preimage, so on a single-uid host another session can copy it.
+    Doing so confers nothing, because binding is the coordinator's; it produces at most a second
+    claim, which is exactly the contested condition the coordinator must resolve.
+    """
+    claim = next(
+        (c for c in (marker.get("claims") or []) if same_identity(claimant(c), session_id)), None
+    )
+    if not claim:
+        return False
+    presented = claim.get("dispatchRequestId")
+    if not named(presented):
+        return False
+    digest = hashlib.sha256(presented.encode("utf-8")).hexdigest()
+    return same_identity(digest, (marker.get("intent") or {}).get("dispatchRequestIdHash"))
+
+
+# ---------------------------------------------------------------- selection
+
+
+def select_assignment(root, workspace, session_id):
+    """Which assignment under this workspace this session's turn is about.
+
+    A claim is consulted BEFORE recency, and that order is the protection: a child stays with the
+    assignment it claimed, so declaring a later assignment for the same path can neither release a
+    still-running earlier child nor make it read as somebody else's.
+
+    An assignment with no published intent is not selectable. It is a directory someone is still
+    building, and skipping it leaves the reader on a valid earlier state rather than on nothing,
+    which is the property every other create-once fact already has.
+    """
+    candidates = []
+    unreadable = []
+    for directory in _list_assignments(root, workspace):
+        marker, problems = read_assignment(directory)
+        unreadable.extend(problems)
+        if not isinstance(marker.get("intent"), dict):
+            # No published intent, or one that is not a record. Not selectable either way; a
+            # malformed intent still reaches the shape check through the unreadable/malformed path
+            # once an assignment IS selected.
+            if "intent" in marker:
+                candidates.append((directory, marker, True))
+            continue
+        candidates.append((directory, marker, False))
+
+    claimed = [
+        (directory, marker)
+        for directory, marker, skipped in candidates
+        if not skipped
+        and any(
+            same_identity(claimant(claim), session_id) for claim in marker.get("claims") or []
+        )
+    ]
+    pool = claimed or [
+        (directory, marker) for directory, marker, skipped in candidates if not skipped
+    ]
+    if not pool:
+        return None, None, unreadable
+    # Newest declaration wins, ties broken on the assignment id so that every reader of the same
+    # listing selects the same one.
+    directory, marker = max(
+        pool,
+        key=lambda item: (
+            str((item[1].get("intent") or {}).get("declaredAt") or ""),
+            item[0].name,
+        ),
+    )
+    return directory, marker, unreadable
+
+
+# ---------------------------------------------------------------- writing
+
+
+def _next_index(directory, kind) -> int:
+    sub = Path(directory) / kind
+    if not sub.is_dir():
+        return 0
+    used = [
+        int(path.stem)
+        for path in sub.glob("*.json")
+        if not path.name.startswith(".") and path.stem.isdigit()
+    ]
+    return max(used) + 1 if used else 0
+
+
+def _publish_numbered(directory, kind, payload) -> str:
+    """Publish the next numbered fact, re-listing on every loss.
+
+    A sequence number is allocated from a listing, and a listing is stale the moment another writer
+    publishes. Losing the link is therefore ordinary and is answered by looking again, never by
+    assuming the first guess was current.
+    """
+    for _ in range(64):
+        index = _next_index(directory, kind)
+        target = Path(directory) / kind / (str(index) + ".json")
+        if publish(target, payload) == PUBLISHED:
+            return kind + "/" + str(index)
+    raise RegistrationError(
+        RefusalReason.RELATIONSHIP_CONFLICT,
+        "could not allocate a free " + kind + " slot after 64 attempts",
+    )
+
+
+def declare_intent(
+    root,
+    *,
+    workspace,
+    dispatch_request_id: str,
+    issue_key: str,
+    declared_at: str,
+    criteria_source=None,
+    baseline_revision=None,
+    authorized_settings=None,
+    db_path=None,
+) -> dict:
+    """Publish the intent. This is the fact that exists BEFORE the task does.
+
+    The dispatch request id is stored only as its sha256. Storing it in the clear would make
+    correlation meaningless, because any session able to read the directory could then present it.
+    The child holds the preimage from its own dispatch and writes it into its claim.
+    """
+    if not named(dispatch_request_id):
+        raise RegistrationError(
+            RefusalReason.UNBOUND_GENERATION, "an intent needs an exact dispatch request id"
+        )
+    assignment = assignment_id(dispatch_request_id)
+    directory = assignment_dir(root, workspace, assignment)
+    payload = {
+        "dispatchRequestIdHash": assignment,
+        "issueKey": issue_key,
+        "workspace": str(Path(workspace).expanduser().resolve()),
+        "criteriaSource": criteria_source,
+        "baselineRevision": baseline_revision,
+        "authorizedSettings": authorized_settings,
+        "declaredAt": declared_at,
+    }
+    if db_path:
+        # Where the relay store this assignment was registered against actually lives. The Stop
+        # payload carries only cwd, and resolving the store from the environment instead is the one
+        # slip that silently creates an EMPTY store, whose answer is "no receipt" and whose
+        # consequence is a wrongly held child. The contract leaves the database location to the
+        # operations contract; the coordinator is the party that knows it, so it records it here.
+        payload["dbPath"] = str(db_path)
+    outcome = publish(directory / "intent.json", payload)
+    return {
+        "assignmentId": assignment,
+        "assignmentDir": str(directory),
+        "outcome": outcome,
+        "declaredAt": declared_at,
+    }
+
+
+def record_attempt(root, *, workspace, assignment, outcome: str, at: str, task_id=None) -> dict:
+    """Record what the creation call returned: accepted, unknown, or failed.
+
+    unknown is the one that matters most. A creation whose response was lost is not a failure and
+    not a success, and collapsing it into either is how a real task becomes invisible or a
+    non-existent one becomes authoritative.
+    """
+    if outcome not in ATTEMPT_OUTCOMES:
+        raise RegistrationError(
+            RefusalReason.UNKNOWN_GENERATION,
+            "an attempt outcome is one of " + ", ".join(ATTEMPT_OUTCOMES) + ", not " + repr(outcome),
+        )
+    directory = assignment_dir(root, workspace, assignment)
+    payload = {"outcome": outcome, "at": at}
+    if task_id is not None:
+        payload["taskId"] = task_id
+    fact_id = _publish_numbered(directory, "attempts", payload)
+    return {"assignmentId": assignment, "factId": fact_id, "outcome": outcome}
+
+
+def bind(root, *, workspace, assignment, session_id: str, task_id: str, at: str) -> dict:
+    """Bind the intent to the real native task id. Atomic, and idempotent on replay.
+
+    Atomic because the publication is a link(): two coordinator processes racing produce exactly one
+    winner and one EEXIST. Idempotent because the loser reads the winner and compares: the same
+    identity is unchanged, and only a DIFFERENT identity is a conflict.
+
+    A conflict is RECORDED rather than swallowed. Writing nothing would leave the contest invisible
+    to every later reader, and the assignment has to stay contested until a resolution naming the
+    bound identity covers that exact record.
+
+    Binding is coordinator-only. A child claims and never binds, because only the party holding the
+    creation receipt can tell "the task I created" from "a session that read an id".
+    """
+    if not (named(session_id) and named(task_id)):
+        raise RegistrationError(
+            RefusalReason.UNBOUND_GENERATION,
+            "a bind needs an exact session id and task id; a record naming nothing binds nothing",
+        )
+    directory = assignment_dir(root, workspace, assignment)
+    payload = {"sessionId": session_id, "taskId": task_id, "at": at}
+    if publish(directory / "bound.json", payload) == PUBLISHED:
+        return {"assignmentId": assignment, "outcome": BOUND, "sessionId": session_id,
+                "taskId": task_id}
+
+    marker, unreadable = read_assignment(directory)
+    winner = marker.get("bound")
+    if not isinstance(winner, dict):
+        raise RegistrationError(
+            RefusalReason.UNBOUND_GENERATION,
+            "a bind already exists here and cannot be read: " + ", ".join(unreadable or ["bound"]),
+        )
+    if same_identity(winner.get("sessionId"), session_id) and same_identity(
+        winner.get("taskId"), task_id
+    ):
+        return {"assignmentId": assignment, "outcome": UNCHANGED, "sessionId": session_id,
+                "taskId": task_id}
+    conflict = _publish_numbered(
+        directory,
+        "conflicts",
+        {
+            "attemptedSessionId": session_id,
+            "attemptedTaskId": task_id,
+            "loserProcess": str(os.getpid()),
+            "at": at,
+        },
+    )
+    return {
+        "assignmentId": assignment,
+        "outcome": CONFLICT,
+        "factId": conflict,
+        "boundSessionId": winner.get("sessionId"),
+        "boundTaskId": winner.get("taskId"),
+    }
+
+
+def register_relationship(
+    root, *, workspace, assignment, relationship_id: str, dispatch_request_id: str, at: str
+) -> dict:
+    """Publish which relay relationship this assignment was registered as.
+
+    The dispatch request id is restated and checked against the assignment directory it would be
+    written into. One assignment is one dispatch request, and the relay's generations table keys the
+    same dispatch id to the same generation, so a relationship whose dispatch id does not hash to
+    this directory belongs to a different assignment. Refusing here is what makes a receipt earned
+    under another assignment's relationship unattributable rather than merely unlikely.
+    """
+    if not named(relationship_id):
+        raise RegistrationError(
+            RefusalReason.UNREGISTERED_RELATIONSHIP, "a registration needs an exact relationship id"
+        )
+    if assignment_id(dispatch_request_id) != assignment:
+        raise RegistrationError(
+            RefusalReason.RELATIONSHIP_CONFLICT,
+            "relationship " + relationship_id + " was dispatched under a different request id, so "
+            "it does not belong to assignment " + str(assignment),
+        )
+    directory = assignment_dir(root, workspace, assignment)
+    outcome = publish(
+        directory / "relationship.json", {"relationshipId": relationship_id, "at": at}
+    )
+    return {"assignmentId": assignment, "relationshipId": relationship_id, "outcome": outcome}
+
+
+def publish_resolution(
+    root, *, workspace, assignment, chosen_task_id, chosen_session_id, reason, at, adjudicated
+) -> dict:
+    """Adjudicate named evidence. A resolution naming nothing adjudicates nothing.
+
+    Resolutions accumulate: a later adjudication is another file, never a rewrite of an earlier one,
+    so each keeps the scope it was published with and coverage does not depend on their order.
+    """
+    directory = assignment_dir(root, workspace, assignment)
+    entries = [
+        {"factId": entry["factId"], "digest": entry["digest"]} for entry in (adjudicated or [])
+    ]
+    fact_id = _publish_numbered(
+        directory,
+        "resolutions",
+        {
+            "chosenTaskId": chosen_task_id,
+            "chosenSessionId": chosen_session_id,
+            "reason": reason,
+            "at": at,
+            "adjudicated": entries,
+        },
+    )
+    return {"assignmentId": assignment, "factId": fact_id, "adjudicated": len(entries)}
+
+
+def publish_claim(
+    root, *, workspace, assignment, session_id: str, dispatch_request_id: str, first_turn_id, at
+) -> dict:
+    """The child's own assertion that it is this assignment's session.
+
+    Written into a directory the child owns, and the body must name that same session: a fact that
+    contradicts its own location is not one to act on. Refused here rather than silently published,
+    because a claim whose body disagrees with its path owns nothing and would only ever read as a
+    competitor.
+    """
+    if not named(session_id):
+        raise RegistrationError(
+            RefusalReason.UNBOUND_GENERATION, "a claim needs an exact session id"
+        )
+    directory = assignment_dir(root, workspace, assignment)
+    outcome = publish(
+        directory / "claims" / session_id / "claim.json",
+        {
+            "dispatchRequestId": dispatch_request_id,
+            "sessionId": session_id,
+            "firstTurnId": first_turn_id,
+            "at": at,
+        },
+    )
+    return {"assignmentId": assignment, "sessionId": session_id, "outcome": outcome}
+
+
+def publish_disposition(
+    root, *, workspace, assignment, session_id: str, turn_id: str, outcome: str, at: str
+) -> dict:
+    """What this turn declared, recorded by the session itself at the path its Stop identity derives.
+
+    The outcome vocabulary is exhaustive rather than illustrative, and it is checked here so that a
+    typo cannot buy a release later: anything outside it is not a declaration at all.
+    """
+    if not (named(session_id) and named(turn_id)):
+        raise RegistrationError(
+            RefusalReason.UNBOUND_GENERATION,
+            "a disposition needs an exact session id and turn id",
+        )
+    if outcome not in DISPOSITION_OUTCOMES:
+        raise RegistrationError(
+            RefusalReason.OUTCOME_INCONSISTENT,
+            "a disposition outcome is one of " + ", ".join(DISPOSITION_OUTCOMES) + ", not "
+            + repr(outcome),
+        )
+    directory = assignment_dir(root, workspace, assignment)
+    published = publish(
+        directory / "dispositions" / session_id / (turn_id + ".json"),
+        {"sessionId": session_id, "turnId": turn_id, "outcome": outcome, "at": at},
+    )
+    return {
+        "assignmentId": assignment,
+        "sessionId": session_id,
+        "turnId": turn_id,
+        "outcome": outcome,
+        "published": published,
+    }

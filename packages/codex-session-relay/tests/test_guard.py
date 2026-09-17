@@ -1,0 +1,425 @@
+"""The Stop decision, judged against receipts that actually exist in the relay store.
+
+This is where the marker stops being a filesystem exercise. Every readiness case below emits a real
+receipt through the real intake, so the guard is reading events the relay wrote rather than a
+dictionary a fixture handed it.
+
+Three separations carry their own tests because collapsing any of them is how this feature would
+fail: a missing receipt is not an unreadable store, an unreadable store is not a success, and none
+of the three is ever answered by writing the evidence that was missing.
+"""
+
+import os
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
+
+from codex_session_relay import guard, intent, marker
+
+from .support import CHILD, DISPATCH_TURN, RelayTestCase
+
+NOW = "2026-01-01T00:05:00+00:00"
+LATER = "2026-01-01T00:06:00+00:00"
+DISPATCH = "dispatch-1"
+
+
+class GuardTestCase(RelayTestCase):
+    """A registered relationship, a marker declared for the same dispatch request, and a Stop."""
+
+    def setUp(self):
+        super().setUp()
+        self.markers = Path(tempfile.mkdtemp(prefix="relay-guard-"))
+        self.addCleanup(shutil.rmtree, self.markers, ignore_errors=True)
+        self.assignment = marker.assignment_id(DISPATCH)
+        self.workspace = Path(self.root)
+
+    # ----------------------------------------------------------- marker fixtures
+
+    def declare(self, **kw):
+        return intent.declare_intent(
+            self.markers,
+            workspace=self.workspace,
+            dispatch_request_id=DISPATCH,
+            issue_key="REL-1",
+            declared_at="2026-01-01T00:00:00+00:00",
+            db_path=kw.pop("db_path", str(self.store.path)),
+            **kw,
+        )
+
+    def claim(self, session=CHILD):
+        return intent.publish_claim(
+            self.markers, workspace=self.workspace, assignment=self.assignment,
+            session_id=session, dispatch_request_id=DISPATCH, first_turn_id=DISPATCH_TURN, at=NOW,
+        )
+
+    def bind(self, session=CHILD):
+        return intent.bind(
+            self.markers, workspace=self.workspace, assignment=self.assignment,
+            session_id=session, task_id=CHILD, at=NOW,
+        )
+
+    def register_marker(self, relationship):
+        return intent.register_relationship(
+            self.markers, workspace=self.workspace, assignment=self.assignment,
+            relationship_id=relationship["relationshipId"], dispatch_request_id=DISPATCH, at=NOW,
+        )
+
+    def dispose(self, outcome, *, session=CHILD, turn=DISPATCH_TURN):
+        return intent.publish_disposition(
+            self.markers, workspace=self.workspace, assignment=self.assignment,
+            session_id=session, turn_id=turn, outcome=outcome, at=NOW,
+        )
+
+    def managed(self):
+        """The ordinary case: declared, claimed, bound and registered."""
+        relationship = self.register()
+        self.declare()
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        return relationship
+
+    def emit_ready(self, relationship, *, status="completed", turn=DISPATCH_TURN):
+        path = self.artifact("out.txt", "work")
+        payload = self.ready_payload(
+            relationship, [path], turn=self.assigned_turn(status, turn=turn)
+        )
+        return self.accept(payload)
+
+    def stop(self, **kw):
+        payload = {
+            "cwd": str(self.workspace),
+            "session_id": kw.pop("session_id", CHILD),
+            "turn_id": kw.pop("turn_id", DISPATCH_TURN),
+            "stop_hook_active": kw.pop("stop_hook_active", False),
+        }
+        payload.update(kw)
+        return payload
+
+    def evaluate(self, *, mode=guard.HOLD, now=LATER, record=True, **kw):
+        return guard.evaluate(
+            self.markers, self.stop(**kw), now=now, mode=mode, record=record
+        )
+
+
+class UnmanagedAndUnclaimed(GuardTestCase):
+    def test_an_ordinary_session_with_no_marker_is_never_touched(self):
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "unmanaged")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(verdict["hook_output"], {})
+        self.assertIsNone(verdict["assignmentId"])
+
+    def test_t22_a_bind_without_the_child_s_own_claim_releases(self):
+        relationship = self.register()
+        self.declare()
+        self.bind()
+        self.register_marker(relationship)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "marker_unclaimed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_t1_a_correlated_session_before_the_bind_releases_and_keeps_the_record(self):
+        self.declare()
+        self.claim()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "correlated_unbound")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        # The pre-bind window is not blind: what the turn WOULD have read is kept for the fold.
+        self.assertEqual(verdict["record"]["pendingObservation"], "undeclared_turn_end")
+
+    def test_t6_an_uncorrelated_occupant_is_released_before_and_after_the_bind(self):
+        self.declare()
+        before = self.evaluate(session_id="stranger")
+        self.assertEqual(before["observation"], "dispatch_uncorrelated")
+        self.claim()
+        self.bind()
+        after = self.evaluate(session_id="stranger")
+        self.assertEqual(after["observation"], "marker_claimed_by_other_session")
+        self.assertEqual(after["decision"], guard.RELEASE)
+
+    def test_t12_a_bind_naming_no_session_releases_rather_than_holding(self):
+        self.declare()
+        self.claim()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(directory / "bound.json", {"sessionId": "", "taskId": CHILD, "at": NOW})
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "bound_identity_unnamed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+
+class Declarations(GuardTestCase):
+    def test_a_receipted_readiness_releases(self):
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_receipt_staged_inside_the_child_s_own_turn_counts(self):
+        """A child emits mid-turn, so the host reports inProgress and the event is stored staged.
+
+        Requiring 'final' would read every honest readiness as a missing receipt and hold it, and
+        finalization only happens after the daemon observes the turn end, which is after this hook.
+        """
+        relationship = self.managed()
+        accepted = self.emit_ready(relationship, status="inProgress")
+        self.assertEqual(accepted.get("_stage", "staged"), "staged")
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+
+    def test_readiness_without_a_receipt_is_an_omission_and_is_held(self):
+        self.managed()
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertEqual(verdict["hook_output"]["decision"], "block")
+        self.assertTrue(verdict["hook_output"]["reason"])
+
+    def test_a_receipt_from_another_turn_does_not_answer_for_this_one(self):
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review", turn="turn-other")
+        verdict = self.evaluate(turn_id="turn-other")
+        self.assertEqual(verdict["observation"], "receipt_missing")
+
+    def test_t15_a_receipt_earned_under_another_assignment_is_unmatched(self):
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        # Same session, same turn, current head, and a relationship this assignment never published.
+        published = directory / "relationship.json"
+        published.unlink()
+        marker.publish(published, {"relationshipId": "rel-ffffffffffffffff", "at": NOW})
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+
+    def test_an_undeclared_turn_is_the_detection_this_contract_exists_for(self):
+        self.managed()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_an_outcome_outside_the_vocabulary_cannot_buy_a_release(self):
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(
+            directory / "dispositions" / CHILD / (DISPATCH_TURN + ".json"),
+            {"sessionId": CHILD, "turnId": DISPATCH_TURN, "outcome": "redy_for_review", "at": NOW},
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+
+    def test_user_interruption_always_wins_over_a_missing_registration(self):
+        """Holding a turn waiting for a person is the one trade this policy refuses to make."""
+        self.register()
+        self.declare()
+        self.claim()
+        self.bind()
+        for outcome in ("blocked_needs_input", "interrupted", "in_progress", "failed"):
+            self.dispose(outcome, turn="turn-" + outcome)
+            verdict = self.evaluate(turn_id="turn-" + outcome)
+            self.assertEqual(verdict["observation"], "declared_" + outcome)
+            self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_an_unregistered_relationship_is_managed_and_held_not_ignored(self):
+        self.register()
+        self.declare()
+        self.claim()
+        self.bind()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "managed_unregistered")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+
+class Bounds(GuardTestCase):
+    def test_a_turn_takes_exactly_one_hold(self):
+        self.managed()
+        first = self.evaluate()
+        self.assertEqual(first["decision"], guard.BLOCK)
+        second = self.evaluate()
+        self.assertEqual(second["decision"], guard.RELEASE)
+        self.assertEqual(second["state"], "hold_in_flight")
+        self.assertEqual(second["observation"], "undeclared_turn_end")
+
+    def test_an_in_flight_continuation_releases_on_the_delivered_flag_too(self):
+        self.managed()
+        verdict = self.evaluate(stop_hook_active=True)
+        self.assertEqual(verdict["state"], "hold_in_flight")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_the_generation_bound_records_an_unresolved_handoff(self):
+        self.managed()
+        for index in range(guard.MAX_HOLDS_PER_GENERATION):
+            held = self.evaluate(turn_id="turn-" + str(index))
+            self.assertEqual(held["decision"], guard.BLOCK)
+        verdict = self.evaluate(turn_id="turn-final")
+        self.assertEqual(verdict["state"], "unresolved_handoff")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_exhaustion_is_evaluated_before_the_per_turn_guard(self):
+        """A terminal statement about the assignment must not be hidden behind 'not right now'."""
+        self.managed()
+        for index in range(guard.MAX_HOLDS_PER_GENERATION):
+            self.evaluate(turn_id="turn-" + str(index))
+        repeat = self.evaluate(turn_id="turn-0")
+        self.assertEqual(repeat["state"], "unresolved_handoff")
+
+    def test_a_corrupt_hold_budget_is_reported_and_never_read_as_a_fresh_one(self):
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(
+            directory / "hook" / CHILD / DISPATCH_TURN / "0.json", {"held": "yes", "at": NOW}
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_t27_a_releasing_disposition_survives_a_corrupt_budget(self):
+        """Counters are weighed only when an omission would be held."""
+        self.managed()
+        self.dispose("interrupted")
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        marker.publish(
+            directory / "hook" / CHILD / DISPATCH_TURN / "0.json", {"held": "yes", "at": NOW}
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_interrupted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+
+class ObserveOnly(GuardTestCase):
+    def test_observe_only_classifies_and_records_and_never_holds(self):
+        """Holding depends on isolation the sandbox grants, not on the decision logic."""
+        self.managed()
+        verdict = self.evaluate(mode=guard.OBSERVE)
+        self.assertEqual(verdict["observation"], "undeclared_turn_end")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertFalse(verdict["record"]["held"])
+        self.assertEqual(verdict["record"]["mode"], guard.OBSERVE)
+        self.assertEqual(verdict["hook_output"], {})
+
+    def test_observe_is_the_default(self):
+        self.managed()
+        verdict = guard.evaluate(self.markers, self.stop(), now=LATER)
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertEqual(verdict["record"]["mode"], guard.OBSERVE)
+
+
+class FailureSeparation(GuardTestCase):
+    def test_a_database_error_is_not_a_missing_receipt(self):
+        """The difference between these two answers is a hold."""
+        relationship = self.register()
+        self.declare(db_path=str(self.workspace / "no-such-store.sqlite3"))
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertIn("receipts", verdict["reason"])
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_an_unlocatable_store_is_unreadable_rather_than_empty(self):
+        relationship = self.register()
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=DISPATCH,
+            issue_key="REL-1", declared_at="2026-01-01T00:00:00+00:00",
+        )
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        self.dispose("ready_for_review")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+
+    def test_an_unreadable_marker_outranks_an_absent_one(self):
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "bound.json").unlink()
+        (directory / "bound.json").write_text("{not json", encoding="utf-8")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_malformed_fact_is_reported_rather_than_read_through(self):
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "bound.json").unlink()
+        (directory / "bound.json").write_text('"bare"', encoding="utf-8")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "marker_malformed")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_the_guard_never_manufactures_the_evidence_it_found_missing(self):
+        """The whole point of the detection is that it reports, and writing a receipt would be the
+        one repair that makes the report meaningless."""
+        self.managed()
+        self.dispose("ready_for_review")
+        before = self.counts()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(self.counts(), before)
+
+    def test_the_guard_writes_nothing_to_the_store_on_any_path(self):
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        before = self.counts()
+        self.evaluate()
+        self.evaluate(session_id="stranger")
+        self.evaluate(turn_id="turn-other")
+        self.assertEqual(self.counts(), before)
+
+    def test_evaluating_never_creates_a_store_at_a_misresolved_path(self):
+        """Store.__init__ writes on open, so a guard built on it would mint an empty database whose
+        answer is 'no receipt', which is a hold."""
+        relationship = self.register()
+        missing = self.workspace / "nested" / "relay.sqlite3"
+        self.declare(db_path=str(missing))
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        self.dispose("ready_for_review")
+        self.evaluate()
+        self.assertFalse(missing.exists())
+        self.assertFalse(missing.parent.exists())
+
+    def counts(self):
+        return {
+            table: self.store.one("SELECT COUNT(*) AS n FROM " + table)["n"]
+            for table in ("events", "acks", "verdicts", "verification_claims", "deliveries",
+                          "assignment_marks", "journal")
+        }
+
+
+class Recording(GuardTestCase):
+    def test_every_observation_is_recorded_whether_or_not_it_is_held(self):
+        self.managed()
+        held = self.evaluate()
+        self.assertTrue(held["recordedAs"].startswith("hook/"))
+        released = self.evaluate()
+        self.assertTrue(released["recordedAs"].startswith("hook/"))
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        published = sorted((directory / "hook" / CHILD / DISPATCH_TURN).glob("*.json"))
+        self.assertEqual(len(published), 2)
+
+    def test_the_record_carries_the_assignment_state_and_the_contest_both_ways(self):
+        self.managed()
+        verdict = self.evaluate()
+        self.assertEqual(verdict["record"]["assignmentState"], intent.RELATIONSHIP_REGISTERED)
+        self.assertIs(verdict["record"]["identityContested"], False)
+
+    def test_nothing_is_recorded_for_an_unmanaged_workspace(self):
+        verdict = self.evaluate()
+        self.assertIsNone(verdict.get("recordedAs"))
+        self.assertFalse((self.markers / marker.workspace_key(self.workspace)).exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

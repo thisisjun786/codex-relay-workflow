@@ -21,6 +21,7 @@ from .criteria import CriteriaService
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
+from . import guard, intent, marker
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -1104,6 +1105,188 @@ def _reachability(services, report) -> dict:
     }
 
 
+# ------------------------------------------------------------------ managed marker
+
+# The marker is deliberately NOT reached through Services. Services exists to build a Store, and a
+# Store writes on open; every command below either writes only to the marker filesystem or reads the
+# relay database read-only. The state directory is still resolved, because the coordinator is the
+# party that knows where the store it registered against actually lives.
+
+
+def _marker_root(args):
+    return marker.resolve_marker_root(getattr(args, "marker_root", None)).path
+
+
+def _adjudicated(values):
+    entries = []
+    for value in values or []:
+        fact_id, _, digest = str(value).partition("=")
+        if not fact_id or not digest:
+            raise SystemExit2(
+                f"--adjudicate takes factId=digest, not {value!r}", EXIT_USAGE
+            )
+        entries.append({"factId": fact_id, "digest": digest})
+    return entries
+
+
+def cmd_intent_declare(services, args) -> dict:
+    return intent.declare_intent(
+        _marker_root(args),
+        workspace=args.workspace,
+        dispatch_request_id=args.dispatch_request_id,
+        issue_key=args.issue,
+        declared_at=args.declared_at or services.clock.iso(),
+        criteria_source=args.criteria_source,
+        baseline_revision=args.baseline_revision,
+        authorized_settings=json.loads(args.settings) if args.settings else None,
+        db_path=None if args.no_db_path else str(services.selection.db_path),
+    )
+
+
+def cmd_intent_attempt(services, args) -> dict:
+    return intent.record_attempt(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        outcome=args.outcome,
+        task_id=args.task_id,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_bind(services, args) -> dict:
+    return intent.bind(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        session_id=args.session,
+        task_id=args.task_id,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_register(services, args) -> dict:
+    return intent.register_relationship(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        relationship_id=args.relationship,
+        dispatch_request_id=args.dispatch_request_id,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_claim(services, args) -> dict:
+    return intent.publish_claim(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        session_id=args.session,
+        dispatch_request_id=args.dispatch_request_id,
+        first_turn_id=args.first_turn,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_disposition(services, args) -> dict:
+    return intent.publish_disposition(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        session_id=args.session,
+        turn_id=args.turn,
+        outcome=args.outcome,
+        at=services.clock.iso(),
+    )
+
+
+def cmd_intent_resolve(services, args) -> dict:
+    return intent.publish_resolution(
+        _marker_root(args),
+        workspace=args.workspace,
+        assignment=args.assignment,
+        chosen_task_id=args.chosen_task,
+        chosen_session_id=args.chosen_session,
+        reason=args.reason,
+        at=services.clock.iso(),
+        adjudicated=_adjudicated(args.adjudicate),
+    )
+
+
+def cmd_intent_show(services, args) -> dict:
+    """What the marker says about this workspace, without asking the relay anything.
+
+    This is the question a hook has that registered relationships cannot answer: an assignment whose
+    registration was never written has no row anywhere, and it is exactly the one worth finding.
+    """
+    root = _marker_root(args)
+    if args.assignment:
+        directory = marker.assignment_dir(root, args.workspace, args.assignment)
+        facts, unreadable = marker.read_assignment(directory)
+    else:
+        directory, facts, unreadable = intent.select_assignment(root, args.workspace, args.session)
+        if directory is None:
+            return {
+                "markerRoot": str(root),
+                "workspace": args.workspace,
+                "managed": False,
+                "unreadable": list(unreadable or []),
+            }
+    malformed = intent.malformed(facts) if facts else None
+    payload = {
+        "markerRoot": str(root),
+        "workspace": args.workspace,
+        "managed": True,
+        "assignmentId": directory.name,
+        "assignmentDir": str(directory),
+        "unreadable": list(unreadable or []),
+        "malformed": malformed,
+    }
+    if malformed or unreadable:
+        # Derivation follows the marker being readable. Summarising records that are not records is
+        # how a reader ends in a traceback and reports nothing at all.
+        return payload
+    payload["assignmentState"] = intent.derive_assignment_state(
+        facts, args.now or services.clock.iso()
+    )
+    payload["identityContested"] = intent.identity_contested(facts)
+    payload["intent"] = facts.get("intent")
+    payload["bound"] = facts.get("bound")
+    payload["relationship"] = facts.get("relationship")
+    payload["attempts"] = facts.get("attempts") or []
+    payload["claims"] = facts.get("claims") or []
+    payload["conflicts"] = facts.get("conflicts") or []
+    payload["resolutions"] = facts.get("resolutions") or []
+    return payload
+
+
+def cmd_guard_evaluate(services, args) -> dict:
+    """Decide one Stop and record the observation.
+
+    The Stop payload arrives as JSON on stdin, which is the shape the host delivers it in. Reading
+    it from a file is for replaying a captured payload, never for inventing one.
+    """
+    if args.stop_input and args.stop_input != "-":
+        text = Path(args.stop_input).expanduser().read_text(encoding="utf-8")
+    else:
+        text = sys.stdin.read()
+    try:
+        stop_input = json.loads(text)
+    except ValueError as error:
+        raise SystemExit2(f"the Stop payload is not JSON: {error}", EXIT_USAGE) from error
+    if not isinstance(stop_input, dict):
+        raise SystemExit2("the Stop payload must be a JSON object", EXIT_USAGE)
+    return guard.evaluate(
+        _marker_root(args),
+        stop_input,
+        now=args.now or services.clock.iso(),
+        mode=guard.HOLD if args.mode == guard.HOLD else guard.OBSERVE,
+        db_path=args.db_path or str(services.selection.db_path),
+        record=not args.no_record,
+    )
+
+
+
 # ----------------------------------------------------------------------- wiring
 
 
@@ -1406,6 +1589,94 @@ def build_parser() -> argparse.ArgumentParser:
     challenge.add_argument("--read")
     challenge.add_argument("--actor")
     challenge.set_defaults(handler=cmd_store_challenge)
+
+    def marker_command(name):
+        """One subparser shape for every marker command: a root and a workspace."""
+        command = subparsers.add_parser(name)
+        command.add_argument("--marker-root")
+        command.add_argument("--workspace", required=True)
+        return command
+
+    intent_declare = marker_command("intent-declare")
+    intent_declare.add_argument("--dispatch-request-id", required=True)
+    intent_declare.add_argument("--issue", required=True)
+    intent_declare.add_argument("--declared-at")
+    intent_declare.add_argument("--criteria-source")
+    intent_declare.add_argument("--baseline-revision")
+    intent_declare.add_argument("--settings", help="the authorised execution settings, as JSON")
+    intent_declare.add_argument(
+        "--no-db-path", action="store_true",
+        help="do not record where the relay store lives; the hook must then be told explicitly",
+    )
+    intent_declare.set_defaults(handler=cmd_intent_declare)
+
+    intent_attempt = marker_command("intent-attempt")
+    intent_attempt.add_argument("--assignment", required=True)
+    intent_attempt.add_argument("--outcome", required=True, choices=intent.ATTEMPT_OUTCOMES)
+    intent_attempt.add_argument("--task-id")
+    intent_attempt.set_defaults(handler=cmd_intent_attempt)
+
+    intent_bind = marker_command("intent-bind")
+    intent_bind.add_argument("--assignment", required=True)
+    intent_bind.add_argument("--session", required=True)
+    intent_bind.add_argument("--task-id", required=True)
+    intent_bind.set_defaults(handler=cmd_intent_bind)
+
+    intent_register = marker_command("intent-register")
+    intent_register.add_argument("--assignment", required=True)
+    intent_register.add_argument("--relationship", required=True)
+    intent_register.add_argument("--dispatch-request-id", required=True)
+    intent_register.set_defaults(handler=cmd_intent_register)
+
+    intent_claim = marker_command("intent-claim")
+    intent_claim.add_argument("--assignment", required=True)
+    intent_claim.add_argument("--session", required=True)
+    intent_claim.add_argument("--dispatch-request-id", required=True)
+    intent_claim.add_argument("--first-turn")
+    intent_claim.set_defaults(handler=cmd_intent_claim)
+
+    intent_disposition = marker_command("intent-disposition")
+    intent_disposition.add_argument("--assignment", required=True)
+    intent_disposition.add_argument("--session", required=True)
+    intent_disposition.add_argument("--turn", required=True)
+    intent_disposition.add_argument(
+        "--outcome", required=True, choices=intent.DISPOSITION_OUTCOMES
+    )
+    intent_disposition.set_defaults(handler=cmd_intent_disposition)
+
+    intent_resolve = marker_command("intent-resolve")
+    intent_resolve.add_argument("--assignment", required=True)
+    intent_resolve.add_argument("--chosen-task", required=True)
+    intent_resolve.add_argument("--chosen-session", required=True)
+    intent_resolve.add_argument("--reason", required=True)
+    intent_resolve.add_argument(
+        "--adjudicate", action="append", required=True,
+        help="factId=digest, repeatable; a resolution naming nothing adjudicates nothing",
+    )
+    intent_resolve.set_defaults(handler=cmd_intent_resolve)
+
+    intent_show = marker_command("intent-show")
+    intent_show.add_argument("--assignment")
+    intent_show.add_argument("--session")
+    intent_show.add_argument("--now")
+    intent_show.set_defaults(handler=cmd_intent_show)
+
+    guard_evaluate = subparsers.add_parser("guard-evaluate")
+    guard_evaluate.add_argument("--marker-root")
+    guard_evaluate.add_argument(
+        "--stop-input", default="-", help="the Stop payload as JSON; - reads stdin"
+    )
+    guard_evaluate.add_argument(
+        "--mode", default=guard.OBSERVE, choices=(guard.OBSERVE, guard.HOLD),
+        help="observe classifies and records without ever holding, which is the default because "
+             "holding depends on per-session write isolation the caller has to have granted",
+    )
+    guard_evaluate.add_argument("--db-path", help="the relay store to read receipts from")
+    guard_evaluate.add_argument("--now")
+    guard_evaluate.add_argument("--no-record", action="store_true")
+    guard_evaluate.set_defaults(handler=cmd_guard_evaluate)
+
+
     return parser
 
 
