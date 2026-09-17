@@ -107,10 +107,22 @@ def stores_seen(readings, env=None):
                      "foundBy": "targeted: a database at the root of the state home,"
                                 " which discovery never enumerates"})
 
+    for candidate in filesystem_candidates(env):
+        seen.append({"path": candidate["path"], "database": candidate["database"],
+                     "kind": candidate["kind"], "foundBy": candidate["foundBy"]})
+
     unique = []
     for entry in seen:
-        if entry["path"] not in [u["path"] for u in unique]:
+        match = next((u for u in unique if u["path"] == entry["path"]
+                      and u.get("database") == entry.get("database")), None)
+        if match is None:
             unique.append(entry)
+        else:
+            # Keep both provenances rather than letting one reading mask the other.
+            if entry["foundBy"] not in match["foundBy"]:
+                match["foundBy"] = match["foundBy"] + "; " + entry["foundBy"]
+            for key in ("database", "kind"):
+                match.setdefault(key, entry.get(key))
     return unique
 
 
@@ -181,4 +193,38 @@ def sibling_reading(payload):
     if siblings.get("checked") is False:
         return "not checked: " + str(siblings.get("reason"))
     return "checked"
+
+
+def filesystem_candidates(env=None):
+    """Every relay database and operations ledger visible on disk, listed and not interpreted.
+
+    This exists because the relay cannot always answer. An installed build older than the
+    revision that added sibling reporting returns no siblingStores at all, and a host in that
+    state would otherwise get an inventory that silently omits a real store. Listing files is
+    not rediscovering anything: nothing here opens a database, chooses between candidates or
+    decides which one serves a socket. That judgement stays with the relay, which is why each
+    entry says it was listed rather than identified.
+    """
+    root = default_state_root(env)
+    found = []
+    if not root.is_dir():
+        return found
+    database = root / "relay.sqlite3"
+    if database.is_file():
+        found.append({"path": str(root), "database": str(database), "kind": "relay store",
+                      "foundBy": "listed on disk at the root of the state home"})
+    try:
+        children = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return found
+    for child in children:
+        if (child / "relay.sqlite3").is_file():
+            found.append({"path": str(child), "database": str(child / "relay.sqlite3"),
+                          "kind": "relay store", "foundBy": "listed on disk in a scope directory"})
+        for ledger in sorted(child.glob("operations-*.sqlite3")):
+            found.append({"path": str(child), "database": str(ledger),
+                          "kind": "adapter operations ledger, selected differently from the store"
+                                  " (OPS-3.3)",
+                          "foundBy": "listed on disk in a scope directory"})
+    return found
 

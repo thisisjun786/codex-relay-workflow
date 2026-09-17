@@ -225,6 +225,12 @@ its own: an installed relay older than the revision that added sibling reporting
 that field, and rendering that silence as an empty inventory would hide exactly the conflict the
 inventory exists to surface. The summary distinguishes not reported, not checked, and checked.
 
+Because a relay cannot always answer, the inventory also lists every relay database and operations
+ledger visible under the state home, each marked as listed rather than identified. Listing files is
+not rediscovering anything: nothing opens a database, chooses between candidates or decides which
+one serves a socket, and that judgement stays with the relay. It is there so a host whose installed
+relay is too old to report siblings still sees every store it has.
+
 Equality of path strings is not proof under OPS-3.4. Proof is `doctor` from each participating
 process reporting the same `stateDirectory` together with `assignment-find --issue` returning the
 expected relationship. A relationship count is reported as the weaker observation it is: a count of

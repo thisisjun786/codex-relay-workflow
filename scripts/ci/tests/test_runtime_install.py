@@ -294,6 +294,32 @@ class ScopeReadingTests(unittest.TestCase):
         self.assertIn("/s/default", paths)
         self.assertIn("/s/codex-session-relay", paths)
 
+    def test_nothing_on_disk_is_hidden_when_the_relay_cannot_report_siblings(self):
+        # The host case this exists for: an installed relay too old to emit siblingStores.
+        # Listing files is not rediscovery; no database is opened and no candidate is chosen.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "codex-session-relay"
+            (root / "default").mkdir(parents=True)
+            (root / "scope").mkdir()
+            (root / "relay.sqlite3").write_text("", encoding="utf-8")
+            (root / "default" / "relay.sqlite3").write_text("", encoding="utf-8")
+            (root / "scope" / "operations-scope.sqlite3").write_text("", encoding="utf-8")
+
+            env = {"XDG_STATE_HOME": temporary}
+            listed = scope.filesystem_candidates(env)
+            databases = sorted(entry["database"] for entry in listed)
+            self.assertEqual(databases, [
+                str(root / "default" / "relay.sqlite3"),
+                str(root / "relay.sqlite3"),
+                str(root / "scope" / "operations-scope.sqlite3"),
+            ])
+            self.assertTrue(all("listed" in entry["foundBy"] for entry in listed))
+
+            # A relay that reports nothing must still not produce an empty inventory.
+            seen = scope.stores_seen({"discovery": {"payload": {"stateDirectory": str(root)}}}, env)
+            self.assertIn(str(root / "default" / "relay.sqlite3"),
+                          [entry.get("database") for entry in seen])
+
 
 class EntryPointTests(unittest.TestCase):
     def test_the_skill_installer_is_untouched_and_still_standard_library_only(self):
