@@ -515,6 +515,66 @@ class WhatIsRecordedAboutThisHookItself(unittest.TestCase):
                           "the guard recorded nothing, and that is reported rather than filled in")
         self.assertFalse(records[0]["held"])
 
+    def test_a_payload_this_hook_cannot_parse_is_still_recorded(self):
+        """The one class of invocation that most needs a record was the one leaving none: the
+        settings say where a record goes, so reading them second meant an unparseable payload
+        was released into silence."""
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            self.assertIsNone(completion.run(b"not json at all", codex_home=temporary,
+                                             environ={}))
+            self.assertIsNone(completion.run(json.dumps([1]).encode("utf-8"),
+                                             codex_home=temporary, environ={}))
+            self.assertIsNone(completion.run(None, codex_home=temporary, environ={}))
+            records = journalled(temporary)
+        self.assertEqual(sorted(r["adapterOutcome"] for r in records),
+                         sorted([completion.STDIN_NOT_JSON, completion.STDIN_NOT_OBJECT,
+                                 completion.STDIN_UNREADABLE]))
+
+
+class ATildeTargetIsNotExpandedByAnybody(unittest.TestCase):
+    def test_a_tilde_adapter_path_is_relative_in_effect(self):
+        """The settings path this adapter expands before opening it. Its own path is handed to
+        the interpreter literally, and nothing expands a tilde on the way."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            command = sys.executable + " '~/completion_hook.py'"
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredCommandTarget"]["value"],
+                         completion.REGISTRATION_RELATIVE_TARGET)
+
+    def test_a_missing_absolute_target_is_reported_beside_a_relative_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            gone = completion.command_for(sys.executable, home / "gone" / "completion_hook.py")
+            loose = sys.executable + " scripts/completion_hook.py"
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": gone, "timeout": 10}]},
+                {"hooks": [{"type": "command", "command": loose, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredCommandTarget"]["value"], reading.ABSENT,
+                         "one unjudgeable entry must not hide a broken copy beside it")
+        self.assertEqual(found["registeredCommandTarget"]["relativeTargets"],
+                         ["scripts/completion_hook.py"])
+
+    def test_one_registration_naming_settings_and_one_not_is_ambiguous(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            named = completion.command_for(sys.executable, str(ENTRY_POINT), home / "a.json")
+            silent = completion.command_for(sys.executable, str(ENTRY_POINT))
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": named, "timeout": 10}]},
+                {"hooks": [{"type": "command", "command": silent, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS,
+                         "one path and one silence is two different files")
+
     def test_the_guards_own_answer_is_carried_verbatim_and_not_re_derived(self):
         with tempfile.TemporaryDirectory() as temporary:
             fake_relay(temporary, stdout=json.dumps(HELD))

@@ -1260,6 +1260,10 @@ guard publishes an observation only when it selected an assignment, so on a host
 session it writes nothing at all, and an empty firing record would be indistinguishable from a
 hook that never runs. The count is always reported beside the policy that produced it.
 
+The settings are read before the payload is looked at, because the settings say where a record
+goes. Reading them second meant a payload the adapter could not parse was released with nothing
+written anywhere, which is the one class of invocation that most needs a record.
+
 The daemon is not on this path. The guard reads the marker and a read-only database, so a stopped
 daemon is not observable from a Stop and is never inferred from one; `hook-status` answers it
 separately or says it did not look. Long retries and whole verification loops belong to the daemon

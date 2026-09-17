@@ -845,17 +845,21 @@ def run(payload, codex_home=None, environ=None, settings=None):
               "assignmentId": None, "guardRecordedAs": None, "held": False}
     config = {}
     try:
-        stop, failed, detail = stop_input(payload)
-        if failed is not None:
-            return _release(config, record, failed, detail, started)
-        record["sessionId"] = stop.get("session_id")
-        record["turnId"] = stop.get("turn_id")
-        record["stopHookActive"] = stop.get("stop_hook_active")
+        # The settings are read FIRST, before the payload is looked at. They are what says where
+        # a record goes, so reading them second meant a payload this hook could not parse was
+        # released with nothing written down anywhere - the one class of invocation that most
+        # needs a record, silently absent from the firing evidence.
         path = configuration_path(codex_home, environ, settings)
         record["configuration"] = str(path)
         config, failed, detail, _found = read_configuration(path)
         if failed is not None:
             return _release(config or {}, record, failed, detail, started)
+        stop, payload_failed, payload_detail = stop_input(payload)
+        if payload_failed is not None:
+            return _release(config, record, payload_failed, payload_detail, started)
+        record["sessionId"] = stop.get("session_id")
+        record["turnId"] = stop.get("turn_id")
+        record["stopHookActive"] = stop.get("stop_hook_active")
         record["guardMode"] = config.get("mode")
         ending = invoke_guard(config, payload)
         said, value = read_guard_stdout(ending.get("stdout"))
@@ -1298,7 +1302,11 @@ def status(codex_home=None, environ=None, event=EVENT):
     relative = [named for named in carried
                 if not os.path.isabs(os.path.expanduser(named))]
     distinct = sorted({str(_settled(named)) for named in carried if named not in relative})
-    if len(distinct) > 1:
+    # A registration with no settings argument resolves its own path, which is not necessarily
+    # the one its neighbour names. Counted as a separate answer for that reason: "one path and
+    # one silence" is two different files just as surely as two paths are.
+    silent = len(ours or []) - len(carried)
+    if len(distinct) + (1 if silent else 0) > 1:
         # Every registration runs, so naming one of them would describe one hook while
         # reporting the others' state as if it were that one's.
         path, source, config = Path(distinct[0]), "the registered commands", None
@@ -1323,9 +1331,22 @@ def status(codex_home=None, environ=None, event=EVENT):
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     interpreter = _cell(NOT_READ, "no registration for this adapter was found to check")
     if ours:
-        loose = [entry["target"] for entry in ours
-                 if not os.path.isabs(os.path.expanduser(entry["target"]))]
-        if loose:
+        # No expansion here, unlike the settings path. The settings path is expanded by this
+        # adapter before it opens it; the adapter's own path is handed to the interpreter
+        # literally, and nothing expands a tilde on the way. So a ~ target is relative in
+        # effect, and judging it with expanduser would report a file the host never runs.
+        loose = [entry["target"] for entry in ours if not os.path.isabs(entry["target"])]
+        firm = [entry for entry in ours if os.path.isabs(entry["target"])]
+        probes = [presence(entry["target"], "the adapter script") for entry in firm]
+        worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
+        if worst is not None:
+            # An absolute target that is missing is reported even when another registration
+            # names a relative one: skipping every probe because one entry is unjudgeable
+            # hides the broken copies beside it.
+            target = _cell(worst["value"], worst["evidence"],
+                           commands=[entry["command"] for entry in ours], probes=probes,
+                           relativeTargets=loose or None)
+        elif loose:
             # Not resolved here, for the same reason a relative settings path is not: the hook
             # resolves it against each session's workspace, so the file this process would find
             # is not the one the host runs, and reporting on it answers about the wrong program.
@@ -1335,9 +1356,7 @@ def status(codex_home=None, environ=None, event=EVENT):
                            " workspace; no single file answers for it and none was read",
                            commands=[entry["command"] for entry in ours])
         else:
-            probes = [presence(entry["target"], "the adapter script") for entry in ours]
-            worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
-            target = _cell((worst or probes[0])["value"], (worst or probes[0])["evidence"],
+            target = _cell(probes[0]["value"], probes[0]["evidence"],
                            commands=[entry["command"] for entry in ours],
                            probes=probes)
         # Its own cell, because the script being there says nothing about the program that has
