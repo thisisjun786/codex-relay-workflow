@@ -1416,25 +1416,21 @@ def _quote(value) -> str:
     return shlex.quote(str(value))
 
 
-def _without_state_env(selection) -> str:
-    """A prefix that drops the state pin, but only when the pin is what went wrong.
+def _without_state_env() -> str:
+    """Drop the state pin from a line whose whole job is to discover by socket.
 
-    A line that says "find the store that belongs to this socket" cannot do that while
-    CODEX_SESSION_RELAY_STATE still pins the selection to the store that produced the
-    refusal: pasting it would return the very same refusal and read as a dead end.
+    Unconditional whenever the variable is set, because this prefix is only ever attached to
+    a command carrying no --state of its own. Left in place, the variable would decide that
+    command's answer instead of the socket, whichever rule happened to cause the refusal.
 
-    It is conditioned on the selection's own source, not merely on the variable being set.
-    When --state caused the refusal the variable may well point at the right store for this
-    socket, and dropping it there sends the operator to a default directory that usually
-    holds no database at all - a worse answer than the one it replaced.
+    Two narrower conditions were tried first and both were wrong in one direction or the
+    other, which is why this one no longer decides anything: see _wrong_socket_recovery.
     """
     import os
 
     from .store import STATE_ENV
 
-    if getattr(selection, "source", None) != "env" or STATE_ENV not in os.environ:
-        return ""
-    return f"env -u {STATE_ENV} "
+    return f"env -u {STATE_ENV} " if STATE_ENV in os.environ else ""
 
 
 def _program() -> str:
@@ -1478,15 +1474,21 @@ def _recovery_commands(services, selection, contested: bool) -> list:
     # Quoted, every one of them. These are printed to be pasted, and a state directory or a
     # socket path containing shell syntax would otherwise be executed by the operator doing
     # exactly what the refusal told them to do.
-    socket = f" --socket {shlex.quote(str(services.socket_path))}" if services.socket_path else ""
+    # Attached with '=' rather than a space, for a separate reason: a path may legitimately
+    # begin with a dash, and argparse reads '--socket -odd.sock' as two options and fails
+    # with "expected one argument". The '=' form keeps option and value one token.
+    socket = (
+        f" --socket={shlex.quote(str(services.socket_path))}"
+        if services.socket_path else ""
+    )
     lines = [
         f"{program}{socket} doctor",
         "  lists the candidates under siblingStores",
     ]
     for candidate in list(selection.ambiguous or selection.unidentified):
         quoted = shlex.quote(str(candidate))
-        lines.append(f"{program} --state {quoted}{socket} doctor")
-        lines.append(f"{program} --state {quoted}{socket} service status")
+        lines.append(f"{program} --state={quoted}{socket} doctor")
+        lines.append(f"{program} --state={quoted}{socket} service status")
     lines.append(
         "  service status groups by project, so the candidate holding the assignments you"
         " expect is the one to keep"
@@ -1496,14 +1498,51 @@ def _recovery_commands(services, selection, contested: bool) -> list:
         # not retire the other, so the next default invocation is refused again and every
         # participant has to be given the same directory until one store is gone.
         lines.append(
-            "  then pass --state <the chosen directory> on EVERY participant of this"
+            "  then pass --state=<the chosen directory> on EVERY participant of this"
             " assignment: both stores still record this socket, so default discovery keeps"
             " refusing until one of them is retired"
         )
     else:
         lines.append(
-            f"  then pass --state {shlex.quote(str(selection.path))} once to create the new"
-            " store deliberately, or --state <the existing directory> to keep using it"
+            f"  then pass --state={shlex.quote(str(selection.path))} once to create the new"
+            " store deliberately, or --state=<the existing directory> to keep using it"
+        )
+    return lines
+
+
+def _wrong_socket_recovery(selection, recorded, wanted) -> list:
+    """Every candidate this refusal has, printed rather than chosen between.
+
+    Two earlier versions tried to work out which store the operator meant. Dropping the state
+    pin whenever it was set lost the environment store in a flag-caused refusal, where that
+    store may be the one that records the requested socket. Dropping it only when the pin
+    caused the refusal left it in place for `--state A` with the variable ALSO naming A,
+    re-selecting the very store the refusal was about - and because doctor is exempt from this
+    guard it then exits 0 under a caption claiming it found the requested socket's store.
+
+    The CLI cannot tell those apart without opening the environment store, so it stops
+    deciding. The socket-first line always runs unpinned, and a directory the environment
+    names that this invocation did not use is printed beside it as its own line. The operator
+    reads both; nothing here assumes which one is right.
+    """
+    import os
+
+    from .store import STATE_ENV
+
+    lines = [
+        f"{_program()} --state={_quote(selection.path)}"
+        f" --socket={_quote(recorded)} doctor",
+        "  reads this store under the socket it actually records",
+        f"{_without_state_env()}{_program()} --socket={_quote(wanted)} doctor",
+        "  discovers by socket alone, ignoring any pinned directory",
+    ]
+    pinned = os.environ.get(STATE_ENV)
+    if pinned and pinned != str(selection.path):
+        lines.append(
+            f"{_program()} --state={_quote(pinned)} --socket={_quote(wanted)} doctor"
+        )
+        lines.append(
+            f"  reads the directory {STATE_ENV} names, which --state overrode on this run"
         )
     return lines
 
@@ -1556,21 +1595,10 @@ def _refuse_ambiguous_state(services, args) -> None:
                 "recordedSocket": recorded,
                 "requestedSocket": wanted,
                 "stateDirectory": str(selection.path),
-                # No adoption list, and saying so explicitly. Using this store does not
-                # rewrite the socket it recorded, so there is nothing here to adopt: the fix
-                # is to point the command at the store that belongs to this socket, or at the
-                # socket that belongs to this store.
-                "recover": [
-                    f"{_program()} --state {_quote(selection.path)}"
-                    f" --socket {_quote(recorded)} doctor",
-                    "  reads this store under the socket it actually records",
-                    # The pin is dropped explicitly. This line has no --state to override it,
-                    # so an inherited CODEX_SESSION_RELAY_STATE would re-select the store that
-                    # just produced this refusal and hand back the same error.
-                    f"{_without_state_env(selection)}{_program()}"
-                    f" --socket {_quote(wanted)} doctor",
-                    "  finds the store that belongs to the socket you asked for",
-                ],
+                # Nothing here adopts anything. Using a store does not rewrite the socket it
+                # recorded, so the fix is to point the command at the store that belongs to
+                # this socket, or at the socket that belongs to this store.
+                "recover": _wrong_socket_recovery(selection, recorded, wanted),
                 "note": "using a store does not rewrite the socket it recorded, so neither"
                         " command here adopts anything; choose the matching pair",
             }, EXIT_REFUSED)

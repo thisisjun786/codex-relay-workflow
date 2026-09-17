@@ -14,6 +14,23 @@ from .support import CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, RelayTestCase
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def option_values(command):
+    """A shell round trip, with `--opt=value` tokens taken back apart.
+
+    The generated commands attach values with '=' so that a path beginning with a dash stays
+    one token and argparse reads it as a value rather than another option. That also means the
+    value is no longer a word of its own after shlex.split, which is what these assertions
+    have to look at: the round trip still has to hand the path back whole and unexecuted.
+    """
+    import shlex
+
+    values = []
+    for word in shlex.split(command):
+        head, sep, tail = word.partition("=")
+        values.append(tail if sep and head.startswith("--") else word)
+    return values
+
+
 class CliBase(RelayTestCase):
     def run_cli(self, *args, expect=0):
         environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
@@ -615,11 +632,11 @@ class ContestedSocket(CliBase):
         commands = [line for line in recover if not line.startswith("  ")]
         self.assertTrue(commands, "the refusal offered no runnable command")
         for command in commands:
-            self.assertIn(f"--socket {socket}", command,
+            self.assertIn(f"--socket={socket}", command,
                           f"a recovery command dropped the socket: {command}")
         for candidate in refused["candidates"]:
             self.assertTrue(
-                any(f"--state {candidate}" in c for c in commands),
+                any(f"--state={candidate}" in c for c in commands),
                 f"no command inspects candidate {candidate}",
             )
         self.assertTrue(
@@ -687,7 +704,7 @@ class ContestedSocket(CliBase):
         for command in commands:
             # The real property is the round trip: the shell must hand the socket back as ONE
             # intact argument rather than splitting it or running the substitution in it.
-            words = shlex.split(command)
+            words = option_values(command)
             self.assertIn(
                 socket, words,
                 f"the socket did not survive a shell round trip intact: {command}",
@@ -720,7 +737,7 @@ class ContestedSocket(CliBase):
 
         commands = [line for line in refused["recover"] if not line.startswith("  ")]
         self.assertTrue(commands)
-        words = [word for command in commands for word in shlex.split(command)]
+        words = [word for command in commands for word in option_values(command)]
         self.assertIn(first, words, "the recorded socket did not survive a shell round trip")
         self.assertIn(state, words, "the state directory did not survive a shell round trip")
 
@@ -785,65 +802,180 @@ class ContestedSocket(CliBase):
             "the state pin survived into the command printed to look past it",
         )
 
-    def test_a_flag_caused_refusal_leaves_the_state_pin_alone(self):
-        """Dropping the pin is only right when the pin is what went wrong.
+    def wrong_socket_refusal(self, name, *, flagged_socket, wanted_socket, pin):
+        """Refuse a --state store that records another socket, with the variable also set.
 
-        --state wins over the variable, so it can cause this refusal while the variable
-        still points at the store that does record the requested socket. Dropping it there
-        sends the operator to a default directory that usually holds no database at all,
-        under a caption promising the store that belongs to this socket.
+        Returns the payload and the environment it was produced in, so a test can replay the
+        commands it printed under exactly the conditions that printed them.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, f"{name}-home")
+        os.makedirs(home)
+        flagged = os.path.join(self.tmp, f"{name}-flagged")
+        Store(Path(flagged) / "relay.sqlite3", socket_path=flagged_socket).close()
+
+        environment = dict(
+            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
+            CODEX_SESSION_RELAY_STATE=(flagged if pin == "same" else pin),
+        )
+        environment.pop("XDG_STATE_HOME", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", flagged,
+             "--socket", wanted_socket, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+        return refused, environment, flagged
+
+    def test_a_pin_repeating_the_flags_mistake_does_not_come_back_as_the_answer(self):
+        """--state A with the variable also naming A. Two conditions failed this case.
+
+        Keying the prefix on which rule caused the refusal proved only that --state won, not
+        that the lower-precedence store was any better: here it is the SAME store. Left
+        pinned, the socket-first line re-selects the directory the refusal was about, and
+        because doctor is exempt from this guard it exits 0 under a caption claiming it found
+        the requested socket's store. The line no longer decides - it always runs unpinned.
+        """
+        import shlex
+
+        wanted = os.path.join(self.tmp, "samepin-wanted.sock")
+        refused, environment, flagged = self.wrong_socket_refusal(
+            "samepin",
+            flagged_socket=os.path.join(self.tmp, "samepin-other.sock"),
+            wanted_socket=wanted, pin="same",
+        )
+
+        discovery = [
+            line for line in refused["recover"]
+            if not line.startswith("  ") and wanted in line
+        ]
+        self.assertEqual(len(discovery), 1, refused["recover"])
+
+        replayed = subprocess.run(
+            shlex.split(discovery[0]),
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+
+        selection = json.loads(replayed.stdout)["stateSelection"]
+        self.assertNotEqual(
+            selection["path"], flagged,
+            "the recovery command handed back the store the refusal was about",
+        )
+        self.assertNotEqual(selection["source"], "env", selection)
+
+    def test_a_flag_caused_refusal_offers_the_environment_store_as_its_own_candidate(self):
+        """--state wins over the variable, so the variable may hold the right store.
+
+        Guessing in either direction was wrong, so both candidates are printed: one line
+        discovers by socket with no pin at all, and a second reads the directory the variable
+        names. Nothing here decides which of them the operator meant.
         """
         import shlex
         from pathlib import Path
 
         from codex_session_relay.store import Store
 
-        home = os.path.join(self.tmp, "flagenv-home")
-        os.makedirs(home)
-        flagged = os.path.join(self.tmp, "flagenv-flagged")
-        pinned = os.path.join(self.tmp, "flagenv-pinned")
-        other = os.path.join(self.tmp, "flagenv-other.sock")
         wanted = os.path.join(self.tmp, "flagenv-wanted.sock")
-        # The flag's store records a different socket; the pinned store records the wanted one.
-        Store(Path(flagged) / "relay.sqlite3", socket_path=other).close()
+        pinned = os.path.join(self.tmp, "flagenv-pinned")
+        # The variable's store is the one that records the socket actually being asked for.
         Store(Path(pinned) / "relay.sqlite3", socket_path=wanted).close()
-
-        environment = dict(
-            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
-            CODEX_SESSION_RELAY_STATE=pinned,
+        refused, environment, _flagged = self.wrong_socket_refusal(
+            "flagenv",
+            flagged_socket=os.path.join(self.tmp, "flagenv-other.sock"),
+            wanted_socket=wanted, pin=pinned,
         )
-        environment.pop("XDG_STATE_HOME", None)
-        completed = subprocess.run(
-            [sys.executable, "-m", "codex_session_relay.cli", "--state", flagged,
-             "--socket", wanted, "status"],
-            capture_output=True, text=True, env=environment, timeout=60,
-        )
-        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
-        refused = json.loads(completed.stdout)
-        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
 
-        socket_first = [
-            line for line in refused["recover"]
-            if not line.startswith("  ") and wanted in line
-        ]
-        self.assertEqual(len(socket_first), 1, refused["recover"])
-        self.assertNotIn("env -u", socket_first[0], "the pin was dropped, but it was not the cause")
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        unpinned = [c for c in commands if wanted in c and "env -u" in c]
+        env_candidate = [c for c in commands if f"--state={pinned}" in c]
+        self.assertEqual(len(unpinned), 1, refused["recover"])
+        self.assertEqual(
+            len(env_candidate), 1,
+            f"the directory the variable names was never offered: {refused['recover']}",
+        )
 
         replayed = subprocess.run(
-            shlex.split(socket_first[0]),
+            shlex.split(env_candidate[0]),
             capture_output=True, text=True, env=environment, timeout=60,
         )
 
         selection = json.loads(replayed.stdout)["stateSelection"]
-        self.assertEqual(
-            selection["path"], pinned,
-            "the recovery command walked past the store that records this socket",
-        )
+        self.assertEqual(selection["path"], pinned, selection)
         self.assertTrue(
             os.path.exists(selection["dbPath"]),
-            "the recovery command reported a database that does not exist",
+            "the offered candidate reported a database that does not exist",
         )
 
+    def test_a_socket_path_beginning_with_a_dash_still_produces_runnable_commands(self):
+        """A relative socket path may legitimately begin with a dash.
+
+        The original invocation can pass it as --socket=-odd.sock, but a generated line that
+        separates them with a space makes argparse read the value as another option and fail
+        with "expected one argument" - so every command in the payload is unusable for that
+        input. The value travels attached.
+
+        This drives the ambiguous refusal rather than the different-socket one, because that
+        is where a dash can still reach the output: the different-socket payload prints
+        canonical_socket() on both sides, which is absolute and therefore never leads with a
+        dash, while _recovery_commands prints services.socket_path, the argument as given.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        # RELATIVE, so the value itself begins with the dash. An absolute path with a dashed
+        # basename still starts with '/' and never reaches the parser ambiguity.
+        relative = "-odd.sock"
+        home = os.path.join(self.tmp, "dash-home")
+        root = os.path.join(home, ".local", "state", "codex-session-relay")
+        # Both stores record what that relative name resolves to under the subprocess cwd,
+        # so the run is ambiguous for exactly the socket being asked about.
+        for directory in ("aaaa666666666666", "bbbb666666666666"):
+            os.makedirs(os.path.join(root, directory))
+            Store(
+                Path(root) / directory / "relay.sqlite3",
+                socket_path=os.path.join(self.tmp, relative),
+            ).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home)
+        for name in ("CODEX_SESSION_RELAY_STATE", "XDG_STATE_HOME"):
+            environment.pop(name, None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli",
+             f"--socket={relative}", "status"],
+            capture_output=True, text=True, env=environment, timeout=60, cwd=self.tmp,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "ambiguous_state_directory")
+
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        self.assertTrue(commands)
+        for command in commands:
+            self.assertIn(
+                relative, option_values(command),
+                f"a dashed socket path did not survive the round trip: {command}",
+            )
+            # Running it is the assertion that matters: the parser must accept the value
+            # rather than reading it as an option it does not have.
+            replayed = subprocess.run(
+                shlex.split(command), capture_output=True, text=True,
+                env=environment, timeout=60, cwd=self.tmp,
+            )
+            self.assertNotIn(
+                "expected one argument", replayed.stderr,
+                f"the printed command is unusable: {command}",
+            )
+            self.assertTrue(
+                replayed.stdout.strip().startswith("{"),
+                f"the printed command produced no payload: {command}\n{replayed.stderr}",
+            )
     def test_the_printed_command_names_the_interpreter_that_is_running(self):
         """These lines are pasted into a shell where python3 may be absent or different.
 
