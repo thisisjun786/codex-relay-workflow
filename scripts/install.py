@@ -8,7 +8,7 @@ import sys
 
 LEGACY_NAMES = (
     "linear-focus", "linear-next", "linear-plan",
-    "linear-run", "linear-check", "linear-logic",
+    "linear-run", "linear-check", "linear-logic", "crw-focus",
 )
 
 
@@ -35,7 +35,7 @@ def main() -> int:
             kind = "symlink" if target.is_symlink() else "directory" if target.is_dir() else "file"
             print(f"LEGACY {target} ({kind})", file=sys.stderr)
     if legacy:
-        print("Legacy entries are preserved. See README: Upgrade from linear-* to crw-*; "
+        print("Legacy entries are preserved. See README: Retired skill migration; "
               "inspect ownership and move retired entries outside skill discovery. "
               "--apply installs new names; --check fails while legacy entries remain.", file=sys.stderr)
     for source in sources:
