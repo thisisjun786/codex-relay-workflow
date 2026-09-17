@@ -10,7 +10,7 @@ Two entry points exist and they are deliberately not one:
 
 | Command | Installs | Contract |
 | --- | --- | --- |
-| `python3 scripts/install.py` | Skill links into Codex | OPS-2.3 |
+| `python3 scripts/install.py --check` or `--apply` | Skill links into Codex | OPS-2.3 |
 | `python3 scripts/runtime_install.py` | The bridge, the relay, the MCP registration and the Linear hook | OPS-2.4, OPS-6.3 |
 
 The first is unchanged by this page. It stays standard-library-only and idempotent, it refuses to
@@ -34,7 +34,7 @@ the checkout at check time or marked with the OPS-0 status word that says it was
 | `subdirectoryTree`, `packageTree` | `git rev-parse HEAD:<path>` |
 | `sourceDigest` | The OPS-1.2 walk over the package directory |
 | `version`, `requiresPython` | Read from the component's `pyproject.toml` |
-| `upstream` | `recorded`: carried from the import, not re-derivable here |
+| `upstream` remote, revision, tree and licence | `recorded`: carried from the import, not re-derivable here |
 | `measuredPoints` | Empty, and `unmeasured`: this repository has exercised no combination |
 
 `python3 scripts/runtime_install.py verify-definition` re-derives every derivable field and fails on
@@ -53,6 +53,38 @@ interpreters, host names and measured points are host facts. OPS-3.2 makes a rea
 receipt, so the runtime entry point writes those to a host record outside this repository and this
 repository never commits one.
 
+## The host record
+
+The host record at `${XDG_STATE_HOME:-~/.local/state}/codex-relay-workflow/host-record.json` is the
+other half of the definition and is never committed. It holds the repository commit and tree
+measured at run time, checkout cleanliness, one entry per install location
+(`location`, `installMode`, `entryPoint`, `entryPointTarget`, `environment`, `interpreter`,
+`integrity`, `reachedVia`) and the measured points.
+
+This is what makes reuse reachable. Under OPS-1.3 a point means the combination was exercised, so
+no amount of reading bytes produces one, and a component whose bytes match but whose combination
+nobody has run classifies `unmeasured` and is preserved rather than reused. `runtime_install.py
+measure` is the operation that produces a point: it runs the relay console script and imports and
+starts the bridge module under the resolved interpreter, then records
+`{interpreter, codexCli, appServer, host, date, measuredBy, method}` bound to one install location.
+A point recorded against another interpreter is a different combination and does not satisfy this
+one. Points are appended, never replaced.
+
+## Installing the runtime
+
+`runtime_install.py install` refuses unless `verify-definition` passes, then resolves an
+interpreter that satisfies both components' `requires-python`. The controller itself runs on
+Python 3.10 for CI and never selects itself for a runtime that requires 3.11 or newer; when no
+suitable interpreter exists it refuses and names the requirement.
+
+The environment is created as a new directory, so an existing one is never overwritten. Each
+module's imported location is then read back from the interpreter rather than assumed, because an
+editable install leaves nothing under site-packages and a copied install does, and its OPS-1.2
+digest is computed from whatever the interpreter actually resolved. Only after those readings
+succeed is the recorded pointer moved. A failure at any step leaves the previous runtime in place,
+and nothing here removes, moves or recreates the store: update failure and store loss are
+different accidents and the recovery for one must not cause the other.
+
 ## Installation ownership
 
 Classification reads the four OPS-2.1 signals and nothing else: where the entry point actually
@@ -60,11 +92,17 @@ resolves, the checkout's commit, tree and cleanliness, whether the definition ag
 installed bytes, and what the Codex configuration registers. A signal that cannot be read is
 reported as unreadable and stops classification; it never counts as a signal that agreed.
 
+Cleanliness is read across the whole checkout, not only the component's subdirectory. An
+uncommitted change to a root script or to another package leaves every package digest untouched
+while the checkout is no longer the revision the definition names, and only the checkout-wide
+reading catches it.
+
 The five OPS-2.2 classes are evaluated in their fixed order and the first match wins:
 `conflict`, `fork`, `foreign`, `unmeasured`, `own`. Only `own` is reused. Because the committed
 definition carries no measured points, a host install whose bytes match still classifies
-`unmeasured` and is preserved rather than reused. That is the intended answer, not a gap to close
-by relaxing the rule: OPS-1.3 refuses to let a matching digest stand in for a run nobody performed.
+`unmeasured` until the host record carries a point for the combination it runs under. That is the
+intended answer, not a gap to close by relaxing the rule: OPS-1.3 refuses to let a matching digest
+stand in for a run nobody performed. `measure` is the supported way out, and it is the only one.
 
 Nothing outside a recorded path is ever overwritten. A foreign relay, a local fork, an existing
 directory, an existing link and an MCP name already registered with a different command are each
@@ -80,10 +118,17 @@ including other MCP servers and hook settings, is preserved byte for byte.
 
 The reader is a deliberately small table-header scanner, not a general TOML parser, because the
 `validate` and `tests` jobs run on Python 3.10 where `tomllib` does not exist. It models exactly one
-shape and refuses everything else: an array-of-tables header, a dotted or inline `mcp_servers`
-assignment, or an unterminated multi-line string makes the file unreadable, and an unreadable file
-is never appended to. Where `tomllib` is importable it additionally cross-checks the scanner's
-reading and reports a disagreement as an unreadable signal rather than proceeding.
+shape, `[mcp_servers.<name>]`. A server's name is the first segment after `mcp_servers.`, and any
+deeper segments are that server's own sub-tables: a real configuration on this host carries
+`[mcp_servers.oracle.env]` and `[mcp_servers.codex-thread-bridge.tools.create_thread]`, and reading
+either as a server name would append a duplicate registration for a server that is already there.
+Bare and quoted spellings of a name normalise to one name.
+
+Everything else makes the file unreadable, and an unreadable file is never appended to: an
+array-of-tables header, a dotted or inline `mcp_servers` assignment, an unterminated multi-line
+string, or the same server defined twice. Where `tomllib` is importable it additionally
+cross-checks the scanner's reading and reports a disagreement as an unreadable signal, but the
+Python 3.10 branch is protected by negative fixtures rather than by `tomllib`.
 
 ## Six results that never imply one another
 
@@ -105,6 +150,14 @@ registration alone; observed tool names are supplied explicitly with `--observed
 as what they are. Every record names the destination it measured and whether that destination was
 temporary, so a temporary-destination proof cannot be read as a claim about a host.
 
+Two further results are reported beside those six and are never merged into them, because importing
+and preserving settings are separately falsifiable:
+
+| Result | Established by |
+| --- | --- |
+| `imported` | The module imported under the resolved interpreter, carrying the `__file__` it resolved to, so an import satisfied by another copy is visible |
+| `settingsPreserved` | Every other table in `config.toml` and every other hook entry byte-identical before and after |
+
 ## Trial mode
 
 Diagnosis creates no work. `deliveryAccepted` requires an attempt that recorded a returned turn id,
@@ -121,9 +174,23 @@ per project, per repository or per parent.
 
 Diagnosis therefore reports the resolved scope, the store directory and database, the service owner
 and whether a service is running, by calling the relay's own `doctor` and `service status` rather
-than by rediscovering any of it. Equality of path strings is not proof under OPS-3.4, so the report
-carries `doctor`'s `stateDirectory` and its relationship count together: a count of zero where an
-assignment is expected means the process is pointed somewhere else.
+than by rediscovering any of it.
+
+`doctor` is called twice, because it answers two different questions. A call that selects a store
+explicitly, through `--state` or the environment, skips sibling discovery altogether and reports
+`checked: false`: the caller already decided which participants share that directory. Only a
+discovery call, with the socket and no explicit state, populates `siblingStores`. The report
+carries both and preserves a `checked: false` as not checked, never as none found.
+
+Equality of path strings is not proof under OPS-3.4. Proof is `doctor` from each participating
+process reporting the same `stateDirectory` together with `assignment-find --issue` returning the
+expected relationship. A relationship count is reported as the weaker observation it is: a count of
+zero where an assignment is expected means the process is pointed somewhere else, and a nonzero
+count from a different populated database would satisfy a count check while proving nothing.
+
+Every subsequent call sets both selectors, `--state` and `CODEX_SESSION_RELAY_STATE`, to the same
+resolved absolute path, because under OPS-3.3 the flag alone moves the store while leaving the
+adapter's `operations-<scope>.sqlite3` ledger behind. That ledger is reported as its own artifact.
 
 Other stores beside the resolved one are reported, never adopted and never hidden. `doctor` already
 distinguishes stores that record no socket from stores claiming the same socket, and a host can
@@ -148,6 +215,6 @@ command never enables a daemon, and `alwaysActive` is a separate field with sepa
 
 Running the entry point against a temporary destination proves what it did there. It is not
 evidence about a host's real Codex home, its installed runtime, its MCP registration or its
-operational database. Installation success, MCP registration, tool exposure, App Server
-connection, delivery acceptance and service activation are six separate facts under OPS-6.1 and
-none of them is read from another.
+operational database. `installed`, `mcpExposed`, `connected`, `deliveryAccepted`,
+`verificationComplete` and `alwaysActive` are six separate facts under OPS-6.1, and `imported` and
+`settingsPreserved` are two more beside them. None of the eight is read from another.
