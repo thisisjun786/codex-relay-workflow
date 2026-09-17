@@ -17,6 +17,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from . import reading
+
 RECORD_NAME = "host-record.json"
 
 
@@ -40,17 +42,47 @@ def empty(definition_version):
     }
 
 
+def shape(record):
+    """Reject a record whose containers are not what every consumer here assumes.
+
+    This is the explicit half of the guarantee: the boundary makes the worst case a refusal,
+    and this makes the message say which container was wrong. It checks containers only,
+    because a field whose absence has a defined meaning is interpreted rather than refused.
+    """
+    if not isinstance(record, dict):
+        raise TypeError("a host record is an object, found " + type(record).__name__)
+    components = record.get("components")
+    if components is not None and not isinstance(components, dict):
+        raise TypeError("components is an object, found " + type(components).__name__)
+    for name, entry in (components or {}).items():
+        if not isinstance(entry, dict):
+            raise TypeError("component " + str(name) + " is an object, found "
+                            + type(entry).__name__)
+        for key in ("installs", "measuredPoints"):
+            value = entry.get(key)
+            if value is not None and not isinstance(value, list):
+                raise TypeError(str(name) + "." + key + " is a list, found "
+                                + type(value).__name__)
+            for item in value or []:
+                if not isinstance(item, dict):
+                    raise TypeError("every entry in " + str(name) + "." + key
+                                    + " is an object, found " + type(item).__name__)
+    selected = record.get("selected")
+    if selected is not None and not isinstance(selected, dict):
+        raise TypeError("selected is an object, found " + type(selected).__name__)
+    return record
+
+
 def load(path, definition_version):
-    path = Path(path)
-    if not path.is_file():
-        return empty(definition_version)
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        # An unreadable record is reported by the caller as an unread signal. It is never
-        # replaced silently, because overwriting it would destroy the only evidence that
-        # anything was ever exercised on this host.
-        return None
+    """Read the record as a reading, never as a sentinel.
+
+    An unreadable record is never replaced silently, because overwriting it would destroy the
+    only evidence that anything was ever exercised on this host. Which kind of failure it was
+    travels with the reading: a parse failure and a permission failure are different answers
+    and a caller that cannot tell them apart cannot report either one honestly.
+    """
+    return reading.read_json(path, "the host record",
+                             absent=lambda: empty(definition_version), shape=shape)
 
 
 def save(path, record):
@@ -189,3 +221,49 @@ class Locked:
             self.handle = None
         self.path.unlink(missing_ok=True)
         return False
+
+
+# ------------------------------------------------------------------ the one way to write
+
+def update(path, definition_version, *, installs=None, points=None, select=None,
+           component_facts=None, outgoing=None, drop_environment=None):
+    """Apply narrow deltas to state this helper loads itself, inside the lock, at write time.
+
+    The helper never accepts a record, and that is the whole point. A caller that loads a
+    record, spends minutes installing and exercising a runtime, and then hands the record back
+    to be saved will overwrite whatever another run committed in between. A lock around that
+    save does not help, because the staleness is already inside the value being written. So a
+    caller says what it learned -- this install, these points, this selection -- and the merge
+    happens here against the record as it stands.
+
+    'drop_environment' is the recovery delta: it removes the install records this run created
+    and leaves the selection exactly as found, because another run's successful promotion is
+    not this run's to undo.
+
+    Returns the Reading it loaded, so a caller can report an unreadable record rather than
+    guess. Nothing is written when the record could not be read.
+    """
+    with Locked(path):
+        current = load(path, definition_version)
+        if not current.usable:
+            return current
+        record = current.value
+        for name, install in (installs or []):
+            put_install(record, name, install)
+        for name, point in (points or []):
+            add_point(record, name, point)
+        for name, facts in (component_facts or {}).items():
+            component(record, name).update(facts)
+        if drop_environment is not None:
+            for name in list(record.get("components") or {}):
+                entry = record["components"][name]
+                entry["installs"] = [i for i in entry.get("installs") or []
+                                     if i.get("environment") != str(drop_environment)]
+        if outgoing is not None:
+            record["outgoing"] = outgoing
+        if select:
+            # Only the assignments this run made. A whole selection map would carry back
+            # entries the caller read before its slow work and re-assert them as current.
+            record.setdefault("selected", {}).update(select)
+        save(path, record)
+    return current

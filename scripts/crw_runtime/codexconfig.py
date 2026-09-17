@@ -24,7 +24,7 @@ would invent a server that does not exist and hide one that does.
 
 import re
 
-HEADER = re.compile(r"^\s*\[([^\[\]]*)\]\s*(?:#.*)?$")
+HEADER = re.compile(r"^\s*\[([^\[\]]*)\]\s*$")
 ARRAY_HEADER = re.compile(r"^\s*\[\[")
 ASSIGNMENT = re.compile(r"^\s*([^\s=#]+)\s*=")
 BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
@@ -140,7 +140,13 @@ def consume(line, fence):
 
 
 def _split_key(text):
-    """Split a dotted TOML key into segments, honouring quoted segments."""
+    """Split a dotted TOML key into segments, honouring quoted segments and their escapes.
+
+    A quoted segment is a string and carries the same escapes a quoted value does. Finding its
+    close by the next raw quote ends a name one character into itself when the name contains
+    an escaped quote, and returning the raw text leaves a name that never compares equal to
+    the one that was written. Both produce a second registration of a server already there.
+    """
     segments = []
     index = 0
     while index < len(text):
@@ -150,11 +156,24 @@ def _split_key(text):
             return None
         char = text[index]
         if char in "\"'":
-            closing = text.find(char, index + 1)
-            if closing == -1:
+            literal = char == "'"
+            end = index + 1
+            while end < len(text):
+                if not literal and text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == char:
+                    break
+                end += 1
+            if end >= len(text):
                 return None
-            segments.append(text[index + 1:closing])
-            index = closing + 1
+            try:
+                segments.append(decode(text[index + 1:end], literal))
+            except Unreadable:
+                # A key this reader cannot decode is not a key it may guess at. The caller
+                # decides whether an unreadable key under mcp_servers is fatal or ignorable.
+                return None
+            index = end + 1
         else:
             match = BARE_KEY.match(text, index)
             if not match:
@@ -180,7 +199,11 @@ def scan(text):
     pending = None
 
     try:
-        for number, line in enumerate(text.splitlines(), 1):
+        # str.splitlines splits on Unicode boundaries such as U+2028 and U+0085 that TOML
+        # does not treat as line endings, which tears a value containing one in half and
+        # reads the remainder as syntax. TOML's line ending is a newline, optionally
+        # preceded by a carriage return.
+        for number, line in enumerate(text.replace("\r\n", "\n").split("\n"), 1):
             inside = fence is not None
             code, values, fence = consume(line, fence)
             if inside:
@@ -212,14 +235,18 @@ def scan(text):
                 current, section = None, None
                 continue
 
-            # A table header is self-contained on its line, and its key may itself be a
-            # quoted string, so it is read from the raw line. The blanked code is what tells
-            # us this is a header at all rather than a quoted value that looks like one.
-            header = HEADER.match(line) if code.lstrip().startswith("[") else None
+            # A header is recognised from the blanked code, which already knows where the
+            # strings are, and its key is then sliced out of the ORIGINAL line by the match
+            # span. Matching the raw line instead rejects a quoted name containing a bracket,
+            # which tomllib accepts, so the table would be read as no server at all; parsing
+            # the blanked interior instead would erase the name. The span is exact because
+            # every blanked string keeps its original width.
+            header = HEADER.match(code)
             if header:
-                segments = _split_key(header[1])
+                raw_key = line[header.start(1):header.end(1)]
+                segments = _split_key(raw_key)
                 if segments is None:
-                    if "mcp_servers" in header[1]:
+                    if "mcp_servers" in raw_key:
                         raise Unreadable("line " + str(number) + ": a table header under"
                                          " mcp_servers whose key this reader cannot read")
                     current, section = None, None
@@ -287,6 +314,11 @@ def cross_check(text, view):
         if "command" in entry and theirs.get("command") != entry["command"]:
             return ("the reader read " + name + " command " + repr(entry["command"])
                     + " but tomllib read " + repr(theirs.get("command")))
+        # Arguments decide LINKED against CONFLICT exactly as the command does, so leaving
+        # them out of the comparison leaves half the registration unchecked.
+        if "args" in entry and list(theirs.get("args") or []) != list(entry["args"] or []):
+            return ("the reader read " + name + " args " + repr(entry["args"])
+                    + " but tomllib read " + repr(theirs.get("args")))
     return None
 
 
@@ -307,8 +339,18 @@ def quote(value):
 _quote = quote
 
 
+def key(name):
+    """A table-name segment this reader and TOML both read back as this exact name.
+
+    A bare key is written as itself; anything else is quoted. Written raw, a name containing a
+    dot becomes a sub-table of another server, so the registration this command believes it
+    made is not the one in the file, and the next run appends a second one.
+    """
+    return name if BARE_KEY.fullmatch(name) else quote(name)
+
+
 def render(name, command, args):
-    lines = ["[mcp_servers." + name + "]", "command = " + quote(command)]
+    lines = ["[mcp_servers." + key(name) + "]", "command = " + quote(command)]
     if args:
         lines.append("args = [" + ", ".join(quote(a) for a in args) + "]")
     return "\n".join(lines) + "\n"
@@ -340,4 +382,3 @@ def register(text, name, command, args):
 
     separator = "" if text == "" or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
     return text + separator + render(name, command, args), "CREATED", "appended at the end of the file"
-

@@ -23,7 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crw_runtime import check, codexconfig, definition, hooks, hostrecord, ownership, scope
+from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
+                         reading, scope)
 
 ROOT = Path(__file__).resolve().parents[1]
 EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
@@ -42,10 +43,38 @@ def acting_process():
     return "runtime_install.py on " + sys.executable
 
 
+def within(candidate, root):
+    """Whether a resolved path is a root or lies under it.
+
+    A string prefix test says yes for /opt/env-other against /opt/env, because it does not
+    know where a path component ends. Every identity decision over paths here is containment
+    over resolved parts, so a sibling directory sharing a prefix is a different place.
+    """
+    candidate, root = Path(candidate), Path(root)
+    return candidate == root or root in candidate.parents
+
+
+def refused(command, failed, **extra):
+    """Report a reading that failed, as the reading it was.
+
+    The state is the outcome, so an unreadable shape, an unreachable file and an absent one
+    stay three answers. The exception type and the line that raised travel with it: a code
+    defect reaching this boundary must stay locatable instead of being filed as bad data.
+    """
+    payload = {"command": command, "refused": failed.detail, "reading": failed.refusal()}
+    payload.update(extra)
+    emit(payload)
+    return EXIT_REFUSED
+
+
 # ----------------------------------------------------------------- verify-definition
 
 def cmd_verify_definition(args):
-    findings = definition.verify(ROOT)
+    try:
+        with reading.region(definition.DEFINITION_PATH, "the component definition"):
+            findings = definition.verify(ROOT)
+    except reading.Refused as stop:
+        return refused("verify-definition", stop.reading)
     emit({
         "command": "verify-definition",
         "definition": str(definition.DEFINITION_PATH.relative_to(ROOT)),
@@ -139,27 +168,34 @@ def recorded_roots(record, name):
     accounted for.
     """
     roots = [ROOT.resolve()]
-    for install in ((record or {}).get("components", {}).get(name) or {}).get("installs", []):
-        for key in ("environment", "location"):
-            value = install.get(key)
-            if value:
-                roots.append(Path(value).resolve())
+    # Interpreting a recorded string as a path is a read of the record, so it sits inside the
+    # boundary: a stored value that cannot name a path is an unreadable record, not a crash
+    # in the middle of classification.
+    with reading.region("the host record", "the paths an install recorded",
+                        field="components[].installs[].environment|location"):
+        for install in ((record or {}).get("components", {}).get(name) or {}).get("installs", []):
+            for key in ("environment", "location"):
+                value = install.get(key)
+                if value:
+                    roots.append(Path(value).resolve())
     return roots
 
 
-def classify_component(component, *, record, entry_override=None, registration=None):
+def classify_component(component, *, record, entry_override=None, registration=None,
+                       record_state=None):
     """Gather the four OPS-2.1 signals and classify."""
     unreadable = []
     entry = resolve_entry_point(component["consoleScript"], entry_override)
     resolved = entry.resolve() if entry and entry.exists() else None
 
     roots = recorded_roots(record, component["component"])
-    entry_recorded = bool(resolved and any(
-        str(resolved).startswith(str(r)) for r in roots
-    ))
+    entry_recorded = bool(resolved and any(within(resolved, r) for r in roots))
     shebang = interpreter_of(resolved) if resolved else None
     if resolved and not entry_recorded and shebang:
-        entry_recorded = any(str(Path(shebang).resolve()).startswith(str(r)) for r in roots)
+        with reading.region("the installed entry point", "the interpreter it names",
+                            field="shebang"):
+            interpreter_path = Path(shebang).resolve()
+        entry_recorded = any(within(interpreter_path, r) for r in roots)
 
     python = shebang or (sys.executable if resolved is None else shebang)
     version = interpreter_version(python) if python else None
@@ -200,7 +236,10 @@ def classify_component(component, *, record, entry_override=None, registration=N
             codex_cli=codex_cli_version(), host=socket.gethostname(),
         )
     elif record is None:
-        unreadable.append("the host record")
+        # Which failure it was, not merely that there was one: a record that could not be
+        # reached and a record whose shape could not be read are different problems with
+        # different answers, and a classification that says only 'unreadable' hides that.
+        unreadable.append("the host record (" + str(record_state or reading.UNREADABLE) + ")")
 
     conflict = None
     if registration and registration.get("outcome") == "CONFLICT":
@@ -249,8 +288,14 @@ def classify_component(component, *, record, entry_override=None, registration=N
 # ------------------------------------------------------------------------- diagnose
 
 def read_config(codex_home):
+    """The configuration text, as a reading.
+
+    Decoding is part of reading it: a file that is not UTF-8 raised straight through this
+    function before, so a configuration nobody could read arrived as a traceback rather than
+    as the refusal it is.
+    """
     path = Path(codex_home) / "config.toml"
-    return path, (path.read_text(encoding="utf-8") if path.is_file() else "")
+    return path, reading.read_text(path, "the Codex configuration", absent="")
 
 
 def registration_state(codex_home, command, args, name=MCP_NAME):
@@ -261,7 +306,13 @@ def registration_state(codex_home, command, args, name=MCP_NAME):
     exactly right, and that false conflict then drags the component and the installed
     result down with it.
     """
-    path, text = read_config(codex_home)
+    path, config = read_config(codex_home)
+    if not config.usable:
+        # The state IS the outcome, so 'the file could not be decoded' and 'the file could
+        # not be reached' stay two answers here rather than collapsing into UNREADABLE.
+        return {"path": str(path), "outcome": config.state, "detail": config.detail,
+                "wouldWrite": False, "registered": None, "reading": config.refusal()}
+    text = config.value
     view = codexconfig.scan(text)
     if not view.readable:
         return {"path": str(path), "outcome": "UNREADABLE",
@@ -285,22 +336,30 @@ def registration_state(codex_home, command, args, name=MCP_NAME):
 
 def cmd_diagnose(args):
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-    data = definition.load()
     record_path = Path(args.record) if args.record else hostrecord.record_path()
-    record = hostrecord.load(record_path, data["definitionVersion"])
+    try:
+        with reading.region(definition.DEFINITION_PATH, "the component definition"):
+            data = definition.load()
+    except reading.Refused as stop:
+        return refused("diagnose", stop.reading)
+    host_record = hostrecord.load(record_path, data["definitionVersion"])
+    record = host_record.value if host_record.usable else None
 
     bridge = next(c for c in data["components"] if c["component"] == "codex-thread-bridge")
     relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
 
     registration = registration_state(codex_home, args.bridge_command or "", args.bridge_arg or [])
-    classes = {
-        c["component"]: classify_component(
-            c, record=record,
-            entry_override=args.relay_command if c["component"] == "codex-session-relay" else None,
-            registration=registration if c["component"] == "codex-thread-bridge" else None,
-        )
-        for c in data["components"]
-    }
+    try:
+        classes = {
+            c["component"]: classify_component(
+                c, record=record, record_state=host_record.state,
+                entry_override=args.relay_command if c["component"] == "codex-session-relay" else None,
+                registration=registration if c["component"] == "codex-thread-bridge" else None,
+            )
+            for c in data["components"]
+        }
+    except reading.Refused as stop:
+        return refused("diagnose", stop.reading, hostRecord=str(record_path))
 
     relay_executable = args.relay_command or shutil.which(relay_component["consoleScript"])
     survey = readings = None
@@ -311,6 +370,14 @@ def cmd_diagnose(args):
                              socket=args.socket, state=args.state)
         summary = scope.summarise(readings, issue=args.issue, service={
             "reading": status.get("payload"),
+            # The invocation envelope is kept, not discarded, and then interpreted. Keeping
+            # only the payload made 'the command could not run' and 'the daemon answered and
+            # is stopped' the same answer, and one of those two is a claim about activation
+            # that nobody observed.
+            "state": scope.service_state(status),
+            "invocation": {"ok": status.get("ok"), "exitCode": status.get("exitCode"),
+                           "command": status.get("command"),
+                           "unreadable": status.get("unreadable")},
             "note": "who owns the service for this scope. A service is never started here, and"
                     " no parent may stop one another parent is using (OPS-4.1).",
         })
@@ -391,7 +458,13 @@ def cmd_diagnose(args):
         "repositoryCommit": definition.git(["rev-parse", "HEAD"], ROOT),
         "codexHome": str(codex_home),
         "hostRecord": str(record_path),
-        "hostRecordPresent": record is not None and Path(record_path).is_file(),
+        "hostRecordState": host_record.state,
+        "hostRecordStateMeaning": (
+            "ABSENT is a clean host, PRESENT was read, UNREADABLE exists and its shape could"
+            " not be read, ACCESS_ERROR could not be reached at all. They are four answers and"
+            " none of them is inferred from another."
+        ),
+        "hostRecordReading": None if host_record.ok else host_record.refusal(),
         "skillLinks": skill_links(codex_home),
         "components": classes,
         "mcpRegistration": registration,
@@ -469,8 +542,17 @@ TRIAL_GENERATION = "<generation>"
 TRIAL_EVENT = "<event>"
 
 
-def trial_request_id(issue):
-    return "jun104-trial-" + str(issue)
+def trial_request_id(issue, dispatch_turn):
+    """Unique to one dispatch, and stable across retries of that same dispatch.
+
+    Keyed on the issue alone, the second trial for an issue replays the first generation-open
+    and gets back the generation already bound to the first dispatch turn; generation-bind
+    then refuses the new anchor and the trial cannot reach a delivery. A trial that only works
+    once is not the delivery test criterion 5 asks for. Keyed on the dispatch turn too, a
+    retry of one dispatch still replays, and a genuinely new dispatch opens its own.
+    """
+    seed = str(issue) + "/" + str(dispatch_turn)
+    return "jun104-trial-" + hashlib.sha256(seed.encode()).hexdigest()[:16]
 
 
 def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
@@ -483,7 +565,7 @@ def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
     that only exist once an earlier step has run appear as placeholders and are substituted
     at execution time.
     """
-    request_id = trial_request_id(issue)
+    request_id = trial_request_id(issue, dispatch_turn_id)
     steps = [
         # First, before anything is written. A lookup run after register could find the
         # relationship this trial just created, which says nothing about the store
@@ -585,18 +667,18 @@ def _trial(args, relay_executable):
 
     def run_step(argv):
         concrete = [resolved.get(token, token) for token in argv]
-        reading = scope.relay(concrete, executable=relay_executable, socket=args.socket,
-                              state=args.state)
-        performed.append({"command": reading.get("command"), "ok": reading.get("ok"),
-                          "exitCode": reading.get("exitCode")})
-        return reading
+        answer = scope.relay(concrete, executable=relay_executable, socket=args.socket,
+                             state=args.state)
+        performed.append({"command": answer.get("command"), "ok": answer.get("ok"),
+                          "exitCode": answer.get("exitCode")})
+        return answer
 
-    def refuse(step, reading):
+    def refuse(step, answer):
         return check.field(
             "not_verified",
             step + " did not succeed, so nothing later could be established: "
-            + str(reading.get("stderr") or reading.get("unreadable")
-                  or json.dumps(reading.get("payload"))[:300])
+            + str(answer.get("stderr") or answer.get("unreadable")
+                  or json.dumps(answer.get("payload"))[:300])
             + ". Steps: " + json.dumps(performed),
             command=json.dumps(performed[-1]["command"]) if performed else None,
             acting_process=acting_process(), measured_at=now(),
@@ -620,13 +702,22 @@ def _trial(args, relay_executable):
         ),
     }
     if args.expect_relationship:
-        seen = json.dumps(found.get("payload"))
-        assignment["agrees"] = args.expect_relationship in seen
+        # Compared against the field that names the responsible relationship, not against the
+        # serialized answer. A substring test over the payload matches an archived assignment
+        # sitting anywhere in it, so the guard meant to prove this process reads the expected
+        # store would pass against a store where that relationship is closed.
+        payload = found.get("payload")
+        responsible = payload.get("responsibleRelationship") if isinstance(payload, dict) else None
+        assignment["responsibleRelationship"] = responsible
+        assignment["comparedField"] = "responsibleRelationship"
+        assignment["agrees"] = responsible is not None and responsible == args.expect_relationship
         if not assignment["agrees"]:
+            seen = json.dumps(payload)
             return check.field(
                 "not_verified",
                 "the store does not hold the expected relationship "
                 + str(args.expect_relationship) + " for issue " + str(args.issue)
+                + " as its responsible relationship (it reports " + repr(responsible) + ")"
                 + ", so this process is pointed at a different store than the one the"
                 " assignment lives in. Nothing was written. Lookup: " + seen[:300],
                 command=json.dumps(performed[-1]["command"]),
@@ -720,8 +811,12 @@ def cmd_hook(args):
 # ------------------------------------------------------------------------- install
 
 def cmd_install(args):
-    data = definition.load()
-    findings = definition.verify(ROOT)
+    try:
+        with reading.region(definition.DEFINITION_PATH, "the component definition"):
+            data = definition.load()
+            findings = definition.verify(ROOT)
+    except reading.Refused as stop:
+        return refused("install", stop.reading)
     if findings:
         emit({"command": "install", "refused": "the definition does not describe this checkout",
               "findings": findings})
@@ -743,12 +838,12 @@ def cmd_install(args):
     ).hexdigest()[:12]
     environment = destination / ("env-" + str(data["definitionVersion"]) + "-" + combined)
     record_path = Path(args.record) if args.record else hostrecord.record_path()
-    record = hostrecord.load(record_path, data["definitionVersion"])
-    if record is None:
-        emit({"command": "install", "refused": "the host record exists but could not be read",
-              "hostRecord": str(record_path),
-              "note": "it is never replaced silently: it holds the only evidence of what was run here"})
-        return EXIT_REFUSED
+    host_record = hostrecord.load(record_path, data["definitionVersion"])
+    if not host_record.usable:
+        return refused("install", host_record, hostRecord=str(record_path),
+                       note="it is never replaced silently: it holds the only evidence of"
+                            " what was run here")
+    record = host_record.value
 
     plan = [
         {"step": "verify-definition", "outcome": "passed"},
@@ -783,12 +878,14 @@ def cmd_install(args):
         return done.returncode == 0
 
     destination.mkdir(parents=True, exist_ok=True)
-    # OPS-2.4's first measurement: what is selected now, before anything replaces it. Without
-    # it, restoring the previous pointer after a failure reports a runtime as selected with no
-    # current evidence about it.
-    outgoing = _outgoing_runtime(record, data)
-    record["outgoing"] = outgoing
-    hostrecord.save(record_path, record)
+    # OPS-2.4's first measurement: what is selected now, and whether it is still the runtime
+    # that was recorded, taken before anything stages over it. It is only READ here; nothing
+    # about it is written until this run has proved it owns a destination, because a run that
+    # is about to be refused must not have changed the record on its way to the refusal.
+    try:
+        outgoing = _outgoing_runtime(record, data)
+    except reading.Refused as stop:
+        return refused("install", stop.reading, hostRecord=str(record_path))
 
     # Exclusive: this fails if the directory exists, which is what proves the run owns it and
     # may therefore remove it on failure. An exists() test before a separate create does not.
@@ -796,34 +893,44 @@ def cmd_install(args):
         environment.mkdir()
     except FileExistsError:
         emit({"command": "install", "refused": "the environment directory already exists",
-              "environment": str(environment), "plan": plan,
+              "environment": str(environment), "plan": plan, "outgoing": outgoing,
               "note": "an existing environment is never overwritten, and a run only removes a"
-                      " directory it created itself"})
+                      " directory it created itself. Nothing was written to the host record."})
         return EXIT_REFUSED
     owned = environment
 
+    # Ownership is proven, so this run may record what it observed on the way in.
+    staged = hostrecord.update(record_path, data["definitionVersion"], outgoing=outgoing)
+    if not staged.usable:
+        return refused("install", staged, hostRecord=str(record_path))
+
     if not perform("create environment", [str(interpreter), "-m", "venv", str(environment)]):
-        return _install_failed(record_path, record, previous, performed, environment, owned)
+        return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
 
     python = environment / "bin" / "python"
     packages = [str(ROOT / c["subdirectory"]) for c in data["components"]]
     if not perform("install packages", [str(python), "-m", "pip", "install", "--quiet", *packages]):
-        return _install_failed(record_path, record, previous, performed, environment, owned)
+        return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
 
     version = interpreter_version(python)
     installs = {}
+    facts = {}
     for component in data["components"]:
         location, error, _argv = module_location(python, component["module"])
         if not location:
             performed.append({"step": "read imported location", "component": component["component"],
                               "ok": False, "detail": error})
-            return _install_failed(record_path, record, previous, performed, environment, owned)
+            return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
         digest = definition.ops12_digest(location)
         install = {
             "location": location,
             # Read back from the interpreter: an editable install leaves nothing under
             # site-packages and a copied one does, so the mode follows the location.
-            "installMode": "copied" if str(environment) in location else "editable",
+            # Containment over resolved parts, not a substring: /opt/env-other contains the
+            # text /opt/env, and reading a neighbouring environment's install as this one's
+            # copy is the same class of error as a prefix test on a recorded root.
+            "installMode": "copied" if within(Path(location).resolve(), environment.resolve())
+                           else "editable",
             "entryPoint": str(environment / "bin" / component["consoleScript"]),
             "environment": str(environment),
             "interpreter": version,
@@ -831,35 +938,57 @@ def cmd_install(args):
             "digestMatchesDefinition": digest == component["sourceDigest"],
             "reachedVia": "installed by runtime_install.py into " + str(destination),
         }
-        entry = hostrecord.component(record, component["component"])
-        entry["repositoryCommit"] = definition.git(["rev-parse", "HEAD"], ROOT)
-        entry["repositoryTree"] = definition.git(["rev-parse", "HEAD^{tree}"], ROOT)
-        entry["subdirectoryTree"] = definition.git(
-            ["rev-parse", "HEAD:" + component["subdirectory"]], ROOT)
-        entry["workingTreeClean"] = definition.working_tree_clean(ROOT)
+        facts[component["component"]] = {
+            # Recorded at install time, from the checkout the bytes actually came from, so
+            # the identity in the record is the one this run installed rather than whatever
+            # the checkout says later.
+            "repositoryCommit": definition.git(["rev-parse", "HEAD"], ROOT),
+            "repositoryTree": definition.git(["rev-parse", "HEAD^{tree}"], ROOT),
+            "subdirectoryTree": definition.git(
+                ["rev-parse", "HEAD:" + component["subdirectory"]], ROOT),
+            "workingTreeClean": definition.working_tree_clean(ROOT),
+        }
         hostrecord.put_install(record, component["component"], install)
         installs[component["component"]] = install
         performed.append({"step": "read imported location", "component": component["component"],
                           "ok": True, "location": location,
                           "digestMatchesDefinition": install["digestMatchesDefinition"]})
 
-    hostrecord.save(record_path, record)
+    written = hostrecord.update(
+        record_path, data["definitionVersion"],
+        installs=[(name, install) for name, install in installs.items()],
+        component_facts=facts,
+    )
+    if not written.usable:
+        return refused("install", written, hostRecord=str(record_path))
     measurement = measure_candidate(data, record, python=python, environment=environment,
                                     socket_path=args.socket, state=args.state,
                                     relay_command=str(environment / "bin" / "codex-session-relay"),
                                     measured_by=args.issue)
+    # A point measured during this run is a delta, applied to the record as it stands now.
+    # Measuring takes minutes; anything appended in the meantime is not this run's to drop.
+    if measurement.get("points"):
+        appended = hostrecord.update(
+            record_path, data["definitionVersion"],
+            points=[(name, point) for name, point in measurement["points"]])
+        if not appended.usable:
+            return refused("install", appended, hostRecord=str(record_path))
     if not measurement["qualifyingPoint"]:
         # The candidate imports but does not work. Release the destination the same way any
         # other failure does, so a transient connection failure does not block every retry.
         performed.append({"step": "measure the candidate", "ok": False,
                           "detail": measurement.get("refused")
                           or "the candidate was not exercised successfully"})
-        return _install_failed(record_path, record, previous, performed, environment, owned)
+        return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
 
-    record.setdefault("selected", {})
-    for name, install in installs.items():
-        record["selected"][name] = install["location"]
-    hostrecord.save(record_path, record)
+    # Only the components this run installed. A whole selection map would re-assert entries
+    # read before the installation as though they were current.
+    promoted = hostrecord.update(
+        record_path, data["definitionVersion"],
+        select={name: install["location"] for name, install in installs.items()})
+    if not promoted.usable:
+        return refused("install", promoted, hostRecord=str(record_path))
+    record = promoted.value
 
     emit({
         "command": "install", "applied": True, "environment": str(environment),
@@ -880,46 +1009,51 @@ def cmd_install(args):
 
 def _outgoing_runtime(record, data):
     """What is selected right now, and whether its bytes are still what was recorded."""
-    reading = {}
+    observed = {}
     selected = record.get("selected") or {}
     for component in data["components"]:
         location = selected.get(component["component"])
         if not location:
-            reading[component["component"]] = {"selected": None}
+            observed[component["component"]] = {"selected": None}
             continue
         present = Path(location).is_dir()
-        reading[component["component"]] = {
+        observed[component["component"]] = {
             "selected": location,
             "present": present,
             "digest": definition.ops12_digest(location) if present else None,
         }
-    return reading
+    return observed
 
 
-def _install_failed(record_path, record, previous, performed, environment, owned=None):
-    """Restore the previous selection and release a destination this run created.
+def _install_failed(record_path, definition_version, performed, environment, owned=None):
+    """Release a destination this run created, and drop only the records this run wrote.
+
+    The selection is left EXACTLY as found. Writing back the selection this run read at its
+    start would discard a promotion another run committed while this one was installing, and
+    holding a lock over that write does not help, because the staleness is already inside the
+    value being written. This run undoes its own installs and nothing else.
 
     Removing only a directory this run created is what makes the retry work without ever
     touching an environment somebody else owns; the exclusive mkdir above is the proof of
     that ownership. The store is never removed, moved or recreated: update failure and store
     loss are different accidents.
     """
-    record["selected"] = previous
     removed = None
     if owned is not None and Path(owned).is_dir():
         shutil.rmtree(str(owned), ignore_errors=True)
         removed = str(owned)
-    for component in list((record.get("components") or {})):
-        entry = record["components"][component]
-        entry["installs"] = [i for i in entry.get("installs", [])
-                             if i.get("environment") != str(environment)]
-    hostrecord.save(record_path, record)
+    dropped = hostrecord.update(record_path, definition_version, drop_environment=environment)
     emit({"command": "install", "applied": False, "steps": performed,
-          "environment": str(environment), "selected": previous,
+          "environment": str(environment),
+          "selected": (dropped.value or {}).get("selected") if dropped.usable else None,
+          "hostRecordState": dropped.state,
+          "recordsDropped": dropped.usable,
           "removedCandidate": removed,
-          "refused": "a step failed; the previously selected runtime remains selected",
+          "refused": "a step failed; whatever runtime was selected remains selected",
           "note": "the candidate this run created was removed so the destination can be"
-                  " retried, and the records for it were dropped. The store is untouched."})
+                  " retried, and only the install records this run wrote were dropped. The"
+                  " selection is left as found, because another run's promotion is not this"
+                  " run's to undo. The store is untouched."})
     return EXIT_REFUSED
 
 
@@ -1018,10 +1152,10 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
         return {"operations": [], "qualifyingPoint": False, "appServer": None, "toolsListed": [],
                 "refused": mismatch}
 
-    reading = scope.relay(["doctor"], executable=relay_command, socket=socket_path, state=state)
-    connect = ((reading.get("payload") or {}).get("actorReachability") or {}).get("socketConnect")
+    doctor = scope.relay(["doctor"], executable=relay_command, socket=socket_path, state=state)
+    connect = ((doctor.get("payload") or {}).get("actorReachability") or {}).get("socketConnect")
     operations.append({
-        "component": relay_component["component"], "command": reading.get("command"),
+        "component": relay_component["component"], "command": doctor.get("command"),
         "exercised": connect == "ok",
         "detail": "actorReachability.socketConnect = " + repr(connect)
                   + "; a real connect is what makes this an exercise rather than a file read",
@@ -1049,10 +1183,15 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
     })
 
     qualifying = all(op["exercised"] for op in operations)
+    # Points are RETURNED, not written into the record this function was handed. Measuring
+    # takes minutes, and a record mutated here and saved by the caller would carry back a
+    # value read before all of it, silently dropping whatever another run appended in
+    # between. The caller applies these as a delta against the record as it then stands.
+    points = []
     if qualifying:
         for component in data["components"]:
             install = bound[component["component"]]["install"]
-            hostrecord.add_point(record, component["component"], {
+            points.append((component["component"], {
                 "interpreter": interpreter_version(python),
                 "codexCli": codex_cli_version(),
                 "appServer": app_server,
@@ -1070,19 +1209,22 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
                 "definitionDigest": component["sourceDigest"],
                 "digestMatchesDefinition":
                     bound[component["component"]]["digest"] == component["sourceDigest"],
-            })
-    return {"operations": operations, "qualifyingPoint": qualifying,
+            }))
+    return {"operations": operations, "qualifyingPoint": qualifying, "points": points,
             "appServer": app_server, "toolsListed": tools_listed}
 
 
 def cmd_measure(args):
-    data = definition.load()
+    try:
+        with reading.region(definition.DEFINITION_PATH, "the component definition"):
+            data = definition.load()
+    except reading.Refused as stop:
+        return refused("measure", stop.reading)
     record_path = Path(args.record) if args.record else hostrecord.record_path()
-    record = hostrecord.load(record_path, data["definitionVersion"])
-    if record is None:
-        emit({"command": "measure", "refused": "the host record exists but could not be read",
-              "hostRecord": str(record_path)})
-        return EXIT_REFUSED
+    host_record = hostrecord.load(record_path, data["definitionVersion"])
+    if not host_record.usable:
+        return refused("measure", host_record, hostRecord=str(record_path))
+    record = host_record.value
 
     relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
     relay_command = args.relay_command or shutil.which(relay_component["consoleScript"])
@@ -1103,8 +1245,11 @@ def cmd_measure(args):
     measurement = measure_candidate(data, record, python=python, environment=environment,
                                     socket_path=args.socket, state=args.state,
                                     relay_command=relay_command, measured_by=args.issue)
-    if measurement["qualifyingPoint"]:
-        hostrecord.save(record_path, record)
+    if measurement.get("points"):
+        appended = hostrecord.update(record_path, data["definitionVersion"],
+                                     points=measurement["points"])
+        if not appended.usable:
+            return refused("measure", appended, hostRecord=str(record_path))
     emit({
         "command": "measure", "hostRecord": str(record_path),
         "recorded": bool(measurement["qualifyingPoint"]),
@@ -1127,12 +1272,28 @@ def cmd_register_mcp(args):
     appended at the end, and a different command or argument list is reported and refused.
     Every other table in the file is preserved, which is checked by comparing the bytes
     outside the appended block rather than asserted.
+
+    Reading the file and scanning it are the protected boundary; rendering, replacing and
+    reporting are not. That line matters: a ValueError from a render is a defect in this
+    command and must keep raising, while a configuration that cannot be decoded is a refusal.
     """
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     path, before = read_config(codex_home)
-    new_text, outcome, detail = codexconfig.register(
-        before, args.name, args.bridge_command, args.bridge_arg or [],
-    )
+    if not before.usable:
+        return refused("register-mcp", before, path=str(path), applied=False, wrote=False,
+                       otherTablesPreserved=True,
+                       note="nothing was written: the file was not read")
+    before_text = before.value
+    try:
+        with reading.region(path, "the Codex configuration"):
+            new_text, outcome, detail = codexconfig.register(
+                before_text, args.name, args.bridge_command, args.bridge_arg or [],
+            )
+    except reading.Refused as stop:
+        return refused("register-mcp", stop.reading, path=str(path), applied=False, wrote=False,
+                       otherTablesPreserved=True,
+                       note="nothing was written: the file could not be scanned")
+
     wrote = False
     if args.apply and outcome == "CREATED":
         # Held under one lock for the whole read-modify-write, re-read immediately before
@@ -1142,42 +1303,82 @@ def cmd_register_mcp(args):
         # reason: a writer ignoring the lock can still land in the remaining window.
         try:
             with hostrecord.Locked(path):
-                current = path.read_text(encoding="utf-8") if path.is_file() else ""
-                if current != before:
+                current = reading.read_text(path, "the Codex configuration")
+                if not current.usable:
+                    return refused("register-mcp", current, path=str(path), applied=False,
+                                   wrote=False, otherTablesPreserved=True,
+                                   note="nothing was written: the reread failed")
+                if current.value != before_text:
                     emit({"command": "register-mcp", "path": str(path), "outcome": "CHANGED",
                           "detail": "config.toml changed after it was read, so nothing was"
                                     " written; rerun against the file as it now stands",
-                          "applied": False, "otherTablesPreserved": True})
+                          "applied": False, "wrote": False, "otherTablesPreserved": True})
                     return EXIT_REFUSED
-                fresh, outcome, detail = codexconfig.register(
-                    current, args.name, args.bridge_command, args.bridge_arg or [],
-                )
+                with reading.region(path, "the Codex configuration"):
+                    fresh, outcome, detail = codexconfig.register(
+                        current.value, args.name, args.bridge_command, args.bridge_arg or [],
+                    )
                 if outcome == "CREATED":
                     hostrecord.atomic_write(path, fresh)
                     new_text, wrote = fresh, True
         except TimeoutError as error:
             emit({"command": "register-mcp", "path": str(path), "outcome": "BUSY",
-                  "detail": str(error), "applied": False, "otherTablesPreserved": True})
+                  "detail": str(error), "applied": False, "wrote": False,
+                  "otherTablesPreserved": True})
             return EXIT_REFUSED
+        except reading.Refused as stop:
+            return refused("register-mcp", stop.reading, path=str(path), applied=False,
+                           wrote=False, otherTablesPreserved=True,
+                           note="nothing was written: the reread could not be scanned")
 
-    after = path.read_text(encoding="utf-8") if path.is_file() else ""
-    preserved = after.startswith(before) if wrote else after == before
-    view = codexconfig.scan(after)
+    after = reading.read_text(path, "the Codex configuration")
+    if not after.usable:
+        if wrote:
+            # The table landed and the file cannot be read back. Reporting this as a refusal
+            # that wrote nothing would invite a retry that appends a second registration,
+            # which is the exact outcome this command exists to prevent.
+            emit({"command": "register-mcp", "path": str(path),
+                  "outcome": "APPLIED_UNVERIFIED", "applied": True, "wrote": True,
+                  "readBack": False, "reading": after.refusal(),
+                  "detail": "the registration was written and the file could not be read"
+                            " back: " + str(after.detail),
+                  "otherTablesPreserved": None,
+                  "preservedHow": "not established: the file could not be read after the write"})
+            return EXIT_REFUSED
+        return refused("register-mcp", after, path=str(path), applied=False, wrote=False,
+                       otherTablesPreserved=True,
+                       note="nothing was written: the file could not be read back")
+    after_text = after.value
+
+    preserved = after_text.startswith(before_text) if wrote else after_text == before_text
+    try:
+        with reading.region(path, "the Codex configuration"):
+            view = codexconfig.scan(after_text)
+            servers = sorted(view.servers) if view.readable else None
+            unreadable = view.unreadable or None
+    except reading.Refused as stop:
+        servers, unreadable = None, [stop.reading.detail]
     emit({
         "command": "register-mcp",
         "path": str(path),
         "outcome": outcome,
         "detail": detail,
         "applied": wrote,
+        "wrote": wrote,
+        "readBack": True,
         "otherTablesPreserved": preserved,
         "preservedHow": (
             "the prior content is a byte-exact prefix of the new file, so nothing before the"
             " appended table was rewritten" if wrote else "nothing was written"
         ),
-        "serversNow": sorted(view.servers) if view.readable else None,
-        "unreadable": view.unreadable or None,
+        "serversNow": servers,
+        "unreadable": unreadable,
     })
-    if outcome in ("CONFLICT", "UNREADABLE"):
+    # A partial application is never a success. Left out of this mapping it would exit 0,
+    # and a caller reading only the exit status would record a registration as verified that
+    # nobody could read back.
+    if outcome in ("CONFLICT", "UNREADABLE", "ACCESS_ERROR", "APPLIED_UNVERIFIED", "CHANGED",
+                   "BUSY"):
         return EXIT_REFUSED
     return EXIT_OK
 
@@ -1275,4 +1476,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

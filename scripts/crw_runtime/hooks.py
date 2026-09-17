@@ -15,9 +15,13 @@ import hashlib
 import json
 from pathlib import Path
 
-from . import hostrecord
+from . import hostrecord, reading
 
 SOURCE = "user"
+
+# Installation appends a group carrying no matcher, so that is the matcher a duplicate has to
+# share to be the same registration.
+INSTALLED_MATCHER = None
 
 
 def identity(source, event, matcher_index, hook_index):
@@ -28,14 +32,43 @@ def _hash(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _refused(failed):
+    """A reading that failed, reported as itself.
+
+    The outcome IS the reading's state, so an unreadable shape and an unreachable file stay
+    two answers. Both are refusals to the caller; only one of them is about the content.
+    """
+    return {"outcome": failed.state, "detail": failed.detail, "applied": False,
+            "wrote": False, "reading": failed.refusal()}
+
+
+def shape(document):
+    """Reject containers no consumer here can walk, with a message naming the one that failed."""
+    if not isinstance(document, dict):
+        raise TypeError("a hook file is an object, found " + type(document).__name__)
+    events = document.get("hooks")
+    if events is not None and not isinstance(events, dict):
+        raise TypeError("hooks is an object, found " + type(events).__name__)
+    for name, groups in (events or {}).items():
+        if groups is not None and not isinstance(groups, list):
+            raise TypeError("hooks." + str(name) + " is a list, found " + type(groups).__name__)
+        for group in groups or []:
+            if not isinstance(group, dict):
+                raise TypeError("every group in hooks." + str(name) + " is an object, found "
+                                + type(group).__name__)
+            entries = group.get("hooks")
+            if entries is not None and not isinstance(entries, list):
+                raise TypeError("a group's hooks is a list, found " + type(entries).__name__)
+            for entry in entries or []:
+                if not isinstance(entry, dict):
+                    raise TypeError("every hook in hooks." + str(name)
+                                    + " is an object, found " + type(entry).__name__)
+    return document
+
+
 def read(path):
-    path = Path(path)
-    if not path.is_file():
-        return {"hooks": {}}, None
-    try:
-        return json.loads(path.read_text(encoding="utf-8")), None
-    except (OSError, ValueError) as error:
-        return None, type(error).__name__ + ": " + error.__str__()
+    """Read the hook file as a reading, so absent, unreadable and unreachable stay apart."""
+    return reading.read_json(path, "the hook file", absent=lambda: {"hooks": {}}, shape=shape)
 
 
 def inventory(document, event=None):
@@ -55,6 +88,10 @@ def inventory(document, event=None):
                 found.append({
                     "identity": identity(SOURCE, name, matcher_index, hook_index),
                     "event": name,
+                    # Part of the registration, not decoration: the same command under a
+                    # different matcher fires on different turns, so treating it as already
+                    # installed reports the requested matcher as hooked while leaving it bare.
+                    "matcher": (group or {}).get("matcher"),
                     "trustedHash": _hash(json.dumps(hook, sort_keys=True)),
                 })
     return found
@@ -76,14 +113,19 @@ def plan(document, event, hook):
 def install(path, event, hook, *, issue, apply=False):
     """Append one hook at the end of its event and read the registration back."""
     path = Path(path)
-    before_text = path.read_text(encoding="utf-8") if path.is_file() else ""
-    document, error = read(path)
-    if document is None:
-        return {"outcome": "UNREADABLE", "detail": error}
+    before = reading.read_text(path, "the hook file")
+    if not before.usable:
+        return _refused(before)
+    before_text = before.value
+    first = read(path)
+    if not first.usable:
+        return _refused(first)
+    document = first.value
 
     existing = {entry["identity"]: entry["trustedHash"] for entry in inventory(document)}
     in_event = {entry["identity"]: entry["trustedHash"]
-                for entry in inventory(document, event)}
+                for entry in inventory(document, event)
+                if entry["matcher"] == INSTALLED_MATCHER}
     proposal = plan(document, event, hook)
     already = [key for key, value in in_event.items() if value == proposal["trustedHash"]]
     if already:
@@ -103,27 +145,38 @@ def install(path, event, hook, *, issue, apply=False):
     # The lock coordinates runs of this command; it cannot coordinate with an editor that
     # does not take it, and that limit is stated rather than assumed away.
     with hostrecord.Locked(path):
-        current, error = read(path)
-        if current is None:
-            return {"outcome": "UNREADABLE", "detail": error}
-        if json.dumps(current, sort_keys=True) != json.dumps(document, sort_keys=True):
+        again = read(path)
+        if not again.usable:
+            return _refused(again)
+        if json.dumps(again.value, sort_keys=True) != json.dumps(document, sort_keys=True):
             return {"outcome": "CHANGED", "detail": (
                 "the hook file changed after it was read, so nothing was appended;"
                 " rerun to plan against the file as it now stands")}
         document.setdefault("hooks", {}).setdefault(event, []).append({"hooks": [hook]})
-        hostrecord.atomic_write(path, json.dumps(document, indent=2) + "\n")
+        # The bytes this run writes, kept so the receipt can name them without reading the
+        # file a second time outside a guarded region.
+        payload = json.dumps(document, indent=2) + "\n"
+        hostrecord.atomic_write(path, payload)
 
         # Read the registration back rather than trusting the write.
-        written, error = read(path)
-    if written is None:
-        return {"outcome": "UNREADABLE", "detail": "wrote, but could not read back: " + str(error)}
+        back = read(path)
+    if not back.usable:
+        # The append landed. Reporting this as a refusal that wrote nothing would be the
+        # worst answer available: the caller would retry and append a second copy.
+        return {"outcome": "APPLIED_UNVERIFIED", "applied": True, "wrote": True,
+                "readBack": False, "installed": True, "enabled": "unknown",
+                "observedFired": "unknown", "identity": proposal["identity"],
+                "reading": back.refusal(),
+                "detail": "the hook was appended and the file could not be read back: "
+                          + str(back.detail)}
+    written = back.value
     after = {entry["identity"]: entry["trustedHash"] for entry in inventory(written)}
     preserved = all(after.get(key) == value for key, value in existing.items())
     return {
         "outcome": "CREATED",
         "identity": proposal["identity"],
         "trustedHash": proposal["trustedHash"],
-        "hookFileSha256": _hash(path.read_text(encoding="utf-8")),
+        "hookFileSha256": _hash(payload),
         "hookFileSha256Before": _hash(before_text),
         "installedBy": issue,
         "applied": True,
@@ -149,4 +202,3 @@ def disable(document, event, matcher_index, hook_index):
         ),
         "identity": identity(SOURCE, event, matcher_index, hook_index),
     }
-

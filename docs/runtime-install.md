@@ -83,8 +83,72 @@ it covers rather than an independently editable expectation. A point recorded ag
 interpreter is a different combination and does not satisfy this one. Points are appended, never
 replaced.
 
-## Installing the runtime
+## Reading a record, and what happens when it cannot be read
 
+Every record this command reads — the definition, the host record, the Codex configuration, the
+hook file — is read at a narrow boundary that turns a failure into an answer rather than a
+traceback. The answer is one of four states, decided by an ordered observation rather than by a
+convenience test:
+
+| State | What was observed |
+| --- | --- |
+| `ABSENT` | nothing exists at the path. The only state that may be read as a host with no history. |
+| `PRESENT` | it was read. An existing record with nothing in it is `PRESENT`, not `ABSENT`. |
+| `UNREADABLE` | something is there and its shape cannot be read: a directory or other non-regular file, a symlink whose target is established missing or looping, invalid UTF-8, unparseable JSON, or containers of the wrong type. |
+| `ACCESS_ERROR` | nothing could be established: a permission or I/O failure reaching the path, a symlink whose target could not be resolved, or a parent directory that cannot be traversed. |
+
+The distinction that matters most is the last row. Being unable to ask is not being told no, so a
+failure to establish existence is never reported as absence, and a permission problem is never
+reported as a malformed record.
+
+The service reading is classified the same way, and the invocation wins: a `service status` command
+that did not run yields `ACCESS_ERROR`, an answer with no boolean `running` yields `UNREADABLE`, and
+only an answer that arrived yields `RUNNING` or `STOPPED`. A daemon is never reported stopped
+because nobody could ask it.
+
+A refusal names what failed: the exception type, the source path, and the file and line that raised.
+That is deliberate. Swallowing everything into a generic "unreadable" would file a defect in this
+command as a problem with the user's data, and the defect would then disappear from the record.
+
+### What this guarantees, and what it does not
+
+The guarantee is bounded and stated rather than implied. **What it guarantees:** the worst case for
+a record this command reads is a named refusal, not a crash. **What it does not guarantee:** that a
+record which could have been read is never refused. Validation is per known consumed field where the
+shape is known, and a class guarantee at the boundary everywhere else, so the residue is a record
+refused conservatively. That direction is the safe one and the refusal carries its reason, so it is
+reportable rather than silent.
+
+Two further limits, for the same reason:
+
+- **"Nothing was written" is scoped to what can be guaranteed.** Malformed input detected *before*
+  the first mutating step refuses and the target file's bytes are unchanged. A read failure *after*
+  a mutation reports the mutation instead of denying it: the outcome is `APPLIED_UNVERIFIED` with
+  `applied`, `wrote` and `readBack: false`, and the command exits non-zero. Reporting a landed write
+  as a refusal that wrote nothing would invite a retry that appends a second registration, which is
+  the outcome this command exists to prevent. The unchanged-bytes claim is about the target file; a
+  lock file is created and removed beside it.
+- **A read-only diagnosis reports rather than refuses.** `diagnose` names the failed reading in
+  `hostRecordState` and `hostRecordReading` and continues with what it could still observe, because
+  refusing the whole diagnosis would discard the readings that did answer. It never reads an
+  unreadable record as a clean host: the affected components classify `unreadable`. Commands that
+  would write — `install`, `measure`, `register-mcp`, `hook` — refuse outright.
+
+### One writer for the host record
+
+Every change to the host record goes through one helper that takes the lock, loads the record
+*inside* it, applies the caller's narrow delta and saves. The helper never accepts a record. A
+caller that loads a record, spends minutes installing and exercising a runtime, and then hands the
+record back to be saved would overwrite whatever another run committed in between, and holding a
+lock over that save does not help, because the staleness is already inside the value being written.
+So a caller says what it learned — this install, these points, this selection — and the merge
+happens against the record as it then stands.
+
+Recovery follows from the same rule. A failed install removes the directory it created and drops
+only the install records keyed to that directory. It leaves the selection **exactly as found**,
+because another run's successful promotion is not this run's to undo.
+
+## Installing the runtime
 `runtime_install.py install` refuses unless `verify-definition` passes, then resolves an
 interpreter that satisfies both components' `requires-python`. The controller itself runs on
 Python 3.10 for CI and never selects itself for a runtime that requires 3.11 or newer; when no
@@ -219,6 +283,18 @@ been written. Settings are supplied with `--recipient-settings`, or acknowledged
 recorded as the caller's own unverified claim, because every relay read constructs a store and there
 is no read-only way to confirm it from here. A false acknowledgement can still reach the relay and
 leave rows behind.
+
+The dispatch request id is keyed on the issue **and** the dispatch turn. Keyed on the issue alone, a
+second trial for the same issue replays the first generation, `generation-bind` then refuses the new
+anchor, and the trial can only ever succeed once — which is not a delivery test. Keyed on both, a
+retry of one dispatch still replays and reaches the same generation, and a genuinely new dispatch
+opens its own.
+
+The lookup's agreement is decided against the answer's `responsibleRelationship` field, not against
+its serialized text. A substring test matches an archived assignment sitting anywhere in the
+payload, so the guard meant to prove this process reads the expected store would pass against a
+store where that relationship is closed.
+
 
 Getting that far takes more than three commands, and each of the extra ones exists because the relay
 refuses the send without it. Measured against a running App Server, the sequence is:

@@ -4,19 +4,24 @@ Every case here writes only into a temporary directory. None of it reads or chan
 Codex home, an installed runtime, an MCP registration or an operational database.
 """
 
+import argparse
 import ast
+import errno
 import json
 import os
+import stat
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from crw_runtime import check, codexconfig, definition, hooks, hostrecord, ownership, scope
+from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
+                         reading, scope)
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
@@ -265,7 +270,9 @@ class HostRecordTests(unittest.TestCase):
             record = hostrecord.empty(1)
             hostrecord.put_install(record, "codex-session-relay", {"location": "/env/pkg"})
             hostrecord.save(path, record)
-            self.assertEqual(hostrecord.load(path, 1)["components"], record["components"])
+            read = hostrecord.load(path, 1)
+            self.assertEqual(read.state, reading.PRESENT)
+            self.assertEqual(read.value["components"], record["components"])
 
 
 class ScopeReadingTests(unittest.TestCase):
@@ -816,9 +823,28 @@ class AuthorizedRepairTests(unittest.TestCase):
 
     def test_the_environment_name_covers_every_component(self):
         # Derived from the first component alone, a relay-only change produced the same
-        # directory and the existence check then refused to install it.
-        source = (ROOT / "scripts" / "runtime_install.py").read_text(encoding="utf-8")
-        self.assertIn('"".join(c["sourceDigest"] for c in data["components"])', source)
+        # directory and the existence check then refused to install it. Asserted as
+        # behaviour: reading the source for a expression proves the expression is present,
+        # not that the name changes when a component does.
+        import runtime_install
+
+        base = definition.load()
+        names = set()
+        with tempfile.TemporaryDirectory() as temporary:
+            for digests in (("aa", "bb"), ("aa", "cc"), ("dd", "bb")):
+                data = json.loads(json.dumps(base))
+                for component, digest in zip(data["components"], digests):
+                    component["sourceDigest"] = digest * 32
+                args = argparse.Namespace(dest=temporary, apply=False, record=None,
+                                          python=sys.executable, socket=None, state=None,
+                                          issue=None)
+                with mock.patch.object(runtime_install.definition, "load", return_value=data), \
+                     mock.patch.object(runtime_install.definition, "verify", return_value=[]), \
+                     mock.patch.object(runtime_install, "emit",
+                                       side_effect=lambda p: names.add(p["environment"])):
+                    self.assertEqual(runtime_install.cmd_install(args), 0)
+        self.assertEqual(len(names), 3,
+                         "a change in any component must name a different environment")
 
     def test_a_failed_run_releases_only_the_directory_it_created(self):
         import runtime_install
@@ -833,18 +859,822 @@ class AuthorizedRepairTests(unittest.TestCase):
             theirs = Path(temporary) / "theirs"
             theirs.mkdir()
 
-            code = runtime_install._install_failed(
-                record_path, record, {"codex-session-relay": "/previous"}, [], str(mine), mine)
+            record["selected"] = {"codex-session-relay": "/promoted-by-another-run"}
+            hostrecord.save(record_path, record)
+
+            code = runtime_install._install_failed(record_path, 1, [], str(mine), mine)
             self.assertEqual(code, 1)
             self.assertFalse(mine.exists(), "the destination this run created must be retryable")
             self.assertTrue(theirs.exists(), "a directory this run did not create is untouched")
-            written = hostrecord.load(record_path, 1)
-            self.assertEqual(written["selected"], {"codex-session-relay": "/previous"})
+            written = hostrecord.load(record_path, 1).value
+            self.assertEqual(
+                written["selected"], {"codex-session-relay": "/promoted-by-another-run"},
+                "recovery leaves the selection as found; another run's promotion is not"
+                " this run's to undo")
             self.assertEqual(
                 written["components"]["codex-session-relay"]["installs"], [],
                 "records for a removed candidate are dropped")
 
 
+
+# =========================================================================================
+# Check 1 - round-trip symmetry over names AND values, judged by an independent parser
+# =========================================================================================
+
+ADVERSARIAL_NAMES = [
+    "plain", "dotted.name", 'has"quote', "has'literal", "back\\slash", "tab\there",
+    "bracket[inside]", 'triple"""quote', "u2028\u2028sep", "nel\u0085sep", "space in name",
+    "\u00e9\u4e2d", "equals=sign", "hash#mark",
+]
+ADVERSARIAL_VALUES = [
+    "/usr/bin/plain", 'a"b', "a'b", "a\\b", "a\tb", 'a"""b', "a\u2028b", "a\u0085b",
+    "[bracketed]", "# not a comment", "trailing\\", "\u00e9\u4e2d", "",
+]
+
+
+class RoundTripSymmetryTests(unittest.TestCase):
+    """The reader and the writer agree, and tomllib is the judge of both.
+
+    A chosen list of characters is still a list, and the two defects this closed were both
+    outside whatever list came to mind: a quoted name containing a bracket, which the header
+    recognizer rejected while tomllib accepted it, and a value containing U+2028, which
+    str.splitlines tore in half. Generating the corpus and comparing against an independent
+    parser is what makes this a property rather than a longer list.
+    """
+
+    def test_every_generated_registration_round_trips_and_agrees_with_tomllib(self):
+        try:
+            import tomllib
+        except ImportError:
+            self.skipTest("tomllib is the oracle for this property")
+        failures = []
+        for name in ADVERSARIAL_NAMES:
+            for value in ADVERSARIAL_VALUES:
+                args = [value, "second"]
+                text = codexconfig.render(name, value, args)
+                view = codexconfig.scan(text)
+                if not view.readable:
+                    failures.append((name, value, "unreadable: " + "; ".join(view.unreadable)))
+                    continue
+                try:
+                    parsed = tomllib.loads(text).get("mcp_servers", {})
+                except Exception as error:
+                    failures.append((name, value, "tomllib rejected: " + repr(error)))
+                    continue
+                if set(parsed) != set(view.servers):
+                    failures.append((name, value, "names differ: " + repr(sorted(view.servers))
+                                     + " vs " + repr(sorted(parsed))))
+                    continue
+                mine, theirs = view.servers.get(name) or {}, parsed.get(name) or {}
+                if mine.get("command") != value or theirs.get("command") != value:
+                    failures.append((name, value, "command differs: " + repr(mine.get("command"))
+                                     + " vs " + repr(theirs.get("command"))))
+                    continue
+                if list(mine.get("args") or []) != args or list(theirs.get("args") or []) != args:
+                    failures.append((name, value, "args differ: " + repr(mine.get("args"))
+                                     + " vs " + repr(theirs.get("args"))))
+                    continue
+                _, outcome, detail = codexconfig.register(text, name, value, args)
+                if outcome != "LINKED":
+                    failures.append((name, value, "rerun reported " + outcome + ": " + detail))
+        self.assertEqual(failures, [], "write -> read must return the name and the value"
+                                       " unchanged and a rerun must report LINKED")
+
+    def test_a_dotted_name_is_a_server_rather_than_a_sub_table(self):
+        text = codexconfig.render("codex.thread.bridge", "/usr/bin/bridge", [])
+        self.assertIn('[mcp_servers."codex.thread.bridge"]', text)
+        self.assertEqual(sorted(codexconfig.scan(text).servers), ["codex.thread.bridge"])
+
+    def test_a_quoted_name_containing_a_bracket_is_read_rather_than_skipped(self):
+        text = '[mcp_servers."a[b]"]\ncommand = "/bin/x"\n'
+        view = codexconfig.scan(text)
+        self.assertTrue(view.readable, view.unreadable)
+        self.assertEqual(sorted(view.servers), ["a[b]"])
+
+    def test_a_value_carrying_a_unicode_separator_is_not_torn_in_half(self):
+        text = '[mcp_servers.one]\ncommand = "a\u2028b"\n\n[mcp_servers.two]\ncommand = "/x"\n'
+        view = codexconfig.scan(text)
+        self.assertTrue(view.readable, view.unreadable)
+        self.assertEqual(sorted(view.servers), ["one", "two"])
+        self.assertEqual(view.servers["one"]["command"], "a\u2028b")
+
+    def test_a_key_escape_is_decoded_the_way_a_value_escape_is(self):
+        self.assertEqual(codexconfig._split_key(r'mcp_servers."a\"b"'), ["mcp_servers", 'a"b'])
+        self.assertEqual(codexconfig._split_key(r'"tab\there"'), ["tab\there"])
+
+    def test_the_oracle_comparison_covers_arguments_as_well_as_the_command(self):
+        # The comparison decides LINKED against CONFLICT, and arguments are half of that.
+        source = '[mcp_servers.one]\ncommand = "/x"\nargs = ["a"]\n'
+        view = codexconfig.scan(source)
+        view.servers["one"]["args"] = ["b"]
+        disagreement = codexconfig.cross_check(source, view)
+        self.assertIsNotNone(disagreement)
+        self.assertIn("args", disagreement)
+
+
+# =========================================================================================
+# Check 2 - identity decisions compare identifiers, never serialized text or path prefixes
+# =========================================================================================
+
+def _substring_identity_comparisons(tree):
+    """Membership tests whose right-hand side is a serialized payload."""
+    found = set()
+    for scope_node in ast.walk(tree):
+        if not isinstance(scope_node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        serialized = set()
+        for node in ast.walk(scope_node):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                called = node.value.func
+                if isinstance(called, ast.Attribute) and called.attr == "dumps":
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            serialized.add(target.id)
+        for node in ast.walk(scope_node):
+            if not isinstance(node, ast.Compare):
+                continue
+            if not any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
+                continue
+            for comparator in node.comparators:
+                if (isinstance(comparator, ast.Call)
+                        and isinstance(comparator.func, ast.Attribute)
+                        and comparator.func.attr == "dumps"):
+                    found.add(node.lineno)
+                if isinstance(comparator, ast.Name) and comparator.id in serialized:
+                    found.add(node.lineno)
+    return sorted(found)
+
+
+def _source_modules():
+    paths = [ROOT / "scripts" / "runtime_install.py"]
+    return paths + sorted((ROOT / "scripts" / "crw_runtime").glob("*.py"))
+
+
+class IdentityComparisonTests(unittest.TestCase):
+    """One inventory over the decisions, plus one case per dimension each must not ignore.
+
+    The guard that started this compared an expected relationship against the whole
+    serialized lookup answer, so an archived assignment sitting anywhere in the payload read
+    as agreement. Two more of the same shape were path prefixes. They are one class: an
+    identity compared by something wider than the identity itself.
+    """
+
+    def test_no_identifier_is_compared_against_a_serialized_payload(self):
+        offenders = []
+        for path in _source_modules():
+            lines = _substring_identity_comparisons(ast.parse(path.read_text(encoding="utf-8")))
+            offenders += [str(path.relative_to(ROOT)) + ":" + str(line) for line in lines]
+        self.assertEqual(offenders, [], "compare the field, not the serialized answer")
+
+    def test_environment_membership_rejects_a_sibling_sharing_a_prefix(self):
+        import runtime_install
+
+        self.assertTrue(runtime_install.within(Path("/opt/env/lib/pkg"), Path("/opt/env")))
+        self.assertTrue(runtime_install.within(Path("/opt/env"), Path("/opt/env")))
+        self.assertFalse(runtime_install.within(Path("/opt/env-other/lib"), Path("/opt/env")))
+
+    def test_a_recorded_root_rejects_a_sibling_sharing_a_prefix(self):
+        import runtime_install
+
+        record = hostrecord.empty(1)
+        hostrecord.put_install(record, "codex-session-relay",
+                               {"location": "/opt/env/pkg", "environment": "/opt/env"})
+        roots = runtime_install.recorded_roots(record, "codex-session-relay")
+        self.assertTrue(any(runtime_install.within(Path("/opt/env/bin/x"), r) for r in roots))
+        self.assertFalse(any(runtime_install.within(Path("/opt/env-other/bin/x"), r)
+                             for r in roots))
+
+    def test_an_identical_hook_under_another_matcher_is_not_already_installed(self):
+        document = {"hooks": {"Stop": [{"matcher": "other", "hooks": [{"command": "/bin/x"}]}]}}
+        entries = hooks.inventory(document, "Stop")
+        self.assertEqual([e["matcher"] for e in entries], ["other"])
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "hooks.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            result = hooks.install(path, "Stop", {"command": "/bin/x"}, issue="JUN-104",
+                                   apply=True)
+        self.assertEqual(result["outcome"], "CREATED",
+                         "a matcher-less group is a different registration from a matched one")
+
+    def test_an_archived_relationship_elsewhere_in_the_payload_is_refused(self):
+        import runtime_install
+
+        payload = {"issueKey": "JUN-104", "responsibleRelationship": None,
+                   "assignments": [{"relationshipId": "rel-archived", "state": "closed"}]}
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root="/tmp", turn_thread="t", turn_id="ti", artifact=["/tmp/a"],
+            dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
+            settings_already_recorded=True, expect_relationship="rel-archived",
+            socket=None, state=None)
+        with mock.patch.object(runtime_install.scope, "relay",
+                               return_value={"ok": True, "payload": payload,
+                                             "command": ["assignment-find"]}):
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "not_verified")
+        self.assertIn("responsible relationship", result["evidence"])
+
+
+# =========================================================================================
+# Check 3 - every write to a host-owned file happens under the lock that guards it
+# =========================================================================================
+
+WRITE_CALLS = {"save", "atomic_write", "write_text"}
+
+
+def _is_lock(item):
+    call = item.context_expr
+    if not isinstance(call, ast.Call):
+        return False
+    called = call.func
+    name = called.attr if isinstance(called, ast.Attribute) else getattr(called, "id", None)
+    return name == "Locked"
+
+
+def _unguarded_writes(tree):
+    found = []
+
+    def walk(node, locked):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.With):
+                inner = locked or any(_is_lock(item) for item in child.items)
+                for item in child.items:
+                    walk(item.context_expr, locked)
+                for statement in child.body:
+                    walk(statement, inner)
+                continue
+            if isinstance(child, ast.Call):
+                called = child.func
+                name = (called.attr if isinstance(called, ast.Attribute)
+                        else getattr(called, "id", None))
+                if name in WRITE_CALLS and not locked:
+                    found.append(name + " at line " + str(child.lineno))
+            walk(child, locked)
+
+    walk(tree, False)
+    return found
+
+
+class LockCoverageTests(unittest.TestCase):
+    """The inventory is writes to host-owned files; the property is that each is guarded.
+
+    A lexical check would pass a load that happened before the lock, so the host record has
+    exactly one writer: a helper that loads inside the lock and applies the caller's delta to
+    what it finds there. The inventory then only has to establish that nothing else writes.
+    """
+
+    def test_no_host_owned_file_is_written_outside_a_lock(self):
+        offenders = []
+        for path in _source_modules():
+            for finding in _unguarded_writes(ast.parse(path.read_text(encoding="utf-8"))):
+                offenders.append(str(path.relative_to(ROOT)) + ": " + finding)
+        self.assertEqual(offenders, [], "every write goes through a locked read-modify-write")
+
+    def test_the_helper_refuses_a_whole_record_and_takes_deltas_only(self):
+        import inspect
+
+        accepted = set(inspect.signature(hostrecord.update).parameters)
+        self.assertNotIn("record", accepted,
+                         "a caller handing back a record it loaded before slow work is the"
+                         " staleness this helper exists to prevent")
+        self.assertTrue({"installs", "points", "select", "drop_environment"} <= accepted)
+
+    def test_a_promotion_committed_during_a_slow_run_survives_that_run_failing(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            record = hostrecord.empty(1)
+            hostrecord.put_install(record, "codex-session-relay",
+                                   {"location": "/a/pkg", "environment": "/a"})
+            hostrecord.save(path, record)
+
+            # A stages into /a; B promotes and appends a point; then A fails.
+            hostrecord.update(path, 1, select={"codex-thread-bridge": "/b/pkg"},
+                              points=[("codex-thread-bridge", {"exercised": True, "n": 1})])
+            with mock.patch.object(runtime_install, "emit"):
+                runtime_install._install_failed(path, 1, [], "/a", None)
+
+            after = hostrecord.load(path, 1).value
+        self.assertEqual(after["selected"], {"codex-thread-bridge": "/b/pkg"},
+                         "B's promotion survives A's recovery")
+        self.assertEqual(
+            len(after["components"]["codex-thread-bridge"]["measuredPoints"]), 1,
+            "B's point survives A's recovery")
+        self.assertEqual(after["components"]["codex-session-relay"]["installs"], [],
+                         "A drops only the installs it created")
+
+    def test_a_point_appended_during_a_measurement_is_not_lost_by_its_commit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            # A reads here, then measures slowly. B appends in the meantime.
+            hostrecord.update(path, 1, points=[("codex-session-relay",
+                                                {"exercised": True, "who": "B"})])
+            # A commits what IT measured, as a delta rather than as a whole record.
+            hostrecord.update(path, 1, points=[("codex-session-relay",
+                                                {"exercised": True, "who": "A"})])
+            entry = hostrecord.load(path, 1).value["components"]["codex-session-relay"]
+        self.assertEqual([p["who"] for p in entry["measuredPoints"]], ["B", "A"])
+
+
+# =========================================================================================
+# Check 4 - the reading boundary: a record that cannot be read is an answer, not a crash
+# =========================================================================================
+
+MALFORMED_RECORD = '{"components": {"codex-session-relay": {"installs": "not a list"}}}'
+
+
+def _cli_entry_points():
+    """Derived from the parser's own registrations, not from a list kept by hand.
+
+    A hand-kept list cannot notice a command somebody adds without a boundary, which is the
+    failure this inventory exists to catch. The same technique the relay argv check uses.
+    """
+    import runtime_install
+
+    parser = runtime_install.build_parser()
+    found = {}
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for name, sub in action.choices.items():
+                found[name] = sub.get_default("handler")
+    return found
+
+
+class ReadingBoundaryTests(unittest.TestCase):
+    """What the boundary guarantees, and what it deliberately does not.
+
+    It guarantees the worst case is a named refusal rather than a traceback, and that a
+    refusal says which exception and which source location produced it, so a defect reaching
+    it stays a reportable defect instead of being filed as bad data. It does not guarantee
+    that a record which could have been read is never refused; that residue is conservative
+    and carries its reason. It is stated in docs/runtime-install.md rather than implied.
+    """
+
+    def test_every_registered_command_has_a_boundary_fixture(self):
+        self.assertEqual(
+            sorted(_cli_entry_points()),
+            ["diagnose", "hook", "install", "measure", "register-mcp", "verify-definition"],
+            "a command added without a boundary fixture fails this check")
+
+    def _assert_named_refusal(self, done, where):
+        self.assertEqual(done.returncode, 1, where + ": " + done.stdout + done.stderr)
+        self.assertNotIn("Traceback", done.stderr, where + " raised instead of refusing")
+        payload = json.loads(done.stdout)
+        self.assertIn(payload["reading"]["state"], (reading.UNREADABLE, reading.ACCESS_ERROR))
+        self.assertTrue(payload["reading"]["exception"], where + " named no exception")
+        self.assertTrue(payload["reading"]["raisedAt"], where + " named no source location")
+        return payload
+
+    def test_a_malformed_host_record_refuses_in_every_command_that_reads_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            record = Path(temporary) / "record.json"
+            record.write_text(MALFORMED_RECORD, encoding="utf-8")
+            home = Path(temporary) / "home"
+            home.mkdir()
+            # A command that would WRITE refuses outright. A read-only diagnosis reports the
+            # failed reading beside everything else it could still observe, because refusing
+            # the whole diagnosis would discard the readings that did answer. Neither of them
+            # may read an unreadable record as a clean host, and neither may write.
+            for command, extra in (("install", ["--dest", str(Path(temporary) / "dest")]),
+                                   ("measure", [])):
+                done = run(command, "--record", str(record), *extra)
+                self._assert_named_refusal(done, command)
+                self.assertEqual(record.read_text(encoding="utf-8"), MALFORMED_RECORD,
+                                 command + " wrote to a record it could not read")
+
+            done = run("diagnose", "--record", str(record), "--codex-home", str(home))
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertNotIn("Traceback", done.stderr, "diagnose raised instead of reporting")
+            payload = json.loads(done.stdout)
+            self.assertEqual(payload["hostRecordState"], reading.UNREADABLE)
+            self.assertTrue(payload["hostRecordReading"]["exception"])
+            self.assertTrue(payload["hostRecordReading"]["raisedAt"])
+            for entry in payload["components"].values():
+                self.assertEqual(entry["class"], "unreadable")
+                self.assertTrue(any("host record" in reason for reason in entry["reasons"]),
+                                "a classification may never read an unreadable record as"
+                                " a host with no history: " + json.dumps(entry["reasons"]))
+            self.assertEqual(record.read_text(encoding="utf-8"), MALFORMED_RECORD)
+
+    def test_a_configuration_that_is_not_text_refuses_rather_than_raising(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            config = home / "config.toml"
+            config.write_bytes(b"[mcp_servers.one]\ncommand = \"\xff\xfe\"\n")
+            before = config.read_bytes()
+            done = run("register-mcp", "--codex-home", str(home),
+                       "--bridge-command", "/usr/bin/bridge", "--apply")
+            self._assert_named_refusal(done, "register-mcp")
+            self.assertEqual(config.read_bytes(), before,
+                             "a refusal before the first mutating step writes nothing")
+
+    def test_a_hook_file_of_the_wrong_shape_refuses_rather_than_raising(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            document = home / "hooks.json"
+            document.write_text('{"hooks": {"Stop": "not a list"}}', encoding="utf-8")
+            before = document.read_bytes()
+            done = run("hook", "--codex-home", str(home), "--event", "Stop",
+                       "--hook-command", "/bin/true", "--apply")
+            self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+            self.assertNotIn("Traceback", done.stderr)
+            result = json.loads(done.stdout)["result"]
+            self.assertIn(result["outcome"], (reading.UNREADABLE, reading.ACCESS_ERROR))
+            self.assertFalse(result["wrote"])
+            self.assertEqual(document.read_bytes(), before,
+                             "a refusal before the first mutating step writes nothing")
+
+    def test_a_malformed_definition_refuses_in_verify_definition(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            broken = Path(temporary) / "components.json"
+            broken.write_text("{not json", encoding="utf-8")
+            emitted = []
+            with mock.patch.object(runtime_install.definition, "DEFINITION_PATH", broken), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_verify_definition(argparse.Namespace())
+        self.assertEqual(code, 1)
+        self.assertEqual(emitted[0]["reading"]["state"], reading.UNREADABLE)
+        self.assertEqual(emitted[0]["reading"]["exception"], "JSONDecodeError")
+
+    def test_the_reader_apis_refuse_directly_as_well_as_through_a_handler(self):
+        # The registration inventory proves a command exists; it cannot prove the boundary
+        # sits inside it. Each reader is therefore exercised on its own.
+        with tempfile.TemporaryDirectory() as temporary:
+            record = Path(temporary) / "record.json"
+            record.write_text(MALFORMED_RECORD, encoding="utf-8")
+            self.assertEqual(hostrecord.load(record, 1).state, reading.UNREADABLE)
+
+            document = Path(temporary) / "hooks.json"
+            document.write_text('{"hooks": []}', encoding="utf-8")
+            self.assertEqual(hooks.read(document).state, reading.UNREADABLE)
+
+            config = Path(temporary) / "config.toml"
+            config.write_bytes(b"\xff\xfe")
+            self.assertEqual(
+                reading.read_text(config, "the Codex configuration").state, reading.UNREADABLE)
+
+            missing = Path(temporary) / "components.json"
+            with self.assertRaises(reading.Refused):
+                with reading.region(missing, "the component definition"):
+                    definition.load(missing)
+
+    def test_an_ordinary_defect_outside_a_reading_region_is_not_disguised_as_a_refusal(self):
+        # The catch set is wide because the lattice made it wide. That only stays honest
+        # while the region stays narrow: a ValueError from assembling a result is a defect in
+        # this command and must keep raising rather than being reported as a bad record.
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), record=str(home / "record.json"), socket=None,
+                state=None, issue=None, relay_command=None, bridge_command=None,
+                bridge_arg=None, observed_tool=None, trial=False, assignment_lookup=False,
+                temporary=True, parent_task=None, child_task=None, recipient=None,
+                artifact_root=None, turn_thread=None, turn_id=None, artifact=None,
+                dispatch_turn_id=None, turn_status="completed", recipient_settings=None,
+                settings_already_recorded=False, expect_relationship=None)
+            for error in (ValueError("a defect, not a record"), KeyError("absent")):
+                with mock.patch.object(runtime_install.check, "record", side_effect=error):
+                    with self.assertRaises(type(error)):
+                        runtime_install.cmd_diagnose(args)
+
+
+class FilesystemPartitionTests(unittest.TestCase):
+    """Four states, ordered over one observation, with nothing left unclassified.
+
+    ABSENT is only established absence. Anything that failed to establish anything is an
+    access error, including a symlink whose target cannot be resolved: that is neither a
+    dangling link nor a loop, and calling it unreadable would report a permission problem as
+    a malformed record.
+    """
+
+    def _state(self, path):
+        return hostrecord.load(path, 1).state
+
+    def test_a_missing_path_is_absent_and_carries_a_usable_empty_record(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            found = hostrecord.load(Path(temporary) / "nothing.json", 1)
+        self.assertEqual(found.state, reading.ABSENT)
+        self.assertTrue(found.usable)
+        self.assertEqual(found.value["components"], {})
+
+    def test_an_existing_empty_record_is_present_rather_than_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            found = hostrecord.load(path, 1)
+        self.assertEqual(found.state, reading.PRESENT)
+
+    def test_a_directory_is_unreadable_rather_than_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            path.mkdir()
+            found = hostrecord.load(path, 1)
+        self.assertEqual(found.state, reading.UNREADABLE)
+        self.assertIn("directory", found.detail)
+
+    def test_a_named_pipe_is_unreadable_rather_than_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            os.mkfifo(path)
+            self.assertEqual(self._state(path), reading.UNREADABLE)
+
+    def test_a_dangling_symlink_is_unreadable_rather_than_absent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            path.symlink_to(Path(temporary) / "gone.json")
+            found = hostrecord.load(path, 1)
+        self.assertEqual(found.state, reading.UNREADABLE)
+        self.assertIn("target does not exist", found.detail)
+
+    def test_a_symlink_loop_is_unreadable_rather_than_an_access_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            first, second = Path(temporary) / "a.json", Path(temporary) / "b.json"
+            first.symlink_to(second)
+            second.symlink_to(first)
+            found = hostrecord.load(first, 1)
+        self.assertEqual(found.state, reading.UNREADABLE)
+        self.assertIn("loops", found.detail)
+
+    def test_a_symlink_whose_target_cannot_be_resolved_is_an_access_error(self):
+        if os.geteuid() == 0:
+            self.skipTest("permissions do not restrict root")
+        with tempfile.TemporaryDirectory() as temporary:
+            closed = Path(temporary) / "closed"
+            closed.mkdir()
+            (closed / "record.json").write_text("{}", encoding="utf-8")
+            link = Path(temporary) / "record.json"
+            link.symlink_to(closed / "record.json")
+            closed.chmod(0o000)
+            try:
+                found = hostrecord.load(link, 1)
+            finally:
+                closed.chmod(0o700)
+        self.assertEqual(found.state, reading.ACCESS_ERROR)
+        self.assertIn("could not be resolved", found.detail)
+
+    def test_a_path_under_an_unreadable_directory_is_an_access_error_not_an_absence(self):
+        if os.geteuid() == 0:
+            self.skipTest("permissions do not restrict root")
+        with tempfile.TemporaryDirectory() as temporary:
+            closed = Path(temporary) / "closed"
+            closed.mkdir()
+            closed.chmod(0o000)
+            try:
+                found = hostrecord.load(closed / "record.json", 1)
+            finally:
+                closed.chmod(0o700)
+        self.assertEqual(found.state, reading.ACCESS_ERROR)
+        self.assertFalse(found.usable, "an unestablished absence is never a clean host")
+
+    def test_a_file_that_cannot_be_opened_is_an_access_error(self):
+        if os.geteuid() == 0:
+            self.skipTest("permissions do not restrict root")
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            path.write_text("{}", encoding="utf-8")
+            path.chmod(0o000)
+            try:
+                found = hostrecord.load(path, 1)
+            finally:
+                path.chmod(0o600)
+        self.assertEqual(found.state, reading.ACCESS_ERROR)
+        self.assertEqual(found.exception, "PermissionError")
+
+    def test_an_empty_file_and_a_wrong_shape_are_both_unreadable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            empty = Path(temporary) / "empty.json"
+            empty.write_text("", encoding="utf-8")
+            self.assertEqual(self._state(empty), reading.UNREADABLE)
+
+            shaped = Path(temporary) / "shaped.json"
+            shaped.write_text('{"components": {"relay": {"installs": [42]}}}', encoding="utf-8")
+            found = hostrecord.load(shaped, 1)
+        self.assertEqual(found.state, reading.UNREADABLE)
+        self.assertEqual(found.exception, "TypeError")
+
+    def test_a_null_bearing_recorded_path_refuses_instead_of_raising(self):
+        import runtime_install
+
+        record = hostrecord.empty(1)
+        hostrecord.put_install(record, "codex-session-relay",
+                               {"location": "/a/pkg", "environment": "/a\u0000b"})
+        with self.assertRaises(reading.Refused) as caught:
+            runtime_install.recorded_roots(record, "codex-session-relay")
+        self.assertEqual(caught.exception.reading.state, reading.UNREADABLE)
+        self.assertEqual(caught.exception.reading.exception, "ValueError")
+
+    def test_the_four_states_are_reached_by_four_different_observations(self):
+        # Asserting that four labels differ proves nothing about which path reaches which.
+        if os.geteuid() == 0:
+            self.skipTest("permissions do not restrict root")
+        with tempfile.TemporaryDirectory() as temporary:
+            present = Path(temporary) / "present.json"
+            hostrecord.save(present, hostrecord.empty(1))
+            broken = Path(temporary) / "broken.json"
+            broken.write_text("{not json", encoding="utf-8")
+            closed = Path(temporary) / "closed"
+            closed.mkdir()
+            closed.chmod(0o000)
+            try:
+                observed = {
+                    reading.PRESENT: self._state(present),
+                    reading.ABSENT: self._state(Path(temporary) / "missing.json"),
+                    reading.UNREADABLE: self._state(broken),
+                    reading.ACCESS_ERROR: self._state(closed / "record.json"),
+                }
+            finally:
+                closed.chmod(0o700)
+        for expected, got in observed.items():
+            self.assertEqual(expected, got)
+        self.assertEqual(len(set(observed.values())), 4)
+
+
+class ServiceStateTests(unittest.TestCase):
+    """The fourth outcome is about a daemon, and it must not be reachable by failing to ask."""
+
+    def test_a_failed_invocation_is_an_access_error_even_with_no_payload(self):
+        # The overlapping envelope: ok false AND payload missing. The invocation wins,
+        # because a command that did not run says nothing about the daemon.
+        envelope = {"ok": False, "command": ["relay", "service", "status"], "payload": None,
+                    "unreadable": "FileNotFoundError: no such executable"}
+        self.assertEqual(scope.service_state(envelope)["state"], reading.ACCESS_ERROR)
+
+    def test_an_answer_with_no_readable_status_is_unreadable(self):
+        self.assertEqual(
+            scope.service_state({"ok": True, "payload": None})["state"], reading.UNREADABLE)
+        self.assertEqual(
+            scope.service_state({"ok": True, "payload": {"running": "yes"}})["state"],
+            reading.UNREADABLE)
+
+    def test_a_daemon_that_answered_is_running_or_stopped(self):
+        self.assertEqual(scope.service_state({"ok": True, "payload": {"running": False}}),
+                         {"state": scope.STOPPED, "running": False,
+                          "detail": "the service answered and reports itself not running"})
+        self.assertEqual(
+            scope.service_state({"ok": True, "payload": {"running": True}})["state"],
+            scope.RUNNING)
+
+    def test_the_four_service_answers_are_four_different_values(self):
+        states = {
+            scope.service_state({"ok": False, "payload": None})["state"],
+            scope.service_state({"ok": True, "payload": None})["state"],
+            scope.service_state({"ok": True, "payload": {"running": False}})["state"],
+            scope.service_state({"ok": True, "payload": {"running": True}})["state"],
+        }
+        self.assertEqual(len(states), 4)
+
+
+class PartialApplicationTests(unittest.TestCase):
+    """A write that landed is never reported as a refusal that wrote nothing.
+
+    The hash comparison establishes that the TARGET file's bytes are unchanged. A lock file
+    is created and removed beside it, and that is said rather than implied away.
+    """
+
+    def test_a_hook_that_was_appended_and_could_not_be_read_back_says_so_and_exits_nonzero(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "hooks.json").write_text('{"hooks": {}}', encoding="utf-8")
+            real, calls = hooks.read, []
+
+            def flaky(path):
+                calls.append(path)
+                if len(calls) >= 3:
+                    return reading.Reading(state=reading.UNREADABLE, source=path,
+                                           exception="TypeError", at="hooks.py:1",
+                                           detail="the readback could not be read")
+                return real(path)
+
+            emitted = []
+            args = argparse.Namespace(codex_home=str(home), event="Stop",
+                                      hook_command="/bin/true", timeout=5, issue="JUN-104",
+                                      apply=True)
+            with mock.patch.object(runtime_install.hooks, "read", side_effect=flaky), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+            written = json.loads((home / "hooks.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(code, 1, "a partial application is never a success")
+        result = emitted[0]["result"]
+        self.assertEqual(result["outcome"], "APPLIED_UNVERIFIED")
+        self.assertTrue(result["applied"])
+        self.assertTrue(result["wrote"])
+        self.assertFalse(result["readBack"])
+        self.assertEqual(len(written["hooks"]["Stop"]), 1,
+                         "the append really did land, which is why it is reported")
+
+    def test_a_registration_that_was_written_and_could_not_be_read_back_exits_nonzero(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "config.toml").write_text("[other]\nkeep = true\n", encoding="utf-8")
+            real, calls = reading.read_text, []
+
+            def flaky(path, what, **kwargs):
+                calls.append(path)
+                if len(calls) >= 3:
+                    return reading.Reading(state=reading.UNREADABLE, source=path,
+                                           exception="UnicodeDecodeError", at="reading.py:1",
+                                           detail="the readback could not be decoded")
+                return real(path, what, **kwargs)
+
+            emitted = []
+            args = argparse.Namespace(codex_home=str(home), name="codex-thread-bridge",
+                                      bridge_command="/usr/bin/bridge", bridge_arg=None,
+                                      apply=True)
+            with mock.patch.object(runtime_install.reading, "read_text", side_effect=flaky), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_register_mcp(args)
+            after = (home / "config.toml").read_text(encoding="utf-8")
+
+        self.assertEqual(code, 1, "exit 0 here would record a registration nobody read back")
+        self.assertEqual(emitted[0]["outcome"], "APPLIED_UNVERIFIED")
+        self.assertTrue(emitted[0]["wrote"])
+        self.assertIn("[mcp_servers.codex-thread-bridge]", after)
+
+
+# =========================================================================================
+# The remaining authorized repairs, each as the behaviour it restores
+# =========================================================================================
+
+class TrialIdentityTests(unittest.TestCase):
+    def test_a_dispatch_request_id_is_stable_per_dispatch_and_distinct_across_dispatches(self):
+        import runtime_install
+
+        first = runtime_install.trial_request_id("JUN-104", "turn-a")
+        self.assertEqual(first, runtime_install.trial_request_id("JUN-104", "turn-a"),
+                         "a retry of one dispatch must replay, not open a second generation")
+        self.assertNotEqual(first, runtime_install.trial_request_id("JUN-104", "turn-b"),
+                            "a second dispatch keyed on the issue alone replays the first"
+                            " generation, and the bind of a new anchor is then refused")
+        self.assertNotEqual(first, runtime_install.trial_request_id("JUN-105", "turn-a"))
+
+    def test_the_request_id_reaches_the_argv_the_trial_sends(self):
+        import runtime_install
+
+        steps = runtime_install.trial_steps(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root="/tmp", turn_thread="t", turn_id="ti", host="h",
+            artifacts=["/tmp/a"], dispatch_turn_id="turn-a")
+        expected = runtime_install.trial_request_id("JUN-104", "turn-a")
+        for argv in steps:
+            if "--dispatch-request-id" in argv:
+                self.assertEqual(argv[argv.index("--dispatch-request-id") + 1], expected)
+
+
+class InstallOrderTests(unittest.TestCase):
+    def test_a_refused_destination_leaves_the_record_untouched(self):
+        # The outgoing reading was saved before the exclusive mkdir proved this run owns the
+        # destination, so a run that was about to be refused had already written.
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "dest"
+            data = definition.load()
+            combined = __import__("hashlib").sha256(
+                "".join(c["sourceDigest"] for c in data["components"]).encode()).hexdigest()[:12]
+            environment = destination / ("env-" + str(data["definitionVersion"]) + "-" + combined)
+            environment.mkdir(parents=True)
+
+            record_path = Path(temporary) / "record.json"
+            hostrecord.save(record_path, hostrecord.empty(1))
+            before = record_path.read_bytes()
+
+            done = run("install", "--dest", str(destination), "--record", str(record_path),
+                       "--apply")
+            self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+            payload = json.loads(done.stdout)
+            self.assertIn("already exists", payload["refused"])
+            self.assertEqual(record_path.read_bytes(), before,
+                             "a run refused for want of a destination writes nothing")
+
+    def test_the_outgoing_runtime_is_read_before_anything_stages_over_it(self):
+        import runtime_install
+
+        record = hostrecord.empty(1)
+        record["selected"] = {"codex-session-relay": "/gone/pkg"}
+        observed = runtime_install._outgoing_runtime(record, definition.load())
+        self.assertEqual(observed["codex-session-relay"]["selected"], "/gone/pkg")
+        self.assertFalse(observed["codex-session-relay"]["present"])
+        self.assertIsNone(observed["codex-session-relay"]["digest"])
+
+    def test_an_install_mode_is_decided_by_containment_not_by_a_shared_prefix(self):
+        import runtime_install
+
+        self.assertFalse(
+            runtime_install.within(Path("/opt/env-other/lib/pkg"), Path("/opt/env")),
+            "a neighbouring environment's install is not this environment's copy")
+        self.assertTrue(
+            runtime_install.within(Path("/opt/env/lib/python3/site-packages/pkg"),
+                                   Path("/opt/env")))
+
+
 if __name__ == "__main__":
     unittest.main()
-

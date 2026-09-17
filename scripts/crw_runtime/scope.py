@@ -15,7 +15,38 @@ import os
 import subprocess
 from pathlib import Path
 
+from . import reading
+
 STATE_ENV = "CODEX_SESSION_RELAY_STATE"
+
+RUNNING = "RUNNING"
+STOPPED = "STOPPED"
+
+
+def service_state(envelope):
+    """Classify a service status reading. First match wins, and the invocation wins first.
+
+    A failed invocation returns ok false with no payload, which satisfies both 'the command
+    failed' and 'the payload is missing'. Order matters because those are different answers:
+    a command that did not run says nothing about the daemon, and reading it as stopped would
+    report an activation state nobody observed. Being unable to ask is never being told no.
+    """
+    if not isinstance(envelope, dict) or not envelope.get("ok"):
+        detail = (envelope or {}).get("unreadable") or (envelope or {}).get("stderr")
+        return {"state": reading.ACCESS_ERROR, "running": None,
+                "detail": "the service could not be asked: " + str(detail or "the command failed")}
+    payload = envelope.get("payload")
+    if not isinstance(payload, dict):
+        return {"state": reading.UNREADABLE, "running": None,
+                "detail": "the service answered with no readable status object"}
+    held = payload.get("running")
+    if not isinstance(held, bool):
+        return {"state": reading.UNREADABLE, "running": None,
+                "detail": "the status carries no boolean 'running', found "
+                          + type(held).__name__}
+    return {"state": RUNNING if held else STOPPED, "running": held,
+            "detail": "the service answered and reports itself "
+                      + ("running" if held else "not running")}
 
 
 def relay(command, *, executable, socket=None, state=None, env=None, discovery=False, timeout=60):
@@ -91,8 +122,8 @@ def stores_seen(readings, env=None):
     root = default_state_root(env)
     seen = []
     def usable(name):
-        reading = readings.get(name) or {}
-        return (reading.get("payload") or {}) if reading.get("ok") else {}
+        answer = readings.get(name) or {}
+        return (answer.get("payload") or {}) if answer.get("ok") else {}
 
     discovery = usable("discovery")
     siblings = discovery.get("siblingStores") or {}
@@ -133,10 +164,10 @@ def stores_seen(readings, env=None):
 def summarise(readings, *, issue=None, env=None, service=None):
     """What the relay reported, kept honest about what was not checked."""
     def usable(name):
-        reading = readings.get(name) or {}
+        answer = readings.get(name) or {}
         # A structured refusal still parses as JSON. Preferring it would let a refusal hide
         # a discovery reading that actually answered.
-        return (reading.get("payload") or {}) if reading.get("ok") else {}
+        return (answer.get("payload") or {}) if answer.get("ok") else {}
 
     discovery = usable("discovery")
     selected = usable("selected")
@@ -236,4 +267,3 @@ def filesystem_candidates(env=None):
                                   " (OPS-3.3)",
                           "foundBy": "listed on disk in a scope directory"})
     return found
-
