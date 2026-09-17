@@ -1,10 +1,15 @@
-# Runtime installation and diagnosis
+# Runtime installation, update and diagnosis
 
 [POLICY.md](../POLICY.md) owns repository rules and
 [the operations contract](../skills/crw-run/references/operations.md) owns the operational ones.
-This page describes the runtime entry point that installs and diagnoses the MCP bridge and the
-session relay, and it is written against that contract's clause numbers so a reader can check a
-claim against the rule it came from.
+This page describes the runtime entry point that installs, updates and diagnoses the MCP bridge
+and the session relay, and it is written against that contract's clause numbers so a reader can
+check a claim against the rule it came from.
+
+Updating is the half that can lose something. A first install has nothing to destroy; a second one
+is standing on a runtime somebody is using and a database nobody can rebuild, so most of what
+follows is about what is read before anything moves and what is put back when it does not.
+[Updating an installation](#updating-an-installation) is where that lives.
 
 Two entry points exist and they are deliberately not one:
 
