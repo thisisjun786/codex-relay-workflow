@@ -521,3 +521,55 @@ async def test_the_launch_and_the_comparison_follow_the_authorization_not_the_ar
     assert (resume["model"], resume["config"]["model_reasoning_effort"]) == RELABELLED
     assert delivered["status"] == "accepted"
     assert delivered["executionPolicy"]["model"] == RELABELLED[0]
+
+
+async def test_a_caller_mutating_its_settings_cannot_split_identity_from_dispatch(
+    bridge, fake_server, tmp_path
+):
+    """The ledger fingerprints params only after the mutation lock, so the object matters.
+
+    While one send holds the lock, a second send is waiting with its caller's own dictionary. If
+    params held that dictionary rather than a snapshot, a caller mutating it during the wait would
+    authorize and dispatch one pair while recording the identity of another: the real arguments
+    would then be refused as different, and the mutated ones would replay a dispatch never made
+    under them.
+    """
+    import asyncio
+
+    fake, _ = fake_server
+    created = await bridge.create_thread("c", str(tmp_path), **EXECUTION)
+    fake.pause_after = "thread/read"
+    settings = dict(EXECUTION)
+
+    holding = asyncio.create_task(
+        bridge.send_message_to_thread("holding", created["threadId"], "hold", dict(EXECUTION))
+    )
+    await fake.paused.wait()
+    waiting = asyncio.create_task(
+        bridge.send_message_to_thread("waiting", created["threadId"], "hello", settings)
+    )
+    # Let the second request reach the mutation lock, then mutate the dictionary it was given.
+    for _ in range(20):
+        await asyncio.sleep(0)
+    settings["model"] = UNAPPROVED
+    fake.pause_after = None
+    fake.release.set()
+
+    assert (await holding)["status"] == "accepted"
+    dispatched = await waiting
+    assert dispatched["status"] == "accepted"
+    assert dispatched["executionPolicy"]["model"] == MODEL
+
+    # The identity recorded is the one that was authorized and dispatched, so the real arguments
+    # replay and the mutated ones are refused.
+    replayed = await bridge.send_message_to_thread(
+        "waiting", created["threadId"], "hello", dict(EXECUTION)
+    )
+    assert replayed["replayed"] and replayed["turnId"] == dispatched["turnId"]
+    with pytest.raises(ValueError, match="different arguments"):
+        await bridge.send_message_to_thread(
+            "waiting",
+            created["threadId"],
+            "hello",
+            {"model": UNAPPROVED, "reasoning_effort": EFFORT},
+        )

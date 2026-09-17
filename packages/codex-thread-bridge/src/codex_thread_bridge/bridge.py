@@ -1,6 +1,7 @@
 """Tool behavior, independent of MCP transport and the installed client."""
 
 import asyncio
+import copy
 import re
 from pathlib import Path
 
@@ -21,6 +22,19 @@ def absolute_directory(cwd: str):
     if not path.is_absolute() or not path.is_dir():
         raise ValueError("cwd must be an existing absolute directory on the App Server host")
     return str(path.resolve())
+
+
+def snapshot(value):
+    """Freeze a caller-owned argument at the boundary, before anything can await.
+
+    The ledger serialises params only after the mutation lock is acquired, while authorization
+    and the settings contract read their own copy. Holding the caller's object in params meant a
+    caller that mutated it during that wait could leave the recorded request identity describing
+    a different request than the one that was authorized and dispatched: the real arguments would
+    then be refused as different, and the mutated ones would replay a dispatch never made under
+    them. One snapshot answers both questions.
+    """
+    return copy.deepcopy(value)
 
 
 DISPLAY_FIELDS = frozenset({"text", "preview", "summary", "objective", "aggregatedOutput"})
@@ -264,6 +278,10 @@ class Bridge:
         for name, value in [("prompt", prompt), ("title", title)]:
             if value is not None:
                 nonempty(value, name, 100_000 if name == "prompt" else 500)
+        # Snapshotted before the first await, so identity and behaviour cannot describe
+        # different requests.
+        expected_sandbox_policy = snapshot(expected_sandbox_policy)
+        runtime_workspace_roots = snapshot(runtime_workspace_roots)
         if expected_sandbox_policy is not None:
             validate_sandbox_policy(expected_sandbox_policy)
         params = {"cwd": cwd, "sandbox": sandbox, "approvalPolicy": "never", "ephemeral": False}
@@ -389,6 +407,9 @@ class Bridge:
     ):
         if worktree_mode != "bridge-managed-retained":
             raise ValueError("Explicit bridge-managed-retained worktree ownership is required")
+        # Snapshotted before it is validated, so the object that was checked is the object that
+        # is transmitted, compared and fingerprinted.
+        expected_sandbox_policy = snapshot(expected_sandbox_policy)
         validate_sandbox_policy(expected_sandbox_policy)
         sandbox_types = {
             "read-only": "readOnly",
@@ -603,7 +624,7 @@ class Bridge:
         nonempty(message, "message")
         if expected_settings is not None and not isinstance(expected_settings, dict):
             raise ValueError("expected_settings must be an object")
-        supplied = dict(expected_settings or {})
+        supplied = snapshot(dict(expected_settings or {}))
         # An unrecognised key is refused, never ignored. The MCP schema admits any object, so a
         # caller who writes reasoningEffort instead of reasoning_effort would otherwise request
         # nothing at all: the resume would carry no effort, nothing would be compared, and the
@@ -623,7 +644,7 @@ class Bridge:
         # supplied it belongs to the request identity: retrying the same id with different
         # settings is a different request and the ledger must reject it.
         if expected_settings is not None:
-            params["expected_settings"] = expected_settings
+            params["expected_settings"] = supplied
         if policy_exception is not None:
             nonempty(policy_exception, "policy_exception", EXCEPTION_ID_MAXIMUM)
             params["policy_exception"] = policy_exception
