@@ -239,7 +239,13 @@ def cmd_diagnose(args):
     summary = {"skipped": "no relay executable was found, so no scope reading was made"}
     if relay_executable:
         readings = scope.survey(executable=relay_executable, socket=args.socket, state=args.state)
-        summary = scope.summarise(readings, issue=args.issue)
+        status = scope.relay(["service", "status"], executable=relay_executable,
+                             socket=args.socket, state=args.state)
+        summary = scope.summarise(readings, issue=args.issue, service={
+            "reading": status.get("payload"),
+            "note": "who owns the service for this scope. A service is never started here, and"
+                    " no parent may stop one another parent is using (OPS-4.1).",
+        })
 
     installed_class = classes["codex-session-relay"]["class"]
     both_own = all(c["class"] == "own" for c in classes.values())

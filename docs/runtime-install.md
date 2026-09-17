@@ -129,10 +129,12 @@ reported with both values, and the run changes nothing.
 ## MCP registration
 
 The server is registered as `[mcp_servers.<name>]` in `<CODEX_HOME>/config.toml`, the supported
-configuration path. Registration is append-only and idempotent: an identical registration is
-reported `LINKED` and nothing is written, an absent one is appended, and a different command or
-argument list is reported `CONFLICT` and nothing is written. Every other table in the file,
-including other MCP servers and hook settings, is preserved byte for byte.
+configuration path, through `runtime_install.py register-mcp`. Registration is append-only and
+idempotent: an identical registration is reported `LINKED` and nothing is written, an absent one is
+appended, and a different command or argument list is reported `CONFLICT` and nothing is written.
+Every other table in the file, including other MCP servers and hook settings, is preserved byte for
+byte, which the command checks by requiring the prior content to be an exact prefix of the new file
+rather than by asserting it.
 
 The reader is a deliberately small table-header scanner, not a general TOML parser, because the
 `validate` and `tests` jobs run on Python 3.10 where `tomllib` does not exist. It models exactly one
@@ -217,6 +219,11 @@ only, so a `relay.sqlite3` sitting directly in `<state home>/codex-session-relay
 both calls above. A host can be in exactly that state, so it is inspected explicitly rather than
 left out of the inventory. All three results are reported, a `checked: false` is preserved as not
 checked rather than as none found, and no candidate is adopted.
+
+A relay build that reports no `siblingStores` at all is a third answer again, and it is reported as
+its own: an installed relay older than the revision that added sibling reporting emits nothing for
+that field, and rendering that silence as an empty inventory would hide exactly the conflict the
+inventory exists to surface. The summary distinguishes not reported, not checked, and checked.
 
 Equality of path strings is not proof under OPS-3.4. Proof is `doctor` from each participating
 process reporting the same `stateDirectory` together with `assignment-find --issue` returning the

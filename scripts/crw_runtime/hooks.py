@@ -73,9 +73,12 @@ def install(path, event, hook, *, issue, apply=False):
 
     existing = {entry["identity"]: entry["trustedHash"] for entry in inventory(document)}
     proposal = plan(document, event, hook)
-    if proposal["trustedHash"] in existing.values():
+    already = [key for key, value in existing.items() if value == proposal["trustedHash"]]
+    if already:
+        # The identity of the hook that is already there, not the next free slot: reporting
+        # the slot this run would have used would name a hook that does not exist.
         return {"outcome": "LINKED", "detail": "an identical hook is already installed",
-                "identity": proposal["identity"], "applied": False,
+                "identity": already[0], "applied": False,
                 "installed": True, "enabled": "unknown", "observedFired": "unknown"}
 
     if not apply:

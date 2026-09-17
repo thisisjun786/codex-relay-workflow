@@ -94,16 +94,18 @@ def stores_seen(readings, env=None):
     siblings = discovery.get("siblingStores") or {}
     selected = (readings.get("selected") or {}).get("payload") or {}
 
-    if discovery.get("stateDirectory"):
-        seen.append({"path": discovery["stateDirectory"], "foundBy": "discovery"})
-    if selected.get("stateDirectory"):
-        seen.append({"path": selected["stateDirectory"], "foundBy": "explicit --state"})
+    for payload, how in ((discovery, "discovery"), (selected, "explicit --state")):
+        path = state_directory(payload)
+        if path:
+            seen.append({"path": path, "foundBy": how})
     for path in siblings.get("withoutProvenance") or []:
         seen.append({"path": path, "foundBy": "discovery: records no socket"})
     for path in siblings.get("claimingThisSocket") or []:
         seen.append({"path": path, "foundBy": "discovery: claims this socket"})
     if (readings.get("rootCandidate") or {}).get("payload"):
-        seen.append({"path": str(root), "foundBy": "targeted: a database at the root of the state home"})
+        seen.append({"path": str(root),
+                     "foundBy": "targeted: a database at the root of the state home,"
+                                " which discovery never enumerates"})
 
     unique = []
     for entry in seen:
@@ -112,27 +114,31 @@ def stores_seen(readings, env=None):
     return unique
 
 
-def summarise(readings, *, issue=None, env=None):
+def summarise(readings, *, issue=None, env=None, service=None):
     """What the relay reported, kept honest about what was not checked."""
     discovery = (readings.get("discovery") or {}).get("payload") or {}
     selected = (readings.get("selected") or {}).get("payload") or {}
+    primary = selected or discovery
     siblings = discovery.get("siblingStores") or {}
-    reachability = (selected or discovery).get("actorReachability") or {}
-    contents = (selected or discovery).get("contents") or {}
+    reachability = primary.get("actorReachability") or {}
+    contents = primary.get("contents") or {}
+    store = primary.get("store") or {}
 
-    checked = siblings.get("checked")
     return {
-        "stateDirectory": selected.get("stateDirectory") or discovery.get("stateDirectory"),
-        "ledger": (selected or discovery).get("ledger"),
+        "scopeId": scope_id(primary),
+        "scopeMeaning": "one host, one OS user, one App Server (OPS-3.1). Parents in different"
+                        " repositories and different Linear projects share this one scope.",
+        "stateDirectory": state_directory(primary),
+        "databasePath": store.get("dbPath") or store.get("realPath"),
+        "storeId": store.get("storeId"),
+        "ledger": primary.get("ledger"),
         "socketConnect": reachability.get("socketConnect"),
         "stateDirectoryWritable": reachability.get("stateDirectoryWritable"),
+        "serviceOwner": service,
         "storesSeen": stores_seen(readings, env),
-        "siblingDiscovery": (
-            "not checked: " + str(siblings.get("reason")) if checked is False
-            else "checked" if checked else "not reported"
-        ),
+        "siblingDiscovery": sibling_reading(discovery),
         "ambiguous": siblings.get("ambiguous"),
-        "relationships": contents.get("relationships"),
+        "relationships": contents.get("relationships", primary.get("relationships")),
         "relationshipsMeaning": (
             "a count only. OPS-3.4 proof is assignment-find --issue returning the expected"
             " relationship from each participating process: a nonzero count from a different"
@@ -146,4 +152,33 @@ def summarise(readings, *, issue=None, env=None):
             " so a second repository or project reuses them rather than starting its own"
         ),
     }
+
+
+def state_directory(payload):
+    """Where a doctor payload says its store is, across the shapes different builds emit."""
+    payload = payload or {}
+    selection = payload.get("stateSelection") or {}
+    return payload.get("stateDirectory") or selection.get("path")
+
+
+def scope_id(payload):
+    selection = (payload or {}).get("stateSelection") or {}
+    return selection.get("socketScope")
+
+
+def sibling_reading(payload):
+    """Distinguish 'this build does not report siblings' from 'none were found'.
+
+    A signal that cannot be read is not a signal that agrees (OPS-2.1). An installed relay
+    older than the revision that added sibling reporting emits no siblingStores at all, and
+    rendering that as an empty inventory would hide exactly the conflict this exists to find.
+    """
+    payload = payload or {}
+    if "siblingStores" not in payload or payload.get("siblingStores") is None:
+        return "not reported: this relay build does not emit siblingStores, so the conflict" \
+               " inventory could not be read from it"
+    siblings = payload["siblingStores"]
+    if siblings.get("checked") is False:
+        return "not checked: " + str(siblings.get("reason"))
+    return "checked"
 
