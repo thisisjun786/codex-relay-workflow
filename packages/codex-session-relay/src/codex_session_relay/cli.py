@@ -791,18 +791,21 @@ def _sandbox_summary(row) -> dict:
     participant's line, never the store identity and access evidence standing beside it.
 
     Readable is not the same as deliverable, and the difference is the whole point of the
-    field. A row can parse, normalise and still be refused before any transport call, in
-    which case no sandbox goes on the wire at all - and reporting it as what the adapter
-    would carry tells an operator access is fine for a participant whose sends are never
-    made. So the recorded values are still shown, because they are the only clue to WHY
+    field. A row can parse, normalise and still be refused before its settings ever reach a
+    host, in which case no sandbox goes on the wire at all - and reporting it as what the
+    adapter would carry tells an operator access is fine for a participant whose sends are
+    never made. So the recorded values are still shown, because they are the only clue to WHY
     delivery refuses this participant, and `deliverable` says whether a send can carry them.
 
-    That question is asked of delivery's own validator rather than answered here. Two earlier
-    versions of this re-derived the rule and were wrong in the same direction twice: the
-    first checked neither gate, the second checked the sandbox mode and named the result
-    after all of them, while `require_usable()` independently rejects any record missing a
-    REQUIRED field first. Calling it is the only form that cannot drift from it - the reason
-    and the wording a receipt reports are then literally the ones that refused the send.
+    It is computed by RUNNING that preparation, not by describing it. The whole of delivery's
+    pre-send settings path is `TaskSettings.require_usable()` in `DeliveryService._settings_for`
+    (delivery.py) and `TaskSettings.resume_params()` in `_guarded_send` (bridge_adapter.py);
+    both are executed here and the first refusal is what the receipt reports. Three earlier
+    versions named the answer after gates they had counted, and each drew the line one step
+    short of the path: the first looked at the sandbox type alone, the second delegated to
+    `require_usable()` while the params construction fails after it. Running both means a
+    change inside either one is followed here without this helper being touched, and the
+    reason and wording a receipt carries are the ones that actually stopped the send.
     """
     import json
 
@@ -826,6 +829,13 @@ def _sandbox_summary(row) -> dict:
     refused = None
     try:
         view.require_usable()
+        # Not an inspection of the params: the construction a send performs, run for real. A
+        # record the validator accepts can still fail in it - runtimeWorkspaceRoots: 7 is
+        # present, so require_usable() passes, and then list(7) raises. The thread id is the
+        # one input that cannot change the answer: resume_params assigns it to
+        # params["threadId"] and reads nothing from it, so a placeholder can neither hide a
+        # failure nor invent one.
+        view.resume_params("doctor-probe-thread")
     except DeliveryRefused as refusal:
         refused = refusal
     except Exception as error:  # noqa: BLE001 - total, like everything else in this helper

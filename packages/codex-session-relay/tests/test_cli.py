@@ -1327,18 +1327,24 @@ class ParticipantAccessReceipts(CliBase):
     def test_a_record_delivery_cannot_carry_is_not_reported_as_one_it_would(self):
         """Readable is not deliverable, and this field is documented as the second one.
 
-        `require_usable()` has more than one gate and they refuse independently: a record
-        missing any REQUIRED field is rejected BEFORE the sandbox type is looked at. Both
-        cases below normalise cleanly and neither reaches the wire, so reporting either as
-        the sandbox the adapter would carry tells an operator access is fine for a
-        participant whose sends are never made.
+        The preparation a send performs stops in more than one place and each place stops on
+        its own: a record missing any REQUIRED field is rejected before the sandbox type is
+        looked at, and the resume-params construction in `_guarded_send` fails after both of
+        those. All three records below are readable and none of them can carry its settings
+        to a host - the first two are refused before any transport call, the third fails
+        while the params are built, after `thread/read` and before `thread/resume`
+        (bridge_adapter.py). Reporting any of them as the sandbox the adapter would carry
+        tells an operator access is fine for a participant whose sends are never made.
 
-        Both are here because the two earlier versions of this field each caught one gate and
-        missed the other. A single case would pass while the field still lied.
+        Three cases because three versions of this field each stopped one step short of the
+        path: the sandbox type alone, then `require_usable()` alone. A suite missing the last
+        case passes while the field still lies.
 
-        Written past the validating recorder deliberately: registration refuses both, so the
-        only way a store holds one is an older writer or a hand edit - which is exactly the
-        case this helper says it supports.
+        The first two are written past the validating recorder deliberately: registration
+        refuses them, so the only way a store holds one is an older writer or a hand edit,
+        which is the case this helper says it supports. The third needs no hand edit at all -
+        `record_settings` validates with `require_usable()` (registry.py) and that accepts it,
+        so this row can arrive through the ordinary recorder and still fail every send.
         """
         from pathlib import Path
 
@@ -1350,12 +1356,21 @@ class ParticipantAccessReceipts(CliBase):
         # require_usable() reaches FIRST, and the one a sandbox-only check walks past.
         incomplete = dict(self.settings(self.root))
         del incomplete["cwd"]
+        # Complete, supported, and still not sendable: require_usable() checks that every
+        # REQUIRED field is present and says nothing about its type, while resume_params
+        # calls list() on this one.
+        unusable_roots = dict(self.settings(self.root), runtimeWorkspaceRoots=7)
 
         cases = {
-            "an unsupported sandbox type": (unsupported, "unsupported_sandbox_type"),
-            "a record missing a required field": (incomplete, "settings_incomplete"),
+            "an unsupported sandbox type": (
+                unsupported, "unsupported_sandbox_type", "externalSandbox",
+            ),
+            "a record missing a required field": (incomplete, "settings_incomplete", "cwd"),
+            "a field the params construction cannot use": (
+                unusable_roots, "unexpected", "TypeError",
+            ),
         }
-        for label, (stale, expected_reason) in cases.items():
+        for label, (stale, expected_reason, detail_says) in cases.items():
             with self.subTest(refusal=label):
                 store = Store(Path(self.tmp) / "relay.sqlite3")
                 with store.transaction() as db:
@@ -1386,6 +1401,9 @@ class ParticipantAccessReceipts(CliBase):
                 self.assertEqual(child["refusedBy"], expected_reason, child)
                 self.assertIsNone(child["resumeMode"], "a refused record sends no sandbox")
                 self.assertTrue(child["detail"], child)
+                # The refusal that actually happened, not a generic one: an operator reading
+                # this has to be able to tell these three apart.
+                self.assertIn(detail_says, child["detail"], child)
                 # The row stays readable and what it records is still shown: dropping it
                 # would lose the only clue to why delivery refuses this participant.
                 self.assertTrue(child["readable"], child)

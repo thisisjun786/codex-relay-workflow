@@ -2024,7 +2024,14 @@ class FourHourBoundary(ServiceTestCase):
         """
         import json
 
-        service = self.service("a")
+        # A socket path this test owns, inside its own temporary directory, rather than the
+        # module-level absolute one. A test that reaches a path outside its own fixture is
+        # what already went wrong in this package once: test_store.py's StateDirectory opened
+        # the real user state directory until its HOME was pinned. Here it fails closed, so
+        # the constant was harmless - but the absence is this test's evidence, and evidence
+        # should not rest on a path the test does not own.
+        socket = os.path.join(self.tmp, "absent-app-server.sock")
+        service = self.service("a", socket=socket)
         service.enable(actor="test")
         store, relationship_id = self.assignment(service)
         before_id = service.store_id
@@ -2039,6 +2046,11 @@ class FourHourBoundary(ServiceTestCase):
             spawned.append(child.pid)
             return child
 
+        # Checked here rather than at import time: the assignment below is only named
+        # because the worker's read fails, so the absence has to hold at this moment.
+        self.assertFalse(
+            os.path.exists(socket), f"the worker would have reached a real endpoint: {socket}",
+        )
         outcome = service.supervise(
             allow_isolated=True, segment_seconds=1.0, max_segments=1, spawn=spawn,
         )
@@ -2062,8 +2074,8 @@ class FourHourBoundary(ServiceTestCase):
         # The assignment, named by the worker. DISPATCH_TURN appears nowhere in the argv or
         # the environment spawn_worker builds - only inside the store - so a worker that had
         # not read the inherited database could not have produced this line. The read fails
-        # because SOCKET does not exist, which is what makes it name the turn it was reaching
-        # for.
+        # because this test's socket does not exist, which is what makes it name the turn it
+        # was reaching for.
         notes = " ".join(report["ticks"][0]["notes"])
         self.assertIn(
             "turn-dispatch-9", notes,
