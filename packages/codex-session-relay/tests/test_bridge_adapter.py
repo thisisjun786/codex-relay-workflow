@@ -926,6 +926,7 @@ class TransportIsolation(RelayTestCase):
                 self.starts = []
                 self.lock = threading.Lock()
                 self.hold = set()
+                self.closed = False
 
             async def call(self, method, params):
                 thread_id = params.get("threadId")
@@ -946,6 +947,7 @@ class TransportIsolation(RelayTestCase):
                 raise AssertionError(f"unexpected {method}")
 
             async def close(self):
+                self.closed = True
                 return None
 
         return Barrier()
@@ -1101,3 +1103,90 @@ class TransportIsolation(RelayTestCase):
             "the worker thread outlived close() with work still in flight",
         )
         thread.join(timeout=10)
+
+    def test_a_stopping_flag_alone_never_ends_the_worker(self):
+        """close() cannot set its flag and queue the sentinel in one indivisible step.
+
+        An idle worker that woke up between those two statements used to leave through the
+        empty-queue branch: no _shut_down ran, so the connection and the ledger stayed open
+        and the sentinel close() blocks on was never settled. The interleaving window is a
+        few bytecodes wide, so racing it would make a flaky test. This drives the state the
+        race produces instead - flag set, sentinel not yet queued - and asserts the worker is
+        still there to receive it. The sentinel is the only way out.
+        """
+        import time
+
+        server = self.barrier_server()
+        built = self.adapter(server)
+        transport = built._transport
+
+        transport._stopping = True
+        time.sleep(transport.POLL_SECONDS * 40)
+
+        self.assertTrue(
+            transport.thread.is_alive(),
+            "the worker left on the flag alone, so _shut_down never closed anything",
+        )
+        self.assertEqual(
+            built.send_message("req-f1", "thread-b", "hello", AUTHORIZED)["status"],
+            "accepted",
+        )
+
+        built.close()
+
+        self.assertFalse(transport.thread.is_alive(), "the sentinel did not end the worker")
+        self.assertTrue(server.closed, "shutdown never reached the connection")
+
+    def test_a_replay_is_answered_from_the_ledger_while_the_recipient_is_busy(self):
+        """A request the ledger has already settled has an answer. Busy must not replace it.
+
+        The recipient bound is there to stop a second turn being started for one thread. A
+        replay starts nothing and mutates nothing - it reads a receipt - so refusing it as a
+        busy recipient turned a known outcome back into a retry, which is precisely what a
+        request id exists to prevent. The precheck asks the ledger before the lock.
+        """
+        import threading
+
+        server = self.barrier_server()
+        built = self.adapter(server)
+
+        first = built.send_message("req-g1", "thread-a", "hello", AUTHORIZED)
+        self.assertEqual(first["status"], "accepted", first)
+
+        # Now occupy that same recipient with a different request, held at its first RPC.
+        server.hold.add("thread-a")
+        thread, _outcome = self.send_in_background(built, "req-g2", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", threading.Event()).wait(5),
+            "the occupying send never reached the RPC boundary",
+        )
+
+        replay = built.send_message("req-g1", "thread-a", "hello", AUTHORIZED)
+
+        self.assertTrue(replay.get("replayed"), f"the replay was not answered: {replay}")
+        self.assertEqual(replay["status"], "accepted", replay)
+        self.assertEqual(replay["turnId"], first["turnId"], "a different outcome was reported")
+        self.assertEqual(
+            server.starts, ["thread-a"], "the replay reached the host instead of the ledger",
+        )
+        thread.join(timeout=10)
+
+    def test_a_reused_id_with_different_arguments_is_still_rejected(self):
+        """The precheck must not become a way to smuggle a mismatched id past the ledger.
+
+        ledger.lookup raises when an id was used with different arguments, and that raise is
+        the rejection. Answering it before the recipient lock has to keep it, not swallow it
+        into a busy report or a replayed receipt.
+        """
+        server = self.barrier_server()
+        built = self.adapter(server)
+        self.assertEqual(
+            built.send_message("req-h1", "thread-a", "hello", AUTHORIZED)["status"],
+            "accepted",
+        )
+
+        with self.assertRaises(ValueError) as caught:
+            built.send_message("req-h1", "thread-a", "a different message", AUTHORIZED)
+
+        self.assertIn("different arguments", str(caught.exception))
+        self.assertEqual(server.starts, ["thread-a"], "the mismatched id still reached the host")

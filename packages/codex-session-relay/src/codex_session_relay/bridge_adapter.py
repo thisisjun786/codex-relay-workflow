@@ -351,10 +351,13 @@ class _Transport:
         inflight = set()
         while True:
             try:
-                work, future, recipient, expires_at, withheld = self._inbox.get_nowait()
+                (work, future, recipient, expires_at,
+                 withheld, replay) = self._inbox.get_nowait()
             except queue.Empty:
-                if self._stopping and not inflight:
-                    return
+                # No _stopping shortcut here. close() cannot set a flag and queue the sentinel
+                # in one step, so an idle worker could see the flag first and leave through
+                # this branch - never running _shut_down, never settling the sentinel, never
+                # closing the rpc or the ledger. The sentinel is the only way out.
                 await asyncio.sleep(self.POLL_SECONDS)
                 continue
             if work is None:
@@ -365,17 +368,31 @@ class _Transport:
             # released this loop, so the NEXT submission - a different recipient, a different
             # parent - waited out the abandoned send's whole RPC chain rather than its own.
             task = asyncio.ensure_future(
-                self._run(work, future, recipient, expires_at, withheld)
+                self._run(work, future, recipient, expires_at, withheld, replay)
             )
             inflight.add(task)
             task.add_done_callback(inflight.discard)
 
-    async def _run(self, work, future, recipient, expires_at, withheld):
+    async def _run(self, work, future, recipient, expires_at, withheld, replay=None):
         """One submission, bounded twice: by its recipient's turn and by its own deadline."""
         import asyncio
         import time
 
         held = None
+        if replay is not None:
+            # Asked BEFORE the recipient is considered. A replay of a request the ledger has
+            # already settled makes no RPC and mutates nothing, so refusing it as a busy
+            # recipient would hide a known outcome behind a retry - the opposite of what
+            # request-id idempotency is for. A lookup that raises is the ledger rejecting the
+            # same id under different arguments, and that rejection is the point.
+            try:
+                retained = replay()
+            except BaseException as error:  # noqa: BLE001 - returned to the caller
+                self._settle(future, error=error)
+                return
+            if retained is not None:
+                self._settle(future, result=retained)
+                return
         if recipient is not None:
             # One mutation at a time per recipient, and exactly one. _guarded_send reads the
             # thread, resumes it and starts a turn across separate awaits, so a second
@@ -466,7 +483,7 @@ class _Transport:
         self._accepting = False
         while True:
             try:
-                work, future, _recipient, _expires, _withheld = self._inbox.get_nowait()
+                work, future, *_rest = self._inbox.get_nowait()
             except queue.Empty:
                 break
             if work is None:
@@ -524,7 +541,7 @@ class _Transport:
 
     # ------------------------------------------------------------- caller side
 
-    def _submit(self, work, *, recipient=None, withheld=None):
+    def _submit(self, work, *, recipient=None, withheld=None, replay=None):
         import time
 
         if not self.thread.is_alive():
@@ -536,7 +553,9 @@ class _Transport:
         # The deadline travels WITH the submission. A caller that gives up leaves work whose
         # only remaining purpose would be to occupy its recipient, so waiting work that has
         # outlived its caller is answered rather than dispatched late.
-        self._inbox.put((work, future, recipient, time.monotonic() + budget, withheld))
+        self._inbox.put(
+            (work, future, recipient, time.monotonic() + budget, withheld, replay)
+        )
         return future.result(budget)
 
     def call(self, method, params):
@@ -560,6 +579,19 @@ class _Transport:
                 },
             }
 
+        def replay():
+            # Runs on the worker thread, which owns the ledger's sqlite connection, and is
+            # consulted before the recipient lock. A request the ledger has already settled
+            # has an answer; refusing it as a busy recipient would replace that answer with a
+            # retry and lose it. Raises when the id was reused with different arguments, which
+            # the caller needs to see rather than a busy report.
+            retained = self._state["ledger"].lookup(
+                request_id, *_send_identity(thread_id, message)
+            )
+            if retained is None:
+                return None
+            return {**retained, "replayed": True}
+
         return self._submit(
             lambda: _guarded_send(
                 self._state["rpc"], self._state["ledger"],
@@ -567,6 +599,7 @@ class _Transport:
             ),
             recipient=thread_id,
             withheld=withheld,
+            replay=replay,
         )
 
     def ledger_get(self, request_id):
@@ -585,7 +618,7 @@ class _Transport:
         self._accepting = False
         self._stopping = True
         future = self._futures.Future()
-        self._inbox.put((None, future, None, 0.0, None))
+        self._inbox.put((None, future, None, 0.0, None, None))
         try:
             future.result(self._drain_seconds + self.timeout + self._caller_slack)
         except Exception:  # noqa: BLE001 - the join below is the real answer
@@ -604,6 +637,16 @@ class _Refusal(Exception):
         self.method = method
         self.error = error
         super().__init__(f"{method}: {error.get('message', error.get('code', 'refused'))}")
+
+
+def _send_identity(thread_id, message):
+    """The ledger identity of one send: its operation name and argument fingerprint.
+
+    Defined once because two places ask the ledger the same question - the replay precheck
+    before the recipient lock, and the send itself. If they ever disagreed the precheck would
+    quietly stop matching and replays would go back to being refused as busy.
+    """
+    return "send_message_to_thread", {"threadId": thread_id, "message": message}
 
 
 async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
@@ -626,8 +669,7 @@ async def _guarded_send(rpc, ledger, request_id, thread_id, message, settings):
     """
     import asyncio
 
-    method = "send_message_to_thread"
-    params = {"threadId": thread_id, "message": message}
+    method, params = _send_identity(thread_id, message)
 
     # Raises when the id was used with different arguments. That rejection is the point.
     retained = ledger.lookup(request_id, method, params)
