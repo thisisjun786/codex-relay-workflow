@@ -258,7 +258,9 @@ conclude from a Stop event, are decided in
       --verdict-turn <own turn> --finding 'c1=verified' --finding 'c2=verified'
 
 `claim` binds the review to the criteria set in force at that moment, so editing a criterion's
-text afterwards invalidates the review rather than passing it.
+text afterwards invalidates the review rather than passing it. That review is not lost: see
+[Re-reviewing after the criteria change](#re-reviewing-after-the-criteria-change) for claiming it
+again against the set now in force.
 
 The proof is over the parent's OWN acknowledging turn, which the delivered message cannot carry:
 the child does not know which turn will acknowledge, and quoting the delivered fields back cannot
@@ -317,17 +319,87 @@ and `re_review_needed`. Record an integration with:
       --mark merged --evidence '<what landed>' --actor <id> \
       --expected-event <the event you integrated>
 
-Naming a revision that is no longer current is refused rather than silently rebound.
+Naming a revision that is no longer current is refused rather than silently rebound, and so is a
+revision whose criteria set has moved since it was verified: the mark is refused with
+`criteria_set_changed` until the re-review below lands. The mark is about the revision rather
+than the wording, so once that re-review records `verified` an integration recorded earlier reads
+as the current mark again and does not have to be recorded twice.
 
 ## Re-reviewing after the criteria change
 
-A settled verdict is immutable. Once the criteria change, `assignment-show` reports
-`re_review_needed`, but re-claiming that event returns `already_claimed` and calling `verdict`
-again returns the ORIGINAL settled record marked as a replay, which changes nothing. That is the
-contract working, not a fault.
+Once the criteria change, `assignment-show` reports `re_review_needed` and asks the parent to
+verify again. There are two routes. Which one applies turns on whether the artifact has to change.
 
-The supported route is a fresh execution generation, because a review binds to a criteria set at
-claim time and a settled event keeps the binding it had:
+An inactive relationship gates both routes rather than choosing between them. While it is paused,
+cancelled or archived, claiming cannot reopen the review and `generation-open` refuses with
+`relationship_not_active`. Bring the relationship back first and then pick a route on the ordinary
+grounds below. Reactivating is not a status flip, because `relationship-status` accepts only
+`paused`, `cancelled` and `archived`. Resume restates the generation and the scope being
+re-authorized, and the restatement is compared for exact equality, so repeat
+`--expect-artifact-root` and `--expect-allowed-recipient` once for every root and recipient the
+relationship was registered with:
+
+    codex-session-relay --state "$RELAY_STATE" relationship-resume --relationship <rel> \
+      --expect-generation <n> --expect-artifact-root /abs/path \
+      --expect-allowed-recipient <parent task id> \
+      --expect-allowed-recipient <child task id> --actor <id>
+
+A restatement that does not match is refused with nothing written. A superseded relationship does
+not come back at all: its successor owns the issue. Cancelling or archiving RELEASES the issue, so
+one whose issue another child has since been registered for is refused with
+`duplicate_assignment` rather than resumed into a second owner; replacing that assignment is a
+deliberate act of its own.
+
+### Judging the same revision again
+
+When the deliverable is fine and only the wording moved, claim the same event again and rule on
+it. A claim on an event whose criteria set moved out from under its review returns `proceed`
+instead of `already_claimed`, and rebinds the review to the set now in force:
+
+    codex-session-relay --state "$RELAY_STATE" claim   --event <id> --turn <own turn>
+    codex-session-relay --state "$RELAY_STATE" verdict --event <id> --verdict verified \
+      --verdict-turn <own turn> --finding 'c1=verified' --finding 'c2=verified' \
+      --expect-criteria-digest <the digest of the set you read>
+
+`--expect-criteria-digest` is required only where a verdict has ALREADY settled on that event,
+and it is the `setDigest` `criteria-show` reports for the set actually read. Without it the call
+cannot be told apart from re-submitting the ruling being replaced, which would clear
+`re_review_needed` with nobody having read the new wording, so it is refused with
+`criteria_set_changed`. A review that was claimed but never ruled needs no digest: the re-claim
+rebinds it and the ordinary `verdict` line above works unchanged.
+
+A re-review records `verified` or `needs_changes`. Those are the two dispositions the assignment
+has a state for. `unverified` and `aborted` are refused here with `disposition_conflict`, because
+replacing a certification with a disposition the assignment cannot act on leaves it waiting on a
+verification that can no longer be given. Both remain available on an event that has not been
+ruled on yet, and an assignment nobody intends to finish is stopped on the relationship rather
+than annotated onto one of its events.
+
+Re-claiming stays idempotent: it reopens once per criteria edit. A second claim after it returns
+`already_claimed`, and so does a claim once the re-review has landed, so a duplicate delivery
+still cannot obtain the claim.
+
+The replaced ruling is kept. `verdict_context` carries the set actually ruled on, and the journal
+records `verdict_superseded` with the replaced record and both digests. What this does NOT do is
+refresh an already-published coordination summary: the outbox identity does not include the
+criteria digest, so a re-review landing on the SAME disposition enqueues no second job and the
+document keeps the summary written against the earlier wording. Rewrite it yourself, the same way
+you wrote it the first time.
+
+### A fresh execution generation
+
+That route is closed and a new generation is the one to use whenever the same event cannot be the
+answer:
+
+  - the artifact itself has to change, which is what a `needs_changes` verdict is for;
+  - the event was already ruled `needs_changes`, `unverified` or `aborted`. Re-claiming it
+    returns `already_claimed` and `verdict` returns the settled record marked as a replay. After
+    `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
+    does not announce this one;
+  - the event is no longer the revision this generation stands on, because a newer revision
+    arrived, the head is ambiguous, or the generation advanced.
+
+A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
 
     codex-session-relay --state "$RELAY_STATE" generation-open --relationship <rel> \
       --dispatch-request-id <new stable id> --reason needs_changes_revision \
