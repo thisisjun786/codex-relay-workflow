@@ -334,10 +334,13 @@ assignment, and it is what identifies this creation afterwards. The task ID is t
 native identity that reuse, registration and every later mutation route on, and it
 exists only once creation has actually returned it. Join the two from the creation
 receipt. Where that receipt never arrived, resolve the marker through the transport's
-own operation lookup and adopt whatever it created, rather than issuing a second
-creation under a new marker: a lost response can leave even the task ID unknown, and
-the marker is then the only thing that can find it. Recovery under the same marker is
-the rule; [Bridge launch and recovery](references/bridge.md#receipts-and-safe-recovery)
+own operation lookup rather than issuing a second creation under a new marker. That
+lookup settles the case where a task exists and its ID can be read back. It does not
+always settle: a response lost at the wrong moment leaves the outcome genuinely
+unresolved, and an unresolved outcome means a writer may exist. Treat it as one.
+Reconcile from the backend's own listing, and create no replacement while it stands;
+an unresolved creation is a thing to report, not a thing to overwrite.
+[Bridge launch and recovery](references/bridge.md#receipts-and-safe-recovery)
 holds the mechanism for this transport.
 
 Where a relay holds the assignment, register the relationship with its authorized

@@ -140,10 +140,12 @@ Execution:
   creation tool's supported skill field, and run this bounded objective under it and
   `cxc-pabcd` using your own session binding, host goal, and goalplan.
   If a required loop capability is absent, report the exact gap before starting.
-  On a correction or a resume that goal and goalplan already exist. Confirm your own
-  identity and current state first, then continue them. Opening a second goal for the
-  same assignment is a duplicate rather than a resume, and the coordinator reads it
-  as one.
+  On a correction or a resume, read whether that goal and goalplan exist before making
+  either. Usually they do, and the work is to continue them: opening a second goal for
+  the same assignment is a duplicate rather than a resume, and the coordinator reads it
+  as one. Where activation never succeeded there is nothing to continue, and starting it
+  then is the activation that was owed rather than a duplicate. Say which of the two
+  happened, because from the outside they produce the same new goal.
   Confirming identity means reading it rather than assuming it: your own native task id,
   the native working directory you are actually in, the source checkout that directory
   belongs to, and your real recorded workflow state. Those four can disagree after a

@@ -536,25 +536,28 @@ Settings are applied through the creation tool's real arguments and the returned
 back and compared, because a prompt asking for capability is not capability. A setting the creation
 path cannot apply is settled before the task exists rather than downgraded silently.
 
-That comparison covers the workspace as well as the profile. A child is assigned a checkout under
-OPS-5.2, an evidence root under OPS-5.4, and where it uses the relay directly a state directory
-under OPS-3.5, and each of those has to fall inside the roots the creation receipt actually
-returns. They are checked one at a time because they fail one at a time: OPS-5.3 measures the case
-where roots covering the checkout still exclude the git metadata living outside it, and that
-assignment reads as perfectly satisfiable until the first commit. A gap found here is settled
-before dispatch, by changing the creation arguments or by changing the assignment to match what
-the task will really be able to reach. It is never settled by widening the task afterwards.
+That comparison covers the workspace as well as the profile, and it asks one question rather than
+running a containment test. A child is assigned a checkout under OPS-5.2, an evidence root under
+OPS-5.4, the git metadata belonging to that checkout, and where it uses the relay directly a state
+directory under OPS-3.5. For each of those the question is whether this child can actually write
+there, and it is answered from the effective sandbox and permission profile, because those are the
+only things that constrain a task at all. `runtimeWorkspaceRoots` is one input the receipt reports,
+not the boundary: a child with unrestricted access needs no containment test, and one whose sandbox
+already makes the original repository writable commits normally while the returned roots name only
+its checkout. A path outside those roots is a reason to look, never the verdict.
 
-So the git metadata is checked as a path of its own and not inferred from the checkout. For a
-worktree it lives in the original repository rather than under the working tree, so the reference
-and index writes that a branch or a commit performs land outside the checkout entirely. Resolve
-where that metadata actually is for the assigned checkout, then ask whether this child can write
-there. That question is settled against the effective sandbox and permission profile, which are
-what actually constrain a task, and never against root containment alone: a child with
-unrestricted access, or one whose writable roots already cover the original repository, commits
-perfectly well while the returned workspace roots name only its checkout. A path outside the
-returned roots is a signal to check, not the verdict. Where the profile does exclude it, say so
-and assign the OPS-5.3 fallback deliberately, rather than discovering it at the first commit.
+The git metadata earns its own line because it is the one invisible from the checkout. For a linked
+worktree the common directory, the per-worktree index and the reference files sit under the
+original repository, which `git rev-parse --absolute-git-dir`, `--git-common-dir` and
+`--git-path index` resolve; the writes a branch or a commit performs land there rather than under
+the working tree. Without that check the assignment reads as perfectly satisfiable until the
+child's first commit, which is the case OPS-5.3 measures.
+
+Settle all of this before the task is created, in the creation arguments, because creation carries
+the full work prompt and the receipt arrives with the turn already started. The receipt is then the
+check on what was asked for rather than the first look: where it contradicts the assignment,
+reconcile on that same task as above, and where the profile genuinely excludes a path the child
+needs, assign the OPS-5.3 fallback deliberately. Widening a task afterwards is never the answer.
 
 Tasks that are already running keep the settings they were created with. This clause describes how
 the next child is created; it is not authority to widen a live task, to alter its profile
@@ -610,6 +613,12 @@ the distinction between a turn that stopped and a delivery that moved. Only a co
 vocabulary has a word for is reported as a named blocker against the state that does apply.
 Inventing a state for it and filing it under the nearest existing one fail the same way: both
 produce a record that reads as something a contract can act on when nothing in it can.
+
+Keep them in separate fields, so that a reader does not have to guess which vocabulary a word came
+from: what the turn did, what state the assignment is in, and the blocker where one applies. A
+child waiting on a person is a turn disposition of `blocked_needs_input` recorded beside whatever
+the assignment's own state actually is. Writing `blocked_needs_input` as that assignment state
+invents a state the relay does not have, which is the specific mistake this clause exists to stop.
 
 ### OPS-6.3 Installing a Linear hook
 
@@ -791,8 +800,9 @@ Whether a tool exposes steering, pausing or interrupting, whether the build actu
 this host exposes it, and whether the host supports it are three separate questions rather than
 two. Establish each on its own evidence, use only paths whose permission and support are confirmed,
 and never report a missing tool as a missing host capability. A path a reference describes but the
-running server does not offer is most often the installed build lagging that reference, which is
-an OPS-2.2 classification and not a host limit.
+running server does not offer has more than one explanation, and the installed build lagging that
+reference is one of them rather than the presumed one; it is classified under OPS-2.2. Establish
+which explanation holds before reporting anything as a host limit.
 
 What a hook did or did not say divides the same way. A task that received no hook guidance is
 missing a notice, not stranded: the skill pointers its packet carries are what it reads directly
