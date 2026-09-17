@@ -219,13 +219,20 @@ Use scoped list/search tools to locate candidates, then exact get/read tools for
 
 For authorized writes, use current create/save/update tools, preserve unrelated fields, and read back resulting IDs, contents, and relations. After an ambiguous result, query existing state before repeating a create. Connector absence permits a local draft or partial audit, not invented workspace facts or a claim that Linear was updated.
 
-## CXC owns execution
+## Workflow ownership
 
 Resolve installed paths from the current catalog. Read `cxc-dev` for development work and the matching surface owner when needed. Use `cxc-recall` for missing historical context; it does not establish current state.
 
-The effective Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
+An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` coordinates execution, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations, `crw-loop` owns the default project parent lifecycle, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+
+The default project parent follows [crw-loop](../../crw-loop/SKILL.md) using the existing
+coordination record, without initializing an implementation goalplan/FSM. Verified
+scoped deliveries establish its progress; parent-local source changes are not a
+completion condition. Children keep their own CXC lifecycle. Explicit parent workflow
+choices and existing CXC state require that workflow's supported transition, not a
+silent reset or guard bypass. `crw-loop` owns those entry and recovery rules.
 
 ### Completion follow-up in an existing execution workflow
 

@@ -8,7 +8,7 @@ one of them.
 
 ## S1 New installation on a host that has nothing
 
-Observed: no relay console script, no MCP registration, no state directory, and the seven current skills (including `crw-define`) not
+Observed: no relay console script, no MCP registration, no state directory, and the current CRW skills not
 yet linked.
 
 Clauses: OPS-2.3 for the skill links, OPS-1.1 and OPS-1.3 for the combination, OPS-2.4 for the
@@ -204,7 +204,7 @@ parent's delivery also waits, and nothing resumes that task automatically, becau
 user deliberately stopped is the one thing a retry cannot undo.
 
 A native subagent completes inside its parent's own turn and is not this independent-task case.
-The active project Loop keeps its own goal and lifecycle and continues bounded transport waits
+The active CRW parent keeps its coordination record and continues bounded transport waits
 using actual child identifiers. The timeout does not finish the project or justify a resend.
 After verifying and integrating the child's delivery, it dispatches the next ready issue within
 the agreed scope. A blocked issue holds its dependents, not independent ready work. Without a
@@ -428,7 +428,7 @@ own work and its goal, and the pull request is evidence about the code. Neither 
 which happens against the registered criteria and belongs to the parent. A report that presents an
 internal done state as verification is claiming something nobody has decided yet.
 
-This coordinator can stay idle until a meaningful handoff. Active parent Loops instead use the
+This coordinator can stay idle until a meaningful handoff. Parents in active observation mode instead use the
 compatible waiting mode in OPS-8.1 and S9; a native subagent wait is not a substitute for either
 independent-task path.
 
