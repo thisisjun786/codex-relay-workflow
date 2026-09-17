@@ -55,6 +55,10 @@ RELEASE = "release"
 
 OBSERVE, HOLD = "observe", "hold"
 
+# The create-once name that claims a turn's single hold, alongside the numbered observations in the
+# same hook-owned directory. Named rather than numbered so the two never collide.
+HOLD_FILE = "hold.json"
+
 # Named so a defect in this code cannot masquerade as a data problem in somebody's marker.
 FAULTED = "guard_faulted"
 
@@ -113,6 +117,10 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
         "atCurrentHead": False,
     }
     try:
+        # One snapshot for all three reads. Python's sqlite3 starts no transaction for SELECTs, so
+        # a concurrent writer could replace the head between computing it and fetching the event it
+        # named, and the guard would then judge against a revision that is no longer current.
+        connection.execute("BEGIN DEFERRED")
         relationship = connection.execute(
             "SELECT status, superseded_by, execution_generation FROM relationships"
             " WHERE relationship_id = ?",
@@ -139,6 +147,10 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
     except sqlite3.Error:
         return None, False
     finally:
+        try:
+            connection.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
         connection.close()
 
     if row is None:
@@ -182,8 +194,8 @@ def receipt_matches(receipt, stop, marker) -> bool:
 # ---------------------------------------------------------------- hold budget
 
 
-def _held_records(holds_root, session_id=None):
-    """Hold reservations under one tree, as (session, turn, at). Returns (records, bad, readable).
+def _held_records(hook_root, session_id=None):
+    """Hold reservations under one hook tree, as (session, turn, at). Returns (records, bad, readable).
 
     Every file here IS a hold: reserve_hold creates one exactly when a hold is issued, so counting
     them needs no flag to interpret and no writer has to keep a flag honest.
@@ -194,7 +206,7 @@ def _held_records(holds_root, session_id=None):
     corruption and release an otherwise holdable omission.
     """
     records = []
-    root = Path(holds_root)
+    root = Path(hook_root)
     sessions, readable = listing(root, only=DIRECTORIES)
     if not readable:
         return records, None, False
@@ -205,18 +217,16 @@ def _held_records(holds_root, session_id=None):
         if not readable:
             return records, None, False
         for turn_dir in turns:
-            files, readable = listing(turn_dir, "*.json")
+            files, readable = listing(turn_dir, HOLD_FILE)
             if not readable:
                 return records, None, False
             for path in files:
-                if path.name.startswith("."):
-                    continue
                 try:
                     record = json.loads(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
-                    return records, "holds/" + session_dir.name, True
+                    return records, "hook/" + session_dir.name, True
                 if not isinstance(record, dict):
-                    return records, "holds/" + session_dir.name, True
+                    return records, "hook/" + session_dir.name, True
                 records.append((session_dir.name, turn_dir.name, record.get("at")))
     return records, None, True
 
@@ -237,7 +247,7 @@ def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
     result, and that one loses a bound.
     """
     counters = {"holdsThisTurn": 0, "holdsThisGeneration": 0, "holdsThisSessionWindow": 0}
-    scoped, problem, readable = _held_records(Path(directory) / "holds")
+    scoped, problem, readable = _held_records(Path(directory) / "hook")
     if not readable:
         return counters, None, "hook"
     if problem:
@@ -255,7 +265,7 @@ def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
         return counters, None, "workspace"
     horizon = intents.moment(now)
     for assignment in assignments:
-        found, problem, readable = _held_records(assignment / "holds", session_id=session_id)
+        found, problem, readable = _held_records(assignment / "hook", session_id=session_id)
         if not readable:
             return counters, None, "hook"
         if problem:
@@ -288,10 +298,31 @@ def reserve_hold(directory, *, session_id, turn_id, at, mode, root=None) -> bool
     """
     if not (valid_segment(session_id) and valid_segment(turn_id)):
         return False
-    target = Path(directory) / "holds" / session_id / turn_id / "0.json"
+    # Inside hook/<session>/<turn>/, which is the subtree the contract grants this process. A
+    # separate top-level tree would be refused by the sandbox that makes holding permissible at
+    # all, and the refusal would surface as guard_faulted - releasing every omission in exactly
+    # the configuration hold mode exists for. The name is not a sequence number, so the numbered
+    # observation records and this reservation cannot collide.
+    target = Path(directory) / "hook" / session_id / turn_id / HOLD_FILE
     return publish(
         target, {"sessionId": session_id, "turnId": turn_id, "at": at, "mode": mode}, root=root
     ) == PUBLISHED
+
+
+def release_hold(directory, session_id, turn_id) -> None:
+    """Give back a reservation this evaluation made but could not use.
+
+    The reservation is taken before the observation is published, so a recording failure would
+    otherwise leave the turn's only hold spent with nothing blocked and nothing recorded. It is
+    this call's own file, so removing it is the same principle as discarding an unpublished temp.
+    Losing it to a crash instead costs one hold, which the generation and window bounds still catch.
+    """
+    if not (valid_segment(session_id) and valid_segment(turn_id)):
+        return
+    try:
+        (Path(directory) / "hook" / session_id / turn_id / HOLD_FILE).unlink()
+    except OSError:
+        pass
 
 
 def _next_hook_seq(directory, session_id, turn_id):
@@ -709,5 +740,10 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
     verdict["assignmentId"] = directory.name if directory is not None else None
     verdict["counters"] = counters
     if record and directory is not None:
-        verdict["recordedAs"] = record_observation(directory, verdict["record"], root=root)
+        try:
+            verdict["recordedAs"] = record_observation(directory, verdict["record"], root=root)
+        except BaseException:
+            if verdict["decision"] == BLOCK:
+                release_hold(directory, session_id, turn_id)
+            raise
     return verdict

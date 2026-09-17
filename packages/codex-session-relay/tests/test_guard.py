@@ -274,7 +274,7 @@ class Bounds(GuardTestCase):
     def test_a_corrupt_hold_budget_is_reported_and_never_read_as_a_fresh_one(self):
         self.managed()
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        marker.publish(directory / "holds" / CHILD / DISPATCH_TURN / "0.json", "not a record")
+        marker.publish(directory / "hook" / CHILD / DISPATCH_TURN / "hold.json", "not a record")
         verdict = self.evaluate()
         self.assertEqual(verdict["observation"], "marker_malformed")
         self.assertEqual(verdict["decision"], guard.RELEASE)
@@ -284,7 +284,7 @@ class Bounds(GuardTestCase):
         self.managed()
         self.dispose("interrupted")
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        marker.publish(directory / "holds" / CHILD / DISPATCH_TURN / "0.json", "not a record")
+        marker.publish(directory / "hook" / CHILD / DISPATCH_TURN / "hold.json", "not a record")
         verdict = self.evaluate()
         self.assertEqual(verdict["observation"], "declared_interrupted")
         self.assertEqual(verdict["decision"], guard.RELEASE)
@@ -403,7 +403,12 @@ class Recording(GuardTestCase):
         released = self.evaluate()
         self.assertTrue(released["recordedAs"].startswith("hook/"))
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        published = sorted((directory / "hook" / CHILD / DISPATCH_TURN).glob("*.json"))
+        # Two observations, plus the one reservation the first evaluation took. The reservation is
+        # named rather than numbered so it can share the hook-owned directory without colliding.
+        published = sorted(
+            p for p in (directory / "hook" / CHILD / DISPATCH_TURN).glob("*.json")
+            if p.stem.isdigit()
+        )
         self.assertEqual(len(published), 2)
 
     def test_the_record_carries_the_assignment_state_and_the_contest_both_ways(self):
@@ -515,7 +520,7 @@ class ReviewRegressions(GuardTestCase):
         other_dir = marker.assignment_dir(self.markers, self.workspace, other["assignmentId"])
         for index in range(guard.MAX_HOLDS_PER_SESSION_WINDOW):
             marker.publish(
-                other_dir / "holds" / CHILD / ("spent-" + str(index)) / "0.json",
+                other_dir / "hook" / CHILD / ("spent-" + str(index)) / "hold.json",
                 {"sessionId": CHILD, "turnId": "spent-" + str(index), "at": NOW},
             )
         verdict = self.evaluate(turn_id="turn-fresh")

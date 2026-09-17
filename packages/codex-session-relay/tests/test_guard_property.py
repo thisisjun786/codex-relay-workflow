@@ -215,10 +215,10 @@ class EnforcementIsNotSkipped(GuardTestCase):
         )
         bad = (
             marker.assignment_dir(self.markers, self.workspace, sibling["assignmentId"])
-            / "holds" / "some-other-session" / "turn-x"
+            / "hook" / "some-other-session" / "turn-x"
         )
         bad.mkdir(parents=True)
-        (bad / "0.json").write_text('"not a record"', encoding="utf-8")
+        (bad / "hold.json").write_text('"not a record"', encoding="utf-8")
         verdict = guard.evaluate(
             self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=False
         )
@@ -235,7 +235,7 @@ class EnforcementIsNotSkipped(GuardTestCase):
         other_dir = marker.assignment_dir(self.markers, self.workspace, other["assignmentId"])
         for index in range(guard.MAX_HOLDS_PER_SESSION_WINDOW):
             marker.publish(
-                other_dir / "holds" / CHILD / ("spent-" + str(index)) / "0.json",
+                other_dir / "hook" / CHILD / ("spent-" + str(index)) / "hold.json",
                 {"sessionId": CHILD, "turnId": "spent-" + str(index), "at": NOW},
             )
         selected = marker.assignment_dir(self.markers, self.workspace, self.assignment)
@@ -535,7 +535,7 @@ class HoldReservation(GuardTestCase):
         self.managed()
         self.evaluate()
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        reserved = sorted((directory / "holds" / CHILD).glob("*/0.json"))
+        reserved = sorted((directory / "hook" / CHILD).glob("*/hold.json"))
         self.assertEqual(len(reserved), 1)
         counters, corrupt, unreadable = guard.hold_counters(
             directory, session_id=CHILD, turn_id=DISPATCH_TURN, now=LATER,
@@ -585,11 +585,85 @@ class HoldReservation(GuardTestCase):
         self.assertNotEqual(verdict["state"], "hold_in_flight")
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
+    def test_a_holding_evaluation_writes_only_inside_the_granted_subtree(self):
+        """The contract grants the hook process hook/<own session>/ and nothing else.
+
+        A reservation anywhere outside it is refused by the very sandbox that makes holding
+        permissible, and the refusal surfaces as guard_faulted, releasing every omission in exactly
+        the configuration hold mode exists for.
+        """
+        self.managed()
+        granted = (
+            marker.assignment_dir(self.markers, self.workspace, self.assignment) / "hook" / CHILD
+        )
+        written = []
+        real = marker.publish
+
+        def watched(target, payload, **kw):
+            written.append(Path(target))
+            return real(target, payload, **kw)
+
+        with mock.patch("codex_session_relay.guard.publish", side_effect=watched):
+            verdict = self.evaluate()
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+        self.assertTrue(written)
+        for path in written:
+            self.assertTrue(
+                path.is_relative_to(granted),
+                str(path) + " is outside the granted " + str(granted),
+            )
+
+    def test_the_reservation_shares_the_hook_directory_without_colliding(self):
+        self.managed()
+        self.evaluate()
+        self.evaluate()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        turn = directory / "hook" / CHILD / DISPATCH_TURN
+        self.assertTrue((turn / "hold.json").exists())
+        numbered = sorted(p.name for p in turn.glob("*.json") if p.stem.isdigit())
+        self.assertEqual(numbered, ["0.json", "1.json"])
+
+    def test_a_failed_recording_gives_the_reservation_back(self):
+        """Reserving before recording meant a recording failure spent the turn's only hold with
+        nothing blocked, and every later evaluation then read hold_in_flight."""
+        self.managed()
+        with mock.patch(
+            "codex_session_relay.guard.record_observation", side_effect=OSError("injected")
+        ):
+            faulted = guard.evaluate(self.markers, self.stop(), now=LATER, mode=guard.HOLD)
+        self.assertEqual(faulted["observation"], guard.FAULTED)
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        self.assertFalse((directory / "hook" / CHILD / DISPATCH_TURN / "hold.json").exists())
+        # The turn still has its hold, which is the point.
+        again = self.evaluate()
+        self.assertEqual(again["decision"], guard.BLOCK)
+
+    def test_the_receipt_reads_one_snapshot(self):
+        """Three separate SELECTs with no transaction could see the head move underneath them."""
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        opened = []
+        real = intent.read_only_connection
+
+        def watched(db_path):
+            connection = real(db_path)
+            if connection is not None:
+                opened.append(connection)
+            return connection
+
+        with mock.patch("codex_session_relay.intent.read_only_connection", side_effect=watched):
+            verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        # The connection is closed, and closing it after an explicit BEGIN would have raised had
+        # the transaction been left open.
+        self.assertEqual(len(opened), 1)
+
     def test_observe_only_never_reserves(self):
         self.managed()
         self.evaluate(mode=guard.OBSERVE)
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        self.assertFalse((directory / "holds").exists())
+        self.assertEqual(list((directory / "hook" / CHILD).glob("*/hold.json")), [])
 
 
 class FailedPublicationLeavesNoLitter(unittest.TestCase):
