@@ -348,9 +348,18 @@ SWALLOWING_ALLOWED = {
                               " involved",
     ("cli.py", "_refuse_ambiguous_state"): "pre-existing relay state selection, not a marker path;"
                                            " owned by the store-selection surface",
+    ("manifest.py", "freeze"): "the next statement opens the same path for writing, so an access"
+                               " error hidden by exists() is raised there rather than absorbed",
+    ("manifest.py", "verify_frozen_detailed"): "kept because the two-value contract the intake"
+                                               " depends on is defined by the problem string it"
+                                               " produces; _frozen_document_access does the"
+                                               " three-state probe beside it and reports the"
+                                               " access failure separately",
 }
 
-OWNED_MODULES = ("marker.py", "intent.py", "guard.py", "cli.py")
+# manifest.py joined this list when verify_frozen came into this issue's lane. Taking a module
+# means taking its inventory, not only the line that was reported.
+OWNED_MODULES = ("marker.py", "intent.py", "guard.py", "cli.py", "manifest.py")
 
 # Inventory C: sentinel returns whose PROVENANCE is a failure. Extension A's inventory is a set of
 # stdlib predicate NAMES, and a name set structurally cannot see this shape - a function that turns
@@ -939,6 +948,138 @@ class FailedPublicationLeavesNoLitter(unittest.TestCase):
             with self.assertRaises(OSError):
                 marker.publish(target, {"issueKey": "REL-1"})
         self.assertEqual(list(target.parent.iterdir()), [])
+
+
+# Inventory D: places that turn bytes into text. UnicodeDecodeError is a ValueError, so it walks
+# straight past an "except OSError" that was written to mean "could not read this file" - which is
+# how a corrupt marker came to be reported as a defect in the guard. The enumerable unit is again a
+# name set: the explicit decoding calls, plus open() with an encoding, which is where the decoding
+# happens implicitly.
+DECODING_CALLS = ("read_text", "decode")
+
+DECODE_ALLOWED = {
+    ("manifest.py", "verify_frozen_detailed"): "raises on purpose: a frozen MANIFEST.json that is"
+                                               " not valid UTF-8 was readable and is not a"
+                                               " manifest, which is a corrupt frozen copy rather"
+                                               " than an access failure, and the intake path has"
+                                               " always seen it as an exception",
+    ("cli.py", "_settings_json"): "pre-existing relay CLI helper, outside this issue's editing"
+                                  " surface",
+    ("cli.py", "_read_text"): "pre-existing relay CLI helper for an operator-named @file, outside"
+                              " this issue's editing surface",
+}
+
+
+class DecodeFailureInventory(unittest.TestCase):
+    """Property extension D: bytes that are not text are bytes we could not read.
+
+    The class was found once, in marker._read_fact. Counting it is what stops the next one: a new
+    text read either classifies its decode failure or is named here with the reason it does not.
+    """
+
+    VALUEISH = {"ValueError", "UnicodeDecodeError", "Exception", "BaseException", "bare"}
+
+    @staticmethod
+    def _caught_around(node, tree):
+        names = set()
+
+        def walk(parent, stack):
+            for child in ast.iter_child_nodes(parent):
+                if child is node:
+                    names.update(stack)
+                    return True
+                deeper = stack
+                if isinstance(parent, ast.Try) and child in parent.body:
+                    caught = []
+                    for handler in parent.handlers:
+                        kind = handler.type
+                        if kind is None:
+                            caught.append("bare")
+                        elif isinstance(kind, ast.Name):
+                            caught.append(kind.id)
+                        elif isinstance(kind, ast.Tuple):
+                            caught.extend(
+                                e.id for e in kind.elts if isinstance(e, ast.Name)
+                            )
+                    deeper = stack + caught
+                if walk(child, deeper):
+                    return True
+            return False
+
+        walk(tree, [])
+        return names
+
+    def sites(self):
+        base = Path(__file__).resolve().parent.parent / "src" / "codex_session_relay"
+        found = []
+        for name in OWNED_MODULES:
+            tree = ast.parse((base / name).read_text(encoding="utf-8"))
+            owner = _enclosing_functions(tree)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                called = (
+                    func.attr if isinstance(func, ast.Attribute)
+                    else func.id if isinstance(func, ast.Name) else None
+                )
+                decoding = called in DECODING_CALLS or (
+                    called == "open"
+                    and any(keyword.arg == "encoding" for keyword in node.keywords)
+                )
+                if not decoding:
+                    continue
+                classified = bool(self._caught_around(node, tree) & self.VALUEISH)
+                found.append((name, owner.get(node, "<module>"), node.lineno, classified))
+        return found
+
+    def test_every_text_read_classifies_its_decode_failure_or_is_justified(self):
+        unclassified = [
+            site for site in self.sites()
+            if not site[3] and (site[0], site[1]) not in DECODE_ALLOWED
+        ]
+        self.assertEqual(
+            unclassified, [],
+            "these let a UnicodeDecodeError escape as something other than an unreadable file;"
+            " catch ValueError beside OSError or add them to DECODE_ALLOWED with a reason",
+        )
+
+    def test_the_inventory_still_sees_the_read_it_was_built_for(self):
+        """A scan that finds nothing proves nothing."""
+        self.assertIn(
+            ("marker.py", "_read_fact"), {(site[0], site[1]) for site in self.sites()}
+        )
+
+    def test_the_scan_catches_the_shape_this_round_removed(self):
+        """Fed the pre-fix handler set, the scan must call it unclassified."""
+        before = ast.parse(
+            "def _read_fact(path):\n"
+            "    try:\n"
+            "        text = Path(path).read_text(encoding='utf-8')\n"
+            "    except FileNotFoundError:\n"
+            "        return None, ABSENT\n"
+            "    except OSError:\n"
+            "        return None, UNREADABLE\n"
+            "    return text, PRESENT\n"
+        )
+        call = next(
+            n for n in ast.walk(before)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "read_text"
+        )
+        self.assertFalse(bool(self._caught_around(call, before) & self.VALUEISH))
+
+    def test_the_marker_read_answers_unreadable_for_bytes_that_are_not_text(self):
+        """The scan says the handler is there; this says the handler does the right thing."""
+        root = Path(tempfile.mkdtemp(prefix="relay-decode-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = root / "intent.json"
+        path.write_bytes(b'{"dispatchRequestId": "\xff\xfe"}')
+        value, state = marker._read_fact(path)
+        self.assertIsNone(value)
+        self.assertEqual(state, marker.UNREADABLE)
+        self.assertNotEqual(state, marker.ABSENT)
 
 
 if __name__ == "__main__":

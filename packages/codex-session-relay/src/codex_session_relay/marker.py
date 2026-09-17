@@ -302,6 +302,14 @@ def _read_fact(path):
     except OSError:
         # Permission, mount, I/O, or a name that is not a file. All of them mean we could not look.
         return None, UNREADABLE
+    except ValueError:
+        # UnicodeDecodeError is a ValueError, not an OSError, so it walks straight past the handler
+        # above. Bytes that are not text are bytes we could not read as a fact, and answering
+        # anything else lets the decode error escape to the classification boundary, where a
+        # corrupt marker is then reported as guard_faulted: a defect in THIS code rather than in
+        # somebody's file. Keeping those two apart is the whole reason guard_faulted is its own
+        # state, so the leak has to be closed on this side.
+        return None, UNREADABLE
     try:
         return json.loads(text), PRESENT
     except ValueError:

@@ -331,5 +331,144 @@ class FrozenCopy(RelayTestCase):
         self.assertTrue(problems)
 
 
+class FrozenAccessIsNotFrozenDisagreement(RelayTestCase):
+    """verify_frozen catches its access errors and returns them as problem strings.
+
+    That is the right contract for the intake, which only asks whether the receipt verified. It is
+    not enough for a caller deciding between "the deliverable changed" and "I could not compare
+    it", because those have different repairs. The detailed form answers that question without
+    moving what verify_frozen says, and these tests hold both halves of that claim.
+    """
+
+    def frozen(self, name, text="the delivered bytes"):
+        path = self.artifact(name + ".txt", text)
+        entries, _ = manifest.build([path], [self.root])
+        reference = os.path.join(self.tmp, name)
+        manifest.freeze(entries, reference)
+        return path, entries, reference
+
+    @staticmethod
+    def unreachable_blobs(reference):
+        """Put a regular file where the blob directory belongs.
+
+        NotADirectoryError is the same OSError family as a permission or a vanished mount and needs
+        no chmod, so it behaves the same whoever runs the suite.
+        """
+        shutil.rmtree(os.path.join(reference, "files"))
+        with open(os.path.join(reference, "files"), "w", encoding="utf-8") as handle:
+            handle.write("not a directory")
+
+    def test_an_unreachable_frozen_blob_is_named_as_an_access_failure(self):
+        _path, entries, reference = self.frozen("frozen-access")
+        self.unreachable_blobs(reference)
+        _digest, problems, unreadable = manifest.verify_frozen_detailed(reference, entries)
+        self.assertTrue(problems)
+        self.assertEqual(unreadable, problems)
+
+    def test_a_disagreeing_frozen_copy_is_not_an_access_failure(self):
+        _path, entries, reference = self.frozen("frozen-disagree")
+        blob = os.path.join(reference, "files", entries[0].sha256)
+        os.chmod(blob, 0o600)
+        with open(blob, "wb") as handle:
+            handle.write(b"tampered")
+        _digest, problems, unreadable = manifest.verify_frozen_detailed(reference, entries)
+        self.assertTrue(problems)
+        self.assertEqual(unreadable, [], "tampered bytes were read; they simply disagree")
+
+    def test_an_absent_frozen_copy_is_not_an_access_failure(self):
+        _digest, problems, unreadable = manifest.verify_frozen_detailed(
+            os.path.join(self.tmp, "never-frozen")
+        )
+        self.assertTrue(problems)
+        self.assertEqual(unreadable, [])
+
+    def test_an_unreachable_frozen_directory_is_one(self):
+        """is_file() answers False for absent and for out of reach, and those differ."""
+        reference = os.path.join(self.tmp, "frozen-dir-blocked")
+        with open(reference, "w", encoding="utf-8") as handle:
+            handle.write("a file where the frozen directory belongs")
+        _digest, problems, unreadable = manifest.verify_frozen_detailed(reference)
+        self.assertTrue(problems)
+        self.assertTrue(unreadable, "stat says why is_file said no")
+
+    def test_the_two_value_form_answers_exactly_what_it_always_did(self):
+        """The invariance the intake depends on, held across every branch that produces it."""
+        cases = {}
+        _p, entries, good = self.frozen("equiv-good")
+        cases["a frozen copy that verifies"] = (good, entries)
+        _p2, entries2, broken = self.frozen("equiv-unreachable")
+        self.unreachable_blobs(broken)
+        cases["an unreachable blob"] = (broken, entries2)
+        _p3, entries3, tampered = self.frozen("equiv-tampered")
+        blob = os.path.join(tampered, "files", entries3[0].sha256)
+        os.chmod(blob, 0o600)
+        with open(blob, "wb") as handle:
+            handle.write(b"tampered")
+        cases["tampered frozen bytes"] = (tampered, entries3)
+        cases["no frozen copy at all"] = (os.path.join(self.tmp, "equiv-absent"), None)
+        _p4, _e4, other = self.frozen("equiv-other", text="different bytes")
+        cases["a frozen copy of something else"] = (other, entries)
+
+        for label, (reference, entries_for) in cases.items():
+            with self.subTest(label):
+                two = manifest.verify_frozen(reference, entries_for)
+                detailed = manifest.verify_frozen_detailed(reference, entries_for)
+                self.assertEqual(two, detailed[:2])
+
+
+class IntakeBehaviourIsUnchangedByTheAccessSplit(RelayTestCase):
+    """The intake asks verify_frozen one question and must keep getting the same answer.
+
+    verify_frozen_detailed was added beside it rather than inside it precisely so this holds. The
+    tests above prove the two forms agree; these prove the agreement reaches the intake, which is
+    the caller that actually decides whether a receipt is admitted.
+    """
+
+    def moved_on(self, name):
+        """A receipt whose live bytes have moved on, with a frozen copy behind it."""
+        relationship = self.register()
+        path = self.artifact(name + ".txt", "the delivered bytes")
+        payload = self.ready_payload(relationship, [path])
+        entries = [manifest.Entry.from_record(record) for record in payload["manifest"]]
+        reference = os.path.join(self.tmp, name)
+        manifest.freeze(entries, reference)
+        payload["manifestRef"] = reference
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("a later revision")
+        return payload, reference
+
+    def test_a_good_frozen_copy_is_still_admitted_at_the_best_effort_tier(self):
+        payload, _reference = self.moved_on("intake-frozen-good")
+        self.accept(payload)
+        row = self.store.one(
+            "SELECT path_binding_mode FROM events WHERE event_id = ?", (payload["eventId"],)
+        )
+        self.assertEqual(row["path_binding_mode"], PathBindingMode.BEST_EFFORT_DETECTION.value)
+
+    def test_an_unreachable_frozen_copy_is_still_refused_as_unverified(self):
+        payload, reference = self.moved_on("intake-frozen-unreachable")
+        shutil.rmtree(os.path.join(reference, "files"))
+        with open(os.path.join(reference, "files"), "w", encoding="utf-8") as handle:
+            handle.write("not a directory")
+        self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
+        self.assertIsNone(
+            self.store.one("SELECT 1 AS hit FROM events WHERE event_id = ?", (payload["eventId"],))
+        )
+
+    def test_a_tampered_frozen_copy_is_still_refused_as_unverified(self):
+        payload, reference = self.moved_on("intake-frozen-tampered")
+        entries = [manifest.Entry.from_record(record) for record in payload["manifest"]]
+        blob = os.path.join(reference, "files", entries[0].sha256)
+        os.chmod(blob, 0o600)
+        with open(blob, "wb") as handle:
+            handle.write(b"tampered")
+        self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
+
+    def test_an_absent_frozen_copy_is_still_refused_as_unverified(self):
+        payload, reference = self.moved_on("intake-frozen-absent")
+        shutil.rmtree(reference)
+        self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
+
+
 if __name__ == "__main__":
     unittest.main()

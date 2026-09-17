@@ -203,6 +203,20 @@ class Refusals(MarkerCli):
         )
         self.assertEqual(payload["error"], "usage")
 
+    def test_a_stop_payload_file_that_is_not_utf8_is_a_usage_error(self):
+        """A sibling of the marker decode fault, on the surface an operator types at.
+
+        UnicodeDecodeError is a ValueError, so an unreadable replay file reached the generic
+        handler and was reported as a host failure rather than as the named file it is.
+        """
+        path = os.path.join(self.markers, "payload.json")
+        with open(path, "wb") as handle:
+            handle.write(b'{"cwd": "\xff\xfe"}')
+        payload = self.marker_cli(
+            "guard-evaluate", "--marker-root", self.markers, "--stop-input", path, expect=4
+        )
+        self.assertEqual(payload["error"], "usage")
+
     def test_a_hold_that_cannot_be_recorded_is_refused_at_the_command_line(self):
         """A hold is reserved, counted against the bounds and released by its own record.
 

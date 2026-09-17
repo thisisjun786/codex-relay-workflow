@@ -25,7 +25,7 @@ from pathlib import Path
 from . import intent as intents
 from .currency import AMBIGUOUS, head_revision
 from .errors import ScopeError
-from .manifest import Entry, revision_hash, verify_against_disk, verify_frozen
+from .manifest import Entry, revision_hash, verify_against_disk, verify_frozen_detailed
 from .marker import (
     DIRECTORIES,
     PUBLISHED,
@@ -126,9 +126,20 @@ def deliverable_state(payload, manifest_ref, roots):
         if not problems:
             return DELIVERABLE_CURRENT, "live", None
         if manifest_ref:
-            _digest, frozen = verify_frozen(manifest_ref, entries)
+            _digest, frozen, unreachable = verify_frozen_detailed(manifest_ref, entries)
             if not frozen:
                 return DELIVERABLE_CURRENT, "frozen", None
+            if unreachable:
+                # The frozen copy is this receipt's own fallback and we could not read it, so
+                # whether the deliverable still stands is not something this evaluation knows.
+                # verify_frozen catches its access errors and returns them as problem strings, so
+                # they never become exceptions here - which is why the boundary that converts
+                # exceptions cannot see them and the distinction has to be asked for by name.
+                return (
+                    DELIVERABLE_UNVERIFIABLE,
+                    None,
+                    "; ".join(unreachable[:3]),
+                )
             problems = problems + frozen
         return DELIVERABLE_CHANGED, None, "; ".join(problems[:3])
     except (OSError, ScopeError) as error:

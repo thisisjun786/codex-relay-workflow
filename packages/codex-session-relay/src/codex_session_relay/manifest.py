@@ -219,15 +219,50 @@ def _read_frozen_blob(reference: Path, digest: str) -> tuple[str, int]:
         return hash_authorized(handle)
 
 
-def verify_frozen(manifest_ref: str, entries=None) -> tuple[str, list]:
-    """Verify a receipt against its frozen copy instead of files that may have moved."""
+def _frozen_document_access(document, manifest_ref) -> list:
+    """Why is_file() said no: absent, or out of reach? Returns the access failures, if any.
+
+    is_file() answers False for both, and they are different facts. A frozen copy that does not
+    exist is a receipt that never froze one; a frozen copy behind a permission or a vanished mount
+    is one nobody was able to check. Only the second means the verification did not happen.
+    """
+    try:
+        document.stat()
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        return [f"{manifest_ref}: the frozen manifest could not be reached: {error}"]
+    # It is there and it is not a regular file. That is a malformed frozen copy, not a failure to
+    # reach one, so it stays a content problem.
+    return []
+
+
+def verify_frozen_detailed(manifest_ref: str, entries=None) -> tuple[str, list, list]:
+    """verify_frozen, and which of the problems were failures to READ rather than disagreements.
+
+    Added alongside verify_frozen rather than folded into it. The receipt intake path depends on
+    the two-value answer and its behaviour must not move, so problems is computed exactly as it was
+    in every branch and unreadable is a subset of it naming the access failures. A caller that
+    wants the distinction asks for it; one that does not gets what it always got.
+
+    The distinction matters to a caller deciding whether a deliverable CHANGED or whether it could
+    not be compared at all. Reporting an unreachable frozen copy as a disagreement claims a
+    comparison against bytes nobody opened.
+    """
     reference = Path(manifest_ref)
     document = reference / "MANIFEST.json"
     if not document.is_file():
-        return "", [f"{manifest_ref}: no MANIFEST.json in the frozen copy"]
+        return (
+            "",
+            [f"{manifest_ref}: no MANIFEST.json in the frozen copy"],
+            _frozen_document_access(document, manifest_ref),
+        )
+    # A document that is not valid UTF-8 or not valid JSON raises, as it always has. Those bytes
+    # were readable and are not a manifest, which is a corrupt frozen copy rather than an access
+    # failure, and the intake path has always seen it as an exception.
     payload = json.loads(document.read_text())
     frozen = [Entry.from_record(record) for record in payload["entries"]]
-    problems = []
+    problems, unreadable = [], []
     if entries is not None:
         claimed = {(e.path, e.sha256) for e in entries}
         stored = {(e.path, e.sha256) for e in frozen}
@@ -250,10 +285,22 @@ def verify_frozen(manifest_ref: str, entries=None) -> tuple[str, list]:
         try:
             digest, size = _read_frozen_blob(reference, entry.sha256)
         except (ScopeError, OSError) as error:
-            problems.append(f"{entry.path}: frozen bytes unreadable for {entry.sha256}: {error}")
+            message = f"{entry.path}: frozen bytes unreadable for {entry.sha256}: {error}"
+            problems.append(message)
+            unreadable.append(message)
             continue
         if digest != entry.sha256:
             problems.append(f"{entry.path}: frozen bytes do not match {entry.sha256}")
         elif entry.bytes is not None and entry.bytes != size:
             problems.append(f"{entry.path}: frozen bytes are {size}, not the claimed {entry.bytes}")
-    return revision_hash(frozen), problems
+    return revision_hash(frozen), problems, unreadable
+
+
+def verify_frozen(manifest_ref: str, entries=None) -> tuple[str, list]:
+    """Verify a receipt against its frozen copy instead of files that may have moved.
+
+    The two-value form the intake path has always called. It is the detailed one with the access
+    breakdown dropped, so every branch answers exactly what it answered before.
+    """
+    digest, problems, _unreadable = verify_frozen_detailed(manifest_ref, entries)
+    return digest, problems

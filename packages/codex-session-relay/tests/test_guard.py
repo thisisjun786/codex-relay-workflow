@@ -773,5 +773,76 @@ class AHoldIsOnlyIssuedWhereItCanBeRecorded(GuardTestCase):
         self.assertIn("64 attempts", str(caught.exception))
 
 
+class DecodeAndFrozenAccessKeepTheirOwnAnswers(GuardTestCase):
+    """Two leaks out of the same distinction, closed on the side that owns it.
+
+    A failure the guard could not read must never arrive as a normal state, and it must never be
+    reported as a defect in the guard either. Both directions matter: guard_faulted exists so a bug
+    in this code cannot hide as somebody's corrupt marker, and it stops being useful the moment a
+    corrupt marker starts arriving as a bug in this code.
+    """
+
+    def test_a_marker_that_is_not_utf8_is_unreadable_rather_than_a_guard_defect(self):
+        """UnicodeDecodeError is a ValueError, so it walked past the OSError handler in _read_fact
+        and reached the classification boundary, where a corrupt file was labelled guard_faulted."""
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        (directory / "intent.json").unlink()
+        (directory / "intent.json").write_bytes(b'{"dispatchRequestId": "\xff\xfe"}')
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+        self.assertTrue(verdict["recordedAs"].startswith("hook/"))
+
+    def frozen_ready(self, name):
+        relationship = self.managed()
+        path = self.artifact("out.txt", "work")
+        entries, _bindings = manifest.build(
+            [path], relationship["authorizedScope"]["artifactRoots"]
+        )
+        reference = os.path.join(self.tmp, name)
+        manifest.freeze(entries, reference)
+        payload = self.ready_payload(relationship, [path])
+        payload["manifestRef"] = reference
+        self.accept(payload)
+        self.dispose("ready_for_review")
+        self.artifact("out.txt", "the working tree moved on")
+        return reference
+
+    def test_an_unreachable_frozen_copy_is_not_a_changed_deliverable(self):
+        """verify_frozen catches its access errors and returns them as problem strings.
+
+        They never become exceptions, so the boundary that converts exceptions cannot see them and
+        the guard read "I could not open the frozen copy" as "the deliverable changed" - holding a
+        child over a comparison nobody performed.
+        """
+        reference = self.frozen_ready("guard-frozen-unreachable")
+        shutil.rmtree(os.path.join(reference, "files"))
+        with open(os.path.join(reference, "files"), "w", encoding="utf-8") as handle:
+            handle.write("not a directory")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertIn("the receipt's artifacts", verdict["reason"])
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_tampered_frozen_copy_is_still_a_changed_deliverable(self):
+        """The control: bytes that were read and disagree are a change, and they hold."""
+        reference = self.frozen_ready("guard-frozen-tampered")
+        blob = sorted((Path(reference) / "files").iterdir())[0]
+        os.chmod(blob, 0o600)
+        blob.write_bytes(b"tampered")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["receiptEvidence"], "artifacts_changed_since_receipt")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+    def test_a_readable_frozen_copy_still_releases(self):
+        """The other control: the whole path still works when nothing is wrong."""
+        self.frozen_ready("guard-frozen-good")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+
 if __name__ == "__main__":
     unittest.main()

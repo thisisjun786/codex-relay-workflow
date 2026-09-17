@@ -1290,7 +1290,15 @@ def cmd_guard_evaluate(services, args) -> dict:
     it from a file is for replaying a captured payload, never for inventing one.
     """
     if args.stop_input and args.stop_input != "-":
-        text = Path(args.stop_input).expanduser().read_text(encoding="utf-8")
+        try:
+            text = Path(args.stop_input).expanduser().read_text(encoding="utf-8")
+        except (OSError, ValueError) as error:
+            # A sibling of the marker decode fault: UnicodeDecodeError is a ValueError, so a replay
+            # file that is not UTF-8 would otherwise reach the generic handler and be reported as a
+            # host failure. It is a named file the operator typed.
+            raise SystemExit2(
+                f"the Stop payload file could not be read: {error}", EXIT_USAGE
+            ) from error
     else:
         text = sys.stdin.read()
     try:
