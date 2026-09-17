@@ -15,12 +15,42 @@ import pytest
 from conftest import EFFORT, EXECUTION, MODEL
 
 from codex_thread_bridge.execution import (
+    Execution,
     ExecutionPolicy,
     ExecutionPolicyError,
     ExecutionRefused,
 )
 
 UNAPPROVED = "openai/gpt-6-astra"
+RELABELLED = ("relabelled/model", "relabelled-effort")
+
+
+class RelabellingPolicy:
+    """A policy that authorizes a pair different from the one the caller asked for.
+
+    A real authorize() is value-preserving, so a test built on one cannot tell a launch made from
+    the authorization apart from a launch made from the caller's raw arguments: both are the same
+    string. This can. If any path still reads the arguments, the host is asked for the wrong pair
+    and every assertion below fails.
+    """
+
+    mode = "allowlist"
+
+    def summary(self):
+        return {"mode": self.mode, "digest": "stub"}
+
+    def authorize(self, model, reasoning_effort, *, cwd=None, exception=None):
+        assert isinstance(model, str) and isinstance(reasoning_effort, str)
+        return Execution(
+            *RELABELLED,
+            {
+                "mode": self.mode,
+                "digest": "stub",
+                "exception": exception,
+                "model": RELABELLED[0],
+                "reasoningEffort": RELABELLED[1],
+            },
+        )
 
 
 def policy_for(directory):
@@ -450,3 +480,29 @@ async def test_a_resume_that_disagrees_withholds_the_message(
     assert receipt["status"] == "failed"
     assert receipt["settings"]["findings"][0]["code"] == code
     assert fake.count("turn/start") == before, "the message was dispatched anyway"
+
+
+async def test_the_launch_and_the_comparison_follow_the_authorization_not_the_arguments(
+    configured_bridge, fake_server, tmp_path
+):
+    """The claim is that one Execution record feeds the wire and the check, on both paths.
+
+    With a value-preserving policy that claim is untestable, because the authorized pair and the
+    requested pair are the same string. The stub separates them.
+    """
+    fake, _ = fake_server
+    bridge = configured_bridge(RelabellingPolicy())
+    receipt = await bridge.create_thread("relabelled", str(tmp_path), prompt="work", **EXECUTION)
+    assert receipt["status"] == "accepted"
+    start = next(params for name, params in fake.calls if name == "thread/start")
+    assert (start["model"], start["config"]["model_reasoning_effort"]) == RELABELLED
+    assert receipt["settings"]["requested"]["model"] == RELABELLED[0]
+    assert receipt["settings"]["requested"]["reasoningEffort"] == RELABELLED[1]
+    assert receipt["executionPolicy"]["model"] == RELABELLED[0]
+    delivered = await bridge.send_message_to_thread(
+        "relabelled-send", receipt["threadId"], "again", dict(EXECUTION)
+    )
+    resume = next(params for name, params in fake.calls if name == "thread/resume")
+    assert (resume["model"], resume["config"]["model_reasoning_effort"]) == RELABELLED
+    assert delivered["status"] == "accepted"
+    assert delivered["executionPolicy"]["model"] == RELABELLED[0]

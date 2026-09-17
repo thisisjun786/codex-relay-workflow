@@ -231,7 +231,14 @@ async def configured_bridge(fake_server, tmp_path):
         rpc = AppServer(socket, timeout=1)
         ledger = Ledger(tmp_path / "configured" / f"operations-{len(built)}.sqlite3")
         built.append((rpc, ledger))
-        return Bridge(rpc, ledger, policy=ExecutionPolicy.from_mapping(mapping, digest=digest))
+        # A ready policy object is accepted too, so a test can hand in a stub and observe which
+        # values the bridge actually transmits.
+        policy = (
+            mapping
+            if hasattr(mapping, "authorize")
+            else ExecutionPolicy.from_mapping(mapping, digest=digest)
+        )
+        return Bridge(rpc, ledger, policy=policy)
 
     try:
         yield build

@@ -650,3 +650,20 @@ async def test_a_worktree_exception_covers_only_the_destination_it_names(
     assert start["model"] == excepted["model"]
     assert start["config"]["model_reasoning_effort"] == excepted["reasoning_effort"]
     assert receipt["executionPolicy"]["exception"] == "this-worktree"
+
+
+async def test_a_worktree_launch_follows_the_authorization_not_the_arguments(
+    configured_bridge, fake_server, repository
+):
+    """The same single-source check as the other two paths, on the one with two launch readers."""
+    from test_execution import RELABELLED, RelabellingPolicy
+
+    fake, _ = fake_server
+    bridge = configured_bridge(RelabellingPolicy())
+    receipt = await bridge.create_worktree_thread(**{**repository, "prompt": "work"})
+    assert receipt["status"] == "accepted"
+    start = next(params for name, params in fake.calls if name == "thread/start")
+    assert (start["model"], start["config"]["model_reasoning_effort"]) == RELABELLED
+    assert receipt["settings"]["requested"]["model"] == RELABELLED[0]
+    assert receipt["settings"]["requested"]["reasoningEffort"] == RELABELLED[1]
+    assert receipt["executionPolicy"]["model"] == RELABELLED[0]

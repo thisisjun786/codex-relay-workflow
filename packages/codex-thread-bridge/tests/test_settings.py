@@ -510,6 +510,7 @@ async def test_a_misspelled_setting_key_is_refused_not_discarded(bridge, fake_se
             "hello",
             expected_settings={"model": "anthropic/claude-opus-5", "sandboxPolicy": {}},
         )
+    assert fake.count("turn/start") == before, "neither misspelling may be dispatched"
 
 
 async def test_a_replay_answers_from_the_ledger_without_touching_the_host(
