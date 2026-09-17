@@ -87,7 +87,23 @@ def test_an_exception_cannot_be_invented_where_none_was_written():
         ),
         (
             {"exceptions": {"e": {"model": MODEL, "reasoningEffort": EFFORT, "cwd": ["relative"]}}},
-            "must be absolute",
+            "canonical and absolute",
+        ),
+        (
+            {
+                "exceptions": {
+                    "e": {
+                        "model": MODEL,
+                        "reasoningEffort": EFFORT,
+                        "cwd": ["/srv/checkouts/../task"],
+                    }
+                }
+            },
+            "canonical and absolute",
+        ),
+        (
+            {"exceptions": {"e": {"model": MODEL, "reasoningEffort": EFFORT, "cwd": ["/srv/x/"]}}},
+            "canonical and absolute",
         ),
         (
             {

@@ -143,8 +143,9 @@ Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
 Efforts are scoped to their model, so this file approves `opus/xhigh` and `sol/high` and
 refuses `opus/high`, which nobody wrote down. It is read once at startup from this
 process's environment; a file that is configured and cannot be used stops the server
-rather than degrading to presence-only. Paths must be absolute and canonical, and are
-compared by exact string equality.
+rather than degrading to presence-only. Directories are compared by exact string
+equality, so an entry that is absolute but not canonical is refused at startup rather
+than loading cleanly and then matching nothing.
 
 An exception is a **name, not a value**. The operator writes the id, its one model, its
 one effort and the directories it covers; a caller may cite that id through

@@ -199,8 +199,16 @@ class ExecutionPolicy:
                 raise ExecutionPolicyError(f"exception {name!r} needs at least one cwd")
             for root in roots:
                 _identifier(root, f"a cwd of exception {name!r}")
-                if not Path(root).is_absolute():
-                    raise ExecutionPolicyError(f"exception {name!r} cwd {root!r} must be absolute")
+                path = Path(root)
+                # Canonical as well as absolute, and settled here rather than per request. The
+                # creation path compares against a resolved cwd and the worktree path against a
+                # destination Git already requires to be canonical, so an entry that is merely
+                # absolute would load cleanly and then match nothing. That reads to an operator
+                # as an unexplained refusal instead of the misconfiguration it is.
+                if not path.is_absolute() or str(path.resolve()) != root:
+                    raise ExecutionPolicyError(
+                        f"exception {name!r} cwd {root!r} must be canonical and absolute"
+                    )
             # One model and one effort, never a list: an exception is a single authorized triple.
             # A list here would be a second allowlist wearing an exception's name, and the caller
             # would choose within it. "reason" is read and discarded; it is the operator's note.
