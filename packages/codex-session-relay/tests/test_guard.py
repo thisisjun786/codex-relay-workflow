@@ -420,7 +420,8 @@ class Recording(GuardTestCase):
 
     def test_nothing_is_recorded_for_an_unmanaged_workspace(self):
         verdict = self.evaluate()
-        self.assertIsNone(verdict.get("recordedAs"))
+        self.assertIn("recordedAs", verdict)
+        self.assertIsNone(verdict["recordedAs"])
         self.assertFalse((self.markers / marker.workspace_key(self.workspace)).exists())
 
 
@@ -608,7 +609,11 @@ class ReviewRegressions(GuardTestCase):
         # assignment directory, and both recording paths are guarded by having one. Asserted so the
         # invariant that says so stays checked rather than merely claimed - the previous wording
         # promised persistence unconditionally and this is the case that does not have it.
-        self.assertIsNone(verdict.get("recordedAs"))
+        #
+        # The key must be PRESENT and null. get() would have accepted an absent field too, which is
+        # how the documented shape and the real one came apart in the first place.
+        self.assertIn("recordedAs", verdict)
+        self.assertIsNone(verdict["recordedAs"])
 
 
 class ReceiptsAreBoundToTheRevisionTheyWereComputedOver(GuardTestCase):
@@ -752,6 +757,22 @@ class AHoldIsOnlyIssuedWhereItCanBeRecorded(GuardTestCase):
             workspace_root=directory.parent,
         )
         self.assertEqual(counters["holdsThisTurn"], 0)
+
+    def test_a_verdict_always_carries_the_recorded_field(self):
+        """Null means there was nowhere to write, and absence would have to be guessed at.
+
+        Every branch answers the same question in the same shape: an unmanaged session, a dry run,
+        an unreadable workspace and an ordinary recorded hold all carry the key.
+        """
+        self.assertIn("recordedAs", self.evaluate())
+        self.managed()
+        dry = guard.evaluate(
+            self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=False
+        )
+        self.assertIn("recordedAs", dry)
+        self.assertIsNone(dry["recordedAs"])
+        recorded = self.evaluate()
+        self.assertTrue(recorded["recordedAs"].startswith("hook/"))
 
     def test_the_downgrade_is_named_rather_than_applied_quietly(self):
         self.managed()

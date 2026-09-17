@@ -757,6 +757,11 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_pa
             " Hold mode was not applied: this evaluation was asked not to record, and a hold that"
             " publishes no observation cannot be released, counted against the bounds, or audited."
         )
+    # Always present, so a consumer never has to tell an absent key from a recorded one. Null says
+    # this evaluation had nowhere to write: no assignment directory was selected, the Stop identity
+    # could not be a directory name, or recording was not asked for. Absence would make the reader
+    # infer that from a missing field, which is the same guessing this module exists to remove.
+    verdict.setdefault("recordedAs", None)
     return verdict
 
 
