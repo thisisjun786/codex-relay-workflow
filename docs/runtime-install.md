@@ -468,6 +468,29 @@ registered command, the link target and where the entry point resolves as three 
 `current` repointed by hand at a fork is caught by the cell whose question that is, instead of
 passing because a neighbouring cell was still satisfied.
 
+### A registration written before the pointer existed
+
+The pointer only helps a host that has one. A host installed by an earlier version of this
+command registered a concrete entry point, and comparing that with the pointer reads as a
+conflict — which refuses the update and then deletes the candidate it has just built. That
+made the installed base whose pinned registration the pointer exists to unpin the one base
+that could never receive it.
+
+So a conflict is checked against the host record before it is believed. A registered command
+that the record names as an entry point of an install this command made is this command's own
+earlier registration, not somebody else's, and it does not refuse the update. Ownership is
+established positively from the record: a path that merely looks familiar proves nothing, and a
+registration nobody recorded stays the conflict it is.
+
+Recognising it is not migrating it, and the difference is worth stating plainly. After the
+update the configuration still names the predecessor. That is not a broken host — the
+predecessor is preserved and still works — but Codex goes on spawning the previous bridge until
+`register-mcp` is aimed at the pointer. Moving an existing registration would need this
+repository to rewrite a table it did not write, and the append-only writer proves it preserved
+everything by requiring the prior content to be an exact prefix of the new file, which an
+in-place edit cannot satisfy. That is a different contract, so it is named here rather than
+improvised.
+
 ### The claim a run leaves behind
 
 The environment name is deterministic and the directory is created with an exclusive `mkdir`,
