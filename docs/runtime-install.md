@@ -63,12 +63,25 @@ measured at run time, checkout cleanliness, one entry per install location
 
 This is what makes reuse reachable. Under OPS-1.3 a point means the combination was exercised, so
 no amount of reading bytes produces one, and a component whose bytes match but whose combination
-nobody has run classifies `unmeasured` and is preserved rather than reused. `runtime_install.py
-measure` is the operation that produces a point: it runs the relay console script and imports and
-starts the bridge module under the resolved interpreter, then records
-`{interpreter, codexCli, appServer, host, date, measuredBy, method}` bound to one install location.
-A point recorded against another interpreter is a different combination and does not satisfy this
-one. Points are appended, never replaced.
+nobody has run classifies `unmeasured` and is preserved rather than reused.
+
+`runtime_install.py measure` is the operation that produces a point, and it has to run something
+real. Starting a process is not exercising a combination: the bridge's entry point starts a stdio
+server and never contacts the App Server, so a recipe built on startup would record success against
+an unreachable host. `measure` therefore runs two actual operations under the resolved interpreter:
+
+| Component | Operation | What makes it an exercise |
+| --- | --- | --- |
+| Relay | `codex-session-relay --socket <sock> --state <dir> doctor` | `actorReachability.socketConnect` is a real connect and must equal `ok` |
+| Bridge | `packages/codex-thread-bridge/scripts/check_connection.py --socket <sock>` | The package's own read-only check starts the MCP server, lists its tools and calls `get_capabilities`, which is an App Server round trip |
+
+That check is invoked, never modified or reimplemented. A connection, protocol or tool-call failure
+records **no** qualifying point and the run reports why. The point records
+`{interpreter, codexCli, appServer, host, date, measuredBy, method}` bound to one install location,
+one combination and the `sourceDigest` it was measured against, so it is evidence tied to the bytes
+it covers rather than an independently editable expectation. A point recorded against another
+interpreter is a different combination and does not satisfy this one. Points are appended, never
+replaced.
 
 ## Installing the runtime
 
@@ -80,10 +93,15 @@ suitable interpreter exists it refuses and names the requirement.
 The environment is created as a new directory, so an existing one is never overwritten. Each
 module's imported location is then read back from the interpreter rather than assumed, because an
 editable install leaves nothing under site-packages and a copied install does, and its OPS-1.2
-digest is computed from whatever the interpreter actually resolved. Only after those readings
-succeed is the recorded pointer moved. A failure at any step leaves the previous runtime in place,
-and nothing here removes, moves or recreates the store: update failure and store loss are
-different accidents and the recovery for one must not cause the other.
+digest is computed from whatever the interpreter actually resolved.
+
+The candidate is then exercised, and the recorded pointer moves only after a qualifying point
+exists for it. OPS-2.4 sequences an update as measure, install, measure again, and the second
+measurement is the one that produces the point; promoting before it would select a runtime that
+imports cleanly and fails the moment it is used. A candidate whose exercise fails stays unselected
+and the previously selected runtime remains selected. A failure at any step leaves the previous
+runtime in place, and nothing here removes, moves or recreates the store: update failure and store
+loss are different accidents and the recovery for one must not cause the other.
 
 ## Installation ownership
 
@@ -146,9 +164,11 @@ behind it reports `unknown`; no time is ever invented or copied from another fie
 | `alwaysActive` | A supervised runtime surviving a host restart | Any of the five above |
 
 A live session is the only thing that can list MCP tools, so `mcpExposed` stays `not_verified` on a
-registration alone; observed tool names are supplied explicitly with `--observed-tool` and recorded
-as what they are. Every record names the destination it measured and whether that destination was
-temporary, so a temporary-destination proof cannot be read as a claim about a host.
+registration alone. It reaches `verified` from real tool names only: either `--observed-tool`
+supplied by a caller that is itself in a live session, or the tool list the bridge's own
+`check_connection.py` returns, which is an actual MCP session over stdio. Every record names the
+destination it measured and whether that destination was temporary, so a temporary-destination
+proof cannot be read as a claim about a host.
 
 Two further results are reported beside those six and are never merged into them, because importing
 and preserving settings are separately falsifiable:
@@ -165,6 +185,13 @@ which means creating one, so it reports `not_applicable` unless `--trial` is giv
 the only mode that registers a relationship and sends, it names the scope it acted in, and it is
 never implied by any other flag.
 
+The send has to go far enough to produce the evidence. `emit` stores the receipt and enqueues the
+delivery; the attempt itself happens in `deliver`. So the trial registers, emits, and then runs a
+bounded `deliver` for that one event, and the field's evidence is the attempt's returned turn id.
+An emitted receipt's own turn id never satisfies it. The authorized recipient and the requested
+settings are recorded before the send, and the settings the host reported back are recorded with the
+result.
+
 ## One shared service and one store
 
 OPS-3.1 puts one relay service and one durable store behind an entire operating scope, which is one
@@ -176,11 +203,20 @@ Diagnosis therefore reports the resolved scope, the store directory and database
 and whether a service is running, by calling the relay's own `doctor` and `service status` rather
 than by rediscovering any of it.
 
-`doctor` is called twice, because it answers two different questions. A call that selects a store
-explicitly, through `--state` or the environment, skips sibling discovery altogether and reports
-`checked: false`: the caller already decided which participants share that directory. Only a
-discovery call, with the socket and no explicit state, populates `siblingStores`. The report
-carries both and preserves a `checked: false` as not checked, never as none found.
+`doctor` is called three times, because one call cannot answer all three questions.
+
+A call that selects a store explicitly skips sibling discovery altogether and reports
+`checked: false`, because the caller already decided which participants share that directory. That
+applies to `CODEX_SESSION_RELAY_STATE` exactly as it applies to `--state`, so the **discovery** call
+passes the socket, no `--state`, and a sanitized environment with that variable removed; inheriting
+it would silently produce an empty conflict inventory. The **selected** call uses the explicit
+`--state` for the store actually in use.
+
+The third call is targeted at the root of the state home. Discovery enumerates child directories
+only, so a `relay.sqlite3` sitting directly in `<state home>/codex-session-relay` is invisible to
+both calls above. A host can be in exactly that state, so it is inspected explicitly rather than
+left out of the inventory. All three results are reported, a `checked: false` is preserved as not
+checked rather than as none found, and no candidate is adopted.
 
 Equality of path strings is not proof under OPS-3.4. Proof is `doctor` from each participating
 process reporting the same `stateDirectory` together with `assignment-find --issue` returning the
