@@ -409,8 +409,10 @@ revisions with no stated supersession are ambiguous, and an ambiguous head withh
 rather than picking whichever arrived later. If the criteria changed after a review,
 that review certified wording nobody is judging by now, and there are two routes
 back: judging the same revision again against the set now in force, or opening a
-fresh execution generation. Which one applies turns on whether the artifact itself
-has to change. See [codex-session-relay](references/relay.md).
+fresh execution generation. The same revision can be judged again only while it is
+still the one the assignment stands on and any verdict it carries is `verified`;
+a changed artifact, or an event already ruled `needs_changes`, `unverified` or
+`aborted`, takes the new generation. See [codex-session-relay](references/relay.md).
 
 Use independent review when scope/risk warrants it, through the current CXC
 subagent protocol inside the appropriate checkout. A worker's self-report alone

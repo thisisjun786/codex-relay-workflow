@@ -397,8 +397,6 @@ answer:
     `unverified` the state reads `verifying` rather than `re_review_needed`, so the assignment
     does not announce this one;
   - the event is no longer the revision this generation stands on, because a newer revision
-    arrived, the head is ambiguous, or the generation advanced;
-  - the event is no longer the revision this generation stands on, because a newer revision
     arrived, the head is ambiguous, or the generation advanced.
 
 A `needs_changes` verdict opens the generation itself. Open one by hand when nothing ruled it:
