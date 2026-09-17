@@ -1016,6 +1016,81 @@ class AJournalRecordIsWholeOrAbsent(unittest.TestCase):
         self.assertTrue(found)
         self.assertIn("timeoutSeconds", found[0])
 
+    def test_an_integer_beyond_float_range_is_refused_rather_than_raising(self):
+        """A guard against a bad value must not itself be one: converting an arbitrary-precision
+        integer to a float raises, and the read then fails where it should have answered."""
+        enormous = 10 ** 400
+        self.assertTrue(completion.budget_complaints(enormous, 10))
+        document = completion.configuration(relay="/r", marker_root="/m", codex_home="/h",
+                                            environ={})
+        document["timeoutSeconds"] = enormous
+        found = completion.complaints(document)
+        self.assertTrue(found)
+        self.assertIn("timeoutSeconds", found[0])
+
+    def test_the_seconds_test_accepts_what_it_should_and_nothing_else(self):
+        for good in (1, 5, 0.5, completion.MAX_TIMEOUT_SECONDS):
+            with self.subTest(good=good):
+                self.assertTrue(completion.usable_seconds(good))
+        for bad in (0, -1, True, False, "5", None, float("inf"), float("nan"), 10 ** 400,
+                    completion.MAX_TIMEOUT_SECONDS + 1):
+            with self.subTest(bad=bad):
+                self.assertFalse(completion.usable_seconds(bad))
+
+    def test_a_replacement_under_another_matcher_is_not_this_runs_work(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37",
+                apply=True, isolation_asserted_by=None)
+            expected = completion.command_for(
+                sys.executable, runtime_install.ROOT / "scripts" / completion.ENTRY_POINT_NAME,
+                completion.configuration_path(home))
+            real = runtime_install.hooks.read
+            calls = []
+
+            def rematched(path):
+                calls.append(path)
+                if len(calls) > 2:
+                    return reading.Reading(value={"hooks": {completion.EVENT: [
+                        {"matcher": "somebody else's", "hooks": [
+                            {"type": "command", "command": expected, "timeout": 10}]}]}},
+                        state=reading.PRESENT, source=path)
+                return real(path)
+
+            emitted = []
+            with mock.patch.object(runtime_install.hooks, "read", side_effect=rematched), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+        self.assertEqual(code, 1)
+        self.assertIn("not the one this run made", emitted[0]["error"])
+        self.assertIn("matcher", emitted[0]["error"])
+
+    def test_the_process_group_is_the_one_that_was_started(self):
+        """Looking the group up at kill time asks a process that may already be gone, and a
+        recycled pid would name somebody else's group."""
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(HELD), sleep=10)
+            settings(temporary, timeoutSeconds=1)
+            killed = []
+
+            def watching(group, signal_number):
+                killed.append((group, signal_number))
+
+            with mock.patch.object(completion.os, "killpg", side_effect=watching), \
+                 mock.patch.object(completion.os, "getpgid",
+                                   side_effect=AssertionError("looked the group up late")):
+                completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
+                               environ={})
+            records = journalled(temporary)
+        self.assertEqual(len(killed), 1)
+        self.assertEqual(killed[0][1], 9)
+        self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_TIMED_OUT)
+
 
 class ASpellingThisCommandCannotJudgeIsSaidSo(unittest.TestCase):
     """which() resolves a spelling carrying a separator against the caller's own directory, so

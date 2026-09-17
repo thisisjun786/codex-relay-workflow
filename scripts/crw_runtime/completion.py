@@ -28,7 +28,6 @@ separate questions, answered separately by status().
 
 import errno
 import json
-import math
 import os
 import re
 import shlex
@@ -82,6 +81,22 @@ JOURNAL_POLICIES = (EVERY_INVOCATION, FAULTS_ONLY, NO_JOURNAL)
 DEFAULT_TIMEOUT_SECONDS = 5
 REGISTERED_TIMEOUT_SECONDS = 10
 
+# The largest budget any of these checks will entertain. Compared against rather than converted,
+# because an arbitrary-precision integer cannot always become a float: math.isfinite raises
+# OverflowError on one, and a guard against a bad value must never itself be the failure.
+MAX_TIMEOUT_SECONDS = 86400
+
+
+def usable_seconds(value):
+    """Whether this can be a number of seconds at all.
+
+    Written without converting, so an integer is judged as an integer and a float as a float.
+    NaN fails every comparison it appears in, which is what excludes it here.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return 0 < value <= MAX_TIMEOUT_SECONDS
+
 # The lowest Python this adapter is supported on, and the one the repository's checks run.
 SUPPORTED_PYTHON = (3, 10)
 
@@ -96,9 +111,9 @@ def budget_complaints(guard_timeout, registered_timeout):
     can see the relationship on its own.
     """
     found = []
-    if isinstance(guard_timeout, bool) or not isinstance(guard_timeout, (int, float)) \
-            or not math.isfinite(guard_timeout) or guard_timeout <= 0:
-        found.append("the guard budget must be a positive number of seconds")
+    if not usable_seconds(guard_timeout):
+        found.append("the guard budget must be a positive number of seconds, at most "
+                     + str(MAX_TIMEOUT_SECONDS))
     elif (isinstance(registered_timeout, (int, float))
             and not isinstance(registered_timeout, bool)
             and guard_timeout >= registered_timeout):
@@ -374,9 +389,9 @@ def complaints(document):
     if policy is not None and policy not in JOURNAL_POLICIES:
         found.append("journalPolicy must be one of " + ", ".join(JOURNAL_POLICIES))
     budget = document.get("timeoutSeconds")
-    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, (int, float))
-                               or not math.isfinite(budget) or budget <= 0):
-        found.append("timeoutSeconds must be a positive number")
+    if budget is not None and not usable_seconds(budget):
+        found.append("timeoutSeconds must be a positive number of seconds, at most "
+                     + str(MAX_TIMEOUT_SECONDS))
     root = document.get("journalRoot")
     if root is not None and (not isinstance(root, str) or not root.strip()):
         found.append("journalRoot must be a non-empty string when it is present at all")
@@ -448,6 +463,10 @@ def invoke_guard(config, payload):
                 "stdout": "", "stderr": "",
                 "errno": errno.errorcode.get(error.errno, error.errno),
                 "detail": "the configured runtime could not be run: " + str(error)}
+    # Saved now, while the leader is certainly alive and certainly leads it: start_new_session
+    # made its pid the group's id. Looking the group up at kill time asks a process that may
+    # already be gone, and a recycled pid would name somebody else's group.
+    group = opened.pid
     sent = payload if isinstance(payload, bytes) else str(payload).encode("utf-8")
     try:
         out, err = opened.communicate(input=sent, timeout=budget)
@@ -455,7 +474,7 @@ def invoke_guard(config, payload):
         # The whole group, not just the process this started. A relay that forks keeps the
         # inherited pipes open, and waiting on those is what would carry this past its own
         # budget and let the host kill the adapter before it records why it did not answer.
-        _end_group(opened)
+        _end_group(opened, group)
         # Draining is bounded by what is LEFT of the budget, never by the budget again. A
         # descendant that escaped the group by calling setsid still holds these pipes, and a
         # second full wait would take the whole thing to nearly twice the budget - which is the
@@ -490,14 +509,14 @@ def invoke_guard(config, payload):
     }
 
 
-def _end_group(opened):
+def _end_group(opened, group):
     """End the session this call started, then the process itself as a fallback."""
     for ending in (os.killpg, None):
         try:
             if ending is None:
                 opened.kill()
             else:
-                ending(os.getpgid(opened.pid), 9)
+                ending(group, 9)
             return
         except (OSError, AttributeError, ProcessLookupError):
             continue
