@@ -7,7 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts/install.py"
-NAMES = ("crw-check", "crw-define", "crw-focus", "crw-logic", "crw-next", "crw-plan", "crw-run")
+NAMES = ("crw-check", "crw-define", "crw-focus", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run")
 SOURCES = [ROOT / "skills" / name for name in NAMES]
 
 

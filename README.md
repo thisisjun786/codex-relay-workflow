@@ -6,7 +6,7 @@ CRW is a community project designed to work with CXC; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
-This is an experimental workflow built from a personal setup. It contains seven
+This is an experimental workflow built from a personal setup. It contains eight
 skill instruction sets, a symlink installer, and the two Python packages the
 workflow delegates and reports through. CXC and Paperthin remain separate
 dependencies. Having the package source here does not install or activate a
@@ -20,6 +20,7 @@ compatibility.
 | [crw-define](skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
 | [crw-plan](skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
 | [crw-run](skills/crw-run/SKILL.md) | Delegate ready work to independent Codex tasks and verify CXC execution and delivery |
+| [crw-loop](skills/crw-loop/SKILL.md) | Keep a fixed project parent scheduling, observing, verifying and integrating scoped deliveries |
 | [crw-check](skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
 | [crw-logic](skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
 
@@ -183,6 +184,7 @@ $crw-next [Linear project or product repository] 다음에 뭐 하지? 시작할
 $crw-define [idea or initiative] 목표·완료 기준·범위를 정의해 Linear에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
 $crw-run [Linear project link]
+$crw-loop [Linear project link]
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
 ```
@@ -190,14 +192,16 @@ $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾
 These are invocation examples, not requests to execute while reading this file.
 
 A submitted `$crw-run <Linear project link>` execution request defaults to
-fixed-parent designation and a CXC Loop over the agreed project scope, including
+fixed-parent designation and CRW Loop over the agreed project scope, including
 child reuse/creation, verification and authorized integration. No expanded prompt
 is needed; [operation selection](skills/crw-run/SKILL.md#determine-the-requested-operation)
 owns the meaning and its narrower-request and host-rule limits.
 The parent actively finds independent ready work and fills available capacity
 without waiting for an entire batch; shared-target merges remain serial.
-The project Loop gives the parent its own coordination goal;
-each child keeps its issue goal. Before dispatch, choose a compatible observation
+The parent records coordination progress and completes on verified scoped deliveries;
+it does not need a local implementation diff or CXC phases. Each child keeps its own
+issue goal and implementation workflow. `$crw-loop` also enters that same parent lifecycle;
+it does not provide a daemon or guarantee automatic wake-ups. Before dispatch, choose a compatible observation
 and delivery mode under [parent continuation](skills/crw-run/SKILL.md#keep-a-project-run-moving).
 Explicit first-batch-only requests still stop at that batch's delivery boundary.
 
