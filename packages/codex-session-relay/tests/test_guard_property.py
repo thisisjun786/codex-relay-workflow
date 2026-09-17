@@ -1202,15 +1202,28 @@ class StrayFilesDoNotDisableHoldAccounting(GuardTestCase):
 # anything. The decision path gates on exactly two fields with named(); everything else reaches a
 # decision through same_identity and cannot be bought with a blank. The pair below is asserted, so a
 # third gating identity appearing without its check fails here.
-DECISION_PATH = ("observe_state", "classify_declaration", "receipt_matches")
+# Scoped to the guard's decision path in the first pass, which is why it missed the same defect in
+# the state derivation one module over. A decision is a decision wherever it is taken, so the scan
+# covers both modules now.
+DECISION_PATH = {
+    "guard.py": ("observe_state", "classify_declaration", "receipt_matches"),
+    "intent.py": ("derive_assignment_state",),
+}
 
-NAMED_GATES = {("observe_state", "sessionId"), ("observe_state", "relationshipId")}
+NAMED_GATES = {
+    ("observe_state", "sessionId"),
+    ("observe_state", "relationshipId"),
+    ("derive_assignment_state", "relationshipId"),
+}
 
 IDENTITY_READ_ALLOWED = {
     ("classify_declaration", "outcome"): "a name collision rather than an identity: outcome is"
                                          " declared under attempts, and this read is the"
                                          " disposition's vocabulary value, compared against a"
                                          " fixed set rather than used to name anybody",
+    ("derive_assignment_state", "outcome"): "the same collision on the attempt record: the value is"
+                                            " compared against the accepted vocabulary, and a blank"
+                                            " matches nothing in it",
 }
 
 
@@ -1219,11 +1232,17 @@ class IdentityFieldsAreGuardedOrFailClosed(unittest.TestCase):
 
     def reads(self):
         base = Path(__file__).resolve().parent.parent / "src" / "codex_session_relay"
-        tree = ast.parse((base / "guard.py").read_text(encoding="utf-8"))
         fields = {f for values in intent.IDENTITY_FIELDS.values() for f in values}
         found = []
+        for module, functions in DECISION_PATH.items():
+            tree = ast.parse((base / module).read_text(encoding="utf-8"))
+            found.extend(self._reads_in(tree, functions, fields))
+        return found
+
+    def _reads_in(self, tree, functions, fields):
+        found = []
         for function in ast.walk(tree):
-            if not isinstance(function, ast.FunctionDef) or function.name not in DECISION_PATH:
+            if not isinstance(function, ast.FunctionDef) or function.name not in functions:
                 continue
             for node in ast.walk(function):
                 if not isinstance(node, ast.Call):

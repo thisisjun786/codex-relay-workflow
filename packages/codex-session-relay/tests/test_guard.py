@@ -860,6 +860,7 @@ class DecodeAndFrozenAccessKeepTheirOwnAnswers(GuardTestCase):
         self.artifact("out.txt", "the working tree moved on")
         return reference
 
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses the permission this depends on")
     def test_an_unreachable_frozen_copy_is_not_a_changed_deliverable(self):
         """verify_frozen catches its access errors and returns them as problem strings.
 
@@ -868,13 +869,23 @@ class DecodeAndFrozenAccessKeepTheirOwnAnswers(GuardTestCase):
         child over a comparison nobody performed.
         """
         reference = self.frozen_ready("guard-frozen-unreachable")
-        shutil.rmtree(os.path.join(reference, "files"))
-        with open(os.path.join(reference, "files"), "w", encoding="utf-8") as handle:
-            handle.write("not a directory")
+        files = os.path.join(reference, "files")
+        self.addCleanup(os.chmod, files, 0o700)
+        os.chmod(files, 0o000)
         verdict = self.evaluate()
         self.assertEqual(verdict["observation"], "state_unreadable")
         self.assertIn("the receipt's artifacts", verdict["reason"])
         self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_a_frozen_copy_missing_its_bytes_is_a_changed_deliverable(self):
+        """Absence is definitive. Releasing on it would let a provably broken snapshot pass."""
+        reference = self.frozen_ready("guard-frozen-missing-blob")
+        blob = sorted((Path(reference) / "files").iterdir())[0]
+        os.remove(blob)
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["receiptEvidence"], "artifacts_changed_since_receipt")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
 
     def test_a_tampered_frozen_copy_is_still_a_changed_deliverable(self):
         """The control: bytes that were read and disagree are a change, and they hold."""

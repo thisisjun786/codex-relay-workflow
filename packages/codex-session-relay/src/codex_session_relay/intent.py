@@ -323,7 +323,12 @@ def derive_assignment_state(marker, now=None) -> str:
     attempts = marker.get("attempts") or []
     claims = marker.get("claims") or []
     if marker.get("bound"):
-        return RELATIONSHIP_REGISTERED if marker.get("relationship") else IDENTITY_BOUND
+        # The identity, not the object: the same test the guard's decision path makes. A
+        # relationship fact carrying a blank or missing relationshipId has registered nothing, and
+        # deriving "registered" from its mere presence reports a registration to a coordinator that
+        # names no relationship.
+        registered = named((marker.get("relationship") or {}).get("relationshipId"))
+        return RELATIONSHIP_REGISTERED if registered else IDENTITY_BOUND
     resolved = _ambiguity_resolved(marker)
     accepted = [a for a in attempts if a.get("outcome") == "accepted"]
     if not resolved and (len(_accepted_tasks(marker)) > 1 or len(claims) > 1):

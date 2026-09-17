@@ -347,23 +347,42 @@ class FrozenAccessIsNotFrozenDisagreement(RelayTestCase):
         manifest.freeze(entries, reference)
         return path, entries, reference
 
-    @staticmethod
-    def unreachable_blobs(reference):
-        """Put a regular file where the blob directory belongs.
+    def unreachable_blobs(self, reference):
+        """Make the blob directory unopenable.
 
-        NotADirectoryError is the same OSError family as a permission or a vanished mount and needs
-        no chmod, so it behaves the same whoever runs the suite.
+        It has to be a real access failure. A regular file where the directory belongs raises
+        ENOTDIR, which scope interprets as a structural answer about the snapshot rather than as a
+        failure to look, and that is the distinction this class exists to hold.
         """
-        shutil.rmtree(os.path.join(reference, "files"))
-        with open(os.path.join(reference, "files"), "w", encoding="utf-8") as handle:
-            handle.write("not a directory")
+        files = os.path.join(reference, "files")
+        self.addCleanup(os.chmod, files, 0o700)
+        os.chmod(files, 0o000)
 
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses the permission this depends on")
     def test_an_unreachable_frozen_blob_is_named_as_an_access_failure(self):
         _path, entries, reference = self.frozen("frozen-access")
         self.unreachable_blobs(reference)
         _digest, problems, unreadable = manifest.verify_frozen_detailed(reference, entries)
         self.assertTrue(problems)
         self.assertEqual(unreadable, problems)
+
+    def test_a_deleted_frozen_blob_is_a_broken_snapshot_not_an_access_failure(self):
+        """Absence is as definitive here as a vanished live artifact, and it answers the same way."""
+        _path, entries, reference = self.frozen("frozen-deleted-blob")
+        os.remove(os.path.join(reference, "files", entries[0].sha256))
+        _digest, problems, unreadable = manifest.verify_frozen_detailed(reference, entries)
+        self.assertTrue(problems)
+        self.assertEqual(unreadable, [])
+
+    def test_a_blob_directory_replaced_by_a_file_is_a_broken_snapshot(self):
+        """ENOTDIR is interpreted by scope, so it is an answer about the snapshot, not a failure."""
+        _path, entries, reference = self.frozen("frozen-not-a-directory")
+        shutil.rmtree(os.path.join(reference, "files"))
+        with open(os.path.join(reference, "files"), "w", encoding="utf-8") as handle:
+            handle.write("not a directory")
+        _digest, problems, unreadable = manifest.verify_frozen_detailed(reference, entries)
+        self.assertTrue(problems)
+        self.assertEqual(unreadable, [])
 
     def test_a_disagreeing_frozen_copy_is_not_an_access_failure(self):
         _path, entries, reference = self.frozen("frozen-disagree")
@@ -397,8 +416,8 @@ class FrozenAccessIsNotFrozenDisagreement(RelayTestCase):
         _p, entries, good = self.frozen("equiv-good")
         cases["a frozen copy that verifies"] = (good, entries)
         _p2, entries2, broken = self.frozen("equiv-unreachable")
-        self.unreachable_blobs(broken)
-        cases["an unreachable blob"] = (broken, entries2)
+        os.remove(os.path.join(broken, "files", entries2[0].sha256))
+        cases["a missing blob"] = (broken, entries2)
         _p3, entries3, tampered = self.frozen("equiv-tampered")
         blob = os.path.join(tampered, "files", entries3[0].sha256)
         os.chmod(blob, 0o600)

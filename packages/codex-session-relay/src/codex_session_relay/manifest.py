@@ -333,7 +333,12 @@ def verify_frozen_detailed(manifest_ref: str, entries=None) -> tuple[str, list, 
         except (ScopeError, OSError) as error:
             message = f"{entry.path}: frozen bytes unreadable for {entry.sha256}: {error}"
             problems.append(message)
-            unreadable.append(message)
+            # The same discrimination the live path makes, applied here too. A blob that was
+            # DELETED raises PATH_CHANGED, which is a definitive answer about a broken snapshot
+            # rather than a failure to look, and calling it unreadable would release a turn whose
+            # frozen copy is provably incomplete. Only an error nobody could interpret counts.
+            if not isinstance(error, ScopeError) or _is_access_failure(error):
+                unreadable.append(message)
             continue
         if digest != entry.sha256:
             problems.append(f"{entry.path}: frozen bytes do not match {entry.sha256}")
