@@ -1144,6 +1144,15 @@ directory: a relative path would resolve somewhere the install never named, and 
 would be looked up on `PATH`. The pointer itself is not followed, so an update moves the link
 and these settings keep naming the runtime that is actually selected.
 
+The interpreter in the registered command is settled the same way, and a bare name is looked up
+at install time, on the machine doing the install. That is the only moment the lookup means
+anything, because the hook runs later from each session's own workspace.
+
+`hook-status` probes these paths through the four reading states rather than asking whether a
+file is there. A runtime behind a permission wall and one that was never installed answer
+differently, because they are repaired in different places, and a runtime that could not be
+reached is not asked whether it offers the subcommand.
+
 Only a verdict that agrees with itself is acted on. Both halves are read: a verdict whose own
 decision releases while its `hook_output` holds did not come from the guard, and rebuilding a
 block out of the nested half alone would let this adapter deliver a hold nobody decided. Any

@@ -31,6 +31,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import time
 import uuid
@@ -542,6 +543,27 @@ def command_for(interpreter, script):
     return shlex.join([str(interpreter), str(script)])
 
 
+def interpreter_for(python):
+    """The interpreter this command will register, settled here rather than at every Stop.
+
+    A bare name is looked up now, on the machine doing the install, because that is the only
+    moment a lookup means anything: the hook runs later, from each session's own workspace, and
+    a name resolved then could find a different interpreter or nothing at all. The same reason
+    the runtime is named through the pointer instead of through PATH.
+    """
+    if not python:
+        raise ValueError("an interpreter is required")
+    found = shutil.which(str(python))
+    if found:
+        return _settled(found)
+    settled = _settled(python)
+    if settled.is_file():
+        return settled
+    raise ValueError("no interpreter was found at " + str(python)
+                     + "; the hook runs from each session's workspace, so this has to name one"
+                       " that can be found from anywhere")
+
+
 def registered_argv(command):
     """The words a registered command is made of, or None when it is not a command line.
 
@@ -842,6 +864,30 @@ def _cell(value, evidence, **extra):
     return answer
 
 
+def presence(path, what, *, directory=False):
+    """Whether something is at this path, keeping "could not look" apart from "not there".
+
+    Path.is_file answers false for both, which turns a permission problem or an unreachable
+    mount into a clean report that the runtime is simply missing, and sends the repair to the
+    wrong place. The four states come from the module that owns them.
+    """
+    try:
+        found = os.stat(str(path))
+    except FileNotFoundError:
+        return _cell(reading.ABSENT, "nothing exists at " + str(path), path=str(path))
+    except (OSError, ValueError) as error:
+        return _cell(reading.ACCESS_ERROR,
+                     "whether anything exists at this path could not be established: "
+                     + type(error).__name__ + ": " + str(error), path=str(path))
+    import stat as stat_module
+    right = stat_module.S_ISDIR(found.st_mode) if directory else stat_module.S_ISREG(found.st_mode)
+    if not right:
+        return _cell(reading.UNREADABLE,
+                     "something is at this path and it is not the " + what + " expected here",
+                     path=str(path))
+    return _cell(reading.PRESENT, what, path=str(path))
+
+
 def _registration(codex_home, event, command_fragment):
     path = Path(codex_home) / "hooks.json"
     found = hooks.read(path)
@@ -963,12 +1009,11 @@ def status(codex_home=None, environ=None, event=EVENT):
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     if ours:
-        missing = [entry for entry in ours if not Path(entry["target"]).is_file()]
-        target = _cell(
-            reading.ABSENT if missing else reading.PRESENT,
-            "the registered command names a script that is not there" if missing
-            else "every registered command names a script that exists",
-            commands=[entry["command"] for entry in ours])
+        probes = [presence(entry["target"], "the adapter script") for entry in ours]
+        worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
+        target = _cell((worst or probes[0])["value"], (worst or probes[0])["evidence"],
+                       commands=[entry["command"] for entry in ours],
+                       probes=probes)
 
     if failed is not None:
         settings = _cell(failed, detail or "", configuration=str(path))
@@ -984,15 +1029,13 @@ def status(codex_home=None, environ=None, event=EVENT):
         settings = _cell(found.state, "settings read", configuration=str(path),
                          mode=config.get("mode"), dbPath=config.get("dbPath"))
         executable = Path(config["relayExecutable"])
-        relay = _cell(reading.PRESENT if executable.is_file() else reading.ABSENT,
-                      "the configured runtime", relayExecutable=str(executable))
+        relay = presence(executable, "the configured runtime")
         offers = (_offers_guard(executable, config.get("timeoutSeconds")
                                 or DEFAULT_TIMEOUT_SECONDS)
-                  if executable.is_file()
-                  else _cell(NOT_READ, "the configured runtime is not there to ask"))
-        root = Path(config["markerRoot"])
-        marker = _cell(reading.PRESENT if root.is_dir() else reading.ABSENT,
-                       "the configured marker root", markerRoot=str(root))
+                  if relay["value"] == reading.PRESENT
+                  else _cell(NOT_READ, "the configured runtime could not be asked: "
+                                       + relay["evidence"]))
+        marker = presence(config["markerRoot"], "the configured marker root", directory=True)
         firing = _journal_cell(config)
 
     return {

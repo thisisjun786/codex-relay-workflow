@@ -1930,6 +1930,7 @@ def cmd_hook(args):
             emit({"command": "hook", "adapter": adapter, "error": "; ".join(refused)})
             return EXIT_USAGE
         try:
+            interpreter = completion.interpreter_for(args.python or sys.executable)
             wanted = completion.configuration(
                 destination=args.dest, relay=args.relay_command, marker_root=args.marker_root,
                 database=args.db_path, mode=args.mode, timeout=args.guard_timeout,
@@ -1947,7 +1948,7 @@ def cmd_hook(args):
                            " registered against settings it cannot act on is installed and"
                            " inert, which is the one outcome worth refusing outright.")})
             return EXIT_REFUSED
-        command = completion.command_for(args.python or sys.executable,
+        command = completion.command_for(interpreter,
                                          ROOT / "scripts" / completion.ENTRY_POINT_NAME)
         event = args.event or completion.EVENT
     else:

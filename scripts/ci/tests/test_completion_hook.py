@@ -223,6 +223,72 @@ class EveryRecordedPathIsAbsolute(unittest.TestCase):
                          "following the link here would record today's target and leave the"
                          " next update moving a pointer nothing reads")
 
+    def test_the_interpreter_is_settled_at_install_time(self):
+        """The hook runs from each session's workspace, so a bare name resolved then could find
+        a different interpreter or nothing at all."""
+        settled = completion.interpreter_for("python3")
+        self.assertTrue(os.path.isabs(str(settled)), settled)
+        self.assertTrue(Path(settled).is_file())
+        with self.assertRaises(ValueError):
+            completion.interpreter_for("definitely-not-an-interpreter-crw37")
+        with self.assertRaises(ValueError):
+            completion.interpreter_for("")
+
+    def test_a_registered_command_names_an_interpreter_that_can_be_found_from_anywhere(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python="python3",
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                runtime_install.cmd_hook(args)
+            document = json.loads((home / "hooks.json").read_text(encoding="utf-8"))
+            command = document["hooks"][emitted[0]["event"]][0]["hooks"][0]["command"]
+        words = completion.registered_argv(command)
+        self.assertTrue(os.path.isabs(words[0]), words)
+        self.assertEqual(Path(words[1]).name, completion.ENTRY_POINT_NAME)
+
+
+class CouldNotLookIsNotNotThere(unittest.TestCase):
+    """Path.is_file answers false for both, which sends the repair to the wrong place."""
+
+    def test_the_four_states_are_four_answers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "a-file").write_text("", encoding="utf-8")
+            (home / "a-dir").mkdir()
+            self.assertEqual(completion.presence(home / "a-file", "x")["value"], reading.PRESENT)
+            self.assertEqual(completion.presence(home / "nothing", "x")["value"], reading.ABSENT)
+            self.assertEqual(completion.presence(home / "a-dir", "x")["value"],
+                             reading.UNREADABLE, "a directory where a file belongs is neither")
+            self.assertEqual(
+                completion.presence(home / "a-dir", "x", directory=True)["value"],
+                reading.PRESENT)
+
+    def test_a_runtime_that_cannot_be_reached_is_not_reported_as_missing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            closed = home / "closed"
+            closed.mkdir()
+            (closed / "codex-session-relay").write_text("", encoding="utf-8")
+            settings(temporary, relayExecutable=str(closed / "codex-session-relay"))
+            closed.chmod(0o000)
+            try:
+                if os.access(str(closed / "codex-session-relay"), os.F_OK):
+                    self.skipTest("this user can traverse a directory with no permissions")
+                found = completion.status(codex_home=temporary, environ={})
+            finally:
+                closed.chmod(0o700)
+        self.assertEqual(found["relayExecutable"]["value"], reading.ACCESS_ERROR,
+                         "a runtime behind a permission wall is a different repair from one"
+                         " that was never installed")
+        self.assertEqual(found["guardEvaluateOffered"]["value"], completion.NOT_READ,
+                         "and it is not asked, rather than being reported as not offering")
+
 
 class TheSettingsVersionIsAnActualBoundary(unittest.TestCase):
     def test_a_document_from_another_version_is_malformed_rather_than_acted_on(self):
