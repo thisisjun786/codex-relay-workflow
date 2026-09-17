@@ -410,10 +410,18 @@ def invoke_guard(config, payload):
         # inherited pipes open, and waiting on those is what would carry this past its own
         # budget and let the host kill the adapter before it records why it did not answer.
         _end_group(opened)
-        try:
-            out, err = opened.communicate(timeout=budget)
-        except subprocess.TimeoutExpired:
-            out, err = b"", b""
+        # Draining is bounded by what is LEFT of the budget, never by the budget again. A
+        # descendant that escaped the group by calling setsid still holds these pipes, and a
+        # second full wait would take the whole thing to nearly twice the budget - which is the
+        # window in which the host kills this process and the timeout goes unrecorded. The
+        # record is worth more here than the output it could not collect.
+        remaining = budget - (time.monotonic() - started)
+        out, err = b"", b""
+        if remaining > 0:
+            try:
+                out, err = opened.communicate(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                out, err = b"", b""
         return {"ending": TIMED_OUT, "argv": argv, "code": None, "signal": None,
                 "elapsedMs": round((time.monotonic() - started) * 1000),
                 "stdout": _text(out), "stderr": _text(err),

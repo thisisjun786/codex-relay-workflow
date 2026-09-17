@@ -20,6 +20,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -398,12 +399,18 @@ class NoTurnIsEverCostByThisAdapter(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fake_relay(temporary, stdout=json.dumps(HELD), sleep=10)
             settings(temporary, timeoutSeconds=1)
+            started = time.monotonic()
             answer = completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
                                     environ={})
+            elapsed = time.monotonic() - started
             records = journalled(temporary)
         self.assertIsNone(answer)
         self.assertEqual(records[0]["adapterOutcome"], completion.GUARD_TIMED_OUT)
         self.assertEqual(records[0]["processEnding"], completion.TIMED_OUT)
+        self.assertLess(elapsed, 5,
+                        "the whole timeout path stays near the budget, because a second full"
+                        " wait is the window in which the host kills this process and the"
+                        " timeout goes unrecorded")
 
     def test_no_answer_this_adapter_gives_by_itself_holds_a_turn(self):
         held = [outcome for outcome in completion.OUTCOMES if outcome in completion.ANSWERED]
