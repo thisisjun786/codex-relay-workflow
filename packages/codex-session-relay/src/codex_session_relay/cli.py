@@ -789,10 +789,20 @@ def _sandbox_summary(row) -> dict:
     Total, like the helper it leans on. These rows can hold anything an older writer or a hand
     edit left behind, and this is a diagnosis: one unreadable participant must cost that
     participant's line, never the store identity and access evidence standing beside it.
+
+    Readable is not the same as deliverable, and the difference is the whole point of the
+    field. `normalise_policy` validates shape and fills defaults but accepts any type string,
+    while delivery separately needs that type to have a resumable spelling in
+    RESUME_SANDBOX_MODE - and the two sets are not the same. `externalSandbox` has defaults,
+    so it normalises cleanly, and has no resumable mode, so `require_usable()` refuses the row
+    and no sandbox is sent at all. Reporting it as what the adapter would carry would have an
+    operator read access as fine and go looking somewhere else. So the recorded values are
+    still shown - they are what the row says - and `deliverable` says whether a send can
+    actually carry them.
     """
     import json
 
-    from .settings import normalise_policy
+    from .settings import RESUME_SANDBOX_MODE, normalise_policy
 
     try:
         settings = json.loads(row["settings"])
@@ -808,9 +818,20 @@ def _sandbox_summary(row) -> dict:
     if policy is None:
         return {"readable": False, "detail": "the recorded sandbox policy cannot be read"}
     cwd = settings.get("cwd")
+    mode = policy.get("type")
+    resume = RESUME_SANDBOX_MODE.get(mode)
     return {
         "readable": True,
-        "mode": policy.get("type"),
+        "deliverable": resume is not None,
+        # What a send would really put on the wire, which is the question behind all of this.
+        # None means nothing goes on it, because delivery refuses the row rather than
+        # downgrading it to some other sandbox.
+        "resumeMode": resume,
+        "detail": None if resume is not None else (
+            f"delivery has no resumable mode for {mode!r}, so it refuses this record and"
+            " sends no sandbox at all"
+        ),
+        "mode": mode,
         "writableRoots": policy.get("writableRoots"),
         "networkAccess": policy.get("networkAccess"),
         "excludeTmpdirEnvVar": policy.get("excludeTmpdirEnvVar"),
