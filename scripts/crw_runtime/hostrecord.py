@@ -31,13 +31,17 @@ RECORD_NAME = "host-record.json"
 # "symmetric" means two absences ARE agreement but one is not: a caller that observed no App
 # Server does not match a point that observed one, which is how a point measured against a
 # different App Server used to be accepted.
+MANDATORY = "mandatory"
+SYMMETRIC = "symmetric"
+POLICIES = (MANDATORY, SYMMETRIC)
+
 DIMENSIONS = {
-    "install": ("location", "mandatory"),
-    "interpreter": ("interpreter", "mandatory"),
-    "installDigest": ("install_digest", "mandatory"),
-    "codexCli": ("codex_cli", "mandatory"),
-    "host": ("host", "mandatory"),
-    "appServer": ("app_server", "symmetric"),
+    "install": ("location", MANDATORY),
+    "interpreter": ("interpreter", MANDATORY),
+    "installDigest": ("install_digest", MANDATORY),
+    "codexCli": ("codex_cli", MANDATORY),
+    "host": ("host", MANDATORY),
+    "appServer": ("app_server", SYMMETRIC),
 }
 
 # Read off a point but not compared as dimensions: these decide whether the point counts at
@@ -170,7 +174,7 @@ def points_for(record, name, *, location, interpreter, install_digest,
         for field, (argument, policy) in DIMENSIONS.items():
             recorded, wanted = point.get(field), supplied[argument]
             if recorded is None and wanted is None:
-                if policy == "mandatory":
+                if policy == MANDATORY:
                     break
                 continue
             if recorded is None or wanted is None or recorded != wanted:

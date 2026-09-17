@@ -29,6 +29,15 @@ from .text import text_prefix
 
 BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
+# What register answers. Named here rather than spelled at each return and each consumer, so a
+# caller asks this module what its answers are instead of respelling one of them.
+LINKED = "LINKED"
+CREATED = "CREATED"
+CONFLICT = "CONFLICT"
+UNREADABLE = "UNREADABLE"
+
+OUTCOMES = (LINKED, CREATED, CONFLICT, UNREADABLE)
+
 # The escapes a TOML basic string may carry, used when WRITING one. Reading is tomllib's job.
 ESCAPES = {"b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r", '"': '"', "\\": "\\"}
 ESCAPED = {value: "\\" + key for key, value in ESCAPES.items()}
@@ -202,14 +211,14 @@ def register(text, name, command, args):
     """
     view = scan(text)
     if not view.readable:
-        return text, "UNREADABLE", "; ".join(view.unreadable)
+        return text, UNREADABLE, "; ".join(view.unreadable)
 
     args = list(args or [])
     if name in view.servers:
         existing = view.servers[name]
         if existing.get("command") == command and list(existing.get("args") or []) == args:
-            return text, "LINKED", "already registered with this exact command and arguments"
-        return text, "CONFLICT", (
+            return text, LINKED, "already registered with this exact command and arguments"
+        return text, CONFLICT, (
             "registered as " + repr(existing.get("command")) + " with " + repr(existing.get("args"))
             + ", requested " + repr(command) + " with " + repr(args)
         )
@@ -219,21 +228,21 @@ def register(text, name, command, args):
 
     check = scan(proposal)
     if not check.readable:
-        return text, "CONFLICT", (
+        return text, CONFLICT, (
             "appending this registration would produce a file that cannot be read, so nothing"
             " was written: " + "; ".join(check.unreadable)
         )
     written = check.servers.get(name)
     if written is None or written.get("command") != command \
             or list(written.get("args") or []) != args:
-        return text, "CONFLICT", (
+        return text, CONFLICT, (
             "appending would not produce the intended registration: the file would read "
             + repr(written) + " for " + repr(name) + ", so nothing was written"
         )
     for other, entry in view.servers.items():
         if check.servers.get(other) != entry:
-            return text, "CONFLICT", (
+            return text, CONFLICT, (
                 "appending would change the registration of " + repr(other)
                 + ", so nothing was written"
             )
-    return proposal, "CREATED", "appended at the end of the file, and read back before writing"
+    return proposal, CREATED, "appended at the end of the file, and read back before writing"

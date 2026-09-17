@@ -168,13 +168,12 @@ correctness problem, and this one cost eight review rounds - delimiter counting,
 dotted names, quoted keys, the three-quote sequence, brackets inside quoted names, Unicode line
 boundaries, quoted member assignments - so it stopped being the reader.
 
-A narrow fallback remains for the one CI job on 3.10. It is not a TOML parser and does not try to
-be. It models `command` as a string and `args` as a list of strings, and refuses everything else:
-a multi-line string value, an inline table as either field, a table or dotted key that makes either
-of them a container, a value it cannot decode, and any line it cannot classify. Outside its subset
-the worst case is a refusal, never a different answer. The checks run it on every interpreter, and
-compare it against `tomllib` where `tomllib` exists, so the subset is judged by an oracle rather
-than by the job that has none.
+No fallback remains. The narrow subset written to replace the hand-written reader produced two
+more defects of its own - a quoted name read as a list of its characters, and a duplicate key
+silently taking the last value - and it existed only to give one CI job something to run. So the
+`validate` and `tests` jobs on Python 3.10 exercise the refusal rather than a second reader, and the
+checks simulate the absence of `tomllib` on an interpreter that has it, so the refusal is verified on
+both jobs rather than only where it bites.
 
 Parsing is not reading a registration. A file where `args` is the string `"ab"` parses cleanly and
 `list()` turns it into `["a", "b"]`, so the shape is validated before anything is compared:
@@ -187,6 +186,26 @@ what it says: a root `mcp_servers = {}` is a closed inline table that `[mcp_serv
 extend, and under `[[mcp_servers]]` an appended table attaches to the last array element. So the
 proposed content is read back **before** it is written, and it must carry the intended registration
 and leave every other one unchanged, or nothing is written.
+
+### One word, one declaration
+
+A partition belongs to the module that declares it, and a consumer asks that module rather than
+testing one of its members. `== UNREADABLE` answers for one of the four reading states and
+silently says yes to another, which is how a configuration that could not be reached at all
+reached classification as one that had been read. The same shape produced a bridge classified
+against whatever PATH resolved, a point recorded with a dimension nobody observed, and a replay
+decided on one of the seven values the relay actually compares.
+
+A check reads every UPPER_CASE module-level binding out of the source, resolves the strings it
+names - including names, cross-module references and concatenations - and reports any comparison
+against one of those strings from a module that can see the declaration. Scoped to importers,
+because unrelated modules share short words: a destination kind spelled `host` has nothing to do
+with the hostname dimension whose key is spelled the same.
+
+Its limit is stated rather than papered over. It reads comparisons; literal key *access* is not
+covered, because payload keys are data and forbidding them would forbid reading a payload at all.
+The one map where that distinction decides something is guarded separately, by an access contract
+over the comparison loop itself.
 
 ### The failure contract
 
@@ -286,26 +305,21 @@ Every other table in the file, including other MCP servers and hook settings, is
 byte, which the command checks by requiring the prior content to be an exact prefix of the new file
 rather than by asserting it.
 
-The reader is a deliberately small table-header scanner, not a general TOML parser, because the
-`validate` and `tests` jobs run on Python 3.10 where `tomllib` does not exist. It models exactly one
-shape, `[mcp_servers.<name>]`. A server's name is the first segment after `mcp_servers.`, and any
-deeper segments are that server's own sub-tables: a real configuration on this host carries
-`[mcp_servers.oracle.env]` and `[mcp_servers.codex-thread-bridge.tools.create_thread]`, and reading
-either as a server name would append a duplicate registration for a server that is already there.
-Bare and quoted spellings of a name normalise to one name.
+The reader is `tomllib`, which arrived in Python 3.11. A controller older than that refuses every
+non-empty configuration instead of approximating one, and refuses into an empty one too, because
+registration reads back the content it proposes to write. The refusal names the interpreter that is
+running and says to rerun on a newer one. The controller's interpreter is not the runtime's: this
+command installs 3.11+ runtimes whatever started it.
 
-Everything else makes the file unreadable, and an unreadable file is never appended to: an
-array-of-tables header, a dotted or inline `mcp_servers` assignment, an unterminated multi-line
-string, or the same server defined twice. Where `tomllib` is importable it additionally
-cross-checks the scanner's reading and reports a disagreement as an unreadable signal, but the
-Python 3.10 branch is protected by negative fixtures rather than by `tomllib`.
+Parsing correctly is still not reading a registration. The parsed shape is validated before anything
+is compared - `mcp_servers` a table, each entry a table, `command` a string, `args` a list of strings -
+because a file where `args` is the string `"ab"` parses cleanly and `list()` turns it into
+`["a", "b"]`. Anything that fails that validation is unreadable, and an unreadable file is never
+appended to. Other fields such as `env` are left alone rather than refused.
 
-The reader walks characters rather than counting delimiters, because a quote only means what it
-means outside a string. A single-quoted literal value can legitimately contain the three-quote
-sequence that opens a multi-line string, and counting delimiters reads that as a fence which never
-closes, silently skipping every table after it. Basic-string escapes are decoded before any value is
-compared, an escape the reader does not model is reported rather than guessed at, and a member
-assignment inside a parent `[mcp_servers]` table is unreadable for the same reason a dotted one is.
+A name that is not a bare key is written quoted, because a name containing a dot written raw becomes
+a sub-table of another server: the registration the command believes it made would not be the one in
+the file, and the next run would append a second.
 
 The property that fixes is a round trip, not three cases: **what the writer emits, the reader reads
 back unchanged, and a rerun then answers `LINKED`** — including values carrying backslashes, quotes,
@@ -381,15 +395,35 @@ its serialized text. A substring test matches an archived assignment sitting any
 payload, so the guard meant to prove this process reads the expected store would pass against a
 store where that relationship is closed.
 
+`register` is the first mutating step, and the order is the guarantee. It is the producer of
+the replay rule: it compares seven values - the parent task, the child task and the issue key
+it hashes into a relationship id, plus the artifact roots, the allowed recipients and the two
+host ids - and either
+replays the relationship that already exists or refuses the whole registration without writing
+anything else. The read-only lookup exposes only the first three, and no relay command returns the
+other four, so the trial compares what it can read and lets `register` decide the rest before any
+settings are recorded. A settings write placed ahead of it lands for a trial that `register` then
+refuses on a scope or a host the lookup could never have shown.
+
+What the trial compares is the whole identity the lookup exposes, not the responsible child alone.
+An assignment carrying this issue and this child under a different parent hashes to a different
+relationship id, and comparing the child alone read it as the same relationship. The report names
+which fields were compared and which are decided by `register`, so it never reads as a complete
+comparison of all seven.
+
+One thing the trial cannot promise is that nothing at all was written: `assignment-find`
+constructs a store, which creates the database and its schema. What a refusal before `register`
+guarantees is that no settings and no relationship row were written.
+
 
 Getting that far takes more than three commands, and each of the extra ones exists because the relay
 refuses the send without it. Measured against a running App Server, the sequence is:
 
 | Step | Why the send needs it |
 | --- | --- |
-| `assignment-find` | Runs first, before anything is written. A lookup run afterwards could find the relationship the trial itself just created, which says nothing about the store |
-| `settings-record` | A send is withheld until the recipient's authorized settings are on record, because preserving them is what the delivery checks against |
-| `register` | Creates the relationship and opens its first generation |
+| `assignment-find` | Runs first. A lookup run afterwards could find the relationship the trial itself just created, which says nothing about the store |
+| `register` | Creates the relationship and opens its first generation, and is the first mutating step on purpose |
+| `settings-record` | A send is withheld until the recipient's authorized settings are on record, because preserving them is what the delivery checks against. Recorded after the relationship exists |
 | `generation-open` | Replays that same dispatch request id to read the generation number back; it opens no second generation |
 | `generation-bind` | The generation `register` opened is unbound, and an unbound generation cannot be emitted against |
 | `admit-turn` | Only the anchor turn is admitted by default; a turn the child actually ran is a continuation |

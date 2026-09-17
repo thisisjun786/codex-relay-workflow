@@ -29,11 +29,46 @@ from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
 EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
-MCP_NAME = "codex-thread-bridge"
+
+# The two components, named once. The MCP server name spells the bridge's component name, and
+# that shared spelling is stated here rather than left for a reader to infer from two literals
+# that happen to match.
+BRIDGE = "codex-thread-bridge"
+RELAY = "codex-session-relay"
+MCP_NAME = BRIDGE
+
+# Which command-line override supplies each component's entry point. Diagnosis used to classify
+# the bridge against whatever was on PATH while --bridge-command pointed somewhere else, because
+# the override was wired for one member of this set instead of for the set.
+COMMAND_OVERRIDES = {BRIDGE: "bridge_command", RELAY: "relay_command"}
+
+# A registration outcome is either a reading state or a config outcome. So "there is a
+# registration" and "classification must stop" are unions of what those two modules answer,
+# rather than a respelling of some of their members here.
+REGISTERED_OUTCOMES = (codexconfig.LINKED, reading.PRESENT)
+UNUSABLE_REGISTRATIONS = tuple(dict.fromkeys(reading.UNUSABLE + (codexconfig.UNREADABLE,)))
+
+# register-mcp's own three answers, beside the ones those modules own. A partial application is
+# never a success: left out of the refusal set it would exit 0, and a caller reading only the
+# exit status would record a registration as verified that nobody could read back.
+APPLIED_UNVERIFIED = "APPLIED_UNVERIFIED"
+CHANGED = "CHANGED"
+BUSY = "BUSY"
+REGISTER_REFUSALS = tuple(dict.fromkeys(
+    (codexconfig.CONFLICT,) + UNUSABLE_REGISTRATIONS + (APPLIED_UNVERIFIED, CHANGED, BUSY)))
 
 
 def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def component_of(data, name):
+    """The one component entry with this name, looked up rather than compared for at each site.
+
+    Five call sites each carried their own literal, so the component a function meant and the
+    string it matched on were two facts that had to be kept equal by hand.
+    """
+    return next(c for c in data["components"] if c["component"] == name)
 
 
 def emit(payload):
@@ -266,10 +301,14 @@ def classify_component(component, *, record, entry_override=None, registration=N
         )
 
     conflict = None
-    if registration and registration.get("outcome") == "CONFLICT":
+    if registration and registration.get("outcome") == codexconfig.CONFLICT:
         conflict = "the Codex configuration registers " + MCP_NAME + " differently: " + registration["detail"]
-    if registration and registration.get("outcome") == "UNREADABLE":
-        unreadable.append("the Codex configuration: " + str(registration.get("detail")))
+    if registration and registration.get("outcome") in UNUSABLE_REGISTRATIONS:
+        # Both answers stop classification. Testing one member of the partition said yes to a
+        # malformed configuration and no to one that could not be reached at all, and the second
+        # of those then reached classification as though the file had been read.
+        unreadable.append("the Codex configuration (" + str(registration.get("outcome")) + "): "
+                          + str(registration.get("detail")))
 
     signals = ownership.Signals(
         entry_point_recorded=entry_recorded,
@@ -369,8 +408,8 @@ def cmd_diagnose(args):
     host_record = hostrecord.load(record_path, data["definitionVersion"])
     record = host_record.value if host_record.usable else None
 
-    bridge = next(c for c in data["components"] if c["component"] == "codex-thread-bridge")
-    relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
+    bridge = component_of(data, BRIDGE)
+    relay_component = component_of(data, RELAY)
 
     registration = registration_state(codex_home, args.bridge_command or "", args.bridge_arg or [])
     # One read-only observation, shared by every component's classification. Without it the
@@ -382,8 +421,12 @@ def cmd_diagnose(args):
         classes = {
             c["component"]: classify_component(
                 c, record=record, record_state=host_record.state, app_server=app_server,
-                entry_override=args.relay_command if c["component"] == "codex-session-relay" else None,
-                registration=registration if c["component"] == "codex-thread-bridge" else None,
+                # Every component that takes an override gets its own. Wired for the relay alone,
+                # the bridge was classified against whatever PATH resolved while --bridge-command
+                # named a different executable, so the class reported and the entry point being
+                # diagnosed were about two different files.
+                entry_override=getattr(args, COMMAND_OVERRIDES[c["component"]], None),
+                registration=registration if c["component"] == MCP_NAME else None,
             )
             for c in data["components"]
         }
@@ -430,7 +473,7 @@ def cmd_diagnose(args):
     if summary:
         summary["assignmentFind"] = assignment
 
-    both_own = all(c["class"] == "own" for c in classes.values())
+    both_own = all(ownership.reusable(c["class"]) for c in classes.values())
     imported_ok = all(c["importedLocation"] for c in classes.values())
 
     connect = (summary or {}).get("socketConnect")
@@ -515,10 +558,10 @@ def _mcp_exposed(registration, observed):
     The bridge's own smoke check launches its own server, so its tool list says nothing about
     whether the REGISTERED command works. Both halves are required.
     """
-    if registration["outcome"] == "CONFLICT":
+    if registration["outcome"] == codexconfig.CONFLICT:
         return check.field("not_verified", "the configuration registers a different command: "
                           + registration["detail"], acting_process=acting_process(), measured_at=now())
-    registered = registration["outcome"] in ("LINKED", "PRESENT")
+    registered = registration["outcome"] in REGISTERED_OUTCOMES
     identity_tool = _bridge_identity_tool()
     if observed and identity_tool not in observed:
         return check.field(
@@ -560,8 +603,7 @@ def observe_app_server(python, socket_path=None):
     its own observation rather than reading the one out of the point it is about to compare
     against, because a comparison against a value copied from its own subject is vacuous.
     """
-    bridge = next(c for c in definition.load()["components"]
-                  if c["component"] == "codex-thread-bridge")
+    bridge = component_of(definition.load(), BRIDGE)
     argv = [str(python), str(ROOT / bridge["exerciseScript"])]
     if socket_path:
         argv += ["--socket", str(socket_path)]
@@ -576,9 +618,7 @@ def observe_app_server(python, socket_path=None):
 
 
 def _bridge_identity_tool():
-    bridge = next(c for c in definition.load()["components"]
-                  if c["component"] == "codex-thread-bridge")
-    return bridge["identityTool"]
+    return component_of(definition.load(), BRIDGE)["identityTool"]
 
 
 def codex_cli_version():
@@ -592,6 +632,20 @@ def codex_cli_version():
 TRIAL_RELATIONSHIP = "<relationship>"
 TRIAL_GENERATION = "<generation>"
 TRIAL_EVENT = "<event>"
+
+# The values Registry.register compares when it decides replay against conflict, and where each
+# one is established for this trial. Three are the identity it hashes into a relationship id and
+# the read-only lookup exposes them. The other four -- the authorized scope and the two host ids
+# -- are returned by no read-only relay command, so the trial cannot pre-compare them. It orders
+# register FIRST instead, because register is where those four are decided and it decides them
+# without writing anything else.
+#
+# Drawing this set as {responsibleChild} was the defect: an assignment carrying this issue and
+# this child under a different parent is a different relationship id, and comparing the child
+# alone read it as the same one.
+REPLAY_FROM_LOOKUP = ("parentTaskId", "childTaskId", "issueKey")
+REPLAY_FROM_REGISTER = ("artifactRoots", "allowedRecipients", "parentHostId", "childHostId")
+REGISTER_REPLAY_FIELDS = REPLAY_FROM_LOOKUP + REPLAY_FROM_REGISTER
 
 
 def trial_request_id(issue, dispatch_turn):
@@ -623,17 +677,24 @@ def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
         # relationship this trial just created, which says nothing about the store
         # (OPS-3.4). Run first, it describes the store as it was found.
         ["assignment-find", "--issue", str(issue)],
-    ]
-    if recipient_settings:
-        # A send is withheld until the recipient's authorized settings are on record, because
-        # preserving them is what the delivery has to check against.
-        steps.append(["settings-record", "--task", str(recipient),
-                      "--settings", str(recipient_settings)])
-    return steps + [
+        # register is the FIRST mutating step, and that ordering is the guarantee. It is the
+        # producer of the replay predicate: it compares seven values and either replays the
+        # existing relationship or refuses the whole registration, without writing anything
+        # else. Four of those seven are not exposed by any read-only relay command, so a
+        # settings write placed before this one would land for a trial that register then
+        # refuses. See REGISTER_REPLAY_FIELDS.
         ["register", "--parent-task", str(parent_task), "--parent-host", str(host),
          "--child-task", str(child_task), "--child-host", str(host),
          "--issue", str(issue), "--artifact-root", str(artifact_root),
          "--allowed-recipient", str(recipient), "--dispatch-request-id", request_id],
+    ]
+    if recipient_settings:
+        # A send is withheld until the recipient's authorized settings are on record, because
+        # preserving them is what the delivery has to check against. Recorded after the
+        # relationship exists, so a refused registration leaves no settings behind.
+        steps.append(["settings-record", "--task", str(recipient),
+                      "--settings", str(recipient_settings)])
+    return steps + [
         # The generation stays unbound until an exact dispatch turn id is supplied, and the
         # relay refuses to emit against an unbound generation.
         ["generation-open", "--relationship", TRIAL_RELATIONSHIP,
@@ -844,11 +905,12 @@ def _trial(args, relay_executable):
     # expects. With no expectation supplied it stays an observation, not a proof.
     found = run_step(by_name["assignment-find"])
     if not found.get("ok"):
-        # The lookup is the trial's store check and it runs before anything is written, so a
-        # lookup that did not run stops the trial here. An answer that found nothing is an
-        # observation; an invocation that failed is not an observation at all, and writing
-        # settings and a relationship afterwards would put rows in a store this process could
-        # not read (OPS-3.4).
+        # The lookup is the trial's store check and it runs before any settings or relationship
+        # row exists, so a lookup that did not run stops the trial here. An answer that found
+        # nothing is an observation; an invocation that failed is not an observation at all, and
+        # registering afterwards would put rows in a store this process could not read
+        # (OPS-3.4). The lookup itself constructs a store, so what is guaranteed here is that no
+        # settings and no relationship row were written, not that nothing at all was.
         return refuse("assignment-find", found)
     assignment = {
         "ran": True,
@@ -856,29 +918,62 @@ def _trial(args, relay_executable):
         "payload": found.get("payload"),
         "expected": args.expect_relationship,
         "agrees": None,
+        "replayFields": {
+            "comparedHere": list(REPLAY_FROM_LOOKUP),
+            "decidedByRegister": list(REPLAY_FROM_REGISTER),
+            "why": "Registry.register compares seven values to decide replay against conflict."
+                   " The lookup exposes three of them; no read-only relay command returns the"
+                   " other four, so register runs first and decides them without writing"
+                   " anything else.",
+        },
         "meaning": (
             "OPS-3.4 also wants this reading from each participating process; one command"
             " cannot produce that, and this is the part it can."
         ),
     }
     # The lookup is the trial's pre-mutation store check, so its ANSWER is consulted, not only
-    # whether it ran. An issue that already has a responsible relationship belongs to that
-    # child; registering a second one is refused by the relay, and settings would be written
-    # first. Replay is decided by the identity the trial would register -- parent, child and
-    # issue -- rather than by an optional flag, so an ordinary repeat still proceeds.
+    # whether it ran. Every field of the registration identity the lookup exposes is compared,
+    # not the child alone: an assignment carrying this issue under a different parent hashes to
+    # a different relationship id, and comparing the child alone read it as the same one.
     payload = found.get("payload")
     responsible = payload.get("responsibleRelationship") if isinstance(payload, dict) else None
     responsible_child = payload.get("responsibleChild") if isinstance(payload, dict) else None
     assignment["responsibleRelationship"] = responsible
     assignment["responsibleChild"] = responsible_child
-    if responsible and str(responsible_child) != str(args.child_task):
+
+    # The identity this trial would register, against the identity the owning assignment has.
+    intended = {"parentTaskId": str(args.parent_task), "childTaskId": str(args.child_task),
+                "issueKey": str(args.issue)}
+    owner = None
+    for entry in ((payload or {}).get("assignments") or []) if isinstance(payload, dict) else []:
+        if isinstance(entry, dict) and entry.get("relationshipId") == responsible:
+            owner = entry
+            break
+    if owner is not None:
+        compared = {field: owner.get(field) for field in REPLAY_FROM_LOOKUP}
+    elif responsible:
+        # The lookup names an owner but returned no record for it, so the top-level answer
+        # carries one field and that is the one that can be compared. Reported as a partial
+        # comparison rather than presented as a complete one.
+        compared = {"childTaskId": responsible_child}
+    else:
+        compared = {}
+    differing = [field for field, value in compared.items() if str(value) != intended[field]]
+    assignment["intendedIdentity"] = intended
+    assignment["owningIdentity"] = compared or None
+    assignment["identityFieldsCompared"] = sorted(compared)
+    assignment["identityFieldsNotExposed"] = sorted(
+        set(REPLAY_FROM_LOOKUP) - set(compared)) if responsible else []
+    if responsible and differing:
         return check.field(
             "not_verified",
             "issue " + str(args.issue) + " already belongs to child "
-            + str(responsible_child) + " under " + str(responsible) + ", and this trial would"
-            " register " + str(args.child_task) + ". The relay refuses the second assignment,"
-            " so proceeding would write settings for a trial that cannot complete. Nothing was"
-            " written.",
+            + str(compared.get("childTaskId")) + " under " + str(responsible)
+            + ", and its " + ", ".join(sorted(differing)) + " differs from the identity this"
+            " trial would register (owning " + json.dumps(compared)
+            + ", intended " + json.dumps(intended) + "). The relay owns one issue to one child,"
+            " so proceeding would drive a trial that cannot complete. No settings and no"
+            " relationship row were written.",
             command=json.dumps(performed[-1]["command"]),
             acting_process=acting_process(), measured_at=now(),
         )
@@ -898,16 +993,11 @@ def _trial(args, relay_executable):
                 + str(args.expect_relationship) + " for issue " + str(args.issue)
                 + " as its responsible relationship (it reports " + repr(responsible) + ")"
                 + ", so this process is pointed at a different store than the one the"
-                " assignment lives in. Nothing was written. Lookup: " + seen[:300],
+                " assignment lives in. No settings and no relationship row were written."
+                " Lookup: " + seen[:300],
                 command=json.dumps(performed[-1]["command"]),
                 acting_process=acting_process(), measured_at=now(),
             )
-
-    for argv in steps:
-        if argv[0] == "settings-record":
-            recorded = run_step(argv)
-            if not recorded.get("ok"):
-                return refuse("settings-record", recorded)
 
     registered = run_step(by_name["register"])
     payload = registered.get("payload") or {}
@@ -915,6 +1005,15 @@ def _trial(args, relay_executable):
     if not registered.get("ok") or not relationship:
         return refuse("register", registered)
     resolved[TRIAL_RELATIONSHIP] = str(relationship)
+
+    # After register, never before. register is the producer of the replay predicate and the
+    # only place the four unexposed fields are compared: a settings write placed ahead of it
+    # lands for a trial that register then refuses on a scope or host the lookup cannot show.
+    for argv in steps:
+        if argv[0] == "settings-record":
+            recorded = run_step(argv)
+            if not recorded.get("ok"):
+                return refuse("settings-record", recorded)
 
     # generation-open declares --dispatch-request-id required, and replaying the SAME id the
     # registration used returns the generation it already opened rather than opening another.
@@ -985,7 +1084,8 @@ def cmd_hook(args):
             " removal and provides no way to perform one."
         ),
     })
-    return EXIT_OK if result["outcome"] in ("LINKED", "CREATED", "MISSING") else EXIT_REFUSED
+    # The set comes from the module that produces the outcomes, not from a list respelled here.
+    return EXIT_OK if result["outcome"] in hooks.SETTLED else EXIT_REFUSED
 
 
 # ------------------------------------------------------------------------- install
@@ -1155,7 +1255,7 @@ def cmd_install(args):
                                    owned, failed_reading=written)
         measurement = measure_candidate(data, record, python=python, environment=environment,
                                         socket_path=args.socket, state=args.state,
-                                        relay_command=str(environment / "bin" / "codex-session-relay"),
+                                        relay_command=str(environment / "bin" / RELAY),
                                         measured_by=args.issue)
         # A point measured during this run is a delta, applied to the record as it stands now.
         # Measuring takes minutes; anything appended in the meantime is not this run's to drop.
@@ -1411,8 +1511,8 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
     read-only smoke check, which starts the MCP server, lists its tools and calls
     get_capabilities. Any connection, protocol or tool-call failure records no point.
     """
-    bridge = next(c for c in data["components"] if c["component"] == "codex-thread-bridge")
-    relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
+    bridge = component_of(data, BRIDGE)
+    relay_component = component_of(data, RELAY)
     operations = []
 
     # Bind the run to the environment before anything is exercised or recorded. Two checks,
@@ -1483,19 +1583,39 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
     })
 
     qualifying = all(op["exercised"] for op in operations)
+
+    # Every dimension a point is compared on, observed ONCE for this measurement and reused for
+    # both the gate below and the point written after it. Four are shared by the whole run and
+    # two are per-component by nature, already observed when the installs were bound. Observed
+    # twice, a transient failure between the gate and the write puts a null dimension into a
+    # point the consumer can never match, and install then promotes on evidence the next
+    # diagnosis rejects.
+    shared = {"interpreter": interpreter_version(python), "codexCli": codex_cli_version(),
+              "host": socket.gethostname(), "appServer": app_server}
+    measured = {
+        name: dict(shared, install=bound[name]["install"].get("location"),
+                   installDigest=bound[name]["digest"])
+        for name in bound
+    }
+
     # A point this run records must be a point this run would later ACCEPT. Recording one the
     # consumer can never match is worse than recording none: install promotes on it and the
-    # next diagnosis rejects the very evidence that authorized the promotion.
+    # next diagnosis rejects the very evidence that authorized the promotion. The condition is
+    # read off the declared map rather than written out, because checking one dimension by name
+    # left an unread interpreter to reach a qualifying point as a null mandatory value, and an
+    # unread App Server to reach one that classification refuses to proceed on at all.
     refused_reason = None
     if qualifying:
-        if codex_cli_version() is None:
-            refused_reason = ("the Codex CLI version could not be read, so any point recorded"
-                              " here would carry a null dimension that can never match")
+        unobserved = sorted({field for facts in measured.values()
+                             for field in hostrecord.DIMENSIONS if facts.get(field) is None})
+        if unobserved:
+            refused_reason = ("these dimensions could not be observed: " + ", ".join(unobserved)
+                              + ", so any point recorded here would carry a null dimension that"
+                              " can never match")
         else:
             mismatched = [name for name in bound
-                          if bound[name]["digest"] != next(
-                              c["sourceDigest"] for c in data["components"]
-                              if c["component"] == name)]
+                          if measured[name]["installDigest"]
+                          != component_of(data, name)["sourceDigest"]]
             if mismatched:
                 refused_reason = ("the installed bytes of " + ", ".join(sorted(mismatched))
                                   + " disagree with the definition, so classification would"
@@ -1512,26 +1632,22 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
     points = []
     if qualifying:
         for component in data["components"]:
-            install = bound[component["component"]]["install"]
-            points.append((component["component"], {
-                "interpreter": interpreter_version(python),
-                "codexCli": codex_cli_version(),
-                "appServer": app_server,
-                "host": socket.gethostname(),
+            facts = measured[component["component"]]
+            point = {field: facts[field] for field in hostrecord.DIMENSIONS}
+            point.update({
                 "date": now(),
                 "measuredBy": measured_by or "JUN-104",
                 "method": "; ".join(
                     " ".join(str(part) for part in (op.get("command") or [])) for op in operations
                 ),
                 "exercised": True,
-                "install": install.get("location"),
-                # The digest of what was exercised, measured now, not the digest the
-                # definition expects. A point has to describe the bytes that ran.
-                "installDigest": bound[component["component"]]["digest"],
+                # installDigest is the digest of what was exercised, measured now, not the one
+                # the definition expects. A point has to describe the bytes that ran.
                 "definitionDigest": component["sourceDigest"],
                 "digestMatchesDefinition":
-                    bound[component["component"]]["digest"] == component["sourceDigest"],
-            }))
+                    facts["installDigest"] == component["sourceDigest"],
+            })
+            points.append((component["component"], point))
     return {"operations": operations, "qualifyingPoint": qualifying, "points": points,
             "appServer": app_server, "toolsListed": tools_listed}
 
@@ -1548,7 +1664,7 @@ def cmd_measure(args):
         return refused("measure", host_record, hostRecord=str(record_path))
     record = host_record.value
 
-    relay_component = next(c for c in data["components"] if c["component"] == "codex-session-relay")
+    relay_component = component_of(data, RELAY)
     relay_command = args.relay_command or shutil.which(relay_component["consoleScript"])
     python = args.python or sys.executable
     # Derived from what the interpreter reports, not from its executable's parent: a virtual
@@ -1617,7 +1733,7 @@ def cmd_register_mcp(args):
                        note="nothing was written: the file could not be scanned")
 
     wrote = False
-    if args.apply and outcome == "CREATED":
+    if args.apply and outcome == codexconfig.CREATED:
         # Held under one lock for the whole read-modify-write, re-read immediately before
         # replacing, and written by temp file and replace. That coordinates runs of this
         # command with each other and removes truncation. It cannot coordinate with an editor
@@ -1631,7 +1747,7 @@ def cmd_register_mcp(args):
                                    wrote=False, otherTablesPreserved=True,
                                    note="nothing was written: the reread failed")
                 if current.value != before_text:
-                    emit({"command": "register-mcp", "path": str(path), "outcome": "CHANGED",
+                    emit({"command": "register-mcp", "path": str(path), "outcome": CHANGED,
                           "detail": "config.toml changed after it was read, so nothing was"
                                     " written; rerun against the file as it now stands",
                           "applied": False, "wrote": False, "otherTablesPreserved": True})
@@ -1640,11 +1756,11 @@ def cmd_register_mcp(args):
                     fresh, outcome, detail = codexconfig.register(
                         current.value, args.name, args.bridge_command, args.bridge_arg or [],
                     )
-                if outcome == "CREATED":
+                if outcome == codexconfig.CREATED:
                     hostrecord.atomic_write(path, fresh)
                     new_text, wrote = fresh, True
         except TimeoutError as error:
-            emit({"command": "register-mcp", "path": str(path), "outcome": "BUSY",
+            emit({"command": "register-mcp", "path": str(path), "outcome": BUSY,
                   "detail": str(error), "applied": False, "wrote": False,
                   "otherTablesPreserved": True})
             return EXIT_REFUSED
@@ -1660,7 +1776,7 @@ def cmd_register_mcp(args):
             # that wrote nothing would invite a retry that appends a second registration,
             # which is the exact outcome this command exists to prevent.
             emit({"command": "register-mcp", "path": str(path),
-                  "outcome": "APPLIED_UNVERIFIED", "applied": True, "wrote": True,
+                  "outcome": APPLIED_UNVERIFIED, "applied": True, "wrote": True,
                   "readBack": False, "reading": after.refusal(),
                   "detail": "the registration was written and the file could not be read"
                             " back: " + str(after.detail),
@@ -1696,11 +1812,11 @@ def cmd_register_mcp(args):
         "serversNow": servers,
         "unreadable": unreadable,
     })
-    # A partial application is never a success. Left out of this mapping it would exit 0,
-    # and a caller reading only the exit status would record a registration as verified that
-    # nobody could read back.
-    if outcome in ("CONFLICT", "UNREADABLE", "ACCESS_ERROR", "APPLIED_UNVERIFIED", "CHANGED",
-                   "BUSY"):
+    # Built from the two modules that own their own answers plus this command's three, rather
+    # than respelled here. A partial application is never a success: left out of this set it
+    # would exit 0, and a caller reading only the exit status would record a registration as
+    # verified that nobody could read back.
+    if outcome in REGISTER_REFUSALS:
         return EXIT_REFUSED
     return EXIT_OK
 

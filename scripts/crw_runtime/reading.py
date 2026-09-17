@@ -26,6 +26,19 @@ ACCESS_ERROR = "ACCESS_ERROR"
 
 STATES = (ABSENT, PRESENT, UNREADABLE, ACCESS_ERROR)
 
+# The same four states, split the way consumers actually ask about them. A consumer that wants
+# to know whether a record can be proceeded on asks this module for the partition instead of
+# testing one member of it: "== UNREADABLE" answers for one member and silently says yes to the
+# other, which is how a permission failure reached classification as a readable configuration.
+USABLE = (PRESENT, ABSENT)
+UNUSABLE = (UNREADABLE, ACCESS_ERROR)
+
+
+def unusable(state):
+    """Whether nothing can be concluded from a reading in this state."""
+    return state in UNUSABLE
+
+
 # Derived from the exception lattice rather than enumerated, because enumerating it is what
 # let two paths escape: ValueError covers UnicodeDecodeError, json.JSONDecodeError and the
 # ValueError a NUL-bearing string raises from Path.resolve; LookupError covers KeyError and
@@ -55,7 +68,7 @@ class Reading:
     @property
     def usable(self):
         """Read, or established to be absent. Absence is a usable answer; failure is not."""
-        return self.state in (PRESENT, ABSENT)
+        return self.state in USABLE
 
     def refusal(self):
         """What a refusal reports. Never the record's contents, only where and what failed."""

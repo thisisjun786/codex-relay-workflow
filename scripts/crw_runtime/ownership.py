@@ -6,7 +6,20 @@ precedence it would read as 'own' and be reused, and the handling that exists to
 the user's work would never run. 'own' is therefore the residual class.
 """
 
-CLASSES = ("conflict", "fork", "foreign", "unmeasured", "own")
+CONFLICT = "conflict"
+FORK = "fork"
+FOREIGN = "foreign"
+UNMEASURED = "unmeasured"
+OWN = "own"
+
+CLASSES = (CONFLICT, FORK, FOREIGN, UNMEASURED, OWN)
+
+# classify also answers UNREADABLE, which is not one of the five classes: it is the answer that
+# no class was decided, because a signal could not be read. Naming it here rather than leaving
+# it as a literal in the one place it is produced keeps the set of things classify can return
+# readable from this module instead of from its body.
+UNREADABLE = "unreadable"
+ANSWERS = CLASSES + (UNREADABLE,)
 
 
 class Signals:
@@ -33,7 +46,7 @@ class Signals:
 def classify(signals):
     """Return (class, reasons). The first matching class wins."""
     if signals.unreadable:
-        return "unreadable", [
+        return UNREADABLE, [
             "classification stopped: " + reading + " could not be read" for reading in signals.unreadable
         ]
 
@@ -42,7 +55,7 @@ def classify(signals):
         for conflict in (signals.registration_conflict, signals.link_conflict):
             if conflict:
                 reasons.append(conflict)
-        return "conflict", reasons
+        return CONFLICT, reasons
 
     # fork before foreign: a recorded path that has diverged is the user's work, and it is
     # preserved rather than reported as somebody else's installation.
@@ -56,7 +69,7 @@ def classify(signals):
         if signals.digest_matches is False:
             reasons.append("the installed bytes differ from the recorded digest")
         if reasons:
-            return "fork", reasons
+            return FORK, reasons
 
     if not signals.entry_point_recorded:
         reasons.append("the entry point resolves outside every recorded path")
@@ -64,18 +77,17 @@ def classify(signals):
             reasons.append("its bytes also differ from the recorded digest, so it is unverified")
         elif not signals.has_point:
             reasons.append("no recorded run covers the combination it runs under, so it is unmeasured")
-        return "foreign", reasons
+        return FOREIGN, reasons
 
     if not signals.has_point:
-        return "unmeasured", [
+        return UNMEASURED, [
             "everything about the installed bytes agrees, but no recorded run covers the"
             " combination it runs under, so it is preserved and not reused"
         ]
 
-    return "own", ["entry point, revision, cleanliness, digest and a measured point all agree"]
+    return OWN, ["entry point, revision, cleanliness, digest and a measured point all agree"]
 
 
 def reusable(classification):
     """Only 'own' may be reused for a host-required command (OPS-2.2, OPS-4.1)."""
-    return classification == "own"
-
+    return classification == OWN

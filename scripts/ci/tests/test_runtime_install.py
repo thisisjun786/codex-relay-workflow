@@ -7,6 +7,7 @@ Codex home, an installed runtime, an MCP registration or an operational database
 import argparse
 import ast
 import builtins
+import contextlib
 import errno
 import json
 import os
@@ -595,7 +596,7 @@ class TrialArgumentTests(unittest.TestCase):
         # Guards the fixture itself. If trial_steps grows a command, or the fixture stops
         # producing one, the comparison silently stops covering it.
         self.assertEqual([argv[0] for argv in self.steps()],
-                         ["assignment-find", "settings-record", "register", "generation-open",
+                         ["assignment-find", "register", "settings-record", "generation-open",
                           "generation-bind", "admit-turn", "emit", "deliver"])
 
     def test_the_relay_parser_is_readable_and_names_what_it_requires(self):
@@ -633,7 +634,7 @@ class TrialArgumentTests(unittest.TestCase):
             dispatch_turn_id="anchor-1", recipient_settings="@/tmp/settings.json",
         )
         self.assertEqual([argv[0] for argv in with_settings],
-                         ["assignment-find", "settings-record", "register", "generation-open",
+                         ["assignment-find", "register", "settings-record", "generation-open",
                           "generation-bind", "admit-turn", "emit", "deliver"])
         emit = next(argv for argv in with_settings if argv[0] == "emit")
         self.assertIn("--artifact", emit,
@@ -1206,6 +1207,8 @@ class IdentityComparisonTests(unittest.TestCase):
             result = runtime_install._trial(args, "/usr/bin/relay")
         self.assertEqual(result["value"], "not_verified")
         self.assertIn("already belongs to child", result["evidence"])
+        self.assertIn("childTaskId", result["evidence"],
+                      "the refusal names which identity field differs, not merely that one does")
         self.assertEqual(sent, ["assignment-find"],
                          "the lookup is the pre-mutation check, so nothing runs after it")
 
@@ -1893,7 +1896,7 @@ class TrialStepGatingTests(unittest.TestCase):
     def test_the_inventory_is_the_trials_own_steps(self):
         self.assertEqual(
             self._steps(),
-            ["assignment-find", "settings-record", "register", "generation-open",
+            ["assignment-find", "register", "settings-record", "generation-open",
              "generation-bind", "admit-turn", "emit", "deliver"])
 
     def test_a_failure_at_any_step_stops_the_trial_at_that_step(self):
@@ -2721,37 +2724,102 @@ class WriteSidePromiseTests(unittest.TestCase):
         self.assertEqual(measurement["points"], [])
         self.assertIn("disagree with the definition", measurement["refused"])
 
-    def test_a_measurement_refuses_when_a_mandatory_dimension_cannot_be_read(self):
+    def test_a_measurement_refuses_when_any_dimension_cannot_be_read(self):
+        """Every dimension, not the one that was checked by name.
+
+        The gate used to name the Codex CLI and nothing else, so an unread interpreter reached a
+        qualifying point as a null mandatory value and an unread App Server reached one that
+        classification refuses to proceed on at all. Both are points the consumer can never
+        match, which is worse than no point: install promotes on them and the next diagnosis
+        rejects the very evidence that authorized the promotion.
+        """
         import runtime_install
 
         data = definition.load()
-        with tempfile.TemporaryDirectory() as temporary:
-            environment = Path(temporary) / "env"
-            record = hostrecord.empty(1)
-            bound = {c["component"]: {
-                "install": {"location": "/l",
-                            "entryPoint": str(environment / "bin" / c["consoleScript"])},
-                "digest": c["sourceDigest"], "location": "/l"} for c in data["components"]}
-            with mock.patch.object(runtime_install, "_interpreter_prefix",
-                                   return_value=str(environment)), \
-                 mock.patch.object(runtime_install, "_bind_installs",
-                                   return_value=(bound, None)), \
-                 mock.patch.object(runtime_install, "codex_cli_version", return_value=None), \
-                 mock.patch.object(runtime_install.scope, "relay",
-                                   return_value={"ok": True, "command": ["doctor"], "payload": {
-                                       "actorReachability": {"socketConnect": "ok"}}}), \
-                 mock.patch.object(runtime_install.subprocess, "run",
-                                   return_value=type("R", (), {
-                                       "returncode": 0,
-                                       "stdout": json.dumps({"tools": [_BRIDGE_TOOL],
-                                                             "connection": {"ok": True}}),
-                                       "stderr": ""})()):
-                measurement = runtime_install.measure_candidate(
-                    data, record, python=str(environment / "bin" / "python"),
-                    environment=str(environment), socket_path=None, state=None,
-                    relay_command=str(environment / "bin" / "codex-session-relay"))
-        self.assertFalse(measurement["qualifyingPoint"])
-        self.assertIn("Codex CLI", measurement["refused"])
+        # How each declared dimension's observation is broken here. The coverage is derived from
+        # the map, so a dimension added to it without a case fails this test instead of quietly
+        # going unchecked.
+        broken = {
+            "codexCli": "codex_cli_version answers None",
+            "interpreter": "interpreter_version answers None",
+            "host": "gethostname answers None",
+            "appServer": "the smoke check reports no connection",
+            "install": "bound by _bind_installs, which refuses before this gate is reached",
+            "installDigest": "bound by _bind_installs, which refuses before this gate is reached",
+        }
+        self.assertEqual(sorted(broken), sorted(hostrecord.DIMENSIONS),
+                         "every declared dimension needs a case that breaks its observation")
+        patched = {
+            "codexCli": lambda: mock.patch.object(runtime_install, "codex_cli_version",
+                                                  return_value=None),
+            "interpreter": lambda: mock.patch.object(runtime_install, "interpreter_version",
+                                                     return_value=None),
+            "host": lambda: mock.patch.object(runtime_install.socket, "gethostname",
+                                              return_value=None),
+        }
+
+        def measure(extra=None, connection=True):
+            with tempfile.TemporaryDirectory() as temporary:
+                environment = Path(temporary) / "env"
+                record = hostrecord.empty(1)
+                bound = {c["component"]: {
+                    "install": {"location": "/l",
+                                "entryPoint": str(environment / "bin" / c["consoleScript"])},
+                    "digest": c["sourceDigest"], "location": "/l"} for c in data["components"]}
+                payload = {"tools": [_BRIDGE_TOOL]}
+                if connection:
+                    payload["connection"] = {"ok": True}
+                stack = [
+                    mock.patch.object(runtime_install, "_interpreter_prefix",
+                                      return_value=str(environment)),
+                    mock.patch.object(runtime_install, "_bind_installs",
+                                      return_value=(bound, None)),
+                    mock.patch.object(runtime_install, "interpreter_version",
+                                      return_value="3.13.1"),
+                    mock.patch.object(runtime_install, "codex_cli_version",
+                                      return_value="0.1.0"),
+                    mock.patch.object(runtime_install.scope, "relay",
+                                      return_value={"ok": True, "command": ["doctor"], "payload": {
+                                          "actorReachability": {"socketConnect": "ok"}}}),
+                    mock.patch.object(runtime_install.subprocess, "run",
+                                      return_value=type("R", (), {
+                                          "returncode": 0,
+                                          "stdout": json.dumps(payload),
+                                          "stderr": ""})()),
+                ]
+                if extra is not None:
+                    stack.append(extra)
+                with contextlib.ExitStack() as entered:
+                    for patch in stack:
+                        entered.enter_context(patch)
+                    return runtime_install.measure_candidate(
+                        data, record, python=str(environment / "bin" / "python"),
+                        environment=str(environment), socket_path=None, state=None,
+                        relay_command=str(environment / "bin" / "codex-session-relay"))
+
+        # The baseline qualifies, so every refusal below means something.
+        self.assertTrue(measure()["qualifyingPoint"])
+
+        for dimension in sorted(patched):
+            with self.subTest(dimension):
+                measurement = measure(patched[dimension]())
+                self.assertFalse(measurement["qualifyingPoint"], dimension)
+                self.assertEqual(measurement["points"], [])
+                self.assertIn(dimension, measurement["refused"])
+
+        with self.subTest("appServer"):
+            measurement = measure(connection=False)
+            self.assertFalse(measurement["qualifyingPoint"])
+            self.assertEqual(measurement["points"], [])
+            self.assertIn("appServer", measurement["refused"])
+
+        with self.subTest("install and installDigest come from the bound install"):
+            # The two per-component dimensions are observed when the installs are bound, and a
+            # binding that produced neither is already refused there. What this asserts is that
+            # the point carries the bound values rather than observing them a second time.
+            for _, point in measure()["points"]:
+                self.assertEqual(point["install"], "/l")
+                self.assertIsNotNone(point["installDigest"])
 
     def test_the_doctor_runs_the_relay_recorded_for_this_environment(self):
         import runtime_install
@@ -3106,6 +3174,533 @@ class SelectorCoverageTests(unittest.TestCase):
         answer = scope.relay(["--version"], executable=sys.executable, discovery=True,
                              env={**os.environ, scope.STATE_ENV: "/from/env"})
         self.assertNotIn("--state", answer["command"])
+
+
+# =========================================================================================
+# Check 10 - the consumer references the DECLARED SET, not a literal member of it
+#
+# Check 9 asserts that the set I declared is covered. It cannot see that the code compares
+# against a literal instead of the declaration: "== UNREADABLE" answers for one member of a
+# four-state partition and silently says yes to another, and a set-coverage assertion written
+# over my own declaration never looks at that line. This one does.
+#
+# The inventory is every UPPER_CASE module-level binding and the strings it names, read out of
+# the source rather than listed here. A comparison against one of those strings is a violation
+# in the module that declares it and in every module that imports the declaring one -- scoped
+# that way because a consumer can only reference a declaration it can see, and because
+# unrelated modules share short words: check.record compares a destination kind "host" that has
+# nothing to do with the hostname dimension whose key is spelled the same.
+#
+# The limit, stated rather than papered over: this reads COMPARISONS. Literal key ACCESS
+# (payload.get("x")) is not covered here, because payload keys are data and forbidding literal
+# keys would forbid reading a payload at all. The one map where that distinction decides
+# something is guarded by _point_accesses in check 9.
+# =========================================================================================
+
+RUNTIME_MODULES = [ROOT / "scripts" / "runtime_install.py"] + sorted(
+    (ROOT / "scripts" / "crw_runtime").glob("*.py"))
+
+
+# The one module-level string collection built by a comprehension, whose members are computed
+# from another collection's rather than written. The reader below evaluates constants, names,
+# cross-module references, concatenation and simple wrapping calls; it does not evaluate string
+# arithmetic, and nothing compares against an escape sequence. Named here so a second computed
+# collection has to be acknowledged instead of quietly slipping past the oracle.
+COMPUTED_DECLARATIONS = {"codexconfig.ESCAPED"}
+
+
+def _evaluate(node, local, others):
+    """The strings a declaration names, over the small expression language declarations use."""
+    if isinstance(node, ast.Constant):
+        return {node.value} if isinstance(node.value, str) else set()
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        found = set()
+        for element in node.elts:
+            found |= _evaluate(element, local, others)
+        return found
+    if isinstance(node, ast.Dict):
+        found = set()
+        for key, value in zip(node.keys, node.values):
+            if key is not None:
+                found |= _evaluate(key, local, others)
+            found |= _evaluate(value, local, others)
+        return found
+    if isinstance(node, ast.Name):
+        return set(local.get(node.id, ()))
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        return set(others.get(node.value.id, {}).get(node.attr, ()))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _evaluate(node.left, local, others) | _evaluate(node.right, local, others)
+    if isinstance(node, ast.Call):
+        found = set()
+        for argument in node.args:
+            found |= _evaluate(argument, local, others)
+        return found
+    return set()
+
+
+def _declarations(tree, others=None):
+    """Every UPPER_CASE module-level binding, as name -> the strings it names.
+
+    A dict contributes its keys AND its values, because the DIMENSIONS policies are values and
+    points_for compares one of them by name. Names resolve to what they were bound to earlier in
+    the same module, so a tuple written as (ABSENT, PRESENT, ...) is the partition it looks like
+    rather than an empty set, and module.NAME resolves across modules so a set assembled from
+    two other modules' answers still names their strings.
+    """
+    others = others or {}
+    bindings = []
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        targets = [t for t in node.targets if isinstance(t, ast.Name) and t.id.isupper()]
+        if not targets or len(targets) != len(node.targets):
+            continue
+        for target in targets:
+            bindings.append((target.id, node.value))
+
+    declared = {}
+    for name, value in bindings:
+        found = _evaluate(value, declared, others)
+        if found:
+            declared[name] = found
+    return declared
+
+
+def _declared_by_module(trees):
+    """Two passes, so a declaration assembled from another module's resolves."""
+    first = {stem: _declarations(tree) for stem, tree in trees.items()}
+    return {stem: _declarations(tree, first) for stem, tree in trees.items()}
+
+
+def _imported_names(tree):
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            names.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+    return names
+
+
+def _compared_literals(node):
+    literals = []
+    for operand in [node.left] + list(node.comparators):
+        if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
+            literals.append(operand.value)
+        elif isinstance(operand, (ast.Tuple, ast.List, ast.Set)):
+            literals.extend(element.value for element in operand.elts
+                            if isinstance(element, ast.Constant)
+                            and isinstance(element.value, str))
+    return literals
+
+
+def _literal_comparisons(trees):
+    """Offenders: a comparison against a string some visible module declares by name."""
+    owned = _declared_by_module(trees)
+    offenders = []
+    for stem, tree in trees.items():
+        visible = ({stem} | _imported_names(tree)) & set(owned)
+        pool = {}
+        for other in visible:
+            for name, values in owned[other].items():
+                for value in values:
+                    pool.setdefault(value, set()).add(other + "." + name)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
+            for literal in _compared_literals(node):
+                if literal in pool:
+                    offenders.append(stem + ":" + str(node.lineno) + " compares " + repr(literal)
+                                     + ", declared by " + ", ".join(sorted(pool[literal])))
+    return sorted(offenders)
+
+
+def _runtime_trees():
+    return {path.stem: ast.parse(path.read_text(encoding="utf-8"))
+            for path in RUNTIME_MODULES}
+
+
+class DeclaredSetReferenceTests(unittest.TestCase):
+    def test_the_inventory_is_not_empty(self):
+        # A blind reader returns no declarations, and then every comparison passes vacuously.
+        declared = _declarations(ast.parse(
+            (ROOT / "scripts" / "crw_runtime" / "reading.py").read_text(encoding="utf-8")))
+        self.assertIn("STATES", declared)
+        self.assertEqual(declared["STATES"], {"ABSENT", "PRESENT", "UNREADABLE", "ACCESS_ERROR"},
+                         "a tuple of Names is the partition it looks like")
+
+    def test_the_ast_reader_agrees_with_the_imported_modules(self):
+        """The oracle: what the source reader found, against what the module actually holds.
+
+        Comparing the reader with a hand-written expectation would only check that two things I
+        wrote agree. The imported module is the outside truth here.
+        """
+        modules = {"check": check, "codexconfig": codexconfig, "definition": definition,
+                   "hooks": hooks, "hostrecord": hostrecord, "ownership": ownership,
+                   "reading": reading, "scope": scope}
+        trees = _runtime_trees()
+        declared_by_module = _declared_by_module(trees)
+        computed = set()
+        for stem, module in modules.items():
+            declared = declared_by_module[stem]
+            comprehensions = {
+                target.id for node in trees[stem].body if isinstance(node, ast.Assign)
+                for target in node.targets
+                if isinstance(target, ast.Name) and target.id.isupper()
+                and isinstance(node.value, (ast.DictComp, ast.ListComp, ast.SetComp,
+                                            ast.GeneratorExp))
+            }
+            computed |= {stem + "." + name for name in comprehensions}
+            for name, value in vars(module).items():
+                if not name.isupper():
+                    continue
+                if stem + "." + name in COMPUTED_DECLARATIONS:
+                    continue
+                if isinstance(value, str):
+                    expected = {value}
+                elif isinstance(value, (tuple, list, set, frozenset)) and value \
+                        and all(isinstance(item, str) for item in value):
+                    expected = set(value)
+                elif isinstance(value, dict) and value \
+                        and all(isinstance(key, str) for key in value):
+                    expected = set(value) | {item for item in value.values()
+                                             if isinstance(item, str)}
+                else:
+                    continue
+                with self.subTest(stem + "." + name):
+                    self.assertIn(name, declared, "the source reader missed this declaration")
+                    self.assertTrue(expected <= declared[name],
+                                    "the source reader missed " + repr(sorted(expected - declared[name])))
+        self.assertEqual(computed, COMPUTED_DECLARATIONS,
+                         "a computed declaration must be acknowledged, not discovered later")
+
+    def test_no_consumer_compares_against_a_literal_member_of_a_declared_set(self):
+        self.assertEqual(_literal_comparisons(_runtime_trees()), [])
+
+    def test_the_scan_sees_each_form_of_declaration_being_bypassed(self):
+        """Injected violations, one per declaration form. Without these an empty list is mute."""
+        declaring = (
+            'ONE = "alpha"\n'
+            'MANY = ("beta", "gamma")\n'
+            'NAMED = (ONE,)\n'
+            'MAP = {"delta": ("x", "epsilon")}\n'
+        )
+        forms = {
+            "a bare constant": 'state == "alpha"',
+            "a member of a tuple": 'state == "beta"',
+            "a member reached through a Name": 'state == "alpha"',
+            "a dict key": 'state == "delta"',
+            "a dict value": 'policy == "epsilon"',
+            "a member on the right of in": 'state in ("gamma", "other")',
+            "an inequality": 'state != "beta"',
+        }
+        for label, comparison in forms.items():
+            with self.subTest(label):
+                trees = {"declaring": ast.parse(declaring),
+                         "consuming": ast.parse("import declaring\n\n\ndef f(state, policy):\n"
+                                                "    return " + comparison + "\n")}
+                self.assertTrue(_literal_comparisons(trees), label + " must be seen")
+
+    def test_a_module_that_cannot_see_a_declaration_is_left_alone(self):
+        """Scoping, not a carve-out. check.record compares a destination kind spelled "host";
+        the hostname dimension is a different module's word and check does not import it."""
+        trees = {"declaring": ast.parse('MAP = {"host": ("host", "mandatory")}\n'),
+                 "unrelated": ast.parse('def f(kind):\n    return kind == "host"\n')}
+        self.assertEqual(_literal_comparisons(trees), [])
+        trees["unrelated"] = ast.parse("import declaring\n\n\ndef f(kind):\n"
+                                       "    return kind == 'host'\n")
+        self.assertTrue(_literal_comparisons(trees),
+                        "importing the declaring module brings the word into scope")
+
+    def test_the_scan_is_red_on_the_source_with_one_reference_put_back(self):
+        """The self-completeness run, performed in memory so nothing on disk is touched."""
+        source = (ROOT / "scripts" / "runtime_install.py").read_text(encoding="utf-8")
+        injected = source.replace(
+            'if registration and registration.get("outcome") in UNUSABLE_REGISTRATIONS:',
+            'if registration and registration.get("outcome") == "UNREADABLE":')
+        self.assertNotEqual(injected, source, "the anchor for the injection moved")
+        trees = _runtime_trees()
+        trees["runtime_install"] = ast.parse(injected)
+        offenders = _literal_comparisons(trees)
+        self.assertTrue(any("UNREADABLE" in offender for offender in offenders), offenders)
+
+
+# =========================================================================================
+# Check 11 - the four sets that were drawn around one member
+# =========================================================================================
+
+def _register_replay_fields():
+    """The values Registry.register compares to decide replay against conflict.
+
+    Read out of the relay's own source. Listed here instead, the set would be a second copy of
+    the relay's rule and would drift from it silently, which is the failure this whole check
+    exists to stop.
+    """
+    tree = ast.parse((RELAY_SRC / "registry.py").read_text(encoding="utf-8"))
+    register = next(
+        node for parent in ast.walk(tree) if isinstance(parent, ast.ClassDef)
+        and parent.name == "Registry"
+        for node in parent.body if isinstance(node, ast.FunctionDef) and node.name == "register")
+
+    # A subscript used as another subscript's value is a container, not a compared field:
+    # record["authorizedScope"]["artifactRoots"] compares artifactRoots.
+    nested = {id(node.value) for node in ast.walk(register) if isinstance(node, ast.Subscript)}
+    fields = set()
+    for node in ast.walk(register):
+        # The identity it hashes into a relationship id.
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "relationship_id":
+            for argument in node.args:
+                if isinstance(argument, ast.Attribute) and isinstance(argument.value, ast.Name):
+                    fields.add(argument.value.id + "_" + argument.attr)
+                elif isinstance(argument, ast.Name):
+                    fields.add(argument.id)
+        # The comparison that decides replay against conflict for an existing identity.
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "same" for t in node.targets):
+            for inner in ast.walk(node.value):
+                if isinstance(inner, ast.Subscript) and id(inner) not in nested \
+                        and isinstance(inner.slice, ast.Constant) \
+                        and isinstance(inner.slice.value, str):
+                    fields.add(inner.slice.value)
+
+    def camel(name):
+        head, *rest = name.split("_")
+        return head + "".join(part.title() for part in rest)
+
+    return {camel(name) for name in fields}
+
+
+class DrawnSetTests(unittest.TestCase):
+    """Four sets that were drawn around one member, each replaced by the codebase's own set."""
+
+    def test_the_replay_set_is_the_one_the_relay_compares(self):
+        import runtime_install
+
+        relay_fields = _register_replay_fields()
+        # Guards the reader: an empty or tiny answer would make the comparison vacuous.
+        self.assertEqual(len(relay_fields), 7, sorted(relay_fields))
+        self.assertEqual(relay_fields, set(runtime_install.REGISTER_REPLAY_FIELDS))
+        self.assertEqual(
+            set(runtime_install.REPLAY_FROM_LOOKUP) | set(runtime_install.REPLAY_FROM_REGISTER),
+            relay_fields, "every field is either compared here or decided by register")
+        self.assertEqual(
+            set(runtime_install.REPLAY_FROM_LOOKUP) & set(runtime_install.REPLAY_FROM_REGISTER),
+            set(), "no field is claimed by both")
+
+    def test_the_replay_reader_notices_a_comparison_the_relay_stops_making(self):
+        # The reader is only evidence if dropping a rule changes its answer.
+        source = (RELAY_SRC / "registry.py").read_text(encoding="utf-8")
+        self.assertIn('and existing["child_host_id"] == child.host_id', source)
+
+    def test_every_component_has_a_command_override(self):
+        import runtime_install
+
+        components = {c["component"] for c in definition.load()["components"]}
+        self.assertEqual(set(runtime_install.COMMAND_OVERRIDES), components,
+                         "an override wired for one component classified the other against"
+                         " whatever PATH resolved")
+        parser = runtime_install.build_parser()
+        diagnose = parser.parse_args(["diagnose", "--relay-command", "/r",
+                                      "--bridge-command", "/b"])
+        for component, destination in runtime_install.COMMAND_OVERRIDES.items():
+            with self.subTest(component):
+                self.assertTrue(hasattr(diagnose, destination),
+                                destination + " is not a diagnose argument")
+
+    def test_diagnosis_classifies_each_component_against_its_own_override(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "codex"
+            home.mkdir()
+            entries = {}
+            for component in definition.load()["components"]:
+                entry = Path(temporary) / (component["consoleScript"] + "-elsewhere")
+                entry.write_text("#!/nonexistent/python\n", encoding="utf-8")
+                entry.chmod(0o755)
+                entries[component["component"]] = entry
+            done = run("diagnose", "--codex-home", str(home),
+                       "--record", str(Path(temporary) / "record.json"),
+                       "--relay-command", str(entries["codex-session-relay"]),
+                       "--bridge-command", str(entries["codex-thread-bridge"]), "--temporary")
+            payload = json.loads(done.stdout)
+        for name, entry in entries.items():
+            with self.subTest(name):
+                self.assertEqual(payload["components"][name]["entryPoint"], str(entry),
+                                 "the component was classified against a different executable"
+                                 " than the one named on the command line")
+
+    def test_an_unreachable_configuration_stops_classification_like_an_unreadable_one(self):
+        """ACCESS_ERROR and UNREADABLE are two members of one partition, and the consumer used
+        to name one of them."""
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        for outcome in reading.UNUSABLE:
+            with self.subTest(outcome):
+                classified = runtime_install.classify_component(
+                    component, record=hostrecord.empty(1),
+                    registration={"outcome": outcome, "detail": "a detail"},
+                    app_server="a-server")
+                self.assertEqual(classified["class"], ownership.UNREADABLE)
+                self.assertTrue(any("Codex configuration" in reason
+                                    for reason in classified["reasons"]), classified["reasons"])
+
+    def test_a_shared_dimension_is_observed_once_for_the_whole_measurement(self):
+        """Observed twice, a transient failure between the gate and the write records a null
+        dimension in a point the consumer can never match."""
+        import runtime_install
+
+        data = definition.load()
+        self.assertGreater(len(data["components"]), 1,
+                           "a per-measurement count only means something with two components")
+        counted = {"codexCli": 0, "interpreter": 0, "host": 0}
+        record = hostrecord.empty(1)
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            bound = {c["component"]: {
+                "install": {"location": "/l",
+                            "entryPoint": str(environment / "bin" / c["consoleScript"])},
+                "digest": c["sourceDigest"], "location": "/l"} for c in data["components"]}
+
+            def counting(key, answer):
+                def call(*args, **kwargs):
+                    counted[key] += 1
+                    return answer
+                return call
+
+            with mock.patch.object(runtime_install, "_interpreter_prefix",
+                                   return_value=str(environment)), \
+                 mock.patch.object(runtime_install, "_bind_installs",
+                                   return_value=(bound, None)), \
+                 mock.patch.object(runtime_install, "codex_cli_version",
+                                   side_effect=counting("codexCli", "0.1.0")), \
+                 mock.patch.object(runtime_install, "interpreter_version",
+                                   side_effect=counting("interpreter", "3.13.1")), \
+                 mock.patch.object(runtime_install.socket, "gethostname",
+                                   side_effect=counting("host", "a-host")), \
+                 mock.patch.object(runtime_install.scope, "relay",
+                                   return_value={"ok": True, "command": ["doctor"], "payload": {
+                                       "actorReachability": {"socketConnect": "ok"}}}), \
+                 mock.patch.object(runtime_install.subprocess, "run",
+                                   return_value=type("R", (), {
+                                       "returncode": 0,
+                                       "stdout": json.dumps({"tools": [_BRIDGE_TOOL],
+                                                             "connection": {"ok": True}}),
+                                       "stderr": ""})()):
+                measurement = runtime_install.measure_candidate(
+                    data, record, python=str(environment / "bin" / "python"),
+                    environment=str(environment), socket_path=None, state=None,
+                    relay_command=str(environment / "bin" / "codex-session-relay"))
+        self.assertTrue(measurement["qualifyingPoint"], measurement.get("refused"))
+        for dimension, calls in counted.items():
+            with self.subTest(dimension):
+                self.assertEqual(calls, 1, dimension + " was observed " + str(calls) + " times")
+
+    def test_register_is_the_first_mutating_step_the_trial_sends(self):
+        """The order is the guarantee. register compares four values no read-only relay command
+        exposes, so a settings write ahead of it lands for a trial register then refuses."""
+        import runtime_install
+
+        sent = []
+
+        def relay(command, **kwargs):
+            sent.append(command[0])
+            if command[0] == "assignment-find":
+                return {"ok": True, "command": list(command),
+                        "payload": {"issueKey": "JUN-104", "assignments": [],
+                                    "responsibleRelationship": None, "responsibleChild": None}}
+            return {"ok": True, "command": list(command), "payload": _trial_payload(command[0])}
+
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root=TRIAL_ROOT, turn_thread="c", turn_id="ti", artifact=[TRIAL_ARTIFACT],
+            dispatch_turn_id="d", turn_status="completed",
+            recipient_settings="@/tmp/settings.json", settings_already_recorded=False,
+            expect_relationship=None, socket=None, state=None)
+        with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "verified", result["evidence"][:300])
+        self.assertIn("settings-record", sent)
+        self.assertLess(sent.index("register"), sent.index("settings-record"),
+                        "settings were written before the step that decides replay")
+
+    def test_a_refused_registration_leaves_no_settings_behind(self):
+        import runtime_install
+
+        sent = []
+
+        def relay(command, **kwargs):
+            sent.append(command[0])
+            if command[0] == "assignment-find":
+                return {"ok": True, "command": list(command),
+                        "payload": {"issueKey": "JUN-104", "assignments": [],
+                                    "responsibleRelationship": None, "responsibleChild": None}}
+            if command[0] == "register":
+                return {"ok": False, "command": list(command), "exitCode": 1,
+                        "stderr": "RELATIONSHIP_CONFLICT: already exists with a different scope"}
+            return {"ok": True, "command": list(command), "payload": _trial_payload(command[0])}
+
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root=TRIAL_ROOT, turn_thread="c", turn_id="ti", artifact=[TRIAL_ARTIFACT],
+            dispatch_turn_id="d", turn_status="completed",
+            recipient_settings="@/tmp/settings.json", settings_already_recorded=False,
+            expect_relationship=None, socket=None, state=None)
+        with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "not_verified")
+        self.assertNotIn("settings-record", sent,
+                         "a registration the relay refused must not leave settings on record")
+
+    def test_an_owner_under_a_different_parent_is_not_read_as_the_same_relationship(self):
+        """The set was drawn around responsibleChild. An assignment with this issue and this
+        child under a DIFFERENT parent hashes to a different relationship id."""
+        import runtime_install
+
+        payload = {"issueKey": "JUN-104", "responsibleRelationship": "rel-1",
+                   "responsibleChild": "c",
+                   "assignments": [{"relationshipId": "rel-1", "parentTaskId": "someone-else",
+                                    "childTaskId": "c", "issueKey": "JUN-104"}]}
+        sent = []
+
+        def relay(command, **kwargs):
+            sent.append(command[0])
+            return {"ok": True, "command": list(command),
+                    "payload": payload if command[0] == "assignment-find"
+                    else _trial_payload(command[0])}
+
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root=TRIAL_ROOT, turn_thread="c", turn_id="ti", artifact=[TRIAL_ARTIFACT],
+            dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
+            settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
+        with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "not_verified", result["evidence"][:300])
+        self.assertIn("parentTaskId", result["evidence"])
+        self.assertEqual(sent, ["assignment-find"])
+
+    def test_an_owner_with_the_same_identity_still_replays(self):
+        import runtime_install
+
+        payload = {"issueKey": "JUN-104", "responsibleRelationship": "rel-1",
+                   "responsibleChild": "c",
+                   "assignments": [{"relationshipId": "rel-1", "parentTaskId": "p",
+                                    "childTaskId": "c", "issueKey": "JUN-104"}]}
+
+        def relay(command, **kwargs):
+            return {"ok": True, "command": list(command),
+                    "payload": payload if command[0] == "assignment-find"
+                    else _trial_payload(command[0])}
+
+        args = argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root=TRIAL_ROOT, turn_thread="c", turn_id="ti", artifact=[TRIAL_ARTIFACT],
+            dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
+            settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
+        with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
+            result = runtime_install._trial(args, "/usr/bin/relay")
+        self.assertEqual(result["value"], "verified", result["evidence"][:300])
 
 
 if __name__ == "__main__":

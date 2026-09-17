@@ -19,6 +19,24 @@ from . import hostrecord, reading
 
 SOURCE = "user"
 
+# What install and disable answer. Named here so a caller asks this module what its answers are
+# instead of respelling one of them, and so the set an exit status is derived from is this one
+# rather than a list kept equal by hand. A reading state can also arrive as an outcome when the
+# file could not be read, which is why reading.UNUSABLE is consulted beside these.
+LINKED = "LINKED"
+MISSING = "MISSING"
+CREATED = "CREATED"
+CHANGED = "CHANGED"
+APPLIED_UNVERIFIED = "APPLIED_UNVERIFIED"
+REFUSED = "REFUSED"
+
+OUTCOMES = (LINKED, MISSING, CREATED, CHANGED, APPLIED_UNVERIFIED, REFUSED)
+
+# The outcomes that mean the hook file now holds this hook, or would with --apply. Every other
+# outcome, and every unusable reading state, is a refusal.
+SETTLED = (LINKED, MISSING, CREATED)
+
+
 # Installation appends a group carrying no matcher, so that is the matcher a duplicate has to
 # share to be the same registration.
 INSTALLED_MATCHER = None
@@ -131,12 +149,12 @@ def install(path, event, hook, *, issue, apply=False):
     if already:
         # The identity of the hook that is already there, not the next free slot: reporting
         # the slot this run would have used would name a hook that does not exist.
-        return {"outcome": "LINKED", "detail": "an identical hook is already installed",
+        return {"outcome": LINKED, "detail": "an identical hook is already installed",
                 "identity": already[0], "applied": False,
                 "installed": True, "enabled": "unknown", "observedFired": "unknown"}
 
     if not apply:
-        return {"outcome": "MISSING", "detail": "would append; nothing was written",
+        return {"outcome": MISSING, "detail": "would append; nothing was written",
                 "plan": proposal, "applied": False,
                 "installed": False, "enabled": "unknown", "observedFired": "unknown"}
 
@@ -149,7 +167,7 @@ def install(path, event, hook, *, issue, apply=False):
         if not again.usable:
             return _refused(again)
         if json.dumps(again.value, sort_keys=True) != json.dumps(document, sort_keys=True):
-            return {"outcome": "CHANGED", "detail": (
+            return {"outcome": CHANGED, "detail": (
                 "the hook file changed after it was read, so nothing was appended;"
                 " rerun to plan against the file as it now stands")}
         document.setdefault("hooks", {}).setdefault(event, []).append({"hooks": [hook]})
@@ -163,7 +181,7 @@ def install(path, event, hook, *, issue, apply=False):
     if not back.usable:
         # The append landed. Reporting this as a refusal that wrote nothing would be the
         # worst answer available: the caller would retry and append a second copy.
-        return {"outcome": "APPLIED_UNVERIFIED", "applied": True, "wrote": True,
+        return {"outcome": APPLIED_UNVERIFIED, "applied": True, "wrote": True,
                 "readBack": False, "installed": True, "enabled": "unknown",
                 "observedFired": "unknown", "identity": proposal["identity"],
                 "reading": back.refusal(),
@@ -173,7 +191,7 @@ def install(path, event, hook, *, issue, apply=False):
     after = {entry["identity"]: entry["trustedHash"] for entry in inventory(written)}
     preserved = all(after.get(key) == value for key, value in existing.items())
     return {
-        "outcome": "CREATED",
+        "outcome": CREATED,
         "identity": proposal["identity"],
         "trustedHash": proposal["trustedHash"],
         "hookFileSha256": _hash(payload),
@@ -201,7 +219,7 @@ def disable(document, event, matcher_index, hook_index):
     the file and accepts the renumbering, knowingly.
     """
     return {
-        "outcome": "REFUSED",
+        "outcome": REFUSED,
         "detail": (
             "removing a hook renumbers every later hook in the same file and detaches the"
             " trusted hash recorded against their identities, so a hook is disabled rather"
