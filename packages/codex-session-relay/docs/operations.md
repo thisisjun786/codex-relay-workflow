@@ -80,7 +80,9 @@ it actually records, and the socket you asked for under whichever store belongs 
 fix is to choose the matching pair; no command in that list makes the mismatch go away. When
 `CODEX_SESSION_RELAY_STATE` is what pinned the selection, the socket-first line is printed
 with `env -u CODEX_SESSION_RELAY_STATE`, because otherwise it would re-select the store that
-produced the refusal and return it again.
+produced the refusal and return it again. Only then: when `--state` caused the refusal the
+variable may point at the store that does record the requested socket, and dropping it there
+would send the operator to a default directory that usually holds no database at all.
 
 `doctor` and `ack-proof` are exempt from these three guards, for opposite reasons: `doctor`
 is how the candidates are found in the first place, and `ack-proof` derives a value from its

@@ -1416,19 +1416,25 @@ def _quote(value) -> str:
     return shlex.quote(str(value))
 
 
-def _without_state_env() -> str:
-    """A prefix that drops the state pin, for a recovery line that selects by socket.
+def _without_state_env(selection) -> str:
+    """A prefix that drops the state pin, but only when the pin is what went wrong.
 
-    Only when the variable is actually set, so the ordinary case prints a plain command. A
-    line that says "find the store that belongs to this socket" cannot do that while
+    A line that says "find the store that belongs to this socket" cannot do that while
     CODEX_SESSION_RELAY_STATE still pins the selection to the store that produced the
     refusal: pasting it would return the very same refusal and read as a dead end.
+
+    It is conditioned on the selection's own source, not merely on the variable being set.
+    When --state caused the refusal the variable may well point at the right store for this
+    socket, and dropping it there sends the operator to a default directory that usually
+    holds no database at all - a worse answer than the one it replaced.
     """
     import os
 
     from .store import STATE_ENV
 
-    return f"env -u {STATE_ENV} " if STATE_ENV in os.environ else ""
+    if getattr(selection, "source", None) != "env" or STATE_ENV not in os.environ:
+        return ""
+    return f"env -u {STATE_ENV} "
 
 
 def _program() -> str:
@@ -1561,7 +1567,8 @@ def _refuse_ambiguous_state(services, args) -> None:
                     # The pin is dropped explicitly. This line has no --state to override it,
                     # so an inherited CODEX_SESSION_RELAY_STATE would re-select the store that
                     # just produced this refusal and hand back the same error.
-                    f"{_without_state_env()}{_program()} --socket {_quote(wanted)} doctor",
+                    f"{_without_state_env(selection)}{_program()}"
+                    f" --socket {_quote(wanted)} doctor",
                     "  finds the store that belongs to the socket you asked for",
                 ],
                 "note": "using a store does not rewrite the socket it recorded, so neither"

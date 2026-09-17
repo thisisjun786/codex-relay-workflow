@@ -785,6 +785,65 @@ class ContestedSocket(CliBase):
             "the state pin survived into the command printed to look past it",
         )
 
+    def test_a_flag_caused_refusal_leaves_the_state_pin_alone(self):
+        """Dropping the pin is only right when the pin is what went wrong.
+
+        --state wins over the variable, so it can cause this refusal while the variable
+        still points at the store that does record the requested socket. Dropping it there
+        sends the operator to a default directory that usually holds no database at all,
+        under a caption promising the store that belongs to this socket.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "flagenv-home")
+        os.makedirs(home)
+        flagged = os.path.join(self.tmp, "flagenv-flagged")
+        pinned = os.path.join(self.tmp, "flagenv-pinned")
+        other = os.path.join(self.tmp, "flagenv-other.sock")
+        wanted = os.path.join(self.tmp, "flagenv-wanted.sock")
+        # The flag's store records a different socket; the pinned store records the wanted one.
+        Store(Path(flagged) / "relay.sqlite3", socket_path=other).close()
+        Store(Path(pinned) / "relay.sqlite3", socket_path=wanted).close()
+
+        environment = dict(
+            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
+            CODEX_SESSION_RELAY_STATE=pinned,
+        )
+        environment.pop("XDG_STATE_HOME", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", flagged,
+             "--socket", wanted, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+
+        socket_first = [
+            line for line in refused["recover"]
+            if not line.startswith("  ") and wanted in line
+        ]
+        self.assertEqual(len(socket_first), 1, refused["recover"])
+        self.assertNotIn("env -u", socket_first[0], "the pin was dropped, but it was not the cause")
+
+        replayed = subprocess.run(
+            shlex.split(socket_first[0]),
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+
+        selection = json.loads(replayed.stdout)["stateSelection"]
+        self.assertEqual(
+            selection["path"], pinned,
+            "the recovery command walked past the store that records this socket",
+        )
+        self.assertTrue(
+            os.path.exists(selection["dbPath"]),
+            "the recovery command reported a database that does not exist",
+        )
+
     def test_the_printed_command_names_the_interpreter_that_is_running(self):
         """These lines are pasted into a shell where python3 may be absent or different.
 
