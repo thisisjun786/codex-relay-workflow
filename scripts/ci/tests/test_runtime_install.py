@@ -924,7 +924,7 @@ class AuthorizedRepairTests(unittest.TestCase):
                     component["sourceDigest"] = digest * 32
                 args = argparse.Namespace(dest=temporary, apply=False, record=None,
                                           python=sys.executable, socket=None, state=None,
-                                          issue=None)
+                                          issue=None, codex_home=temporary)
                 with mock.patch.object(runtime_install.definition, "load", return_value=data), \
                      mock.patch.object(runtime_install.definition, "verify", return_value=[]), \
                      mock.patch.object(runtime_install, "emit",
@@ -2060,7 +2060,7 @@ class OwnershipReleaseTests(unittest.TestCase):
 
             args = argparse.Namespace(dest=str(destination), apply=True, record=str(record_path),
                                       python=sys.executable, socket=None, state=None,
-                                      issue="JUN-104")
+                                      issue="JUN-104", codex_home=str(destination.parent))
             with mock.patch.object(runtime_install.hostrecord, "update", side_effect=failing), \
                  mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
                 code = runtime_install.cmd_install(args)
@@ -2331,7 +2331,8 @@ class RetriableDestinationTests(unittest.TestCase):
         emitted = []
         args = argparse.Namespace(dest=str(Path(temporary) / "dest"), apply=True,
                                   record=str(record_path), python=sys.executable,
-                                  socket=None, state=None, issue="JUN-104")
+                                  socket=None, state=None, issue="JUN-104",
+                                  codex_home=temporary)
         stack = [mock.patch.object(runtime_install, "emit", side_effect=emitted.append)]
         for target, kwargs in patches.items():
             stack.append(mock.patch.object(runtime_install, target, **kwargs))
@@ -4681,7 +4682,7 @@ class LinkConflictTests(unittest.TestCase):
     def test_a_caller_that_made_no_reading_says_so(self):
         classified = self._classified(None)
         self.assertIsNone(classified["linkConflict"])
-        self.assertFalse(classified["linkConflictRead"],
+        self.assertFalse(classified["conflictsRead"]["links"],
                          "no conflict found and nobody looked are different answers")
 
     def test_diagnosis_reads_the_skill_layer_before_it_classifies(self):
@@ -4750,6 +4751,180 @@ class BusyLockTests(unittest.TestCase):
         self.assertIn("lock", payload["candidate"])
         self.assertFalse(payload["retriable"])
         self.assertTrue(payload["recoveryRequires"])
+
+
+# =========================================================================================
+# Check 16 - the inventory for a conflict cell is the CALLER set
+#
+# Every cell was declared, every declaration was verified, and install still promoted over a
+# conflict, because the checks looked at cells and this defect lives one dimension up: the
+# command that moves the selection passed neither conflict reading. A cell may legitimately be
+# None for a caller -- the MCP registration is the bridge's and says nothing about the relay --
+# but the caller says so by passing the keyword, and the classification reports which readings
+# were made.
+#
+# Only the production module is scanned. The cases in this file construct classify_component
+# calls with deliberately isolated signals, and scanning them would forbid the isolation the
+# other checks are built on.
+# =========================================================================================
+
+def _classify_callers(tree):
+    """Every classify_component call in the command, as (function, line, keywords)."""
+    callers = []
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "classify_component":
+                callers.append((function.name, node.lineno,
+                                {k.arg for k in node.keywords if k.arg}))
+    return callers
+
+
+class ConflictCallerTests(unittest.TestCase):
+    def test_the_caller_inventory_is_not_empty(self):
+        callers = _classify_callers(ast.parse(RUNTIME.read_text(encoding="utf-8")))
+        # Guards the reader: no callers would make the assertion below pass vacuously.
+        self.assertGreaterEqual(len(callers), 2, callers)
+        self.assertEqual({name for name, _line, _kw in callers}, {"cmd_diagnose", "cmd_install"})
+
+    def test_every_caller_supplies_every_conflict_reading(self):
+        import runtime_install
+
+        missing = []
+        for name, line, keywords in _classify_callers(
+                ast.parse(RUNTIME.read_text(encoding="utf-8"))):
+            absent = sorted(set(runtime_install.CONFLICT_READINGS) - keywords)
+            if absent:
+                missing.append(name + ":" + str(line) + " omits " + ", ".join(absent))
+        self.assertEqual(missing, [])
+
+    def test_the_scan_sees_a_caller_that_omits_one(self):
+        import runtime_install
+
+        source = ("def cmd_install(args):\n"
+                  "    return classify_component(c, record=r, links=l)\n")
+        callers = _classify_callers(ast.parse(source))
+        absent = set(runtime_install.CONFLICT_READINGS) - callers[0][2]
+        self.assertEqual(sorted(absent), ["registration"])
+
+    def test_the_classification_reports_which_readings_were_made(self):
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        with mock.patch.object(runtime_install, "codex_cli_version",
+                               return_value="0.0.0-for-this-case"):
+            both = runtime_install.classify_component(
+                component, record=hostrecord.empty(1), app_server="a-server",
+                registration={"outcome": reading.PRESENT, "detail": "read", "registered": {}},
+                links={"conflict": [], "linked": [], "missing": [], "legacy": []})
+            neither = runtime_install.classify_component(
+                component, record=hostrecord.empty(1), app_server="a-server")
+        self.assertEqual(both["conflictsRead"],
+                         {name: True for name in runtime_install.CONFLICT_READINGS})
+        self.assertEqual(neither["conflictsRead"],
+                         {name: False for name in runtime_install.CONFLICT_READINGS})
+
+    def test_install_can_be_pointed_at_a_codex_home(self):
+        import runtime_install
+
+        parsed = runtime_install.build_parser().parse_args(
+            ["install", "--dest", "/tmp/x", "--codex-home", "/tmp/home"])
+        self.assertEqual(parsed.codex_home, "/tmp/home")
+
+    def test_the_promoting_caller_compares_the_command_and_not_the_arguments(self):
+        """The mechanism is only half of it; the caller has to ask for it.
+
+        install knows which entry point it installed and nothing about the arguments a host
+        chose, so it compares the command alone. Read from the call rather than from the
+        behaviour because reaching this through a whole installation would cost minutes.
+        """
+        tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+        install = next(node for node in ast.walk(tree)
+                       if isinstance(node, ast.FunctionDef) and node.name == "cmd_install")
+        calls = [node for node in ast.walk(install)
+                 if isinstance(node, ast.Call)
+                 and getattr(node.func, "id", None) == "registration_state"]
+        self.assertTrue(calls, "install makes no registration reading")
+        for call in calls:
+            asked = {k.arg: k.value for k in call.keywords if k.arg}
+            self.assertIn("compare_args", asked,
+                          "install must say it has no expectation about the arguments")
+            self.assertIs(asked["compare_args"].value, False)
+
+    @needs_reader
+    def test_a_registration_with_arguments_is_not_a_conflict_for_a_caller_expecting_none(self):
+        """install knows which entry point it installed and nothing about the arguments a host
+        chose. An empty list is an expectation, not the absence of one."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "codex"
+            home.mkdir()
+            (home / "config.toml").write_text(
+                "[mcp_servers." + runtime_install.MCP_NAME + "]" + chr(10)
+                + 'command = "/opt/env/bin/codex-thread-bridge"' + chr(10)
+                + 'args = ["--socket", "/tmp/s.sock"]' + chr(10), encoding="utf-8")
+            same = runtime_install.registration_state(
+                home, "/opt/env/bin/codex-thread-bridge", [], compare_args=False)
+            other = runtime_install.registration_state(
+                home, "/somewhere/else/bridge", [], compare_args=False)
+            strict = runtime_install.registration_state(
+                home, "/opt/env/bin/codex-thread-bridge", [])
+        self.assertEqual(same["outcome"], codexconfig.LINKED, same["detail"])
+        self.assertFalse(same["comparedArguments"])
+        self.assertEqual(other["outcome"], codexconfig.CONFLICT)
+        self.assertEqual(strict["outcome"], codexconfig.CONFLICT,
+                         "the strict comparison is unchanged and still expects the arguments")
+
+
+# =========================================================================================
+# Check 17 - the inventory for a store on disk is the PLACE set
+#
+# This listing is the whole inventory when the relay cannot answer, which is exactly when
+# hiding a store matters. The state root had its own branch for relay.sqlite3 and everything
+# else was looked for in child directories, so an operations ledger beside the root database
+# was in neither and was never listed. A third branch would reopen at the next place, so the
+# places are a rule and every pattern is looked for in every one of them.
+# =========================================================================================
+
+class StorePlaceTests(unittest.TestCase):
+    def _root(self, temporary):
+        root = Path(temporary) / "state" / "codex-session-relay"
+        (root / "scope-a").mkdir(parents=True)
+        return root
+
+    def test_every_pattern_is_found_in_every_place(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._root(temporary)
+            expected = set()
+            for place in (root, root / "scope-a"):
+                for pattern, _kind in scope.STORE_PATTERNS:
+                    name = pattern.replace("*", "0123456789abcdef")
+                    (place / name).write_bytes(b"")
+                    expected.add(str(place / name))
+            found = scope.filesystem_candidates({"XDG_STATE_HOME": str(Path(temporary) / "state")})
+        self.assertEqual({entry["database"] for entry in found}, expected)
+
+    def test_the_places_are_a_rule_and_the_root_comes_first(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._root(temporary)
+            places = scope.store_places(root)
+        self.assertEqual(places[0], root)
+        self.assertIn(root / "scope-a", places)
+
+    def test_an_unreadable_listing_loses_the_scopes_and_not_the_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self._root(temporary)
+            (root / "relay.sqlite3").write_bytes(b"")
+            with mock.patch.object(Path, "iterdir", side_effect=OSError("denied")):
+                places = scope.store_places(root)
+        self.assertEqual(places, [root])
+
+    def test_the_patterns_are_the_ones_the_packages_write(self):
+        names = {pattern for pattern, _kind in scope.STORE_PATTERNS}
+        self.assertIn("relay.sqlite3", names)
+        self.assertIn("operations-*.sqlite3", names)
 
 
 if __name__ == "__main__":

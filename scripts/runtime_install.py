@@ -102,6 +102,13 @@ SIGNAL_READINGS = {
 # subject, so the subject can be recovered mechanically rather than listed.
 SIGNAL_SUBJECT_SUFFIXES = ("_matches", "_conflict", "_recorded", "_clean", "_point")
 SIGNAL_SUBJECT_PREFIXES = ("has_",)
+
+# The conflict readings a caller of classify_component supplies. Declared because the inventory
+# that matters for these cells is the CALLER set, not the cell set: every cell was named and
+# checked, and install still promoted over a conflict because it passed neither of these. A
+# caller may pass None -- the MCP registration is the bridge's and means nothing for the relay --
+# but it says so by passing the keyword, and the classification reports which readings were made.
+CONFLICT_READINGS = ("registration", "links")
 UNUSABLE_REGISTRATIONS = tuple(dict.fromkeys(reading.UNUSABLE + (codexconfig.UNREADABLE,)))
 
 # register-mcp's own three answers, beside the ones those modules own. A partial application is
@@ -516,10 +523,10 @@ def classify_component(component, *, record, entry_override=None, registration=N
         "interpreterPath": python,
         "interpreterFrom": interpreter_from,
         "linkConflict": link_conflict,
-        # Whether this caller made the skill-link reading at all. install has no Codex home in
-        # scope and makes none, and saying so is the difference between "no conflict was found"
-        # and "nobody looked".
-        "linkConflictRead": links is not None,
+        # Which conflict readings this caller made at all. "No conflict was found" and "nobody
+        # looked" are different answers, and one hand-written flag for one cell did not
+        # generalise: the caller that moves the selection was passing neither.
+        "conflictsRead": {"registration": registration is not None, "links": links is not None},
         "importedLocation": location,
         "importError": import_error,
         "importCommand": import_command,
@@ -556,13 +563,19 @@ def read_config(codex_home):
     return path, reading.read_text(path, "the Codex configuration", absent="")
 
 
-def registration_state(codex_home, command, args, name=MCP_NAME):
+def registration_state(codex_home, command, args, name=MCP_NAME, compare_args=True):
     """What the configuration registers, and only compared when a command was supplied.
 
     Diagnosis with no expected command must not invent one. Comparing an existing, correct
     registration against an empty string reports CONFLICT for a host that is registered
     exactly right, and that false conflict then drags the component and the installed
     result down with it.
+
+    compare_args is for a caller that has an expectation about the command and none about the
+    arguments. install knows which entry point it is promoting and knows nothing about the
+    arguments a host chose, and an empty list is not "no expectation": it is the expectation
+    that there are none, which reports a conflict for a registration that is correct and merely
+    carries supported bridge arguments.
     """
     path, config = read_config(codex_home)
     if not config.usable:
@@ -587,8 +600,13 @@ def registration_state(codex_home, command, args, name=MCP_NAME):
             "wouldWrite": False,
             "registered": registered,
         }
+    if not compare_args:
+        # The caller expects this command and has no expectation about arguments, so the
+        # arguments compare against themselves and only the command decides.
+        args = list((registered or {}).get("args") or [])
     new_text, outcome, detail = codexconfig.register(text, name, command, args)
     return {"path": str(path), "outcome": outcome, "detail": detail,
+            "comparedArguments": compare_args,
             "wouldWrite": new_text != text, "registered": registered}
 
 
@@ -1417,6 +1435,7 @@ def cmd_hook(args):
 # ------------------------------------------------------------------------- install
 
 def cmd_install(args):
+    codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     try:
         with reading.region(definition.DEFINITION_PATH, "the component definition"):
             data = definition.load()
@@ -1612,12 +1631,24 @@ def cmd_install(args):
         if not staged.usable:
             return _install_failed(record_path, data["definitionVersion"], performed,
                                    environment, owned, failed_reading=staged)
+        # The conflict readings this promotion is decided against. Without them the command
+        # that moves the selection was blind to a conflict diagnose would have raised: an MCP
+        # registration naming a different bridge, or a foreign skill path. The registration is
+        # compared on the command this run is promoting and on nothing else, because install
+        # knows which entry point it installed and knows nothing about the arguments a host
+        # chose; an empty argument list would be an expectation, not the absence of one.
+        links = skill_links(codex_home)
+        bridge_entry = installs[component_of(data, BRIDGE)["component"]]["entryPoint"]
+        registration = registration_state(codex_home, bridge_entry, [], compare_args=False)
         verdicts = {}
         for component in data["components"]:
             name = component["component"]
             verdicts[name] = classify_component(
                 component, record=staged.value,
                 entry_override=installs[name]["entryPoint"],
+                # The MCP registration is the bridge's, and says nothing about the relay.
+                registration=registration if name == MCP_NAME else None,
+                links=links,
                 # Freshly observed by the measurement this promotion is about, so measurement,
                 # classification and promotion all speak about the same App Server.
                 app_server=measurement.get("appServer"))
@@ -2202,6 +2233,9 @@ def build_parser():
     install = sub.add_parser("install")
     install.add_argument("--dest", required=True)
     install.add_argument("--python")
+    install.add_argument("--codex-home",
+                         help="the Codex home whose MCP registration and skill links are read"
+                              " before promoting; defaults the way diagnose does")
     install.add_argument("--record")
     install.add_argument("--socket")
     install.add_argument("--state")

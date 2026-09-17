@@ -245,6 +245,32 @@ OPS-2.1 conflict exactly as a differing MCP registration is. A caller that makes
 says so - `linkConflictRead` - because no conflict found and nobody looked are different
 answers, and `install` has no Codex home in scope to read.
 
+### The inventory for a conflict cell is the caller set
+
+Every cell is declared, every declaration is verified, and `install` still promoted over a
+conflict, because that defect lives one dimension up: the command that moves the selection
+passed neither conflict reading. `CONFLICT_READINGS` names them, every call of
+`classify_component` in this command has to pass each one, and the classification reports
+`conflictsRead` so a caller that made no reading is distinguishable from one that found no
+conflict. A cell may legitimately be `None` for a caller - the MCP registration is the bridge's
+and says nothing about the relay - but the caller says so by passing the keyword.
+
+`install` takes a `--codex-home` for this, defaulting the way `diagnose` does, and compares the
+command alone. It knows which entry point it installed and knows nothing about the arguments a
+host chose, and an empty argument list is not the absence of an expectation: it is the
+expectation that there are none, which reports a conflict for a registration that is correct and
+merely carries supported bridge arguments.
+
+### The inventory for a store on disk is the place set
+
+The filesystem listing is the whole inventory when the relay cannot answer, which is exactly
+when hiding a store matters. The state root had its own branch for `relay.sqlite3` and
+everything else was looked for in child directories, so an operations ledger beside the root
+database was in neither and was never listed. A third branch would reopen at the next place, so
+the places are a rule - the state home, then each scope directory under it - and every store
+pattern is looked for in every one of them. The root comes first and unconditionally, so a
+directory listing that cannot be read loses the scopes and not the root.
+
 ### A lock that could not be taken established nothing
 
 `release_candidate` takes the host-record lock, and a `TimeoutError` used to leave it. That meant

@@ -270,6 +270,31 @@ def sibling_reading(payload):
     return "checked"
 
 
+# Where a store can sit, and what a store file is called. The places are a rule rather than a
+# branch each: the state root got its own branch for relay.sqlite3 and everything else was
+# looked for in child directories only, so an operations ledger beside the root database was in
+# neither and never listed. Adding a third branch would reopen at the next place.
+STORE_PATTERNS = (
+    ("relay.sqlite3", "relay store"),
+    ("operations-*.sqlite3",
+     "adapter operations ledger, selected differently from the store (OPS-3.3)"),
+)
+
+
+def store_places(root):
+    """Every directory a store can sit in: the state home itself, and each scope under it.
+
+    The root is first and unconditional, so a listing that cannot be read loses the scopes and
+    not the root.
+    """
+    places = [root]
+    try:
+        places += sorted(path for path in root.iterdir() if path.is_dir())
+    except OSError:
+        pass
+    return places
+
+
 def filesystem_candidates(env=None):
     """Every relay database and operations ledger visible on disk, listed and not interpreted.
 
@@ -284,21 +309,16 @@ def filesystem_candidates(env=None):
     found = []
     if not root.is_dir():
         return found
-    database = root / "relay.sqlite3"
-    if database.is_file():
-        found.append({"path": str(root), "database": str(database), "kind": "relay store",
-                      "foundBy": "listed on disk at the root of the state home"})
-    try:
-        children = sorted(p for p in root.iterdir() if p.is_dir())
-    except OSError:
-        return found
-    for child in children:
-        if (child / "relay.sqlite3").is_file():
-            found.append({"path": str(child), "database": str(child / "relay.sqlite3"),
-                          "kind": "relay store", "foundBy": "listed on disk in a scope directory"})
-        for ledger in sorted(child.glob("operations-*.sqlite3")):
-            found.append({"path": str(child), "database": str(ledger),
-                          "kind": "adapter operations ledger, selected differently from the store"
-                                  " (OPS-3.3)",
-                          "foundBy": "listed on disk in a scope directory"})
+    for place in store_places(root):
+        where = ("at the root of the state home" if place == root
+                 else "in a scope directory")
+        for pattern, kind in STORE_PATTERNS:
+            try:
+                matches = sorted(place.glob(pattern))
+            except OSError:
+                continue
+            for database in matches:
+                if database.is_file():
+                    found.append({"path": str(place), "database": str(database), "kind": kind,
+                                  "foundBy": "listed on disk " + where})
     return found
