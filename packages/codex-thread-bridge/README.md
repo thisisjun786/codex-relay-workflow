@@ -55,7 +55,7 @@ API key is needed; the existing App Server owns its authentication and model usa
 | `get_capabilities` | Connect and report server identity and bridge limitations |
 | `create_thread` | Create one durable session in an existing directory; optionally name it and send its initial prompt |
 | `create_worktree_thread` | Create a locked, retained bridge-managed Git worktree at an explicit commit and start a task; no Desktop-managed lifecycle |
-| `send_message_to_thread` | Resume an explicitly selected idle thread, optionally under stated settings, then send one message |
+| `send_message_to_thread` | Resume an explicitly selected idle thread under stated settings, then send one message |
 | `list_threads` | Read a page of unarchived backend thread summaries |
 | `read_thread` | Read metadata and a paginated history without resuming |
 | `wait_thread` | Wait up to 50 seconds for the supplied recent turn ID |
@@ -81,6 +81,8 @@ Example tool arguments (these are MCP calls, not shell commands):
   "cwd": "/absolute/path/to/project",
   "title": "Bridge validation",
   "sandbox": "read-only",
+  "model": "anthropic/claude-opus-5",
+  "reasoning_effort": "xhigh",
   "prompt": "Do not use tools or edit files. Reply exactly: BRIDGE_READY"
 }
 ```
@@ -93,14 +95,74 @@ use them with `wait_thread`. After checking the session in Desktop, use
 {
   "request_id": "demo-message-001",
   "thread_id": "<returned threadId>",
-  "message": "Do not use tools or edit files. Reply exactly: BRIDGE_FOLLOWUP_OK"
+  "message": "Do not use tools or edit files. Reply exactly: BRIDGE_FOLLOWUP_OK",
+  "expected_settings": {"model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"}
 }
 ```
 
 Creation defaults to `read-only` and approval policy `never`. `workspace-write`
 and `danger-full-access` are explicit options; obtain authorization for the
-chosen environment before calling. Omitted model/reasoning use the server's
-configured defaults and are neither transmitted nor checked.
+chosen environment before calling. `model` and `reasoning_effort` are required on
+every mutation and are never inherited from the server's configuration.
+
+## Which model a task may run on
+
+A creation that omits its model does not fail. `thread/start` has no required model
+parameter, so the App Server starts the task on its own configured default and paid
+inference begins before anyone can see which model is answering. This bridge refuses that
+instead, and it keeps two questions apart.
+
+**Was a pair stated?** Enforced on every host, with no way to switch it off. A creation or
+a resume that does not carry both `model` and `reasoning_effort` is refused before any
+request is sent. The failure this prevents is an omission, and a guard you can forget to
+enable is not a guard against forgetting.
+
+**Was the pair approved?** Only a host that configured a policy file can answer that, so
+the allowlist is compared only where one exists. `get_capabilities` and every mutation
+receipt report which of the two modes was in force, so nobody assumes the stronger one.
+
+Point `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` at a JSON file to configure one:
+
+```json
+{
+  "allowed": [
+    {"model": "anthropic/claude-opus-5", "efforts": ["xhigh"]},
+    {"model": "openai/gpt-5.6-sol", "efforts": ["high"]}
+  ],
+  "exceptions": {
+    "one-task": {
+      "model": "openai/gpt-6-astra",
+      "reasoningEffort": "high",
+      "cwd": ["/absolute/path/to/that/checkout"],
+      "reason": "why you allowed it; never returned to a caller"
+    }
+  }
+}
+```
+
+Efforts are scoped to their model, so this file approves `opus/xhigh` and `sol/high` and
+refuses `opus/high`, which nobody wrote down. It is read once at startup from this
+process's environment; a file that is configured and cannot be used stops the server
+rather than degrading to presence-only. Paths must be absolute and canonical, and are
+compared by exact string equality.
+
+An exception is a **name, not a value**. The operator writes the id, its one model, its
+one effort and the directories it covers; a caller may cite that id through
+`policy_exception` and nothing else. An id nobody wrote is refused, and an id whose pair
+or directory does not match is refused. That is why the allowlist lives in a file rather
+than a tool argument: a caller has no parameter through which to widen its own allowance,
+and a caller that can approve itself has not been checked by anyone.
+
+Refusals happen before any request is sent and before the ledger records anything, so a
+refused call consumes no `request_id`: fix the arguments and reuse the same one. A receipt
+retained from before these arguments were required cannot be replayed through the tools,
+because its fingerprint no longer matches; read it with `get_operation` and never start a
+replacement under a new ID.
+
+This constrains what this bridge requests and what the host reports back. It is not
+evidence that a provider served the model, because the host echoes an arbitrary effort
+string unchanged. Anyone who can rewrite the policy file or this process's environment
+can change the allowlist, and another client of the same App Server is not covered at all.
 
 ## Settings, and what the host lets you check
 
@@ -257,6 +319,8 @@ Git object store; the task sandbox does not restrict the bridge's Git preparatio
   "destination": "/absolute/path/to/retained-checkout",
   "worktree_mode": "bridge-managed-retained",
   "sandbox": "read-only",
+  "model": "anthropic/claude-opus-5",
+  "reasoning_effort": "xhigh",
   "expected_sandbox_policy": {"type": "readOnly", "networkAccess": false}
 }
 ```
@@ -267,8 +331,9 @@ be available locally. The source must be an existing non-bare checkout root. Bot
 paths must be canonical and absolute; the destination must be absent with an
 existing parent, outside repositories and Git metadata. This example creates a
 readiness-only task without a model turn.
-Optional `prompt`, `title`, `model` and `reasoning_effort` are exact overrides;
-omitted model/reasoning preserve configuration defaults. For other sandboxes,
+`model` and `reasoning_effort` are required and are authorized before any Git work
+happens, so a refused launch leaves no worktree behind; `prompt` and `title` stay
+optional. For other sandboxes,
 supply the complete expected policy, including all roots and network/temp flags.
 The bridge verifies the response rather than silently accepting different settings.
 
