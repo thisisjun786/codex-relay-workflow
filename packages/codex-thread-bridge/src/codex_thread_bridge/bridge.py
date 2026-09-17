@@ -38,8 +38,13 @@ def host_versions(user_agent: str):
 
     Substring matching is not identification: "0.154.0" occurs inside "10.154.0", which would
     turn an unrecognised server into a tested one. Only a whole token counts.
+
+    A token runs to its delimiter rather than stopping at the release numbers, so a prerelease
+    or build-metadata suffix stays part of it. "0.154.0-alpha.1" is a different build from the
+    tested release and has to read as one, since hostSupport is where the exposure-versus-support
+    question is answered.
     """
-    return set(re.findall(r"/(\d+(?:\.\d+)+)", user_agent or ""))
+    return set(re.findall(r"/(\d+(?:\.\d+)+[^\s()/;,]*)", user_agent or ""))
 
 
 # Why a thread cannot be steered, named by the exact status the host reported. Collapsing these

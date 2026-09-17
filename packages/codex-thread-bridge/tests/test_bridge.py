@@ -695,3 +695,22 @@ def test_a_version_is_identified_by_token_not_by_substring():
     assert TESTED_HOST_VERSION not in host_versions("Codex Desktop/10.154.0 (linux)")
     assert host_versions("codex-cli 10.154.0") == set()
     assert host_versions("") == set()
+
+
+def test_a_prerelease_build_is_not_the_tested_host():
+    from codex_thread_bridge.bridge import TESTED_HOST_VERSION, host_versions
+
+    # A prerelease or build-metadata token is a different build from the tested release, so
+    # hostSupport must not record it as tested. Stopping the token at the suffix would read
+    # 0.154.0-alpha.1 as the release and answer the exposure-versus-support question wrongly.
+    for suffix in ("-alpha.1", "-rc.2", "+build.5", "-alpha.1+build.5"):
+        agent = f"codex_web_agent/{TESTED_HOST_VERSION}{suffix}"
+        assert host_versions(agent) == {f"{TESTED_HOST_VERSION}{suffix}"}
+        assert TESTED_HOST_VERSION not in host_versions(agent)
+
+    # The tested release itself still identifies, including beside the bridge's own version.
+    real = (
+        f"Codex Desktop/{TESTED_HOST_VERSION} (Ubuntu 26.4.0; x86_64) "
+        "unknown (codex_thread_bridge; 0.1.0)"
+    )
+    assert TESTED_HOST_VERSION in host_versions(real)
