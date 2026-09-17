@@ -18,10 +18,13 @@ unreadable. That residual is in the conservative direction and the classificatio
 reason, so it is reportable rather than silent.
 """
 
+import ast
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -152,8 +155,8 @@ class FailureIsNotANormalState(GuardTestCase):
     def test_an_unlistable_fact_directory_is_unreadable_not_absent(self):
         self.managed()
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        with mock.patch.object(
-            Path, "iterdir", side_effect=PermissionError("injected"), autospec=True
+        with mock.patch(
+            "codex_session_relay.marker.os.scandir", side_effect=PermissionError("injected")
         ):
             facts, unreadable = marker.read_assignment(directory)
         self.assertIn("claims", unreadable)
@@ -201,7 +204,7 @@ class EnforcementIsNotSkipped(GuardTestCase):
         )
         bad = (
             marker.assignment_dir(self.markers, self.workspace, sibling["assignmentId"])
-            / "hook" / "some-other-session" / "turn-x"
+            / "holds" / "some-other-session" / "turn-x"
         )
         bad.mkdir(parents=True)
         (bad / "0.json").write_text('"not a record"', encoding="utf-8")
@@ -221,17 +224,17 @@ class EnforcementIsNotSkipped(GuardTestCase):
         other_dir = marker.assignment_dir(self.markers, self.workspace, other["assignmentId"])
         for index in range(guard.MAX_HOLDS_PER_SESSION_WINDOW):
             marker.publish(
-                other_dir / "hook" / CHILD / ("spent-" + str(index)) / "0.json",
-                {"held": True, "sessionId": CHILD, "turnId": "spent-" + str(index), "at": NOW},
+                other_dir / "holds" / CHILD / ("spent-" + str(index)) / "0.json",
+                {"sessionId": CHILD, "turnId": "spent-" + str(index), "at": NOW},
             )
         selected = marker.assignment_dir(self.markers, self.workspace, self.assignment)
         real = guard.listing
 
-        def refuse(path, pattern=None):
+        def refuse(path, pattern=None, **kw):
             # The workspace listing fails; the selected assignment's own hook tree still reads.
             if Path(path) == Path(self.markers) / marker.workspace_key(self.workspace):
                 return [], False
-            return real(path, pattern)
+            return real(path, pattern, **kw)
 
         with mock.patch("codex_session_relay.guard.listing", side_effect=refuse):
             counters, corrupt, unreadable = guard.hold_counters(
@@ -297,9 +300,15 @@ class CommandSurface(unittest.TestCase):
         from codex_session_relay import cli
 
         for handler in cli.MARKER_COMMANDS:
-            args = Namespace(handler=handler, no_db_path=False)
-            expected = handler is not cli.cmd_intent_declare
+            args = Namespace(handler=handler, no_db_path=False, db_path=None)
+            # Two commands reach a store: declare records its path, register confirms against it.
+            expected = handler not in (cli.cmd_intent_declare, cli.cmd_intent_register)
             self.assertIs(cli._reads_no_selected_store(args), expected, handler.__name__)
+        self.assertTrue(
+            cli._reads_no_selected_store(
+                Namespace(handler=cli.cmd_intent_register, db_path="/named/relay.sqlite3")
+            )
+        )
         # intent-declare records the resolved path, so it stays guarded unless it records none.
         self.assertTrue(
             cli._reads_no_selected_store(
@@ -307,6 +316,233 @@ class CommandSurface(unittest.TestCase):
             )
         )
         self.assertFalse(cli._reads_no_selected_store(Namespace(handler=cli.cmd_emit)))
+
+
+# Inventory A. The set of stdlib predicates that answer a filesystem question by SWALLOWING an
+# access error and returning an ordinary value. Enumerable because it is a fixed set of NAMES,
+# unlike "every place that can fail" - which is why the property is stated over these.
+SWALLOWING_PREDICATES = {
+    "exists", "is_dir", "is_file", "is_symlink", "is_mount", "samefile",
+    "access", "isdir", "isfile", "islink", "lexists",
+    "glob", "rglob", "iterdir", "scandir", "listdir", "walk",
+}
+
+# Every call site allowed to use one, with the reason. Anything else is a sibling of the defect
+# this inventory exists to catch, and the test below names it.
+SWALLOWING_ALLOWED = {
+    ("marker.py", "listing"): "the one guarded implementation: it catches the OSError the"
+                              " predicates swallow and reports readability to its callers",
+    ("cli.py", "cmd_doctor"): "a diagnostic on the constant /proc/self/fd, where False is the right"
+                              " answer whether it is absent or unreadable, and no marker path is"
+                              " involved",
+    ("cli.py", "_refuse_ambiguous_state"): "pre-existing relay state selection, not a marker path;"
+                                           " owned by the store-selection surface",
+}
+
+OWNED_MODULES = ("marker.py", "intent.py", "guard.py", "cli.py")
+
+
+def _enclosing_functions(tree):
+    """Map every node to the function that contains it, so a call site can be attributed."""
+    owner = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(node):
+                owner.setdefault(child, node.name)
+    return owner
+
+
+class SwallowingPredicateInventory(unittest.TestCase):
+    """Property extension A, as the counting method rather than a list of fixed line numbers.
+
+    Three rounds running ended in one site fixed and its siblings left, because the sibling set was
+    never counted. This counts it on every run: a new call to a predicate that hides an access
+    error has to be either routed through the guarded primitive or named here with a reason.
+    """
+
+    def sites(self):
+        base = Path(__file__).resolve().parent.parent / "src" / "codex_session_relay"
+        found = []
+        for name in OWNED_MODULES:
+            source = (base / name).read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            owner = _enclosing_functions(tree)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                attribute = (
+                    func.attr if isinstance(func, ast.Attribute)
+                    else func.id if isinstance(func, ast.Name) else None
+                )
+                if attribute in SWALLOWING_PREDICATES:
+                    found.append((name, owner.get(node, "<module>"), node.lineno, attribute))
+        return found
+
+    def test_every_swallowing_predicate_is_routed_or_justified(self):
+        unjustified = [
+            site for site in self.sites() if (site[0], site[1]) not in SWALLOWING_ALLOWED
+        ]
+        self.assertEqual(
+            unjustified, [],
+            "these call sites hide an access error behind an ordinary value; route them through"
+            " marker.listing or add them to SWALLOWING_ALLOWED with a reason",
+        )
+
+    def test_the_inventory_actually_finds_the_guarded_primitive(self):
+        """A scan that finds nothing proves nothing, so assert it still sees the known site."""
+        self.assertIn(
+            ("marker.py", "listing"), {(site[0], site[1]) for site in self.sites()}
+        )
+
+
+class RecordedPathsAreConfined(unittest.TestCase):
+    """Property extension B: a path that came from a record is resolved and confined before use."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="relay-confine-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_a_symlinked_parent_cannot_carry_a_write_out_of_the_root(self):
+        root = self.tmp / "markers"
+        outside = self.tmp / "outside"
+        outside.mkdir(parents=True)
+        (root / "assignment").mkdir(parents=True)
+        os.symlink(outside, root / "assignment" / "claims")
+        with self.assertRaises(ValueError):
+            marker.publish(
+                root / "assignment" / "claims" / "sess" / "claim.json",
+                {"sessionId": "sess"},
+                root=root,
+            )
+        self.assertFalse((outside / "sess" / "claim.json").exists())
+
+    def test_confinement_accepts_a_path_that_stays_inside(self):
+        root = self.tmp / "markers"
+        target = root / "assignment" / "intent.json"
+        self.assertEqual(marker.publish(target, {"issueKey": "REL-1"}, root=root), marker.PUBLISHED)
+
+    def test_a_relative_database_path_is_absolutised_rather_than_failing_open(self):
+        """Path.as_uri() raises on a relative path, and that was caught as an unreadable store."""
+        store = self.tmp / "state" / "relay.sqlite3"
+        store.parent.mkdir(parents=True)
+        sqlite3.connect(store).close()
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            connection = intent.read_only_connection("state/relay.sqlite3")
+        finally:
+            os.chdir(cwd)
+        self.assertIsNotNone(connection)
+        connection.close()
+
+    def test_query_characters_in_a_path_are_not_read_as_uri_parameters(self):
+        """A dbPath containing ? or # must name a file, never configure the connection."""
+        odd = self.tmp / "relay?mode=rw#x.sqlite3"
+        sqlite3.connect(odd).close()
+        connection = intent.read_only_connection(str(odd))
+        self.assertIsNotNone(connection)
+        try:
+            # Read-only really is read-only: the URI parameter in the NAME did not become one.
+            with self.assertRaises(sqlite3.OperationalError):
+                connection.execute("CREATE TABLE t (x)")
+        finally:
+            connection.close()
+
+    def test_a_missing_store_is_unopenable_rather_than_created(self):
+        absent = self.tmp / "nested" / "relay.sqlite3"
+        self.assertIsNone(intent.read_only_connection(str(absent)))
+        self.assertFalse(absent.parent.exists())
+
+
+class HoldReservation(GuardTestCase):
+    """The per-turn bound is decided by a create-once file, not by a count read beforehand."""
+
+    def test_two_evaluations_that_both_see_an_unspent_budget_produce_one_hold(self):
+        """Deterministic: the counters are forced to zero for both, so only the reservation can
+        separate them. No sleeping and no thread scheduling is involved."""
+        self.managed()
+        empty = {"holdsThisTurn": 0, "holdsThisGeneration": 0, "holdsThisSessionWindow": 0}
+        with mock.patch(
+            "codex_session_relay.guard.hold_counters", return_value=(empty, None, None)
+        ):
+            first = self.evaluate()
+            second = self.evaluate()
+        self.assertEqual(first["decision"], guard.BLOCK)
+        self.assertEqual(second["decision"], guard.RELEASE)
+        self.assertEqual(second["state"], "hold_in_flight")
+        # And the omission is still recorded both times: detection never depended on the hold.
+        self.assertEqual(second["observation"], "undeclared_turn_end")
+
+    def test_a_real_race_on_one_stop_produces_exactly_one_winner(self):
+        self.managed()
+        empty = {"holdsThisTurn": 0, "holdsThisGeneration": 0, "holdsThisSessionWindow": 0}
+        barrier = threading.Barrier(6)
+        decisions = []
+        lock = threading.Lock()
+
+        def race():
+            barrier.wait()
+            verdict = guard.evaluate(
+                self.markers, self.stop(), now=LATER, mode=guard.HOLD, record=False
+            )
+            with lock:
+                decisions.append(verdict["decision"])
+
+        with mock.patch(
+            "codex_session_relay.guard.hold_counters", return_value=(empty, None, None)
+        ):
+            threads = [threading.Thread(target=race) for _ in range(6)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(decisions.count(guard.BLOCK), 1, decisions)
+        self.assertEqual(decisions.count(guard.RELEASE), 5, decisions)
+
+    def test_a_reservation_is_what_the_bounds_count(self):
+        self.managed()
+        self.evaluate()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        reserved = sorted((directory / "holds" / CHILD).glob("*/0.json"))
+        self.assertEqual(len(reserved), 1)
+        counters, corrupt, unreadable = guard.hold_counters(
+            directory, session_id=CHILD, turn_id=DISPATCH_TURN, now=LATER,
+            workspace_root=directory.parent,
+        )
+        self.assertEqual(counters["holdsThisTurn"], 1)
+        self.assertEqual(counters["holdsThisGeneration"], 1)
+        self.assertIsNone(corrupt)
+        self.assertIsNone(unreadable)
+
+    def test_observe_only_never_reserves(self):
+        self.managed()
+        self.evaluate(mode=guard.OBSERVE)
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        self.assertFalse((directory / "holds").exists())
+
+
+class FailedPublicationLeavesNoLitter(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="relay-litter-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_a_failed_write_removes_its_own_temporary_file(self):
+        target = self.tmp / "a" / "intent.json"
+        for _ in range(5):
+            with mock.patch("codex_session_relay.marker.os.write", return_value=0):
+                with self.assertRaises(OSError):
+                    marker.publish(target, {"issueKey": "REL-1"})
+        self.assertFalse(target.exists())
+        # Repeated failures used to pile up one orphan each, in a directory readers have to walk.
+        self.assertEqual(list(target.parent.iterdir()), [])
+
+    def test_a_failed_fsync_removes_its_own_temporary_file(self):
+        target = self.tmp / "a" / "intent.json"
+        with mock.patch("codex_session_relay.marker.os.fsync", side_effect=OSError("injected")):
+            with self.assertRaises(OSError):
+                marker.publish(target, {"issueKey": "REL-1"})
+        self.assertEqual(list(target.parent.iterdir()), [])
 
 
 if __name__ == "__main__":

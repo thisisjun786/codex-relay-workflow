@@ -12,6 +12,7 @@ from pathlib import Path
 
 from codex_session_relay import intent, marker
 from codex_session_relay.errors import RefusalReason, RelayError
+from codex_session_relay.store import Store
 
 T0 = "2026-01-01T00:00:00+00:00"
 T5 = "2026-01-01T00:05:00+00:00"
@@ -30,6 +31,17 @@ class IntentTestCase(unittest.TestCase):
         self.workspace = Path(self.tmp) / "work"
         self.workspace.mkdir()
         self.assignment = marker.assignment_id(DISPATCH)
+        # Registration is confirmed against the relay, so these tests need a real store holding a
+        # real generation for the pair rather than a marker on its own.
+        self.store = Store(str(Path(self.tmp) / "state" / "relay.sqlite3"))
+        self.addCleanup(self.store.close)
+
+    def open_generation(self, relationship_id="rel-0123456789abcdef", dispatch=DISPATCH):
+        self.store.db.execute(
+            "INSERT OR IGNORE INTO generations (relationship_id, execution_generation,"
+            " dispatch_request_id, anchor_state, opened_at) VALUES (?,?,?,?,?)",
+            (relationship_id, 1, dispatch, "bound", T0),
+        )
 
     # ------------------------------------------------------------- helpers
 
@@ -69,10 +81,13 @@ class IntentTestCase(unittest.TestCase):
             session_id=session, task_id=task, at=at,
         )
 
-    def register(self, relationship_id="rel-0123456789abcdef", dispatch=DISPATCH):
+    def register(self, relationship_id="rel-0123456789abcdef", dispatch=DISPATCH, opened=True):
+        if opened:
+            self.open_generation(relationship_id, dispatch)
         return intent.register_relationship(
             self.root, workspace=self.workspace, assignment=self.assignment,
             relationship_id=relationship_id, dispatch_request_id=dispatch, at=T0,
+            db_path=str(self.store.path),
         )
 
 
@@ -166,6 +181,34 @@ class Binding(IntentTestCase):
             self.declare(dispatch_request_id="  ")
         self.assertEqual(caught.exception.reason, RefusalReason.UNBOUND_GENERATION)
 
+    def test_a_replay_that_corrects_a_semantic_field_is_a_conflict_not_unchanged(self):
+        """The file is create-once, so the correction does NOT land. Saying unchanged told a
+        coordinator its fix had taken while the guard went on reading the stale store."""
+        first = self.declare(db_path="/first/relay.sqlite3")
+        self.assertEqual(first["outcome"], marker.PUBLISHED)
+        again = self.declare(db_path="/corrected/relay.sqlite3")
+        self.assertEqual(again["outcome"], intent.CONFLICT)
+        self.assertEqual(self.facts()["intent"]["dbPath"], "/first/relay.sqlite3")
+
+    def test_an_identical_replay_is_still_unchanged(self):
+        self.declare(db_path="/first/relay.sqlite3")
+        self.assertEqual(
+            self.declare(db_path="/first/relay.sqlite3")["outcome"], intent.UNCHANGED
+        )
+
+    def test_every_semantic_field_is_compared(self):
+        baseline = {"criteria_source": "doc-a", "baseline_revision": "rev-1", "issue_key": "REL-1"}
+        self.declare(**baseline)
+        for field, value in (
+            ("criteria_source", "doc-b"),
+            ("baseline_revision", "rev-2"),
+            ("issue_key", "REL-9"),
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(
+                    self.declare(**{**baseline, field: value})["outcome"], intent.CONFLICT
+                )
+
     def test_the_dispatch_request_id_is_stored_only_as_its_hash(self):
         self.declare()
         published = self.facts()["intent"]
@@ -182,6 +225,31 @@ class Registration(IntentTestCase):
             self.register(dispatch="a-different-dispatch")
         self.assertEqual(caught.exception.reason, RefusalReason.RELATIONSHIP_CONFLICT)
         self.assertNotIn("relationship", self.facts())
+
+    def test_an_unrelated_relationship_carrying_the_right_dispatch_id_is_refused(self):
+        """The hash check only proves the CALLER restated the right dispatch id.
+
+        Pairing a relationship the relay never opened under this dispatch passes every check the
+        filesystem can make, and its receipts would then satisfy this assignment's guard.
+        """
+        self.declare()
+        self.bind()
+        with self.assertRaises(RelayError) as caught:
+            self.register(relationship_id="rel-ffffffffffffffff", opened=False)
+        self.assertEqual(caught.exception.reason, RefusalReason.RELATIONSHIP_CONFLICT)
+        self.assertNotIn("relationship", self.facts())
+
+    def test_registration_is_refused_when_the_relay_cannot_be_read(self):
+        """Refusing to claim, rather than taking the caller's word, is the conservative side."""
+        self.declare()
+        self.bind()
+        with self.assertRaises(RelayError) as caught:
+            intent.register_relationship(
+                self.root, workspace=self.workspace, assignment=self.assignment,
+                relationship_id="rel-0123456789abcdef", dispatch_request_id=DISPATCH, at=T0,
+                db_path=str(Path(self.tmp) / "no-such-store.sqlite3"),
+            )
+        self.assertEqual(caught.exception.reason, RefusalReason.UNREGISTERED_RELATIONSHIP)
 
     def test_registration_is_create_once_and_names_a_contradiction_as_one(self):
         """A replay and a different relationship must not report the same word.

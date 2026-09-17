@@ -141,6 +141,39 @@ class Refusals(MarkerCli):
         )
         self.assertIs(shown["managed"], False)
 
+    def test_an_explicit_assignment_with_no_intent_reads_unmanaged(self):
+        """Selection treats a directory with no published intent as not selectable, so naming it
+        explicitly has to read the same way rather than deriving a state out of nothing."""
+        shown = self.marker_cli(
+            "intent-show", "--marker-root", self.markers, "--workspace", self.root,
+            "--assignment", marker.assignment_id("never-declared"),
+        )
+        self.assertIs(shown["managed"], False)
+        self.assertNotIn("assignmentState", shown)
+
+    def test_registering_a_relationship_the_relay_never_opened_is_refused(self):
+        """Restating the right dispatch id is not evidence that THIS relationship carries it."""
+        declared = self.declare()
+        self.register()
+        refused = self.marker_cli(
+            "intent-register", "--marker-root", self.markers, "--workspace", self.root,
+            "--assignment", declared["assignmentId"], "--relationship", "rel-ffffffffffffffff",
+            "--dispatch-request-id", DISPATCH, expect=2,
+        )
+        self.assertEqual(refused["error"], "refused")
+        self.assertEqual(refused["reason"], "relationship_conflict")
+
+    def test_registration_is_refused_when_the_relay_cannot_be_confirmed(self):
+        """Refusing to claim beats taking the caller's word, so an unreadable store is a refusal."""
+        declared = self.declare()
+        refused = self.marker_cli(
+            "intent-register", "--marker-root", self.markers, "--workspace", self.root,
+            "--assignment", declared["assignmentId"], "--relationship", "rel-0123456789abcdef",
+            "--dispatch-request-id", DISPATCH,
+            "--db-path", os.path.join(self.tmp, "no-such-store.sqlite3"), expect=2,
+        )
+        self.assertEqual(refused["reason"], "unregistered_relationship")
+
     def test_a_relationship_from_another_dispatch_is_refused_with_a_reason(self):
         declared = self.declare()
         refused = self.marker_cli(

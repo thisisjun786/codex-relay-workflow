@@ -24,6 +24,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 
 MARKER_ENV = "CODEX_SESSION_RELAY_MARKER_ROOT"
@@ -211,7 +212,7 @@ def _fsync_directory(directory) -> None:
         os.close(descriptor)
 
 
-def publish(target, payload: dict) -> str:
+def publish(target, payload: dict, *, root=None) -> str:
     """Create-once publication. Returns 'published' when this writer won, 'exists' when it lost.
 
     The temp sibling is what forces the writable unit to be the DIRECTORY rather than the single
@@ -221,15 +222,23 @@ def publish(target, payload: dict) -> str:
 
     Losing is returned rather than raised because it is an ordinary outcome: a replayed bind of the
     same identity is a no-op, and only the caller knows whether the value it lost to agrees.
+
+    root confines the write. Every marker write passes it, so a symlinked parent inside the marker
+    subtree cannot carry the publication outside the assignment that owns it. O_NOFOLLOW covers the
+    final component, and O_EXCL already refuses an existing name of any kind.
     """
     target = Path(target)
     directory = target.parent
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if root is not None:
+        confined(directory, root)
     temp = directory / (
         "." + target.name + ".tmp." + str(os.getpid()) + "." + uuid.uuid4().hex[:12]
     )
     body = _canonical(payload).encode("utf-8")
-    descriptor = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    descriptor = os.open(
+        temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600
+    )
     try:
         # os.write may return a short count, and the temp is linked into place immediately after.
         # Ignoring the count let a truncated fact become the winning create-once record, which no
@@ -241,20 +250,29 @@ def publish(target, payload: dict) -> str:
                 raise OSError("the fact could not be written in full, so it is not published")
             written += count
         os.fsync(descriptor)
-    finally:
+    except BaseException:
+        # The temp is this call's own litter. Leaving it behind on every failed write turns a
+        # transient fault into an unbounded pile of orphans in a directory readers have to walk.
         os.close(descriptor)
+        _discard(temp)
+        raise
+    os.close(descriptor)
     try:
         os.link(temp, target)
         outcome = PUBLISHED
     except FileExistsError:
         outcome = EXISTS
     finally:
-        try:
-            os.unlink(temp)
-        except OSError:
-            pass
+        _discard(temp)
     _fsync_directory(directory)
     return outcome
+
+
+def _discard(temp) -> None:
+    try:
+        os.unlink(temp)
+    except OSError:
+        pass
 
 
 PRESENT, ABSENT, UNREADABLE = "present", "absent", "unreadable"
@@ -283,22 +301,61 @@ def _read_fact(path):
         return None, UNREADABLE
 
 
-def listing(directory, pattern=None):
-    """List a fact directory without ever raising. Returns (paths, readable).
+DIRECTORIES, ENTRIES = "directories", "entries"
 
-    The listing itself is an outside-world operation and was the one step here not covered by a
-    read guard, so a permission or mount fault on claims/ or attempts/ escaped read_assignment,
-    left evaluate through the CLI's generic handler as a host failure, and ended the Stop with no
-    observation recorded at all.
+
+def listing(directory, pattern=None, *, only=None):
+    """Every entry in a directory, as (paths, readable). Never raises.
+
+    THE single place this package asks the filesystem what is in a directory, because the ordinary
+    predicates do not answer the question honestly. Path.is_dir(), Path.exists() and their os.path
+    siblings swallow an access error and return False, so a directory nobody may read is reported
+    as one that is not there. The classification boundary in guard.evaluate cannot catch that: it
+    converts exceptions, and a swallowed error never becomes one.
+
+    FileNotFoundError is the only absence. Every other OSError - permission, mount, a file where a
+    directory belongs - is unreadable, which the callers turn into state_unreadable rather than into
+    an ordinary empty result. DirEntry.is_dir() can raise too, and it is caught here for the same
+    reason: filtering a listing must not silently drop the entry it could not classify.
     """
     directory = Path(directory)
+    found = []
     try:
-        if not directory.is_dir():
-            return [], True
-        entries = directory.glob(pattern) if pattern else directory.iterdir()
-        return sorted(entries), True
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if pattern is not None and not fnmatch(entry.name, pattern):
+                    continue
+                if only is not None:
+                    try:
+                        is_directory = entry.is_dir()
+                    except OSError:
+                        return [], False
+                    if (only == DIRECTORIES) != is_directory:
+                        continue
+                found.append(Path(entry.path))
+    except FileNotFoundError:
+        return [], True
     except OSError:
         return [], False
+    return sorted(found), True
+
+
+def confined(path, root):
+    """Resolve a path and require it to stay under the root that owns it.
+
+    The marker subtree is writable by the parties that publish into it, so a symlink planted there
+    would carry a create-once write anywhere the process can reach. Resolving first and checking
+    afterwards is what makes the check meaningful: testing the unresolved path would be asking the
+    attacker's spelling rather than the filesystem's answer.
+    """
+    resolved = Path(path).resolve()
+    base = Path(root).resolve()
+    if resolved != base and not resolved.is_relative_to(base):
+        raise ValueError(
+            "refusing to write outside the marker root: " + str(resolved) + " is not under "
+            + str(base)
+        )
+    return resolved
 
 
 def _identified(value, fact_id):
@@ -357,17 +414,16 @@ def read_assignment(directory):
                 unreadable.append(key + "/" + entry.stem)
                 continue
             items.append(_identified(value, key + "/" + entry.stem))
-        if entries or (directory / key).exists():
-            marker[key] = items
+        # Recorded even when empty: we looked, and "we looked and found none" is a fact readers may
+        # rely on. Asking exists() to decide would reintroduce a predicate that swallows its error.
+        marker[key] = items
 
-    sessions, readable = listing(directory / "claims")
+    sessions, readable = listing(directory / "claims", only=DIRECTORIES)
     if not readable:
         unreadable.append("claims")
-    elif sessions:
+    else:
         claims = []
         for session_dir in sessions:
-            if not session_dir.is_dir():
-                continue
             fact_id = "claims/" + session_dir.name + "/" + CLAIM_FILE
             value, status = _read_fact(session_dir / CLAIM_FILE)
             if status is ABSENT:
@@ -411,10 +467,4 @@ def list_assignments(root, workspace):
     directory could not be read is unknown, and reporting it as unmanaged releases the turn AND
     records nothing, which is how a permission or mount fault silently switches detection off.
     """
-    directory = workspace_dir(root, workspace)
-    if not directory.exists():
-        return [], True
-    try:
-        return sorted(p for p in directory.iterdir() if p.is_dir()), True
-    except OSError:
-        return [], False
+    return listing(workspace_dir(root, workspace), only=DIRECTORIES)

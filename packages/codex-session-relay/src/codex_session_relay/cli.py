@@ -1180,6 +1180,9 @@ def cmd_intent_register(services, args) -> dict:
         relationship_id=args.relationship,
         dispatch_request_id=args.dispatch_request_id,
         at=services.clock.iso(),
+        # The relay is the only party that knows which relationship a dispatch actually opened,
+        # so registration is confirmed against it rather than taken on the caller's word.
+        db_path=args.db_path or str(services.selection.db_path),
     )
 
 
@@ -1230,6 +1233,19 @@ def cmd_intent_show(services, args) -> dict:
     if args.assignment:
         directory = marker.assignment_dir(root, args.workspace, args.assignment)
         facts, unreadable = marker.read_assignment(directory)
+        if not unreadable and not isinstance(facts.get("intent"), dict):
+            # Selection treats an assignment with no published intent as not selectable, so an
+            # explicit one has to read the same way. Reporting it managed and then deriving
+            # intent_declared out of nothing told a coordinator a failed declaration had landed.
+            return {
+                "markerRoot": str(root),
+                "workspace": args.workspace,
+                "managed": False,
+                "assignmentId": directory.name,
+                "assignmentDir": str(directory),
+                "unreadable": [],
+                "detail": "no intent is published for this assignment",
+            }
     else:
         directory, facts, unreadable = intent.select_assignment(root, args.workspace, args.session)
         if directory is None:
@@ -1647,6 +1663,9 @@ def build_parser() -> argparse.ArgumentParser:
     intent_register.add_argument("--assignment", required=True)
     intent_register.add_argument("--relationship", required=True)
     intent_register.add_argument("--dispatch-request-id", required=True)
+    intent_register.add_argument(
+        "--db-path", help="the relay store to confirm this relationship against"
+    )
     intent_register.set_defaults(handler=cmd_intent_register)
 
     intent_claim = marker_command("intent-claim")
@@ -1875,6 +1894,10 @@ def _reads_no_selected_store(args) -> bool:
     handler = getattr(args, "handler", None)
     if handler is cmd_intent_declare:
         return bool(getattr(args, "no_db_path", False))
+    if handler is cmd_intent_register:
+        # It confirms the relationship against a store, so it is only marker-only when the caller
+        # named which store rather than letting discovery guess one.
+        return bool(getattr(args, "db_path", None))
     return handler in MARKER_COMMANDS
 
 

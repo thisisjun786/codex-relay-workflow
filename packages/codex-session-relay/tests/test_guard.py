@@ -63,6 +63,7 @@ class GuardTestCase(RelayTestCase):
         return intent.register_relationship(
             self.markers, workspace=self.workspace, assignment=self.assignment,
             relationship_id=relationship["relationshipId"], dispatch_request_id=DISPATCH, at=NOW,
+            db_path=str(self.store.path),
         )
 
     def dispose(self, outcome, *, session=CHILD, turn=DISPATCH_TURN):
@@ -273,9 +274,7 @@ class Bounds(GuardTestCase):
     def test_a_corrupt_hold_budget_is_reported_and_never_read_as_a_fresh_one(self):
         self.managed()
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        marker.publish(
-            directory / "hook" / CHILD / DISPATCH_TURN / "0.json", {"held": "yes", "at": NOW}
-        )
+        marker.publish(directory / "holds" / CHILD / DISPATCH_TURN / "0.json", "not a record")
         verdict = self.evaluate()
         self.assertEqual(verdict["observation"], "marker_malformed")
         self.assertEqual(verdict["decision"], guard.RELEASE)
@@ -285,9 +284,7 @@ class Bounds(GuardTestCase):
         self.managed()
         self.dispose("interrupted")
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
-        marker.publish(
-            directory / "hook" / CHILD / DISPATCH_TURN / "0.json", {"held": "yes", "at": NOW}
-        )
+        marker.publish(directory / "holds" / CHILD / DISPATCH_TURN / "0.json", "not a record")
         verdict = self.evaluate()
         self.assertEqual(verdict["observation"], "declared_interrupted")
         self.assertEqual(verdict["decision"], guard.RELEASE)
@@ -518,8 +515,8 @@ class ReviewRegressions(GuardTestCase):
         other_dir = marker.assignment_dir(self.markers, self.workspace, other["assignmentId"])
         for index in range(guard.MAX_HOLDS_PER_SESSION_WINDOW):
             marker.publish(
-                other_dir / "hook" / CHILD / ("spent-" + str(index)) / "0.json",
-                {"held": True, "sessionId": CHILD, "turnId": "spent-" + str(index), "at": NOW},
+                other_dir / "holds" / CHILD / ("spent-" + str(index)) / "0.json",
+                {"sessionId": CHILD, "turnId": "spent-" + str(index), "at": NOW},
             )
         verdict = self.evaluate(turn_id="turn-fresh")
         self.assertEqual(verdict["state"], "unresolved_handoff")

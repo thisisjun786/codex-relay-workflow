@@ -34,6 +34,7 @@ from .marker import (
     valid_assignment,
     valid_segment,
 )
+from .marker import listing
 from .marker import list_assignments as _list_assignments
 
 BINDING_WINDOW_MINUTES = 30
@@ -47,6 +48,15 @@ CREATION_ACCEPTED = "creation_accepted"
 INTENT_DECLARED = "intent_declared"
 
 ATTEMPT_OUTCOMES = ("accepted", "unknown", "failed")
+
+# Everything an intent MEANS, which is everything except when it was said. A replay correcting any
+# of these is a different declaration, and reporting it unchanged told a coordinator its fix had
+# landed while the create-once file kept the original. A corrected dbPath is exactly the case that
+# then leaves the guard reading a stale store.
+INTENT_FIELDS = (
+    "dispatchRequestIdHash", "issueKey", "workspace", "dbPath",
+    "criteriaSource", "baselineRevision", "authorizedSettings",
+)
 
 # Exhaustive, not illustrative. An outcome outside this vocabulary is not a declaration at all:
 # reading anything that is not ready_for_review as a release would let a typo buy one, which is
@@ -458,6 +468,58 @@ def _identity(value, what: str) -> str:
     return str(value)
 
 
+def read_only_connection(db_path):
+    """Open the relay store for reading and never for creating. None when it cannot be opened.
+
+    Lives here rather than in guard.py because registration needs it too, and guard imports this
+    module. Mirrors store.read_only_rows: every failure becomes a None rather than an exception,
+    because a caller that raises on a locked database records nothing.
+
+    The path is absolutised BEFORE the URI is built. Path.as_uri() raises ValueError on a relative
+    path, and that exception was being caught as "the store is unreadable", so a perfectly good
+    relative --db-path made every readiness check fail open. as_uri() also percent-encodes, which is
+    what keeps a path containing ? or # from being re-read as SQLite URI parameters.
+    """
+    import sqlite3
+
+    try:
+        resolved = Path(db_path).expanduser().absolute()
+        uri = resolved.as_uri() + "?mode=ro"
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    try:
+        connection = sqlite3.connect(uri, uri=True, timeout=2.0)
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return None
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def dispatch_is_registered(db_path, relationship_id: str, dispatch_request_id: str):
+    """Does the relay agree that this relationship carries this dispatch request id?
+
+    Returns (registered, readable). The marker cannot answer it: an assignment id is the hash of a
+    dispatch request id, so a caller pairing an unrelated relationship with the RIGHT dispatch id
+    satisfies every check the filesystem can make. The relay's generations table is the only place
+    that knows which relationship a dispatch actually opened, and it is unique on the pair.
+    """
+    import sqlite3
+
+    connection = read_only_connection(db_path)
+    if connection is None:
+        return False, False
+    try:
+        row = connection.execute(
+            "SELECT 1 FROM generations WHERE relationship_id = ? AND dispatch_request_id = ?",
+            (relationship_id, dispatch_request_id),
+        ).fetchone()
+    except sqlite3.Error:
+        return False, False
+    finally:
+        connection.close()
+    return row is not None, True
+
+
 def _read_published(target):
     try:
         return json.loads(Path(target).read_text(encoding="utf-8")), True
@@ -465,14 +527,14 @@ def _read_published(target):
         return None, False
 
 
-def _publish_or_compare(target, payload, fields) -> str:
+def _publish_or_compare(target, payload, fields, *, root=None) -> str:
     """Publish a single create-once fact, and say whether losing was a replay or a contradiction.
 
     Returning 'exists' for both would report a coordinator that published a DIFFERENT value exactly
     as it reports one that repeated itself, which is the difference between a retry that is safe to
     ignore and a contest somebody has to settle.
     """
-    if publish(target, payload) == PUBLISHED:
+    if publish(target, payload, root=root) == PUBLISHED:
         return PUBLISHED
     existing, readable = _read_published(target)
     if not readable or not isinstance(existing, dict):
@@ -499,19 +561,25 @@ def malformed_disposition(record) -> str | None:
 
 
 
-def _next_index(directory, kind) -> int:
-    sub = Path(directory) / kind
-    if not sub.is_dir():
-        return 0
+def _next_index(directory, kind):
+    """The next free slot for a numbered fact, as (index, readable).
+
+    readable travels with it because an unreadable directory must not answer 0. Answering 0 would
+    name a slot a fact may already occupy, and the publication would then lose to EEXIST on every
+    retry while the caller believed it was allocating a fresh one.
+    """
+    entries, readable = listing(Path(directory) / kind, "*.json")
+    if not readable:
+        return 0, False
     used = [
         int(path.stem)
-        for path in sub.glob("*.json")
+        for path in entries
         if not path.name.startswith(".") and path.stem.isdigit()
     ]
-    return max(used) + 1 if used else 0
+    return (max(used) + 1 if used else 0), True
 
 
-def _publish_numbered(directory, kind, payload) -> str:
+def _publish_numbered(directory, kind, payload, *, root) -> str:
     """Publish the next numbered fact, re-listing on every loss.
 
     A sequence number is allocated from a listing, and a listing is stale the moment another writer
@@ -519,9 +587,14 @@ def _publish_numbered(directory, kind, payload) -> str:
     assuming the first guess was current.
     """
     for _ in range(64):
-        index = _next_index(directory, kind)
+        index, readable = _next_index(directory, kind)
+        if not readable:
+            raise RegistrationError(
+                RefusalReason.RELATIONSHIP_CONFLICT,
+                "the " + kind + " directory cannot be read, so no slot can be allocated in it",
+            )
         target = Path(directory) / kind / (str(index) + ".json")
-        if publish(target, payload) == PUBLISHED:
+        if publish(target, payload, root=root) == PUBLISHED:
             return kind + "/" + str(index)
     raise RegistrationError(
         RefusalReason.RELATIONSHIP_CONFLICT,
@@ -570,7 +643,7 @@ def declare_intent(
         # operations contract; the coordinator is the party that knows it, so it records it here.
         payload["dbPath"] = str(db_path)
     outcome = _publish_or_compare(
-        directory / "intent.json", payload, ("dispatchRequestIdHash", "issueKey", "workspace")
+        directory / "intent.json", payload, INTENT_FIELDS, root=root
     )
     return {
         "assignmentId": assignment,
@@ -596,7 +669,7 @@ def record_attempt(root, *, workspace, assignment, outcome: str, at: str, task_i
     payload = {"outcome": outcome, "at": at}
     if task_id is not None:
         payload["taskId"] = task_id
-    fact_id = _publish_numbered(directory, "attempts", payload)
+    fact_id = _publish_numbered(directory, "attempts", payload, root=root)
     return {"assignmentId": assignment, "factId": fact_id, "outcome": outcome}
 
 
@@ -621,7 +694,7 @@ def bind(root, *, workspace, assignment, session_id: str, task_id: str, at: str)
         )
     directory = assignment_dir(root, workspace, _assignment(assignment))
     payload = {"sessionId": session_id, "taskId": task_id, "at": at}
-    if publish(directory / "bound.json", payload) == PUBLISHED:
+    if publish(directory / "bound.json", payload, root=root) == PUBLISHED:
         return {"assignmentId": assignment, "outcome": BOUND, "sessionId": session_id,
                 "taskId": task_id}
 
@@ -646,6 +719,7 @@ def bind(root, *, workspace, assignment, session_id: str, task_id: str, at: str)
             "loserProcess": str(os.getpid()),
             "at": at,
         },
+        root=root,
     )
     return {
         "assignmentId": assignment,
@@ -657,7 +731,8 @@ def bind(root, *, workspace, assignment, session_id: str, task_id: str, at: str)
 
 
 def register_relationship(
-    root, *, workspace, assignment, relationship_id: str, dispatch_request_id: str, at: str
+    root, *, workspace, assignment, relationship_id: str, dispatch_request_id: str, at: str,
+    db_path=None,
 ) -> dict:
     """Publish which relay relationship this assignment was registered as.
 
@@ -677,11 +752,29 @@ def register_relationship(
             "relationship " + relationship_id + " was dispatched under a different request id, so "
             "it does not belong to assignment " + str(assignment),
         )
+    # The hash check above only proves the CALLER restated the right dispatch id. Pairing an
+    # unrelated relationship with that id passes it, and its receipts would then satisfy this
+    # assignment's guard. Only the relay knows which relationship a dispatch actually opened.
+    registered, readable = dispatch_is_registered(db_path, relationship_id, dispatch_request_id)
+    if not readable:
+        raise RegistrationError(
+            RefusalReason.UNREGISTERED_RELATIONSHIP,
+            "the relay store could not be read, so it cannot be confirmed that relationship "
+            + relationship_id + " belongs to this assignment; registration is refused rather than "
+            "taken on the caller's word",
+        )
+    if not registered:
+        raise RegistrationError(
+            RefusalReason.RELATIONSHIP_CONFLICT,
+            "the relay has no generation of relationship " + relationship_id + " opened under this "
+            "assignment's dispatch request id, so it is not this assignment's relationship",
+        )
     directory = assignment_dir(root, workspace, _assignment(assignment))
     outcome = _publish_or_compare(
         directory / "relationship.json",
         {"relationshipId": relationship_id, "at": at},
         ("relationshipId",),
+        root=root,
     )
     return {"assignmentId": assignment, "relationshipId": relationship_id, "outcome": outcome}
 
@@ -708,6 +801,7 @@ def publish_resolution(
             "at": at,
             "adjudicated": entries,
         },
+        root=root,
     )
     return {"assignmentId": assignment, "factId": fact_id, "adjudicated": len(entries)}
 
@@ -733,6 +827,7 @@ def publish_claim(
             "at": at,
         },
         ("dispatchRequestId", "sessionId"),
+        root=root,
     )
     return {"assignmentId": assignment, "sessionId": session_id, "outcome": outcome}
 
@@ -758,6 +853,7 @@ def publish_disposition(
         directory / "dispositions" / session_id / (turn_id + ".json"),
         {"sessionId": session_id, "turnId": turn_id, "outcome": outcome, "at": at},
         ("sessionId", "turnId", "outcome"),
+        root=root,
     )
     return {
         "assignmentId": assignment,

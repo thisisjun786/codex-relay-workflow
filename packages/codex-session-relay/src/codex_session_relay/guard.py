@@ -25,13 +25,15 @@ from pathlib import Path
 from . import intent as intents
 from .currency import AMBIGUOUS, head_revision
 from .marker import (
+    DIRECTORIES,
+    PUBLISHED,
     listing,
     named,
-    valid_segment,
     publish,
     read_assignment,
     read_disposition,
     same_identity,
+    valid_segment,
 )
 
 MAX_HOLDS_PER_TURN = 1
@@ -73,25 +75,6 @@ READY = "ready_for_review"
 # ---------------------------------------------------------------- the receipt
 
 
-def _read_only(db_path):
-    """Open the relay store for reading and never for creating.
-
-    Mirrors store.read_only_rows: every failure becomes a field rather than an exception, because a
-    guard that raises on a locked database records nothing, and recording nothing is how a detector
-    silently switches itself off.
-    """
-    try:
-        connection = sqlite3.connect(
-            Path(db_path).as_uri() + "?mode=ro", uri=True, timeout=SQLITE_TIMEOUT
-        )
-    except (OSError, sqlite3.Error, ValueError, TypeError):
-        # TypeError belongs here: a corrupt intent can record a dbPath that is not a string, and
-        # Path() raises on it. Uncaught, that ended the whole evaluation with nothing recorded.
-        return None
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
 def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
     """The reviewable receipt this turn produced, and whether it stands at the current head.
 
@@ -120,7 +103,7 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
         # We were never told where the store is, so we cannot look. Reported as unreadable rather
         # than as an absent receipt, because the difference between those two answers is a hold.
         return None, False
-    connection = _read_only(db_path)
+    connection = intents.read_only_connection(db_path)
     if connection is None:
         return None, False
     base = {
@@ -199,8 +182,11 @@ def receipt_matches(receipt, stop, marker) -> bool:
 # ---------------------------------------------------------------- hold budget
 
 
-def _held_records(hook_root, session_id=None):
-    """Recorded holds under one hook tree, as (session, turn, at). Returns (records, bad, readable).
+def _held_records(holds_root, session_id=None):
+    """Hold reservations under one tree, as (session, turn, at). Returns (records, bad, readable).
+
+    Every file here IS a hold: reserve_hold creates one exactly when a hold is issued, so counting
+    them needs no flag to interpret and no writer has to keep a flag honest.
 
     session_id narrows the walk BEFORE anything is parsed. That ordering is the point: the rolling
     window is a bound on one session, so another session's malformed record must not be able to
@@ -208,14 +194,14 @@ def _held_records(hook_root, session_id=None):
     corruption and release an otherwise holdable omission.
     """
     records = []
-    root = Path(hook_root)
-    sessions, readable = listing(root)
+    root = Path(holds_root)
+    sessions, readable = listing(root, only=DIRECTORIES)
     if not readable:
         return records, None, False
     for session_dir in sessions:
         if session_id is not None and session_dir.name != session_id:
             continue
-        turns, readable = listing(session_dir)
+        turns, readable = listing(session_dir, only=DIRECTORIES)
         if not readable:
             return records, None, False
         for turn_dir in turns:
@@ -228,14 +214,10 @@ def _held_records(hook_root, session_id=None):
                 try:
                     record = json.loads(path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
-                    return records, "hook/" + session_dir.name, True
+                    return records, "holds/" + session_dir.name, True
                 if not isinstance(record, dict):
-                    return records, "hook/" + session_dir.name, True
-                held = record.get("held")
-                if not isinstance(held, bool):
-                    return records, "hook.held", True
-                if held:
-                    records.append((session_dir.name, turn_dir.name, record.get("at")))
+                    return records, "holds/" + session_dir.name, True
+                records.append((session_dir.name, turn_dir.name, record.get("at")))
     return records, None, True
 
 
@@ -255,7 +237,7 @@ def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
     result, and that one loses a bound.
     """
     counters = {"holdsThisTurn": 0, "holdsThisGeneration": 0, "holdsThisSessionWindow": 0}
-    scoped, problem, readable = _held_records(Path(directory) / "hook")
+    scoped, problem, readable = _held_records(Path(directory) / "holds")
     if not readable:
         return counters, None, "hook"
     if problem:
@@ -273,7 +255,7 @@ def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
         return counters, None, "workspace"
     horizon = intents.moment(now)
     for assignment in assignments:
-        found, problem, readable = _held_records(assignment / "hook", session_id=session_id)
+        found, problem, readable = _held_records(assignment / "holds", session_id=session_id)
         if not readable:
             return counters, None, "hook"
         if problem:
@@ -289,19 +271,47 @@ def hold_counters(directory, *, session_id, turn_id, now, workspace_root=None):
     return counters, None, None
 
 
-def _next_hook_seq(directory, session_id, turn_id) -> int:
-    sub = Path(directory) / "hook" / session_id / turn_id
-    if not sub.is_dir():
-        return 0
+def reserve_hold(directory, *, session_id, turn_id, at, mode, root=None) -> bool:
+    """Claim this turn's single hold, atomically. True when this evaluation owns it.
+
+    A create-once file, so two evaluations racing on one Stop produce exactly one winner. Reading
+    the counters and then deciding cannot do this: both readers see an unspent budget and both
+    block, which exceeds the very bound they were checking.
+
+    Deliberately NOT the observation record. hook/<session>/<turn>/<seq>.json is sequence-numbered
+    precisely so a second observation of one turn is never lost, and turning it into a mutual
+    exclusion token would reintroduce the loss it exists to prevent. This is a separate file whose
+    only job is to be unwinnable twice.
+
+    It is also what the bounds count, because a reservation exists exactly when a hold was issued,
+    which an observation carrying held true only mirrors afterwards.
+    """
+    if not (valid_segment(session_id) and valid_segment(turn_id)):
+        return False
+    target = Path(directory) / "holds" / session_id / turn_id / "0.json"
+    return publish(
+        target, {"sessionId": session_id, "turnId": turn_id, "at": at, "mode": mode}, root=root
+    ) == PUBLISHED
+
+
+def _next_hook_seq(directory, session_id, turn_id):
+    """The next observation slot for this turn, as (index, readable).
+
+    An unreadable directory must not answer 0: the publication would lose to EEXIST on every retry
+    while this caller believed it was allocating a fresh sequence number.
+    """
+    entries, readable = listing(Path(directory) / "hook" / session_id / turn_id, "*.json")
+    if not readable:
+        return 0, False
     used = [
         int(path.stem)
-        for path in sub.glob("*.json")
+        for path in entries
         if not path.name.startswith(".") and path.stem.isdigit()
     ]
-    return max(used) + 1 if used else 0
+    return (max(used) + 1 if used else 0), True
 
 
-def record_observation(directory, record) -> str | None:
+def record_observation(directory, record, *, root=None) -> str | None:
     """Publish this observation. One turn can be observed more than once, so the sequence is part
     of the identity: a single create-once file per turn would let the first observation consume the
     only name available and silently lose every later one."""
@@ -312,9 +322,11 @@ def record_observation(directory, record) -> str | None:
         # publishing into a directory the assignment does not own.
         return None
     for _ in range(64):
-        index = _next_hook_seq(directory, session_id, turn_id)
+        index, readable = _next_hook_seq(directory, session_id, turn_id)
+        if not readable:
+            return None
         target = Path(directory) / "hook" / session_id / turn_id / (str(index) + ".json")
-        if publish(target, record) == "published":
+        if publish(target, record, root=root) == PUBLISHED:
             return "hook/" + session_id + "/" + turn_id + "/" + str(index)
     return None
 
@@ -555,7 +567,7 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_pa
         if record and reached["directory"] is not None:
             try:
                 verdict["recordedAs"] = record_observation(
-                    reached["directory"], verdict["record"]
+                    reached["directory"], verdict["record"], root=root
                 )
             except Exception:
                 # Recording is the last thing that can fail, and failing it must not re-raise: the
@@ -671,8 +683,21 @@ def _evaluate(root, stop, *, now, mode, db_path, default_db_path, record, reache
         "now": now,
     }
     verdict = decide(observation, counters=counters, mode=mode)
+    if verdict["decision"] == BLOCK and directory is not None:
+        # The counters were read before the decision, so two evaluations racing on one Stop can
+        # both see an unspent budget. The reservation is the atomic part: exactly one of them wins
+        # the create-once file, and the loser re-decides with this turn's budget already spent,
+        # which is the same hold_in_flight it would have reached had it read the counters later.
+        if not reserve_hold(
+            directory, session_id=session_id, turn_id=turn_id, at=now, mode=mode, root=root
+        ):
+            verdict = decide(
+                observation,
+                counters={**counters, "holdsThisTurn": MAX_HOLDS_PER_TURN},
+                mode=mode,
+            )
     verdict["assignmentId"] = directory.name if directory is not None else None
     verdict["counters"] = counters
     if record and directory is not None:
-        verdict["recordedAs"] = record_observation(directory, verdict["record"])
+        verdict["recordedAs"] = record_observation(directory, verdict["record"], root=root)
     return verdict
