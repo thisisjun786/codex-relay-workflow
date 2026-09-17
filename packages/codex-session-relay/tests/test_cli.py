@@ -598,6 +598,290 @@ class ContestedSocket(CliBase):
         self.assertFalse(os.path.exists(refused["wouldHaveCreated"]))
         self.assertEqual(os.listdir(root), ["0123456789abcdef"], "no store was created")
 
+    def test_the_refusal_prints_commands_an_operator_can_actually_run(self):
+        """The payload is all an operator has.
+
+        It used to end with "--state <the directory above> once, to adopt it deliberately",
+        which is not a command, does not say which directory, and drops the --socket that
+        made the two stores candidates for each other in the first place. It also promised an
+        adoption that does not exist: choosing one of two claiming stores leaves both still
+        recording the socket, so default discovery refuses again on the next invocation.
+        """
+        home, root, socket = self.contested("contested-recovery")
+
+        refused = self.run_in_home(home, "--socket", socket, "status", expect=2)
+
+        recover = refused["recover"]
+        commands = [line for line in recover if not line.startswith("  ")]
+        self.assertTrue(commands, "the refusal offered no runnable command")
+        for command in commands:
+            self.assertIn(f"--socket {socket}", command,
+                          f"a recovery command dropped the socket: {command}")
+        for candidate in refused["candidates"]:
+            self.assertTrue(
+                any(f"--state {candidate}" in c for c in commands),
+                f"no command inspects candidate {candidate}",
+            )
+        self.assertTrue(
+            any("doctor" in c for c in commands) and any("service status" in c for c in commands),
+            "recovery must both identify the store and show what it carries",
+        )
+        self.assertNotIn(
+            "the directory above", " ".join(recover),
+            "the payload still points at a directory it never names",
+        )
+        self.assertTrue(
+            any("retired" in line for line in recover),
+            "the payload must say that choosing one store does not retire the other",
+        )
+
+    def test_the_wrong_socket_refusal_offers_a_matching_pair_not_an_adoption(self):
+        """This refusal has nothing to adopt: using a store does not rewrite the socket it
+        recorded. It printed no recovery at all, which left the operator to infer that."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "pair-state")
+        first = os.path.join(self.tmp, "pair-first.sock")
+        second = os.path.join(self.tmp, "pair-second.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=first).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", state,
+             "--socket", second, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+
+        joined = " ".join(refused["recover"])
+        self.assertIn(first, joined, "no command reads the store under the socket it records")
+        self.assertIn(second, joined, "no command looks for the socket that was asked for")
+        self.assertIn("does not rewrite", refused["note"])
+
+    def test_recovery_commands_are_safe_to_paste(self):
+        """These strings exist to be pasted, so a path carrying shell syntax is executable.
+
+        A state directory or socket path with a substitution in it would run as the operator
+        did exactly what the refusal told them to do.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "quoted-home")
+        root = os.path.join(home, ".local", "state", "codex-session-relay")
+        # A socket whose name would run a command if it were pasted unquoted.
+        socket = os.path.join(self.tmp, "sock$(touch /tmp/pwned);x.sock")
+        for directory in ("aaaa555555555555", "bbbb555555555555"):
+            os.makedirs(os.path.join(root, directory))
+            Store(Path(root) / directory / "relay.sqlite3", socket_path=socket).close()
+
+        refused = self.run_in_home(home, "--socket", socket, "status", expect=2)
+
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        self.assertTrue(commands)
+        for command in commands:
+            # The real property is the round trip: the shell must hand the socket back as ONE
+            # intact argument rather than splitting it or running the substitution in it.
+            words = shlex.split(command)
+            self.assertIn(
+                socket, words,
+                f"the socket did not survive a shell round trip intact: {command}",
+            )
+            self.assertFalse(
+                [w for w in words if "$(" in w and w != socket],
+                f"a substitution escaped quoting: {command}",
+            )
+
+    def test_the_wrong_socket_recovery_is_quoted_too(self):
+        """The other refusal prints commands as well, and paths reach it the same way."""
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "quoted state")
+        first = os.path.join(self.tmp, "first$(id).sock")
+        second = os.path.join(self.tmp, "second.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=first).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", state,
+             "--socket", second, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        self.assertTrue(commands)
+        words = [word for command in commands for word in shlex.split(command)]
+        self.assertIn(first, words, "the recorded socket did not survive a shell round trip")
+        self.assertIn(state, words, "the state directory did not survive a shell round trip")
+
+    def test_the_wrong_socket_recovery_drops_a_state_pin_that_would_reselect_it(self):
+        """The socket-first line carries no --state, so an inherited pin overrides its intent.
+
+        CODEX_SESSION_RELAY_STATE is one of the two ways to reach this refusal, and it is the
+        way that turns the recovery line into a dead end: pasted with the pin still set,
+        "find the store that belongs to this socket" re-selects the store that produced the
+        refusal and hands back the same error. This runs the printed command rather than
+        matching its text, because what matters is where pasting it actually lands.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "pinned-home")
+        os.makedirs(home)
+        state = os.path.join(self.tmp, "pinned-state")
+        recorded = os.path.join(self.tmp, "pinned-recorded.sock")
+        wanted = os.path.join(self.tmp, "pinned-wanted.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=recorded).close()
+
+        # HOME is pinned to a temporary directory: the recovery command falls back to default
+        # discovery once the pin is dropped, and that must not reach the real user state.
+        environment = dict(
+            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
+            CODEX_SESSION_RELAY_STATE=state,
+        )
+        environment.pop("XDG_STATE_HOME", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--socket", wanted, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+
+        socket_first = [
+            line for line in refused["recover"]
+            if not line.startswith("  ") and wanted in line
+        ]
+        self.assertEqual(len(socket_first), 1, refused["recover"])
+
+        replayed = subprocess.run(
+            shlex.split(socket_first[0]),
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+
+        # doctor is exempt from this guard, so it does not hand the refusal back - it does
+        # something quieter and worse. With the pin still set it reports the very store that
+        # produced the refusal, while its caption says it finds the store belonging to the
+        # socket. That is what the assertion has to catch.
+        selection = json.loads(replayed.stdout)["stateSelection"]
+        self.assertNotEqual(
+            selection["path"], state,
+            "the recovery command re-selected the store the refusal was about",
+        )
+        self.assertNotEqual(
+            selection["source"], "env",
+            "the state pin survived into the command printed to look past it",
+        )
+
+    def test_a_flag_caused_refusal_leaves_the_state_pin_alone(self):
+        """Dropping the pin is only right when the pin is what went wrong.
+
+        --state wins over the variable, so it can cause this refusal while the variable
+        still points at the store that does record the requested socket. Dropping it there
+        sends the operator to a default directory that usually holds no database at all,
+        under a caption promising the store that belongs to this socket.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        home = os.path.join(self.tmp, "flagenv-home")
+        os.makedirs(home)
+        flagged = os.path.join(self.tmp, "flagenv-flagged")
+        pinned = os.path.join(self.tmp, "flagenv-pinned")
+        other = os.path.join(self.tmp, "flagenv-other.sock")
+        wanted = os.path.join(self.tmp, "flagenv-wanted.sock")
+        # The flag's store records a different socket; the pinned store records the wanted one.
+        Store(Path(flagged) / "relay.sqlite3", socket_path=other).close()
+        Store(Path(pinned) / "relay.sqlite3", socket_path=wanted).close()
+
+        environment = dict(
+            os.environ, PYTHONPATH=os.path.join(REPO, "src"), HOME=home,
+            CODEX_SESSION_RELAY_STATE=pinned,
+        )
+        environment.pop("XDG_STATE_HOME", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", flagged,
+             "--socket", wanted, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+        self.assertEqual(refused["reason"], "state_directory_serves_another_socket")
+
+        socket_first = [
+            line for line in refused["recover"]
+            if not line.startswith("  ") and wanted in line
+        ]
+        self.assertEqual(len(socket_first), 1, refused["recover"])
+        self.assertNotIn("env -u", socket_first[0], "the pin was dropped, but it was not the cause")
+
+        replayed = subprocess.run(
+            shlex.split(socket_first[0]),
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+
+        selection = json.loads(replayed.stdout)["stateSelection"]
+        self.assertEqual(
+            selection["path"], pinned,
+            "the recovery command walked past the store that records this socket",
+        )
+        self.assertTrue(
+            os.path.exists(selection["dbPath"]),
+            "the recovery command reported a database that does not exist",
+        )
+
+    def test_the_printed_command_names_the_interpreter_that_is_running(self):
+        """These lines are pasted into a shell where python3 may be absent or different.
+
+        The relay can be running under a virtualenv or a versioned interpreter. A bare
+        python3 there reaches another installation, or nothing.
+        """
+        import shlex
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "interpreter-state")
+        recorded = os.path.join(self.tmp, "interpreter-recorded.sock")
+        wanted = os.path.join(self.tmp, "interpreter-wanted.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=recorded).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
+        environment.pop("CODEX_SESSION_RELAY_STATE", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", state,
+             "--socket", wanted, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+
+        commands = [line for line in refused["recover"] if not line.startswith("  ")]
+        self.assertTrue(commands)
+        for command in commands:
+            self.assertEqual(
+                shlex.split(command)[0], sys.executable,
+                f"this line names an interpreter that may not be the running one: {command}",
+            )
+        self.assertNotIn(
+            "env -u", " ".join(commands),
+            "no pin is set here, so there is nothing to drop and nothing to explain",
+        )
+
     def test_an_explicit_state_directory_resolves_the_contest(self):
         home, root, socket = self.contested("contested-explicit")
         chosen = os.path.join(root, "aaaa444444444444")

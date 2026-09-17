@@ -100,7 +100,7 @@ class StateDirectory(unittest.TestCase):
     def setUp(self):
         """Pin HOME. Resolving a socket's directory reads the siblings next to it, and with
         the real home that means opening the databases this host actually runs on - a test
-        has no business reaching those, even to read them."""
+        has no business touching those, even to read them."""
         self.tmp = tempfile.mkdtemp(prefix="relay-statedir-")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         home = os.path.join(self.tmp, "home")
