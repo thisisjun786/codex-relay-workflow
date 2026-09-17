@@ -265,6 +265,60 @@ class PreSendSupersession(DeliveryTestCase):
             self.delivery.get(later["eventId"])["state"], SUPERSEDED,
         )
 
+    def test_enqueueing_clears_the_intent_it_satisfies(self):
+        """A recorded intent means delivery was wanted and refused for a reason that may lift.
+
+        Once the delivery row exists the intent is satisfied by definition. It used to be
+        deleted in a second transaction after enqueue() committed, so a crash between them
+        left an intent for an event that is already queued - no lost event, no duplicate send,
+        but nothing removes it either, because the queries that would find it filter on having
+        no delivery. They accumulate for as long as the store lives.
+        """
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        self.store.db.execute("DELETE FROM deliveries WHERE event_id = ?", (event_id,))
+        with self.store.transaction() as db:
+            self.delivery.record_intent_in(
+                db, event_id, relationship_id=relationship["relationshipId"],
+                kind="completion", recipient_task_id=PARENT,
+                error=RuntimeError("the relationship was paused"), now=self.clock.now(),
+            )
+        self.assertIsNotNone(
+            self.store.one(
+                "SELECT 1 FROM delivery_intent WHERE event_id = ?", (event_id,)
+            ),
+            "the fixture did not record the intent this test is about",
+        )
+
+        self.delivery.enqueue(event_id)
+
+        self.assertIsNotNone(self.delivery.find(event_id), "the delivery was not queued")
+        self.assertIsNone(
+            self.store.one(
+                "SELECT 1 FROM delivery_intent WHERE event_id = ?", (event_id,)
+            ),
+            "the intent outlived the delivery that satisfied it",
+        )
+
+    def test_an_already_queued_event_still_clears_a_stranded_intent(self):
+        """The idempotent early return is the other half of the same leak: the requeue pass
+        can arrive after a crash left the delivery inserted and the intent behind it."""
+        relationship, event_id = self.queued_outcome("ready_for_review")
+        with self.store.transaction() as db:
+            self.delivery.record_intent_in(
+                db, event_id, relationship_id=relationship["relationshipId"],
+                kind="completion", recipient_task_id=PARENT,
+                error=RuntimeError("the relationship was paused"), now=self.clock.now(),
+            )
+
+        self.delivery.enqueue(event_id)
+
+        self.assertIsNone(
+            self.store.one(
+                "SELECT 1 FROM delivery_intent WHERE event_id = ?", (event_id,)
+            ),
+            "an intent stranded beside an existing delivery is never removed",
+        )
+
     def test_a_queued_predecessor_is_annotated_by_its_successor(self):
         """Same generation, and the predecessor has not reached the transport at all.
 

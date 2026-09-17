@@ -318,8 +318,12 @@ A single oldest-first window let one parent's backlog take every slot. Reconcili
 selected the same way. A parent whose send errors or defers is skipped for the rest of that
 tick only; it reserves no capacity and creates no hold.
 
-This is scheduler fairness, not transport concurrency. The adapter serialises on one worker,
-so a stalled call still blocks the one behind it.
+This is scheduler fairness. Transport concurrency is a separate guarantee, and it is now a
+real one: the adapter dispatches each submission as its own task and allows one send in
+flight per recipient, so a call stalled on one recipient no longer blocks a call to another.
+What is still held back is a second send to the SAME recipient, and it is reported
+`thread_busy` without being sent rather than queued behind the first. An abandoned send goes
+on holding its own recipient until the transport's deadline of four times the RPC timeout.
 
 **A stale event is stopped before the send.** A generation that has moved on invalidates
 every outcome of the previous one, whether or not the new generation has produced a revision

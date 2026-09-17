@@ -98,12 +98,22 @@ class DeliveryService:
         )
         existing = self.find(event_id)
         if existing is not None:
+            # An intent is satisfied the moment the delivery row exists, so a lingering one is
+            # cleared on this path too. The requeue pass can arrive here after a crash left the
+            # row inserted and the intent behind it.
+            self.clear_intent(event_id)
             return dict(existing)
         with self.store.transaction() as db:
             self.enqueue_in(
                 db, event_id, relationship_id=event["relationship_id"], kind=kind,
                 recipient_task_id=recipient_task_id,
             )
+            # In the SAME transaction as the insert. These were two commits, and a crash
+            # between them left a delivery_intent row for an event that is already queued.
+            # Nothing loses an event and nothing sends twice, but no pass removes the row
+            # either - the queries that would find it filter on having no delivery - so they
+            # accumulate for as long as the store lives.
+            db.execute("DELETE FROM delivery_intent WHERE event_id = ?", (event_id,))
         return dict(self.get(event_id))
 
     def enqueue_in(self, db, event_id, *, relationship_id, kind, recipient_task_id) -> None:

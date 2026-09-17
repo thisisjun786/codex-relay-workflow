@@ -11,8 +11,61 @@ from codex_session_relay.bridge_adapter import BridgeHostAdapter
 from codex_session_relay.hostadapter import HostUnavailable
 from codex_session_relay.settings import TaskSettings
 
-from .support import RelayTestCase
+from .support import DeliveryTestCase, RelayTestCase
 
+
+def capture_shutdown_cancellation(tmp):
+    """Run a real send, stall it at its first RPC, then close() with a drain too short.
+
+    Returns whatever the transport actually hands a caller whose work `_shut_down` had to
+    cancel. Nothing here stands in for anything: it is the real BridgeHostAdapter, its real
+    worker thread and its real shutdown path, with the stall injected at the RPC boundary
+    through the `_build` factory seam.
+    """
+    import asyncio
+    import threading
+    from pathlib import Path
+
+    from codex_thread_bridge.ledger import Ledger
+
+    entered = threading.Event()
+    gates = {}
+
+    class Stalling:
+        socket_path = None
+        info = {}
+
+        async def call(self, method, params):
+            entered.set()
+            await gates.setdefault("held", asyncio.Event()).wait()
+            raise AssertionError("the stall was released, which this never does")
+
+        async def close(self):
+            return None
+
+    socket = Path(tmp) / "cancel-socket"
+    built = BridgeHostAdapter(
+        str(socket), timeout=0.25, caller_slack=0.75, drain_seconds=0.05,
+        app_server_factory=lambda canonical: Stalling(),
+        ledger_factory=lambda: (socket, Ledger(Path(tmp) / "cancel-operations.sqlite3")),
+    )
+    outcome = {}
+
+    def run():
+        try:
+            outcome["receipt"] = built.send_message(
+                "req-cancelled", "thread-a", "hello", AUTHORIZED,
+            )
+        except BaseException as error:  # noqa: BLE001 - catching it is the whole point
+            outcome["error"] = error
+
+    caller = threading.Thread(target=run, daemon=True)
+    caller.start()
+    if not entered.wait(5):
+        raise AssertionError("the send never reached the RPC boundary")
+    built.close()
+    caller.join(timeout=10)
+    return outcome
 # Shaped after the real correction receipt: a single local environment, workspaceWrite with
 # networkAccess false, approvals never, Opus 5 at xhigh. The original dispatch receipt stays in
 # the maintainer's private task record; the path below is synthetic and only has to be absolute.
@@ -873,3 +926,452 @@ class MirrorMatchesTheBridge(unittest.TestCase):
     def test_the_resume_config_agrees_on_every_key(self):
         relay_config = AUTHORIZED.resume_params("thread-1")["config"]
         self.assertEqual(relay_config, self._bridge_contract().config())
+
+
+class TransportIsolation(RelayTestCase):
+    """One recipient must not be able to hold the transport against another.
+
+    Criterion 8 asks for bounded connection wait, retry and error isolation. The scheduler
+    half shipped in #9; this is the transport half. Everything here drives the REAL
+    BridgeHostAdapter and its real worker thread, with the stall injected at the RPC boundary
+    through _build's app_server_factory seam - fakehost.py cannot reach _Transport at all,
+    because it is a separate implementation over its own in-memory state.
+    """
+
+    TIMEOUT = 0.25
+    SLACK = 0.75
+
+    def setUp(self):
+        super().setUp()
+        try:
+            import codex_thread_bridge.ledger  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+
+    def adapter(self, app_server, **options):
+        from pathlib import Path
+
+        from codex_thread_bridge.ledger import Ledger
+
+        socket = Path(self.tmp) / "socket"
+        built = BridgeHostAdapter(
+            str(socket),
+            timeout=self.TIMEOUT,
+            caller_slack=self.SLACK,
+            app_server_factory=lambda canonical: app_server,
+            ledger_factory=lambda: (socket, Ledger(Path(self.tmp) / "operations.sqlite3")),
+            **options,
+        )
+        self.addCleanup(built.close)
+        return built
+
+    def barrier_server(self):
+        """An App Server that answers normally, except for threads told to hold."""
+        import asyncio
+        import threading
+
+        class Barrier:
+            def __init__(self):
+                self.socket_path = None
+                self.info = {}
+                self.entered = {}
+                self.release = {}
+                self.starts = []
+                self.lock = threading.Lock()
+                self.hold = set()
+                self.closed = False
+
+            async def call(self, method, params):
+                thread_id = params.get("threadId")
+                if thread_id in self.hold:
+                    with self.lock:
+                        event = self.entered.setdefault(thread_id, threading.Event())
+                    event.set()
+                    gate = self.release.setdefault(thread_id, asyncio.Event())
+                    await gate.wait()
+                if method == "thread/read":
+                    return {"thread": {"status": {"type": "idle"}}}
+                if method == "thread/resume":
+                    return authorized_resume_response(thread={"id": thread_id})
+                if method == "turn/start":
+                    with self.lock:
+                        self.starts.append(params.get("threadId"))
+                    return {"turn": {"id": f"turn-{len(self.starts)}"}}
+                raise AssertionError(f"unexpected {method}")
+
+            async def close(self):
+                self.closed = True
+                return None
+
+        return Barrier()
+
+    def send_in_background(self, built, request_id, thread_id):
+        """Start a send on its own thread and hand back somewhere to read its outcome."""
+        import threading
+
+        outcome = {}
+
+        def run():
+            try:
+                outcome["receipt"] = built.send_message(
+                    request_id, thread_id, "hello", AUTHORIZED,
+                )
+            except BaseException as error:  # noqa: BLE001 - the test reads it
+                outcome["error"] = error
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread, outcome
+
+    def test_a_stalled_recipient_does_not_hold_another_recipients_send(self):
+        """The defect, and the assertion is causal rather than a stopwatch.
+
+        B is asserted to complete WHILE A is still held at its RPC. Before this change the
+        worker awaited one submission at a time, so B never even reached the RPC until A's
+        chain ended - A's caller had already given up by then and released nothing.
+        """
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = self.adapter(server)
+
+        thread, _outcome = self.send_in_background(built, "req-a", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", __import__("threading").Event()).wait(5),
+            "A never reached the RPC boundary",
+        )
+
+        receipt = built.send_message("req-b", "thread-b", "hello", AUTHORIZED)
+
+        self.assertEqual(receipt["status"], "accepted", receipt)
+        self.assertIn("thread-b", server.starts)
+        self.assertNotIn(
+            "thread-a", server.starts,
+            "B was only served after A finished, which is the thing being fixed",
+        )
+        thread.join(timeout=10)
+
+    def test_a_second_send_to_one_recipient_is_withheld_rather_than_started(self):
+        """Two turns for one thread is the failure a bare concurrency change would cause.
+
+        _guarded_send reads the thread, resumes it and starts a turn across separate awaits,
+        so without a per-recipient bound both sends pass the idle check and both start. The
+        second is withheld WITHOUT being sent, which is why it is reported as a busy recipient
+        rather than an unknown outcome: it stays retry-safe.
+        """
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = self.adapter(server)
+
+        thread, _outcome = self.send_in_background(built, "req-a1", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", __import__("threading").Event()).wait(5),
+        )
+
+        second = built.send_message("req-a2", "thread-a", "hello", AUTHORIZED)
+
+        self.assertEqual(second["status"], "failed", second)
+        self.assertEqual(second["rpcError"]["code"], "thread_busy")
+        self.assertEqual(server.starts, [], "a second turn was started for one thread")
+        thread.join(timeout=10)
+
+    def test_a_withheld_send_classifies_as_busy_and_retry_safe(self):
+        """Nothing was sent, so the delivery layer must be able to say that precisely."""
+        from codex_session_relay.transport import (
+            DEFERRED_BUSY, assert_attempt_invariants, attempt_record,
+            classify_operation_receipt,
+        )
+
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = self.adapter(server)
+        thread, _outcome = self.send_in_background(built, "req-c1", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", __import__("threading").Event()).wait(5),
+        )
+
+        facts = classify_operation_receipt(
+            built.send_message("req-c2", "thread-a", "hello", AUTHORIZED)
+        )
+
+        self.assertEqual(facts.delivery_state, DEFERRED_BUSY)
+        self.assertEqual(facts.send_attempted, "no")
+        self.assertTrue(facts.retry_safe, "a send that never happened must stay retryable")
+        # The bucket cannot carry the distinction and the schema will not let it: retrySafe is
+        # pinned to thread/read or thread/resume, so a locally withheld send shares the busy
+        # bucket with a host-reported one. What separates them is the error text, which is
+        # exactly what the diagnostics criterion asks not to be hidden behind a generic state.
+        self.assertEqual(facts.failed_operation, "thread/read")
+        self.assertIn("this relay", facts.error_text)
+        self.assertIn("without being sent", facts.error_text)
+        # And the record it produces is one the frozen attempt schema accepts.
+        assert_attempt_invariants(attempt_record(
+            facts, request_id="req-c2", event_id="ev-c", attempt_no=1,
+            recipient="01parent", status_before="unknown",
+            observed_at="2026-09-17T00:00:00Z",
+        ))
+        thread.join(timeout=10)
+
+    def test_the_worker_survives_an_abandoned_send_and_keeps_serving(self):
+        """A's work outlives its caller. The worker must not be one of the casualties."""
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = self.adapter(server)
+
+        thread, outcome = self.send_in_background(built, "req-d1", "thread-a")
+        thread.join(timeout=10)
+        self.assertFalse(thread.is_alive(), "A's caller never gave up")
+        self.assertIn("error", outcome, f"A was expected to be abandoned, got {outcome}")
+
+        receipt = built.send_message("req-d2", "thread-b", "hello", AUTHORIZED)
+
+        self.assertEqual(receipt["status"], "accepted", receipt)
+
+    def test_closing_while_a_send_is_stalled_still_ends_the_worker(self):
+        """Cancelled while the ledger is still open, so the send records its own outcome."""
+        server = self.barrier_server()
+        server.hold.add("thread-a")
+        built = BridgeHostAdapter(
+            str(__import__("pathlib").Path(self.tmp) / "socket"),
+            timeout=self.TIMEOUT,
+            caller_slack=self.SLACK,
+            drain_seconds=0.2,
+            app_server_factory=lambda canonical: server,
+            ledger_factory=lambda: (
+                __import__("pathlib").Path(self.tmp) / "socket",
+                __import__("codex_thread_bridge.ledger", fromlist=["Ledger"]).Ledger(
+                    __import__("pathlib").Path(self.tmp) / "operations.sqlite3"
+                ),
+            ),
+        )
+        thread, _outcome = self.send_in_background(built, "req-e1", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", __import__("threading").Event()).wait(5),
+        )
+
+        worker = built._transport.thread
+        built.close()
+
+        self.assertFalse(
+            worker.is_alive(),
+            "the worker thread outlived close() with work still in flight",
+        )
+        thread.join(timeout=10)
+
+    def test_a_stopping_flag_alone_never_ends_the_worker(self):
+        """close() cannot set its flag and queue the sentinel in one indivisible step.
+
+        An idle worker that woke up between those two statements used to leave through the
+        empty-queue branch: no _shut_down ran, so the connection and the ledger stayed open
+        and the sentinel close() blocks on was never settled. The interleaving window is a
+        few bytecodes wide, so racing it would make a flaky test. This drives the state the
+        race produces instead - flag set, sentinel not yet queued - and asserts the worker is
+        still there to receive it. The sentinel is the only way out.
+        """
+        import time
+
+        server = self.barrier_server()
+        built = self.adapter(server)
+        transport = built._transport
+
+        transport._stopping = True
+        time.sleep(transport.POLL_SECONDS * 40)
+
+        self.assertTrue(
+            transport.thread.is_alive(),
+            "the worker left on the flag alone, so _shut_down never closed anything",
+        )
+        self.assertEqual(
+            built.send_message("req-f1", "thread-b", "hello", AUTHORIZED)["status"],
+            "accepted",
+        )
+
+        built.close()
+
+        self.assertFalse(transport.thread.is_alive(), "the sentinel did not end the worker")
+        self.assertTrue(server.closed, "shutdown never reached the connection")
+
+    def test_a_replay_is_answered_from_the_ledger_while_the_recipient_is_busy(self):
+        """A request the ledger has already settled has an answer. Busy must not replace it.
+
+        The recipient bound is there to stop a second turn being started for one thread. A
+        replay starts nothing and mutates nothing - it reads a receipt - so refusing it as a
+        busy recipient turned a known outcome back into a retry, which is precisely what a
+        request id exists to prevent. The precheck asks the ledger before the lock.
+        """
+        import threading
+
+        server = self.barrier_server()
+        built = self.adapter(server)
+
+        first = built.send_message("req-g1", "thread-a", "hello", AUTHORIZED)
+        self.assertEqual(first["status"], "accepted", first)
+
+        # Now occupy that same recipient with a different request, held at its first RPC.
+        server.hold.add("thread-a")
+        thread, _outcome = self.send_in_background(built, "req-g2", "thread-a")
+        self.assertTrue(
+            server.entered.setdefault("thread-a", threading.Event()).wait(5),
+            "the occupying send never reached the RPC boundary",
+        )
+
+        replay = built.send_message("req-g1", "thread-a", "hello", AUTHORIZED)
+
+        self.assertTrue(replay.get("replayed"), f"the replay was not answered: {replay}")
+        self.assertEqual(replay["status"], "accepted", replay)
+        self.assertEqual(replay["turnId"], first["turnId"], "a different outcome was reported")
+        self.assertEqual(
+            server.starts, ["thread-a"], "the replay reached the host instead of the ledger",
+        )
+        thread.join(timeout=10)
+
+    def test_a_reused_id_with_different_arguments_is_still_rejected(self):
+        """The precheck must not become a way to smuggle a mismatched id past the ledger.
+
+        ledger.lookup raises when an id was used with different arguments, and that raise is
+        the rejection. Answering it before the recipient lock has to keep it, not swallow it
+        into a busy report or a replayed receipt.
+        """
+        server = self.barrier_server()
+        built = self.adapter(server)
+        self.assertEqual(
+            built.send_message("req-h1", "thread-a", "hello", AUTHORIZED)["status"],
+            "accepted",
+        )
+
+        with self.assertRaises(ValueError) as caught:
+            built.send_message("req-h1", "thread-a", "a different message", AUTHORIZED)
+
+        self.assertIn("different arguments", str(caught.exception))
+        self.assertEqual(server.starts, ["thread-a"], "the mismatched id still reached the host")
+
+    def test_a_submission_racing_close_is_answered_rather_than_orphaned(self):
+        """Checking acceptance and queueing the work are two steps, and close() fits between.
+
+        A submission that passed the check and queued after the drain had already run left a
+        future nobody would ever settle. Its caller waited out the whole budget and read a
+        timeout - "outcome unknown" about work that was never started, which is the one
+        report a send that never happened must not produce.
+
+        The interleaving is a few bytecodes wide, so it is driven rather than raced: the
+        submitter is held at the moment it is about to enqueue, close() is started behind it,
+        and then the submitter is let go.
+        """
+        import threading
+
+        server = self.barrier_server()
+        built = self.adapter(server)
+        transport = built._transport
+
+        at_the_door = threading.Event()
+        let_go = threading.Event()
+        real_put = transport._inbox.put
+
+        def held_put(item):
+            if item[0] is not None:  # the sentinel must never be held
+                at_the_door.set()
+                let_go.wait(5)
+            real_put(item)
+
+        transport._inbox.put = held_put
+        sender, outcome = self.send_in_background(built, "req-i1", "thread-b")
+        self.assertTrue(at_the_door.wait(5), "the submission never reached the enqueue")
+
+        closer = threading.Thread(target=built.close, daemon=True)
+        closer.start()
+        closer.join(timeout=0.5)
+        let_go.set()
+
+        sender.join(timeout=10)
+        closer.join(timeout=10)
+
+        self.assertFalse(sender.is_alive(), "the caller was left waiting on its own budget")
+        error = outcome.get("error")
+        self.assertNotIsInstance(
+            error, TimeoutError,
+            "the submission was orphaned: a timeout is not an answer about work never run",
+        )
+        if error is not None:
+            self.assertIn("nothing was sent", str(error), outcome)
+        else:
+            self.assertEqual(outcome["receipt"]["status"], "accepted", outcome)
+
+    def test_a_send_cancelled_by_shutdown_reaches_its_caller_catchably(self):
+        """`_shut_down` cancels work that outlived the drain, and the caller must be able to catch it.
+
+        `asyncio.CancelledError` inherits from BaseException, so forwarded unchanged it walks
+        past every `except Exception` between here and the tick - including the one the
+        delivery layer wraps the send in.
+        """
+        outcome = capture_shutdown_cancellation(self.tmp)
+
+        error = outcome.get("error")
+        self.assertIsNotNone(error, f"the cancelled send was not reported at all: {outcome}")
+        self.assertIsInstance(
+            error, Exception,
+            f"a caller's 'except Exception' cannot see {type(error).__name__}",
+        )
+        self.assertIn("outcome unknown", str(error))
+        # The reason is still readable rather than replaced.
+        import asyncio
+        self.assertIsInstance(error.__cause__, asyncio.CancelledError)
+
+
+class ShutdownCancellationSettlesItsDelivery(DeliveryTestCase):
+    """Criterion 4: what a cancelled send leaves behind has to be accountable after a restart.
+
+    The transport half is asserted in TransportIsolation. This is the consequence that made
+    it worth fixing: `DeliveryService.attempt` claims the delivery and inserts its attempt row
+    in one transaction, then wraps only the send in `except Exception`. An exception it cannot
+    catch unwinds the tick between those two points and leaves the delivery leased, in
+    `sending`, with an attempt row nothing settles.
+    """
+
+    def setUp(self):
+        super().setUp()
+        try:
+            import codex_thread_bridge.ledger  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+
+    def test_a_claimed_delivery_is_settled_when_shutdown_cancels_its_send(self):
+        # The exception is the real one: produced by a real transport cancelling a real send,
+        # not a hand-written stand-in for what that path might raise.
+        error = capture_shutdown_cancellation(self.tmp).get("error")
+        self.assertIsNotNone(error, "the helper produced no error to work from")
+        _relationship, event_id = self.queued_event()
+
+        class CancelledByShutdown:
+            """The ordinary adapter, except its send ends the way shutdown ends one."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def send_message(self, *args, **kwargs):
+                raise error
+
+        record = self.delivery.attempt(
+            event_id, CancelledByShutdown(self.adapter), now=self.clock.now(),
+        )
+
+        self.assertIsNotNone(record, "attempt() unwound instead of settling its own claim")
+        attempts = self.attempts_for(event_id)
+        self.assertEqual(len(attempts), 1, attempts)
+        self.assertEqual(
+            attempts[0]["internal_state"], "settled",
+            "the claim was taken and the attempt row was left open",
+        )
+
+        # The restart. A fresh service over the same store is what a supervisor segment
+        # boundary produces, and it must not find a claim nobody can account for.
+        from codex_session_relay.delivery import DeliveryService
+
+        restarted = DeliveryService(self.store, self.registry, self.intake, self.clock)
+        row = restarted.get(event_id)
+
+        self.assertEqual(row["state"], "held_uncertain", dict(row))
+        self.assertNotEqual(row["state"], "sending", "the delivery is still mid-send")
+        self.assertIsNone(row["lease_owner"], "the lease outlived the process that took it")
+        self.assertIsNone(row["lease_until"])
