@@ -690,6 +690,13 @@ def _trial(args, relay_executable):
     # one. Run before anything is written, and compared against what the caller independently
     # expects. With no expectation supplied it stays an observation, not a proof.
     found = run_step(by_name["assignment-find"])
+    if not found.get("ok"):
+        # The lookup is the trial's store check and it runs before anything is written, so a
+        # lookup that did not run stops the trial here. An answer that found nothing is an
+        # observation; an invocation that failed is not an observation at all, and writing
+        # settings and a relationship afterwards would put rows in a store this process could
+        # not read (OPS-3.4).
+        return refuse("assignment-find", found)
     assignment = {
         "ran": True,
         "ok": found.get("ok"),
@@ -902,7 +909,11 @@ def cmd_install(args):
     # Ownership is proven, so this run may record what it observed on the way in.
     staged = hostrecord.update(record_path, data["definitionVersion"], outgoing=outgoing)
     if not staged.usable:
-        return refused("install", staged, hostRecord=str(record_path))
+        # Past the exclusive mkdir, so every exit releases what this run created. Returning
+        # a bare refusal here would leave the deterministic directory behind and refuse every
+        # retry of the same destination for ever.
+        return _install_failed(record_path, data["definitionVersion"], performed, environment,
+                               owned, failed_reading=staged)
 
     if not perform("create environment", [str(interpreter), "-m", "venv", str(environment)]):
         return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
@@ -960,7 +971,8 @@ def cmd_install(args):
         component_facts=facts,
     )
     if not written.usable:
-        return refused("install", written, hostRecord=str(record_path))
+        return _install_failed(record_path, data["definitionVersion"], performed, environment,
+                               owned, failed_reading=written)
     measurement = measure_candidate(data, record, python=python, environment=environment,
                                     socket_path=args.socket, state=args.state,
                                     relay_command=str(environment / "bin" / "codex-session-relay"),
@@ -972,7 +984,8 @@ def cmd_install(args):
             record_path, data["definitionVersion"],
             points=[(name, point) for name, point in measurement["points"]])
         if not appended.usable:
-            return refused("install", appended, hostRecord=str(record_path))
+            return _install_failed(record_path, data["definitionVersion"], performed,
+                                   environment, owned, failed_reading=appended)
     if not measurement["qualifyingPoint"]:
         # The candidate imports but does not work. Release the destination the same way any
         # other failure does, so a transient connection failure does not block every retry.
@@ -987,7 +1000,8 @@ def cmd_install(args):
         record_path, data["definitionVersion"],
         select={name: install["location"] for name, install in installs.items()})
     if not promoted.usable:
-        return refused("install", promoted, hostRecord=str(record_path))
+        return _install_failed(record_path, data["definitionVersion"], performed, environment,
+                               owned, failed_reading=promoted)
     record = promoted.value
 
     emit({
@@ -1025,7 +1039,8 @@ def _outgoing_runtime(record, data):
     return observed
 
 
-def _install_failed(record_path, definition_version, performed, environment, owned=None):
+def _install_failed(record_path, definition_version, performed, environment, owned=None,
+                    failed_reading=None):
     """Release a destination this run created, and drop only the records this run wrote.
 
     The selection is left EXACTLY as found. Writing back the selection this run read at its
@@ -1049,7 +1064,9 @@ def _install_failed(record_path, definition_version, performed, environment, own
           "hostRecordState": dropped.state,
           "recordsDropped": dropped.usable,
           "removedCandidate": removed,
-          "refused": "a step failed; whatever runtime was selected remains selected",
+          "refused": (failed_reading.detail if failed_reading is not None
+                      else "a step failed; whatever runtime was selected remains selected"),
+          "reading": None if failed_reading is None else failed_reading.refusal(),
           "note": "the candidate this run created was removed so the destination can be"
                   " retried, and only the install records this run wrote were dropped. The"
                   " selection is left as found, because another run's promotion is not this"

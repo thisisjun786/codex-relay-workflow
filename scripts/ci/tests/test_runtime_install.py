@@ -1700,5 +1700,175 @@ class InstallOrderTests(unittest.TestCase):
                                    Path("/opt/env")))
 
 
+
+
+# =========================================================================================
+# Check 5 - a failing step stops the trial, for every step the trial can send
+# =========================================================================================
+
+class TrialStepGatingTests(unittest.TestCase):
+    """The inventory is the trial's own step list; the property is that a failure stops it.
+
+    This is the sibling that the first four checks did not cover. Six of the seven steps had
+    their result checked and assignment-find did not, so a lookup that never ran still let
+    settings-record and register write rows into a store this process could not read. The
+    check is driven from trial_steps rather than a list here, so a step added without a guard
+    fails it.
+    """
+
+    def _args(self):
+        return argparse.Namespace(
+            issue="JUN-104", parent_task="p", child_task="c", recipient="p",
+            artifact_root="/tmp", turn_thread="t", turn_id="ti", artifact=["/tmp/a"],
+            dispatch_turn_id="d", turn_status="completed", recipient_settings="@/tmp/s.json",
+            settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
+
+    def _steps(self):
+        import runtime_install
+
+        args = self._args()
+        return [argv[0] for argv in runtime_install.trial_steps(
+            issue=args.issue, parent_task=args.parent_task, child_task=args.child_task,
+            recipient=args.recipient, artifact_root=args.artifact_root,
+            turn_thread=args.turn_thread, turn_id=args.turn_id, host="h",
+            artifacts=args.artifact, dispatch_turn_id=args.dispatch_turn_id,
+            turn_status=args.turn_status, recipient_settings=args.recipient_settings)]
+
+    def test_the_inventory_is_the_trials_own_steps(self):
+        self.assertEqual(
+            self._steps(),
+            ["assignment-find", "settings-record", "register", "generation-open",
+             "generation-bind", "admit-turn", "emit", "deliver"])
+
+    def test_a_failure_at_any_step_stops_the_trial_at_that_step(self):
+        import runtime_install
+
+        steps = self._steps()
+        for index, failing in enumerate(steps):
+            performed = []
+
+            def relay(command, **kwargs):
+                name = command[0]
+                performed.append(name)
+                if name == failing:
+                    return {"ok": False, "command": ["relay", *command], "exitCode": 1,
+                            "stderr": "this step was made to fail", "payload": None}
+                return {"ok": True, "command": ["relay", *command], "exitCode": 0,
+                        "payload": _trial_payload(name)}
+
+            with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
+                result = runtime_install._trial(self._args(), "/usr/bin/relay")
+
+            self.assertEqual(result["value"], "not_verified", failing)
+            self.assertEqual(
+                performed, steps[:index + 1],
+                "a failing " + failing + " must stop the trial rather than write past it")
+
+    def test_a_lookup_that_found_nothing_is_still_an_observation_the_trial_proceeds_past(self):
+        # The distinction this check must not lose: an answer that found no assignment is a
+        # reading, and a command that did not run is not.
+        import runtime_install
+
+        performed = []
+
+        def relay(command, **kwargs):
+            performed.append(command[0])
+            payload = _trial_payload(command[0])
+            if command[0] == "assignment-find":
+                payload = {"issueKey": "JUN-104", "assignments": [],
+                           "responsibleChild": None, "responsibleRelationship": None}
+            return {"ok": True, "command": ["relay", *command], "exitCode": 0, "payload": payload}
+
+        with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
+            result = runtime_install._trial(self._args(), "/usr/bin/relay")
+        self.assertEqual(result["value"], "verified", result["evidence"][:400])
+        self.assertEqual(performed, self._steps())
+
+
+def _trial_payload(name):
+    """The smallest answer each step needs to let the next one run."""
+    return {
+        "register": {"relationshipId": "rel-test"},
+        "generation-open": {"executionGeneration": 1},
+        "emit": {"receipt": {"eventId": "ev-test"}},
+        "deliver": {"attempt": {"turnId": "turn-test"}},
+    }.get(name, {"ok": True})
+
+
+# =========================================================================================
+# Check 6 - past the exclusive mkdir, every exit releases what this run created
+# =========================================================================================
+
+def _unreleased_exits(tree):
+    """Returns inside cmd_install after the exclusive mkdir that do not go through release.
+
+    The exclusive mkdir is what proves this run owns the directory, and owning it is what
+    obliges the run to release it. A refusal that returns straight out leaves a deterministic
+    directory name behind, and every retry of that destination then refuses for ever.
+    """
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == "cmd_install"):
+            continue
+        owns_from = None
+        for statement in ast.walk(node):
+            if (isinstance(statement, ast.Assign)
+                    and any(getattr(t, "id", None) == "owned" for t in statement.targets)):
+                owns_from = statement.lineno
+        if owns_from is None:
+            return ["cmd_install never records owning a directory"]
+        offenders = []
+        for statement in ast.walk(node):
+            if not isinstance(statement, ast.Return) or statement.lineno <= owns_from:
+                continue
+            value = statement.value
+            if isinstance(value, ast.Call):
+                called = value.func
+                name = (called.attr if isinstance(called, ast.Attribute)
+                        else getattr(called, "id", None))
+                if name == "_install_failed":
+                    continue
+            if isinstance(value, ast.IfExp) or isinstance(value, ast.Name):
+                continue  # the success return
+            offenders.append("line " + str(statement.lineno))
+        return offenders
+    return ["cmd_install was not found"]
+
+
+class OwnershipReleaseTests(unittest.TestCase):
+    def test_every_exit_after_the_exclusive_mkdir_releases_the_directory(self):
+        tree = ast.parse((ROOT / "scripts" / "runtime_install.py").read_text(encoding="utf-8"))
+        self.assertEqual(_unreleased_exits(tree), [],
+                         "a refusal that returns without releasing blocks every retry of"
+                         " the same destination")
+
+    def test_a_record_failure_after_the_directory_exists_still_leaves_it_retriable(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "dest"
+            record_path = Path(temporary) / "record.json"
+            hostrecord.save(record_path, hostrecord.empty(1))
+
+            emitted = []
+            real = hostrecord.update
+
+            def failing(path, version, **deltas):
+                return reading.Reading(state=reading.ACCESS_ERROR, source=path,
+                                       exception="PermissionError", at="hostrecord.py:1",
+                                       detail="the record could not be written")
+
+            args = argparse.Namespace(dest=str(destination), apply=True, record=str(record_path),
+                                      python=sys.executable, socket=None, state=None,
+                                      issue="JUN-104")
+            with mock.patch.object(runtime_install.hostrecord, "update", side_effect=failing), \
+                 mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_install(args)
+            leftover = sorted(p.name for p in destination.iterdir()) if destination.is_dir() else []
+
+        self.assertEqual(code, 1)
+        self.assertEqual(leftover, [], "the destination this run created must be retriable")
+        self.assertIn("could not be written", json.dumps(emitted[-1]))
+
+
 if __name__ == "__main__":
     unittest.main()
