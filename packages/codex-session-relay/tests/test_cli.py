@@ -1139,6 +1139,10 @@ class ParticipantAccessReceipts(CliBase):
     could read and write it, not that a restrictive sandbox would have been reported
     correctly. The recorded sandbox each receipt carries is the settings the adapter would
     send with, which is the value a denial would have to be explained against.
+
+    The device and inode pair is also namespace-local. These participants are co-located, so
+    it settles identity for them; across mount namespaces or hosts it does not, and
+    `store-challenge` with `doctor --expect-nonce` is the mechanism that does.
     """
 
     def probe_socket(self):
@@ -1278,6 +1282,67 @@ class ParticipantAccessReceipts(CliBase):
             "the child's recorded cwd is not the workspace it actually runs in",
         )
 
+    def test_a_policy_that_omits_its_defaults_still_reports_what_would_be_sent(self):
+        """The receipt has to show the effective sandbox, not the recorded keystrokes.
+
+        `{"type": "workspaceWrite"}` is accepted, and the adapter fills networkAccess false,
+        empty writable roots and the two temporary-directory flags from the pinned defaults
+        before sending. Reported raw, networkAccess reads as null for a participant whose
+        sends really do carry false - which would have an operator diagnosing a denial against
+        a value the host never sees.
+        """
+        settings = self.settings(self.root)
+        settings["sandbox"] = {"type": "workspaceWrite"}
+        self.run_cli(
+            "register", "--parent-task", PARENT, "--parent-host", HOST,
+            "--child-task", CHILD, "--child-host", HOST, "--issue", ISSUE,
+            "--artifact-root", self.root, "--allowed-recipient", PARENT,
+            "--dispatch-request-id", "dispatch-1", "--dispatch-turn-id", DISPATCH_TURN,
+            "--parent-settings", json.dumps(settings),
+            "--child-settings", json.dumps(settings),
+        )
+
+        receipt = self.participant("doctor", state=self.tmp, pin=self.tmp)["accessReceipt"]
+
+        sandbox = receipt["recordedSandbox"]["participants"][PARENT]
+        self.assertTrue(sandbox["readable"], sandbox)
+        self.assertEqual(sandbox["mode"], "workspaceWrite")
+        self.assertIs(sandbox["networkAccess"], False, "the default was reported as unknown")
+        self.assertEqual(sandbox["writableRoots"], [])
+        self.assertIs(sandbox["excludeTmpdirEnvVar"], False)
+        self.assertIs(sandbox["excludeSlashTmp"], False)
+
+    def test_one_unreadable_participant_does_not_take_the_diagnosis_with_it(self):
+        """A damaged row is exactly when the rest of the report is worth most.
+
+        These rows can hold whatever an older writer or a hand edit left, and a shape the
+        parser accepts is not a shape the reader can use: json.loads returns a list for `[]`
+        quite happily. Raising there would cost the store identity and the access evidence too,
+        leaving a generic host error where the diagnosis should be.
+        """
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        self.seeded()
+        store = Store(Path(self.tmp) / "relay.sqlite3")
+        self.addCleanup(store.close)
+        with store.transaction() as db:
+            db.execute(
+                "UPDATE authorized_settings SET settings = ? WHERE task_id = ?",
+                ("[]", CHILD),
+            )
+        store.db.commit()
+
+        receipt = self.participant("doctor", state=self.tmp, pin=self.tmp)["accessReceipt"]
+
+        participants = receipt["recordedSandbox"]["participants"]
+        self.assertFalse(participants[CHILD]["readable"], participants[CHILD])
+        self.assertIn("not an object", participants[CHILD]["detail"])
+        # The damage is confined to the row that carries it.
+        self.assertTrue(participants[PARENT]["readable"], participants[PARENT])
+        self.assertIsNotNone(receipt["storeId"])
+        self.assertTrue(receipt["observedAccess"]["read"])
     def test_a_participant_on_another_store_is_refused_rather_than_called_healthy(self):
         """The failure this criterion is really about: agreeing while looking at two stores."""
         state = self.seeded()

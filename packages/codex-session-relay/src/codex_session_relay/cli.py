@@ -777,20 +777,45 @@ def _sandbox_summary(row) -> dict:
     Read from the authorized settings the creation result reported, because that is what a
     send actually sends. A policy file on disk may describe something else entirely, and the
     question here is what this installation would really do, not what it is configured to do.
+
+    Normalised through the same helper delivery uses rather than read raw, for that same
+    reason. An authorized policy may legitimately omit a documented default -
+    `{"type": "workspaceWrite"}` passes `TaskSettings.require_usable()` - and the adapter then
+    applies `networkAccess: false`, empty writable roots and the two temporary-directory
+    flags. A receipt built from the raw JSON would report `networkAccess` as null for a
+    participant whose sends really do carry false, which is the opposite of what this field
+    exists to answer.
+
+    Total, like the helper it leans on. These rows can hold anything an older writer or a hand
+    edit left behind, and this is a diagnosis: one unreadable participant must cost that
+    participant's line, never the store identity and access evidence standing beside it.
     """
     import json
+
+    from .settings import normalise_policy
 
     try:
         settings = json.loads(row["settings"])
     except (TypeError, ValueError):
-        return {"readable": False, "detail": "the recorded settings could not be parsed"}
-    sandbox = settings.get("sandbox") or {}
+        return {"readable": False, "detail": "the recorded settings are not valid JSON"}
+    if not isinstance(settings, dict):
+        # json.loads happily returns a list or a number, and .get raises on both.
+        return {
+            "readable": False,
+            "detail": f"the recorded settings are {type(settings).__name__}, not an object",
+        }
+    policy = normalise_policy(settings.get("sandbox"))
+    if policy is None:
+        return {"readable": False, "detail": "the recorded sandbox policy cannot be read"}
+    cwd = settings.get("cwd")
     return {
         "readable": True,
-        "mode": sandbox.get("type"),
-        "writableRoots": list(sandbox.get("writableRoots") or []),
-        "networkAccess": sandbox.get("networkAccess"),
-        "cwd": settings.get("cwd"),
+        "mode": policy.get("type"),
+        "writableRoots": policy.get("writableRoots"),
+        "networkAccess": policy.get("networkAccess"),
+        "excludeTmpdirEnvVar": policy.get("excludeTmpdirEnvVar"),
+        "excludeSlashTmp": policy.get("excludeSlashTmp"),
+        "cwd": cwd if isinstance(cwd, str) else None,
         "recordedFrom": row["source"],
         "recordedAt": row["recorded_at"],
     }
@@ -809,6 +834,13 @@ def _access_receipt(services, report) -> dict:
     spellings can be one file, and one spelling can be two files on different mounts or in
     different sandboxes. The device and inode are what actually answer it, which is why they
     are here beside the path rather than instead of it.
+
+    They answer it only within one filesystem namespace, though. Participants in separate
+    mount namespaces, or on different hosts, can hold the same device and inode while sharing
+    nothing at all - so this pair is evidence for co-located participants and not a proof
+    across that boundary. `store-challenge` and `doctor --expect-nonce` are what settle it
+    there: a value one participant writes and another reads back proves a shared store however
+    the paths and the mounts are arranged.
     """
     from .store import read_only_rows
 
