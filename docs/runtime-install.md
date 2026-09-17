@@ -150,6 +150,23 @@ string, or the same server defined twice. Where `tomllib` is importable it addit
 cross-checks the scanner's reading and reports a disagreement as an unreadable signal, but the
 Python 3.10 branch is protected by negative fixtures rather than by `tomllib`.
 
+The reader walks characters rather than counting delimiters, because a quote only means what it
+means outside a string. A single-quoted literal value can legitimately contain the three-quote
+sequence that opens a multi-line string, and counting delimiters reads that as a fence which never
+closes, silently skipping every table after it. Basic-string escapes are decoded before any value is
+compared, an escape the reader does not model is reported rather than guessed at, and a member
+assignment inside a parent `[mcp_servers]` table is unreadable for the same reason a dotted one is.
+
+The property that fixes is a round trip, not three cases: **what the writer emits, the reader reads
+back unchanged, and a rerun then answers `LINKED`** — including values carrying backslashes, quotes,
+control characters and the three-quote sequence.
+
+Writing is held under an exclusive lock for the whole read-modify-write, re-reads immediately before
+replacing, and replaces by temp file. That coordinates runs of this command with each other and
+removes truncation. It cannot coordinate with an editor that does not take the same lock, so it is
+not called compare-and-swap: a writer ignoring the lock can still land in the remaining window. The
+hook file is written the same way, with the same stated limit.
+
 ## Six results that never imply one another
 
 Diagnosis reports the six OPS-6.1 fields separately, in the OPS-6.2 shape, each with its own
@@ -194,11 +211,21 @@ An emitted receipt's own turn id never satisfies it. The authorized recipient an
 settings are recorded before the send, and the settings the host reported back are recorded with the
 result.
 
+Everything the trial needs is checked before its first command, so an incomplete trial writes
+nothing: an artifact, a dispatch turn, a recipient equal to the parent task, and the recipient's
+authorized settings. Each of those was previously discovered at the relay, after rows had already
+been written. Settings are supplied with `--recipient-settings`, or acknowledged with
+`--settings-already-recorded` when they are already authorized on the host; that acknowledgement is
+recorded as the caller's own unverified claim, because every relay read constructs a store and there
+is no read-only way to confirm it from here. A false acknowledgement can still reach the relay and
+leave rows behind.
+
 Getting that far takes more than three commands, and each of the extra ones exists because the relay
 refuses the send without it. Measured against a running App Server, the sequence is:
 
 | Step | Why the send needs it |
 | --- | --- |
+| `assignment-find` | Runs first, before anything is written. A lookup run afterwards could find the relationship the trial itself just created, which says nothing about the store |
 | `settings-record` | A send is withheld until the recipient's authorized settings are on record, because preserving them is what the delivery checks against |
 | `register` | Creates the relationship and opens its first generation |
 | `generation-open` | Replays that same dispatch request id to read the generation number back; it opens no second generation |
@@ -255,6 +282,14 @@ process reporting the same `stateDirectory` together with `assignment-find --iss
 expected relationship. A relationship count is reported as the weaker observation it is: a count of
 zero where an assignment is expected means the process is pointed somewhere else, and a nonzero
 count from a different populated database would satisfy a count check while proving nothing.
+
+That lookup constructs a writable store, and a diagnosis constructs none, so plain `diagnose` does
+not run it and says so rather than claiming it happened. It runs in the trial, before any write, and
+its result is compared against the relationship the caller independently supplies with
+`--expect-relationship`; a store that does not hold it stops the trial before anything is written.
+`diagnose --assignment-lookup` runs the same lookup on its own where that is wanted, and is
+documented as constructing a store. One command cannot produce the reading from every participating
+process that OPS-3.4 also asks for, and the report says so.
 
 Every subsequent call sets both selectors, `--state` and `CODEX_SESSION_RELAY_STATE`, to the same
 resolved absolute path, because under OPS-3.3 the flag alone moves the store while leaving the
