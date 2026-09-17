@@ -84,7 +84,7 @@ status. Every row below is implemented and carries a test; the suite is the proo
 | I-51b | The delivered message contains no parent turn id | asserted by test | implemented |
 | I-52 | An acknowledging turn must have started after the delivery | compared against the attempt's observation time | implemented |
 | I-53 | An unverifiable turn does not close the attempt | stored as unverified; the delivery state is unchanged | implemented |
-| I-54 | Duplicate delivery cannot cause a second verification | `ack.claim_verification` is an idempotent insert keyed on event id, reopened only where `ack._re_review_open` holds | implemented |
+| I-54 | Duplicate delivery cannot cause a second verification | `ack.claim_verification` is an idempotent insert keyed on event id, reopened only where `ack._re_review_open` holds and `ack._ruling_is_current` does not | implemented |
 | I-55 | A revision routes to the same child under a new generation | `ack.record_verdict` opens the generation on the same relationship | implemented |
 | I-73 | A verdict requires an acknowledged event | `ack.record_verdict` | implemented |
 | I-74 | The child must be an authorized recipient before a revision is queued | checked before anything is written | implemented |
