@@ -42,6 +42,12 @@ DIMENSIONS = {
     "codexCli": ("codex_cli", MANDATORY),
     "host": ("host", MANDATORY),
     "appServer": ("app_server", SYMMETRIC),
+    # The instrument the claim rests on: the checkout artifacts the measuring command RUNS to
+    # exercise a component. The bridge's smoke check lives outside the installed package, so
+    # its bytes were in no dimension, and a point measured with a modified check stayed
+    # matchable once the check was restored. Mandatory, because a point that cannot name what
+    # produced its claim is not evidence about what ran.
+    "exerciseDigest": ("exercise_digest", MANDATORY),
 }
 
 # Read off a point but not compared as dimensions: these decide whether the point counts at
@@ -165,7 +171,7 @@ def add_point(record, name, point):
 
 
 def points_for(record, name, *, location, interpreter, install_digest,
-               codex_cli=None, app_server=None, host=None):
+               codex_cli=None, app_server=None, host=None, exercise_digest=None):
     """Points that actually cover this install, this interpreter and these bytes.
 
     Every dimension in DIMENSIONS has to agree, and what "agree" means when a value is missing
@@ -176,7 +182,8 @@ def points_for(record, name, *, location, interpreter, install_digest,
     """
     supplied = {"location": location, "interpreter": interpreter,
                 "install_digest": install_digest, "codex_cli": codex_cli,
-                "app_server": app_server, "host": host}
+                "app_server": app_server, "host": host,
+                "exercise_digest": exercise_digest}
     found = []
     for point in component(record, name).get("measuredPoints", []):
         if not point.get("exercised"):

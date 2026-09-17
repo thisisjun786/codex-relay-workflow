@@ -59,6 +59,25 @@ class ConfigView:
         return not self.unreadable
 
 
+# What scan() gives back for a name it did not find. Named, because presence is decided
+# against THIS value rather than against the entry's truth. A server table carrying no fields
+# parses to an empty mapping, an empty mapping is falsey, and a caller testing the entry for
+# truth therefore reported "no registration" for a server that is on disk. Absent and empty
+# are two answers and this sentinel is what keeps them apart.
+ABSENT = None
+
+
+def registration_of(view, name):
+    """Whether this configuration registers name, and the entry. Returns (present, entry).
+
+    The question belongs to the reader that produced the view, so the reader answers it. A
+    consumer deciding presence for itself is deciding it by whatever predicate it happened to
+    write, which is how an empty table became an absent one.
+    """
+    entry = view.servers.get(name, ABSENT)
+    return entry is not ABSENT, entry
+
+
 def registration_view(mapping):
     """Validate mcp_servers and project it to the two fields this command compares.
 

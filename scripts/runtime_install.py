@@ -396,6 +396,39 @@ def interpreter_for(record, name, entry_point):
     return interpreter_of(entry_point), "the script's first line"
 
 
+# The checkout artifacts this command EXECUTES to produce a component's exercise, named as
+# definition fields rather than as paths. A claim rests on its instrument, and this one was in
+# no recorded dimension: exerciseScript lives outside packageLocation, so a modified smoke
+# check produced a point that named only the clean installed bytes and went on matching once
+# the check was restored.
+INSTRUMENT_FIELDS = ("exerciseScript",)
+NO_CHECKOUT_INSTRUMENT = "none: exercised through its own installed entry point"
+
+
+def instrument_digest(component):
+    """The bytes of every checkout artifact this command runs for this component, or None.
+
+    One helper, called by the writer in measure_candidate and by the reader in
+    classify_component, so the value a point carries is the value a later run asks with. A
+    component exercised only through its own installed entry point answers with a declared
+    token: that is an answer, not a missing value, and the installed bytes are already a
+    dimension of their own.
+
+    None means the instrument could not be read, which is an unread signal and not a value.
+    """
+    paths = sorted(str(component[field]) for field in INSTRUMENT_FIELDS if component.get(field))
+    if not paths:
+        return NO_CHECKOUT_INSTRUMENT
+    digest = hashlib.sha256()
+    for relative in paths:
+        digest.update(relative.encode("utf-8") + b"\0")
+        try:
+            digest.update((ROOT / relative).read_bytes())
+        except OSError:
+            return None
+    return digest.hexdigest()
+
+
 def classify_component(component, *, record, entry_override=None, registration=None,
                        record_state=None, app_server=None, links=None):
     """Gather the four OPS-2.1 signals and classify."""
@@ -470,17 +503,24 @@ def classify_component(component, *, record, entry_override=None, registration=N
     codex_cli = judged.answer(codex_cli_version(), what="the Codex CLI version")
     host_name = judged.answer(this_host(), what="this host's name")
     app_server = judged.answer(app_server, what="the App Server identity")
+    # The instrument this component's exercise runs from, read here by the same helper the
+    # measurement writes with. Unread, it is an unread signal like any other: passing None
+    # through would drop the dimension and let a point measured with a different smoke check
+    # carry the component to 'own'.
+    instrument = judged.answer(instrument_digest(component),
+                               what="the instrument that exercises " + component["component"])
     if record is None:
         # Which failure it was, not merely that there was one.
         unreadable.append("the host record (" + str(record_state or reading.UNREADABLE) + ")")
     elif (codex_cli is not None and app_server is not None and host_name is not None
-          and location and version):
+          and instrument is not None and location and version):
         # Each unreadable signal is recorded on its own. Reporting only the first would hide
         # the others, and every one of them independently stops the classification.
         points = hostrecord.points_for(
             record, component["component"], location=location,
             interpreter=version, install_digest=current_digest,
             codex_cli=codex_cli, app_server=app_server, host=host_name,
+            exercise_digest=instrument,
         )
 
     conflict = None
@@ -589,14 +629,14 @@ def registration_state(codex_home, command, args, name=MCP_NAME, compare_args=Tr
         return {"path": str(path), "outcome": "UNREADABLE",
                 "detail": "; ".join(view.unreadable), "wouldWrite": False,
                 "registered": None}
-    registered = view.servers.get(name)
+    present, registered = codexconfig.registration_of(view, name)
     if not command:
         return {
             "path": str(path),
-            "outcome": "PRESENT" if registered else "ABSENT",
+            "outcome": "PRESENT" if present else "ABSENT",
             "detail": ("the configuration registers " + repr((registered or {}).get("command"))
                        + "; no expected command was supplied, so nothing was compared")
-                      if registered else "no registration for " + name,
+                      if present else "no registration for " + name,
             "wouldWrite": False,
             "registered": registered,
         }
@@ -896,29 +936,70 @@ REPLAY_FROM_LOOKUP = ("parentTaskId", "childTaskId", "issueKey")
 REPLAY_FROM_REGISTER = ("artifactRoots", "allowedRecipients", "parentHostId", "childHostId")
 REGISTER_REPLAY_FIELDS = REPLAY_FROM_LOOKUP + REPLAY_FROM_REGISTER
 
-# Every input the trial requires before its first mutating step, as argument name -> the flag
-# that supplies it. Declared rather than spelled out at the check, so a test can derive the set
-# and make each member unusable in turn: an input added without a preflight case fails that test
-# instead of being discovered at the relay after rows already exist.
-#
-# Split in two because the two halves are checked differently, and saying so here is what keeps
-# the check itself free of a literal naming one member of the set it is iterating.
-TRIAL_REQUIRED_INPUTS = {
-    "issue": "--issue", "parent_task": "--parent-task", "child_task": "--child-task",
-    "recipient": "--recipient", "artifact_root": "--artifact-root",
-    "turn_thread": "--turn-thread", "turn_id": "--turn-id", "artifact": "--artifact",
-    "dispatch_turn_id": "--dispatch-turn-id",
-}
-# Required too, but with an acknowledgement path and a usability question of its own.
-TRIAL_ACKNOWLEDGED_INPUTS = {"recipient_settings": "--recipient-settings"}
-TRIAL_PREFLIGHT_INPUTS = dict(TRIAL_REQUIRED_INPUTS, **TRIAL_ACKNOWLEDGED_INPUTS)
-
 # The two callables settings-record actually uses: the relay's reader for a JSON object or an
 # @path, and the predicate record_settings applies before it writes anything. Named here and
 # derived again from the relay's source by a check, so a relay that changes either one fails
 # that check rather than leaving this preflight enforcing a rule nobody applies any more.
 SETTINGS_READER = ("codex_session_relay.cli", "_settings_json")
 SETTINGS_PREDICATE = ("codex_session_relay.settings", "TaskSettings", "require_usable")
+
+# The relay callable that decides whether an anchor turn id is one at all. Paired with the
+# inputs it governs below and asked of the relay's own code, never restated here.
+RELAY_TURN_ID = ("codex_session_relay.registry", "validated_turn_id")
+
+# This command's own minimum for a flag that was supplied: a value with something in it.
+NON_BLANK = "non-blank"
+
+# Every input the trial requires before its first mutating step, as argument name ->
+# (the flag that supplies it, the predicate its CONSUMER applies).
+#
+# The pair is the point. Carrying only names, the set left each member to whatever predicate
+# the gate happened to write, and the gate wrote truthiness: a whitespace-only turn id is
+# truthy here and blank in the relay's validated_turn_id, so it passed the preflight and was
+# refused after register had written a relationship row. NON_BLANK closes that for the whole
+# family rather than for the two members a reviewer named, and a member whose consumer applies
+# a stricter rule names that rule so it can be asked of the consumer's own code.
+#
+# Split in two because the two halves are checked differently, and saying so here is what keeps
+# the check itself free of a literal naming one member of the set it is iterating.
+TRIAL_REQUIRED_INPUTS = {
+    "issue": ("--issue", NON_BLANK),
+    "parent_task": ("--parent-task", NON_BLANK),
+    "child_task": ("--child-task", NON_BLANK),
+    "recipient": ("--recipient", NON_BLANK),
+    "artifact_root": ("--artifact-root", NON_BLANK),
+    "turn_thread": ("--turn-thread", NON_BLANK),
+    "artifact": ("--artifact", NON_BLANK),
+    "turn_id": ("--turn-id", RELAY_TURN_ID),
+    "dispatch_turn_id": ("--dispatch-turn-id", RELAY_TURN_ID),
+}
+# Required too, but with an acknowledgement path and a usability question of its own.
+TRIAL_ACKNOWLEDGED_INPUTS = {"recipient_settings": ("--recipient-settings", SETTINGS_PREDICATE)}
+TRIAL_PREFLIGHT_INPUTS = dict(TRIAL_REQUIRED_INPUTS, **TRIAL_ACKNOWLEDGED_INPUTS)
+
+# The read-only probes this command runs before the trial mutates anything. Each asks a
+# question whose answer the SELECTED relay will act on, so each runs that relay's interpreter.
+# A probe running sys.executable asks this checkout instead, and a checkout whose rule differs
+# from the installed relay's accepts what the relay refuses -- after four mutating steps.
+PREFLIGHT_PROBES = ("settings_usable", "values_usable", "_relay_normalizes")
+
+# Every presence question this command asks, paired with the reader whose own sentinel answers
+# it. Deciding presence here instead means deciding it by whatever predicate this module wrote,
+# and the one it wrote read an empty server table as an absent one.
+PRESENCE_READINGS = {"the MCP registration": ("codexconfig", "registration_of")}
+
+
+def _supplied(value):
+    """Whether a flag arrived carrying something.
+
+    A value made only of whitespace is not supplied. It is truthy, which is how one reached the
+    relay and was refused there, after the rows a refusal was supposed to prevent.
+    """
+    if value is None:
+        return False
+    if isinstance(value, (list, tuple)):
+        return bool(value) and all(_supplied(item) for item in value)
+    return bool(str(value).strip())
 
 
 def _settings_program():
@@ -979,6 +1060,65 @@ def settings_usable(raw, interpreter):
     except ValueError as error:
         return {"usable": None,
                 "detail": "the check answered something unreadable: " + str(error)}
+
+
+def _predicate_program(predicate):
+    """A read-only program that asks one declared callable about each value it is given."""
+    module, callable_name = predicate
+    return "\n".join([
+        "import json, sys",
+        "from " + module + " import " + callable_name,
+        "refusals = {}",
+        "for flag, value in json.loads(sys.argv[1]).items():",
+        "    try:",
+        "        " + callable_name + "(value)",
+        "    except BaseException as error:",
+        "        refusals[flag] = type(error).__name__ + ': ' + str(error)",
+        "print(json.dumps(refusals))",
+        "",
+    ])
+
+
+def values_usable(predicate, values, interpreter):
+    """Whether the consumer's own predicate accepts these values, asked in its own runtime.
+
+    The other half of the pair a declared input carries. An input's predicate belongs to
+    whatever will act on the value, so the value goes there rather than to a rule restated
+    here: validated_turn_id refuses a blank anchor and a truthiness test written here does not,
+    and the difference is a relationship row written before the refusal arrives.
+
+    Returns {"usable": bool or None, "detail": str}. None means the question could not be
+    asked, which is a refusal of its own and never a fall back to a predicate of this
+    command's own making.
+    """
+    if not interpreter:
+        return {"usable": None, "detail": (
+            "the relay's interpreter could not be resolved, so its own rule for "
+            + predicate[-1] + " could not be asked here. Pass --relay-command naming an"
+            " installed entry point, or record the install first.")}
+    try:
+        # -B for the same reason the settings probe uses it: this runs inside somebody's
+        # installed runtime and read-only has to mean it.
+        done = subprocess.run([str(interpreter), "-B", "-c", _predicate_program(predicate),
+                               json.dumps(dict(values))],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"usable": None,
+                "detail": "the check could not be run: " + type(error).__name__ + ": " + str(error)}
+    if done.returncode != 0 or not done.stdout.strip():
+        return {"usable": None, "detail": (
+            "the relay's " + predicate[-1] + " check did not answer (exit "
+            + str(done.returncode) + "): "
+            + ((done.stderr or done.stdout).strip()[-300:] or "no output"))}
+    try:
+        refusals = json.loads(done.stdout)
+    except ValueError as error:
+        return {"usable": None,
+                "detail": "the check answered something unreadable: " + str(error)}
+    if refusals:
+        return {"usable": False,
+                "detail": "; ".join(flag + " " + why for flag, why in sorted(refusals.items()))}
+    return {"usable": True, "detail": "read, and accepted by " + predicate[-1]}
 
 
 def trial_request_id(issue, dispatch_turn):
@@ -1051,33 +1191,38 @@ def trial_steps(*, issue, parent_task, child_task, recipient, artifact_root,
     ]
 
 
-RELAY_SOURCE = ROOT / "packages" / "codex-session-relay" / "src"
-
-
-def _relay_normalizes(paths):
-    """Ask the relay's own normalizer, in its own source, what it refuses.
+def _relay_normalizes(paths, interpreter):
+    """Ask the relay's own normalizer, in the runtime that will act on the answer, what it refuses.
 
     Reimplementing this drifted: a path written with a parent segment compares equal to its own
     string, so a "is it already normalised" check written here passed something the relay
     rejects at emit, after four mutating steps. The rule belongs to the relay, so the question
     goes to the relay rather than to a second copy of it.
 
+    And to the relay that will run, not to this checkout's copy of it. Asked with this
+    interpreter and this source, a selected installation whose rule differs accepts here and
+    refuses at emit, which is the same failure one layer up: the question was paired with a
+    predicate but not with the runtime that applies it. The settings probe already does this.
+
     Returns (refusals, reason). A reason means the question could not be asked, which is a
     refusal of its own - never a fallback to an approximation.
     """
+    if not interpreter:
+        return {}, ("the relay's interpreter could not be resolved, so its own path rule could"
+                    " not be asked here. Pass --relay-command naming an installed entry point,"
+                    " or record the install first")
     probe = (
         "import json, sys\n"
-        "sys.path.insert(0, sys.argv[1])\n"
         "from codex_session_relay.scope import normalize_declared_path\n"
         "out = {}\n"
-        "for path in json.loads(sys.argv[2]):\n"
+        "for path in json.loads(sys.argv[1]):\n"
         "    try:\n"
         "        normalize_declared_path(path)\n"
         "    except Exception as error:\n"
         "        out[path] = type(error).__name__ + ': ' + str(error)\n"
         "print(json.dumps(out))\n"
     )
-    argv = [sys.executable, "-c", probe, str(RELAY_SOURCE), json.dumps(list(paths))]
+    argv = [str(interpreter), "-B", "-c", probe, json.dumps(list(paths))]
     try:
         done = subprocess.run(argv, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as error:
@@ -1091,7 +1236,7 @@ def _relay_normalizes(paths):
         return {}, "the relay's normalizer returned nothing readable"
 
 
-def _unusable_artifacts(artifacts, root):
+def _unusable_artifacts(artifacts, root, interpreter):
     """Why the relay would refuse each artifact, checked before anything is written.
 
     The path shape is the relay's own rule, asked of the relay's own function. What remains
@@ -1101,7 +1246,7 @@ def _unusable_artifacts(artifacts, root):
     paths = [str(raw) for raw in (artifacts or [])]
     if not paths:
         return []
-    refusals, reason = _relay_normalizes(paths)
+    refusals, reason = _relay_normalizes(paths, interpreter)
     if reason:
         return [reason + "; artifacts are not checked against a second copy of the rule"]
 
@@ -1147,20 +1292,37 @@ def _trial(args, relay_executable, relay_interpreter=None):
     if not relay_executable:
         return check.field("not_verified", "trial requested but no relay executable was found",
                            acting_process=acting_process())
-    # Driven from the declared set. A reviewable receipt with an empty manifest is refused and a
-    # generation with no anchor cannot be emitted against; both were discovered at the relay,
-    # after the trial had already written rows.
-    required = {flag: getattr(args, name, None)
-                for name, flag in TRIAL_REQUIRED_INPUTS.items()}
-    missing = sorted(name for name, value in required.items() if not value)
-    if missing:
+    # Driven from the declared pairs, so each input is checked by the predicate its consumer
+    # applies rather than by whatever this gate would otherwise invent. A reviewable receipt
+    # with an empty manifest is refused and a generation with no anchor cannot be emitted
+    # against; both were discovered at the relay, after the trial had written rows.
+    blank = sorted(flag for name, (flag, _) in TRIAL_REQUIRED_INPUTS.items()
+                   if not _supplied(getattr(args, name, None)))
+    if blank:
         return check.field(
             "not_verified",
-            "trial requested but these inputs were not supplied: " + ", ".join(missing)
-            + ". Everything the trial needs is checked here, before the first command, so an"
-            " incomplete trial writes nothing.",
+            "trial requested but these inputs were not supplied with a value: "
+            + ", ".join(blank) + ". Everything the trial needs is checked here, before the"
+            " first command, so an incomplete trial writes nothing. A flag carrying only"
+            " whitespace is not supplied: it is refused by the relay after rows exist.",
             acting_process=acting_process(), measured_at=now(),
         )
+    # The members whose consumer applies a stricter rule than "supplied", asked of that
+    # consumer's own code in the runtime that will act on the answer.
+    for predicate in sorted({pair[1] for pair in TRIAL_REQUIRED_INPUTS.values()
+                             if pair[1] != NON_BLANK}):
+        governed = {flag: str(getattr(args, name))
+                    for name, (flag, declared) in TRIAL_REQUIRED_INPUTS.items()
+                    if declared == predicate}
+        answer = values_usable(predicate, governed, relay_interpreter)
+        if not answer.get("usable"):
+            return check.field(
+                "not_verified",
+                "these inputs are not what " + predicate[-1] + " accepts: "
+                + str(answer.get("detail")) + ". This is the relay's own predicate for them,"
+                " asked before the first mutating step. Nothing was written.",
+                acting_process=acting_process(), measured_at=now(),
+            )
     if args.recipient != args.parent_task:
         return check.field(
             "not_verified",
@@ -1179,7 +1341,7 @@ def _trial(args, relay_executable, relay_interpreter=None):
             " after the store has been written to.",
             acting_process=acting_process(), measured_at=now(),
         )
-    unusable = _unusable_artifacts(args.artifact, args.artifact_root)
+    unusable = _unusable_artifacts(args.artifact, args.artifact_root, relay_interpreter)
     if unusable:
         return check.field(
             "not_verified",
@@ -1955,7 +2117,10 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
               "host": socket.gethostname(), "appServer": app_server}
     measured = {
         name: dict(shared, install=bound[name]["install"].get("location"),
-                   installDigest=bound[name]["digest"])
+                   installDigest=bound[name]["digest"],
+                   # The instrument this component's claim rests on, read by the same helper
+                   # classification reads it with.
+                   exerciseDigest=instrument_digest(component_of(data, name)))
         for name in bound
     }
 

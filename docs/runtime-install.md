@@ -319,6 +319,30 @@ covered, because payload keys are data and forbidding them would forbid reading 
 The one map where that distinction decides something is guarded separately, by an access contract
 over the comparison loop itself.
 
+### A member carries its predicate and its provenance
+
+Declaring a set fixes what belongs to it and nothing else. The gate over that set still applies
+whatever predicate it wrote and the probe over it still asks whatever runtime was nearest, which
+is how one defect reopened a dimension up four separate times: a whitespace-only turn id read as
+supplied here and as blank by the relay, an empty server table read as an absent registration, an
+artifact rule asked of this checkout while a different installed relay acts on the answer, and a
+smoke check whose bytes decided a point that named only the installed package.
+
+So a member is a pair. `TRIAL_REQUIRED_INPUTS` maps each input to its flag *and* to the predicate
+its consumer applies - `NON_BLANK` for this command's own minimum, the relay's own
+`validated_turn_id` for the anchors the relay refuses blank. `PREFLIGHT_PROBES` names the
+read-only probes, and each runs the interpreter it was handed rather than this controller.
+`PRESENCE_READINGS` pairs a presence question with the reader whose sentinel answers it, because
+an empty mapping is falsey and is not an absent one. And `exerciseDigest` is a dimension of a
+point, because the bridge's smoke check lives outside the installed package and its bytes decide
+the claim the point records.
+
+Two consequences are worth stating rather than discovering. `--trial` needs the selected relay's
+interpreter to be resolvable before it writes anything, and says so instead of falling back to
+this checkout's copy of a rule the installation owns. And a point recorded before `exerciseDigest`
+existed no longer qualifies: it cannot name the instrument that produced its claim, so a host that
+reached `own` on such a point measures again.
+
 ### The failure contract
 
 The reading boundary answers questions about records. Underneath it, `main()` converts anything

@@ -53,6 +53,20 @@ Path(TRIAL_ROOT).mkdir(parents=True, exist_ok=True)
 TRIAL_ARTIFACT = str(Path(TRIAL_ROOT) / "deliverable.txt")
 Path(TRIAL_ARTIFACT).write_text("a deliverable", encoding="utf-8")
 
+# A stand-in for the interpreter of a SELECTED relay installation: this interpreter, with the
+# relay importable. The preflight probes now run the runtime that will act on their answers
+# rather than this checkout, so a case that wants the relay's real rule has to hand them a
+# runtime that has the relay in it. A wrapper rather than a virtual environment, because the
+# property under test is which runtime is asked, not how it was built.
+_RELAY_RUNTIME = Path(tempfile.mkdtemp(prefix="crw-jun104-relay-runtime-")) / "python"
+_RELAY_RUNTIME.write_text(
+    "#!/bin/sh\n"
+    'PYTHONPATH="' + str(ROOT / "packages" / "codex-session-relay" / "src") + '" '
+    'exec "' + sys.executable + '" "$@"\n',
+    encoding="utf-8")
+_RELAY_RUNTIME.chmod(0o755)
+RELAY_RUNTIME = str(_RELAY_RUNTIME)
+
 
 def usable_settings():
     """Stub the relay's settings check for cases that are not about settings validity.
@@ -300,10 +314,10 @@ class HostRecordTests(unittest.TestCase):
         record = hostrecord.empty(1)
         hostrecord.add_point(record, "codex-session-relay", {
             "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
-            "installDigest": "abc", "method": "doctor",
+            "installDigest": "abc", "exerciseDigest": "an-instrument", "method": "doctor",
             "codexCli": "0.1.0", "host": "a-host",
         })
-        matching = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc",
+        matching = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc", exercise_digest="an-instrument",
                         codex_cli="0.1.0", host="a-host")
         self.assertEqual(len(hostrecord.points_for(record, "codex-session-relay", **matching)), 1)
         for change in (dict(location="/other"), dict(interpreter="3.11.0"), dict(install_digest="def")):
@@ -521,9 +535,9 @@ class ReviewFixTests(unittest.TestCase):
         record = hostrecord.empty(1)
         hostrecord.add_point(record, "codex-session-relay", {
             "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
-            "installDigest": "abc", "codexCli": "0.154.0", "host": "one",
+            "installDigest": "abc", "exerciseDigest": "an-instrument", "codexCli": "0.154.0", "host": "one",
         })
-        asked = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc")
+        asked = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc", exercise_digest="an-instrument")
         self.assertEqual(len(hostrecord.points_for(record, "codex-session-relay", **asked,
                                                    codex_cli="0.154.0", host="one")), 1)
         self.assertEqual(hostrecord.points_for(record, "codex-session-relay", **asked,
@@ -732,7 +746,7 @@ class TrialArgumentTests(unittest.TestCase):
         runtime_install.scope.relay = fake_relay
         try:
             with usable_settings():
-                result = runtime_install._trial(Args(), "/opt/relay")
+                result = runtime_install._trial(Args(), "/opt/relay", RELAY_RUNTIME)
         finally:
             runtime_install.scope.relay = original
 
@@ -819,7 +833,7 @@ class AuthorizedRepairTests(unittest.TestCase):
         runtime_install.scope.relay = fake_relay
         try:
             with usable_settings():
-                return runtime_install._trial(args, "/opt/relay"), sent
+                return runtime_install._trial(args, "/opt/relay", RELAY_RUNTIME), sent
         finally:
             runtime_install.scope.relay = original
 
@@ -868,7 +882,7 @@ class AuthorizedRepairTests(unittest.TestCase):
         })
         self.assertEqual(hostrecord.points_for(
             record, "codex-session-relay", location="/env/pkg", interpreter="3.13.1",
-            install_digest="abc"), [], "a point recorded before this existed says nothing"
+            install_digest="abc", exercise_digest="an-instrument"), [], "a point recorded before this existed says nothing"
             " about which bytes ran")
 
     def test_measuring_refuses_when_the_interpreter_belongs_to_another_environment(self):
@@ -1216,7 +1230,7 @@ class IdentityComparisonTests(unittest.TestCase):
         with mock.patch.object(runtime_install.scope, "relay",
                                return_value={"ok": True, "payload": payload,
                                              "command": ["assignment-find"]}):
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "not_verified")
         self.assertIn("responsible relationship", result["evidence"])
 
@@ -1238,7 +1252,7 @@ class IdentityComparisonTests(unittest.TestCase):
             return {"ok": True, "command": list(command), "payload": payload}
 
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "not_verified")
         self.assertIn("already belongs to child", result["evidence"])
         self.assertIn("childTaskId", result["evidence"],
@@ -1267,7 +1281,7 @@ class IdentityComparisonTests(unittest.TestCase):
                     else _trial_payload(command[0])}
 
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "verified", result["evidence"][:300])
         self.assertIn("deliver", sent)
 
@@ -1951,7 +1965,7 @@ class TrialStepGatingTests(unittest.TestCase):
 
             with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
                 with usable_settings():
-                    result = runtime_install._trial(self._args(), "/usr/bin/relay")
+                    result = runtime_install._trial(self._args(), "/usr/bin/relay", RELAY_RUNTIME)
 
             self.assertEqual(result["value"], "not_verified", failing)
             self.assertEqual(
@@ -1975,7 +1989,7 @@ class TrialStepGatingTests(unittest.TestCase):
 
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
             with usable_settings():
-                result = runtime_install._trial(self._args(), "/usr/bin/relay")
+                result = runtime_install._trial(self._args(), "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "verified", result["evidence"][:400])
         self.assertEqual(performed, self._steps())
 
@@ -2464,7 +2478,7 @@ class PreflightCorpusTests(unittest.TestCase):
             dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
             settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
         with mock.patch.object(runtime_install.scope, "relay") as relay:
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "not_verified")
         self.assertIn("is not the child task", result["evidence"])
         relay.assert_not_called()
@@ -2492,9 +2506,9 @@ class PreflightCorpusTests(unittest.TestCase):
             }
             for label, path in cases.items():
                 with self.subTest(label):
-                    self.assertTrue(runtime_install._unusable_artifacts([path], str(root)),
+                    self.assertTrue(runtime_install._unusable_artifacts([path], str(root), RELAY_RUNTIME),
                                     label + " should be refused")
-            self.assertEqual(runtime_install._unusable_artifacts([str(real)], str(root)), [])
+            self.assertEqual(runtime_install._unusable_artifacts([str(real)], str(root), RELAY_RUNTIME), [])
 
     def test_a_refused_artifact_stops_the_trial_before_the_first_command(self):
         import runtime_install
@@ -2506,7 +2520,7 @@ class PreflightCorpusTests(unittest.TestCase):
             turn_status="completed", recipient_settings=None,
             settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
         with mock.patch.object(runtime_install.scope, "relay") as relay:
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "not_verified")
         self.assertIn("manifest entry", result["evidence"])
         relay.assert_not_called()
@@ -2679,9 +2693,9 @@ class WriteSidePromiseTests(unittest.TestCase):
         record = hostrecord.empty(1)
         hostrecord.add_point(record, "codex-session-relay", {
             "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
-            "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+            "installDigest": "abc", "exerciseDigest": "an-instrument", "codexCli": "0.1.0", "host": "a-host",
         })
-        asked = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc",
+        asked = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc", exercise_digest="an-instrument",
                      host="a-host")
         self.assertEqual(
             hostrecord.points_for(record, "codex-session-relay", codex_cli=None, **asked), [],
@@ -2696,12 +2710,12 @@ class WriteSidePromiseTests(unittest.TestCase):
         record = hostrecord.empty(1)
         hostrecord.add_point(record, "codex-session-relay", {
             "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
-            "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+            "installDigest": "abc", "exerciseDigest": "an-instrument", "codexCli": "0.1.0", "host": "a-host",
             "digestMatchesDefinition": False,
         })
         found = hostrecord.points_for(
             record, "codex-session-relay", location="/env/pkg", interpreter="3.13.1",
-            install_digest="abc", codex_cli="0.1.0", host="a-host")
+            install_digest="abc", exercise_digest="an-instrument", codex_cli="0.1.0", host="a-host")
         self.assertEqual(found, [])
 
     def test_a_point_written_before_the_field_existed_is_still_readable(self):
@@ -2710,11 +2724,11 @@ class WriteSidePromiseTests(unittest.TestCase):
         record = hostrecord.empty(1)
         hostrecord.add_point(record, "codex-session-relay", {
             "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
-            "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+            "installDigest": "abc", "exerciseDigest": "an-instrument", "codexCli": "0.1.0", "host": "a-host",
         })
         found = hostrecord.points_for(
             record, "codex-session-relay", location="/env/pkg", interpreter="3.13.1",
-            install_digest="abc", codex_cli="0.1.0", host="a-host")
+            install_digest="abc", exercise_digest="an-instrument", codex_cli="0.1.0", host="a-host")
         self.assertEqual(len(found), 1)
 
     def test_a_measurement_refuses_to_record_a_point_its_own_reader_would_reject(self):
@@ -2783,6 +2797,7 @@ class WriteSidePromiseTests(unittest.TestCase):
             "appServer": "the smoke check reports no connection",
             "install": "bound by _bind_installs, which refuses before this gate is reached",
             "installDigest": "bound by _bind_installs, which refuses before this gate is reached",
+            "exerciseDigest": "instrument_digest cannot read the smoke check it would run",
         }
         self.assertEqual(sorted(broken), sorted(hostrecord.DIMENSIONS),
                          "every declared dimension needs a case that breaks its observation")
@@ -2793,6 +2808,10 @@ class WriteSidePromiseTests(unittest.TestCase):
                                                      return_value=None),
             "host": lambda: mock.patch.object(runtime_install.socket, "gethostname",
                                               return_value=None),
+            # The instrument a claim rests on, unreadable. A point recorded here would name
+            # clean installed bytes and say nothing about what produced the exercise.
+            "exerciseDigest": lambda: mock.patch.object(runtime_install, "instrument_digest",
+                                                        return_value=None),
         }
 
         def measure(extra=None, connection=True):
@@ -3020,11 +3039,11 @@ class DimensionCoverageTests(unittest.TestCase):
 
     def _point(self):
         return {"exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
-                "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+                "installDigest": "abc", "exerciseDigest": "an-instrument", "codexCli": "0.1.0", "host": "a-host",
                 "appServer": "a-server"}
 
     def _asked(self):
-        return {"location": "/env/pkg", "interpreter": "3.13.1", "install_digest": "abc",
+        return {"location": "/env/pkg", "interpreter": "3.13.1", "install_digest": "abc", "exercise_digest": "an-instrument",
                 "codex_cli": "0.1.0", "host": "a-host", "app_server": "a-server"}
 
     def _match(self, point, asked):
@@ -3150,9 +3169,9 @@ class RelayRuleCoverageTests(unittest.TestCase):
             }
             for label, path in cases.items():
                 with self.subTest(label):
-                    self.assertTrue(runtime_install._unusable_artifacts([path], str(root)),
+                    self.assertTrue(runtime_install._unusable_artifacts([path], str(root), RELAY_RUNTIME),
                                     label + " must be refused before anything is written")
-            self.assertEqual(runtime_install._unusable_artifacts([str(real)], str(root)), [],
+            self.assertEqual(runtime_install._unusable_artifacts([str(real)], str(root), RELAY_RUNTIME), [],
                              "and a real artifact is not refused")
 
 
@@ -3656,7 +3675,7 @@ class DrawnSetTests(unittest.TestCase):
             expect_relationship=None, socket=None, state=None)
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
             with usable_settings():
-                result = runtime_install._trial(args, "/usr/bin/relay")
+                result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "verified", result["evidence"][:300])
         self.assertIn("settings-record", sent)
         self.assertLess(sent.index("register"), sent.index("settings-record"),
@@ -3685,7 +3704,7 @@ class DrawnSetTests(unittest.TestCase):
             recipient_settings="@/tmp/settings.json", settings_already_recorded=False,
             expect_relationship=None, socket=None, state=None)
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "not_verified")
         self.assertNotIn("settings-record", sent,
                          "a registration the relay refused must not leave settings on record")
@@ -3713,7 +3732,7 @@ class DrawnSetTests(unittest.TestCase):
             dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
             settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "not_verified", result["evidence"][:300])
         self.assertIn("parentTaskId", result["evidence"])
         self.assertEqual(sent, ["assignment-find"])
@@ -3737,7 +3756,7 @@ class DrawnSetTests(unittest.TestCase):
             dispatch_turn_id="d", turn_status="completed", recipient_settings=None,
             settings_already_recorded=True, expect_relationship=None, socket=None, state=None)
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay):
-            result = runtime_install._trial(args, "/usr/bin/relay")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         self.assertEqual(result["value"], "verified", result["evidence"][:300])
 
 
@@ -3909,7 +3928,7 @@ class PreflightInputSetTests(unittest.TestCase):
 
         with mock.patch.object(runtime_install.scope, "relay", side_effect=relay), \
              mock.patch.object(runtime_install, "settings_usable", return_value=settings_answer):
-            result = runtime_install._trial(args, "/usr/bin/relay", "/usr/bin/python")
+            result = runtime_install._trial(args, "/usr/bin/relay", RELAY_RUNTIME)
         return result, sent
 
     def test_the_baseline_reaches_a_delivery_so_the_refusals_mean_something(self):
@@ -3940,6 +3959,28 @@ class PreflightInputSetTests(unittest.TestCase):
                     self.assertEqual(result["value"], "not_verified", name)
                     self.assertEqual([step for step in sent if step in self.MUTATING], [],
                                      name + ": the trial mutated before its inputs were usable")
+
+    def test_every_required_input_made_blank_stops_the_trial_before_it_mutates(self):
+        """Supplied and usable are two questions, and whitespace answers them differently.
+
+        A truthiness gate reads a whitespace-only flag as supplied; the relay reads it as blank
+        and refuses, after register has written a relationship row. The corpus is the declared
+        set, so the whole family is closed rather than the two members a review happened to
+        name.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Path(temporary) / "s.json"
+            settings.write_text("{}", encoding="utf-8")
+            for name in sorted(runtime_install.TRIAL_REQUIRED_INPUTS):
+                with self.subTest(name):
+                    blank = ["   "] if name == "artifact" else "   "
+                    result, sent = self._run(self._args(settings, **{name: blank}),
+                                             {"usable": True, "detail": "read"})
+                    self.assertEqual(result["value"], "not_verified", name)
+                    self.assertEqual([step for step in sent if step in self.MUTATING], [],
+                                     name + ": a blank flag wrote to the store")
 
 
 # =========================================================================================
@@ -4925,6 +4966,222 @@ class StorePlaceTests(unittest.TestCase):
         names = {pattern for pattern, _kind in scope.STORE_PATTERNS}
         self.assertIn("relay.sqlite3", names)
         self.assertIn("operations-*.sqlite3", names)
+
+
+# =========================================================================================
+# Check 18 - the members of a declared set are PAIRS
+#
+# Four findings in one round, two shapes, one layer. A declared set fixed its MEMBERS and left
+# what is attached to each member unfixed, so the gate over the set applied whatever predicate
+# it happened to write and the probe over the set asked whatever runtime was nearest.
+#
+#   a trial input, paired with the predicate its CONSUMER applies
+#   a preflight question, paired with the RUNTIME that will act on the answer
+#   a presence question, paired with the READER whose sentinel decides it
+#   a recorded claim, paired with every ARTIFACT the claim rests on
+#
+# Layer 4 made a producer keep a consumer's predicate. Layer 6 made a consumer reference a
+# declared set rather than a literal. Neither of them says that a member of that set carries
+# its own predicate and its own provenance, which is what these check.
+# =========================================================================================
+
+
+def _function_named(path, name):
+    tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    return None
+
+
+def _relay_defines(predicate):
+    """Whether the relay's own source defines the callable a predicate names.
+
+    Read from the relay rather than imported, because this runs on interpreters that have no
+    relay installed and the question is about the declaration, not about this host.
+    """
+    module, name, rest = predicate[0], predicate[1], tuple(predicate[2:])
+    path = RELAY_SRC / (module.rsplit(".", 1)[-1] + ".py")
+    if not path.exists():
+        return False
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    owner = next((node for node in tree.body
+                  if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name == name),
+                 None)
+    if owner is None:
+        return False
+    if not rest:
+        return True
+    return any(isinstance(node, ast.FunctionDef) and node.name == rest[0]
+               for node in owner.body)
+
+
+class PairedMemberTests(unittest.TestCase):
+    def test_every_trial_input_carries_the_predicate_its_consumer_applies(self):
+        """A member is (flag, predicate). Carrying only the flag is what left the gate free to
+        invent truthiness for an input whose consumer refuses a blank string."""
+        import runtime_install
+
+        for name, pair in runtime_install.TRIAL_PREFLIGHT_INPUTS.items():
+            with self.subTest(name):
+                self.assertIsInstance(pair, tuple, name + " must carry (flag, predicate)")
+                self.assertGreaterEqual(len(pair), 2, name)
+                flag, predicate = pair[0], pair[1]
+                self.assertTrue(str(flag).startswith("--"), name + " must name its flag")
+                if predicate == runtime_install.NON_BLANK:
+                    continue
+                self.assertIsInstance(predicate, tuple, name + " names a consumer's callable")
+                self.assertTrue(
+                    _relay_defines(predicate),
+                    name + " is governed by " + str(predicate) + ", which the relay's own"
+                    " source does not define: the pair names a predicate nobody applies")
+
+    def test_the_gate_applies_each_declared_predicate_rather_than_one_of_its_own(self):
+        """The declared predicates have to reach the trial. Read from the gate's source, so a
+        pair declared and then ignored fails here instead of at the relay."""
+        import runtime_install
+
+        gate = ast.unparse(_function_named(RUNTIME, "_trial"))
+        self.assertIn("TRIAL_REQUIRED_INPUTS", gate)
+        self.assertIn("values_usable", gate,
+                      "a declared consumer predicate is asked of the consumer, not restated")
+        self.assertIn("_supplied", gate,
+                      "every member carries this command's own minimum for a supplied flag")
+
+    def test_every_preflight_probe_runs_the_runtime_it_was_handed(self):
+        """The other half of the pair: a question and the runtime that will act on the answer.
+
+        Asked of this checkout, a selected installation whose rule differs accepts here and
+        refuses after four mutating steps, which is the failure the pair exists to stop.
+        """
+        import runtime_install
+
+        for name in runtime_install.PREFLIGHT_PROBES:
+            with self.subTest(name):
+                node = _function_named(RUNTIME, name)
+                self.assertIsNotNone(node, name + " is declared a preflight probe and is gone")
+                body = ast.unparse(node)
+                self.assertIn("interpreter", [argument.arg for argument in node.args.args],
+                              name + " must be handed the runtime it asks")
+                self.assertNotIn(
+                    "sys.executable", body,
+                    name + " runs this controller, so it asks this checkout's copy of a rule"
+                    " the selected installation owns")
+                self.assertNotIn(
+                    "sys.path.insert", body,
+                    name + " puts this checkout on the probe's path, which is the same thing"
+                    " by another route")
+                self.assertIn("str(interpreter)", body,
+                              name + " must build its argv from the runtime it was handed")
+
+    def test_a_blank_value_is_refused_by_the_consumers_own_predicate(self):
+        """The defect itself: whitespace is truthy here and blank in the relay."""
+        import runtime_install
+
+        answer = runtime_install.values_usable(
+            runtime_install.RELAY_TURN_ID, {"--turn-id": "   "}, RELAY_RUNTIME)
+        self.assertFalse(answer["usable"], answer["detail"])
+        self.assertIn("--turn-id", answer["detail"])
+
+        accepted = runtime_install.values_usable(
+            runtime_install.RELAY_TURN_ID, {"--turn-id": "t-1"}, RELAY_RUNTIME)
+        self.assertTrue(accepted["usable"], accepted["detail"])
+
+    def test_a_question_that_could_not_be_asked_is_a_refusal_and_not_a_fallback(self):
+        import runtime_install
+
+        answer = runtime_install.values_usable(runtime_install.RELAY_TURN_ID, {"--turn-id": "t"},
+                                               None)
+        self.assertIsNone(answer["usable"])
+        self.assertIn("interpreter", answer["detail"])
+
+        refusals, reason = runtime_install._relay_normalizes(["/tmp/x"], None)
+        self.assertEqual(refusals, {})
+        self.assertIn("interpreter", reason)
+
+    @needs_reader
+    def test_an_empty_server_table_is_present_and_not_absent(self):
+        """Empty is not absent. Deciding it by testing the entry for truth denied a
+        registration that is on disk, which is the reading half of the same shape."""
+        import runtime_install
+
+        name = runtime_install.MCP_NAME
+        view = codexconfig.scan("[mcp_servers." + name + "]\n")
+        self.assertEqual(codexconfig.registration_of(view, name), (True, {}))
+        self.assertEqual(codexconfig.registration_of(view, "not-registered"),
+                         (False, codexconfig.ABSENT))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "codex"
+            home.mkdir()
+            (home / "config.toml").write_text("[mcp_servers." + name + "]\n",
+                                              encoding="utf-8")
+            state = runtime_install.registration_state(home, "", [])
+        self.assertEqual(state["outcome"], "PRESENT",
+                         "a table that exists on disk is not an absent registration")
+
+    def test_every_presence_reading_is_asked_through_its_own_reader(self):
+        import runtime_install
+
+        source = RUNTIME.read_text(encoding="utf-8")
+        for question, (module, callable_name) in runtime_install.PRESENCE_READINGS.items():
+            with self.subTest(question):
+                self.assertIn(module + "." + callable_name + "(", source,
+                              question + " is declared to be answered by " + callable_name
+                              + ", and this module decides it some other way")
+
+    def test_a_claim_names_the_instrument_it_rests_on(self):
+        """The bytes that produced 'exercised' are a dimension, because they decide the claim."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "check.py").write_text("print('one')", encoding="utf-8")
+            with mock.patch.object(runtime_install, "ROOT", root):
+                first = runtime_install.instrument_digest({"exerciseScript": "check.py"})
+                (root / "check.py").write_text("print('two')", encoding="utf-8")
+                second = runtime_install.instrument_digest({"exerciseScript": "check.py"})
+                (root / "check.py").unlink()
+                gone = runtime_install.instrument_digest({"exerciseScript": "check.py"})
+                none = runtime_install.instrument_digest({"component": "no-instrument"})
+        self.assertNotEqual(first, second, "a changed instrument is a changed claim")
+        self.assertIsNone(gone, "an instrument that could not be read is not a value")
+        self.assertEqual(none, runtime_install.NO_CHECKOUT_INSTRUMENT,
+                         "no instrument is an answer, not a missing dimension")
+
+    def test_the_writer_and_the_reader_ask_one_helper(self):
+        """Two derivations drift. The value a point carries has to be the value a later run
+        asks with, so both sides call the same function."""
+        for name in ("measure_candidate", "classify_component"):
+            with self.subTest(name):
+                self.assertIn("instrument_digest", ast.unparse(_function_named(RUNTIME, name)),
+                              name + " must ask the shared helper")
+
+    def test_the_bridges_instrument_sits_outside_its_installed_package(self):
+        """The premise of the dimension. If the smoke check ever moves inside the package its
+        bytes are already covered by installDigest, and this says so rather than leaving the
+        dimension standing on a reason nobody rechecked."""
+        bridge = next(component for component in definition.load()["components"]
+                      if component["component"] == "codex-thread-bridge")
+        self.assertNotIn(bridge["packageLocation"], bridge["exerciseScript"],
+                         "the instrument is inside the installed package now")
+
+    def test_a_point_measured_with_another_instrument_does_not_authorize_reuse(self):
+        record = hostrecord.empty(1)
+        hostrecord.add_point(record, "codex-thread-bridge", {
+            "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
+            "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+            "appServer": "a-server", "exerciseDigest": "the-check-as-it-was",
+        })
+        asked = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc",
+                     codex_cli="0.1.0", host="a-host", app_server="a-server")
+        self.assertEqual(
+            len(hostrecord.points_for(record, "codex-thread-bridge",
+                                      exercise_digest="the-check-as-it-was", **asked)), 1)
+        self.assertEqual(
+            hostrecord.points_for(record, "codex-thread-bridge",
+                                  exercise_digest="the-check-restored", **asked), [],
+            "a point made by a modified smoke check cannot be read back once it is restored")
 
 
 if __name__ == "__main__":
