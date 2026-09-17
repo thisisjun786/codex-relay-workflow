@@ -76,6 +76,18 @@ GATE_CELLS = {
     "storeTables": (("swapgate", "tables_cell"), _tables_block),
 }
 
+# The in-flight cell answers from TWO readings of its own, in this order: whether a store is
+# there at all, and then what it says. That is not a neighbour's answer borrowed -- it is the
+# same ordered observation the record reader makes, where absence is settled by looking at the
+# path before anything is opened.
+#
+# Without the first reading the cell had no way to say "established absent". The relay reports
+# contents unavailable for a store that is missing and for one it cannot read, so an absent
+# store read as unreadable, the gate returned UNESTABLISHED, and a first install on a clean
+# host could never promote -- while the schema cell, which does look at the path, answered
+# NO_STORE about the very same store.
+INFLIGHT_READINGS = (("runtime_install", "store_presence"), ("scope", "relay"))
+
 
 def _cell(answer, *, readable, detail, command=None, evidence=None):
     """One gate cell. 'readable' is whether the question was answered at all, and it is kept
@@ -97,14 +109,39 @@ def daemon_cell(envelope):
                  command=(envelope or {}).get("command"), evidence=state.get("running"))
 
 
-def inflight_cell(envelope):
-    """How many attempts are still open, from the relay's own doctor.
+def inflight_cell(envelope, presence=None):
+    """How many attempts are still open, from this cell's own two readings.
 
-    doctor constructs no Store, so asking does not create the database the question is about.
-    Its 'contents' reports availability separately from the counts for the same reason this
-    module does: a store it could not read yields no counts rather than zero.
+    'presence' settles whether a store exists by looking at the path, before anything is
+    opened. It has to come first, because the relay reports contents unavailable both for a
+    store that is missing and for one it cannot read, and those are opposite answers here: an
+    absent store has no open attempt, and an unreadable one has an unknown number.
+
+    'envelope' is the relay's own doctor, which constructs no Store, so asking does not create
+    the database the question is about.
+
+    A caller that supplies no presence reading gets the old behaviour and says so by passing
+    nothing: absence is then indistinguishable from unreadability and the cell refuses, which
+    is the safe direction for a caller that did not look.
     """
     command = (envelope or {}).get("command")
+    if presence is not None:
+        if not presence.get("readable"):
+            return _cell(reading.ACCESS_ERROR, readable=False,
+                         command=presence.get("command"),
+                         detail="whether a store exists at the resolved selection could not be"
+                                " established: " + str(presence.get("detail")))
+        if presence.get("present") is False:
+            available = (((envelope or {}).get("payload") or {}).get("contents") or {})
+            if available.get("available"):
+                # Two readings of this cell's own question disagreeing is not an answer.
+                return _cell(reading.UNREADABLE, readable=False, command=command,
+                             detail="no store exists at " + str(presence.get("dbPath"))
+                                    + " and the relay reports readable contents for it")
+            return _cell(0, readable=True, command=presence.get("command"), evidence=0,
+                         detail="no store exists at " + str(presence.get("dbPath"))
+                                + ", so no attempt can be open. That is established absence"
+                                  " rather than a count nobody could read")
     if not isinstance(envelope, dict) or not envelope.get("ok"):
         detail = (envelope or {}).get("unreadable") or (envelope or {}).get("stderr")
         return _cell(reading.ACCESS_ERROR, readable=False, command=command,

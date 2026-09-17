@@ -281,6 +281,16 @@ def decide(claim, liveness, *, occupied, protected, selected):
     was read and names this environment.
     """
     if claim.state == reading.ABSENT:
+        # Liveness first, even with no claim. A run takes the lock and writes its claim as one
+        # step, so the only way to see a held lock with no claim is a run that is between the
+        # two -- or one whose claim write failed. Reading that as an empty slot is how a live
+        # build gets adopted out from under its creator.
+        if liveness == LIVE:
+            return OCCUPIED, ("another run holds the staging lock here and has not written its"
+                              " claim yet, so this directory is being taken, not free")
+        if liveness == UNKNOWN:
+            return KEEP, ("there is no claim here and whether a run holds the staging lock"
+                          " could not be established")
         if occupied is None:
             return KEEP, ("there is no claim here and the directory could not be listed, so"
                           " whether it holds anything could not be established")
@@ -332,6 +342,28 @@ def decide(claim, liveness, *, occupied, protected, selected):
                       " writing a pointer to it is established as safe")
     return RECLAIM, ("this staging was abandoned by a run that no longer holds it and nothing"
                      " selects it or points at it, so it is removed and created again")
+
+
+def clear_own(environment):
+    """Remove this command's own two files from a directory, and nothing else.
+
+    Only CLAIM_NAME and LOCK_NAME are ever unlinked, so this cannot destroy anybody's work. It
+    exists because ADOPT removes an empty directory with rmdir -- which is its proof that
+    nothing was destroyed -- and rmdir refuses a directory still holding a lock file a previous
+    run left when its claim write failed. Without this, that leftover blocked the deterministic
+    destination for ever, which is the failure this whole path exists to remove.
+    """
+    removed = []
+    for name in (CLAIM_NAME, LOCK_NAME):
+        target = Path(environment) / name
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+        removed.append(name)
+    return removed
 
 
 def settled(claim):

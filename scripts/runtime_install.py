@@ -438,6 +438,42 @@ def _asked(argv, what, timeout=120):
     return answer
 
 
+# Whether a store is THERE, settled by looking at the path and opening nothing. The relay
+# reports contents unavailable both for a store that is missing and for one it cannot read, so
+# the in-flight cell cannot tell those apart from doctor alone -- and they are opposite answers
+# for it. Established absence means no attempt can be open; an unreadable store means the count
+# is unknown.
+_STORE_PRESENCE_PROGRAM = """
+import json, os, sys
+from codex_session_relay.store import resolve_state_dir
+
+selection = resolve_state_dir(sys.argv[1] or None, sys.argv[2] or None)
+database = selection.db_path
+try:
+    os.lstat(str(database))
+except FileNotFoundError:
+    print(json.dumps({"readable": True, "present": False, "dbPath": str(database),
+                      "detail": None}))
+    raise SystemExit(0)
+except OSError as error:
+    print(json.dumps({"readable": False, "present": None, "dbPath": str(database),
+                      "detail": type(error).__name__ + ": " + str(error)}))
+    raise SystemExit(0)
+print(json.dumps({"readable": True, "present": True, "dbPath": str(database), "detail": None}))
+"""
+
+
+def store_presence(interpreter, state=None, socket_path=None):
+    """Whether a store exists at the selection the relay itself resolves.
+
+    Asked of the relay rather than of this checkout, because which path a selection resolves to
+    is the relay's rule. Nothing is opened: the answer comes from the path.
+    """
+    argv = [str(interpreter), "-c", _STORE_PRESENCE_PROGRAM, str(state or ""),
+            str(socket_path or "")]
+    return _asked(argv, "whether a store exists")
+
+
 def store_tables(interpreter, state=None, socket_path=None):
     """The tables the store actually holds, read under the relay that owns the rule.
 
@@ -1238,7 +1274,7 @@ TRIAL_PREFLIGHT_INPUTS = dict(TRIAL_REQUIRED_INPUTS, **TRIAL_ACKNOWLEDGED_INPUTS
 # A probe running sys.executable asks this checkout instead, and a checkout whose rule differs
 # from the installed relay's accepts what the relay refuses -- after four mutating steps.
 PREFLIGHT_PROBES = ("settings_usable", "values_usable", "_relay_normalizes",
-                    "store_tables", "candidate_tables")
+                    "store_presence", "store_tables", "candidate_tables")
 
 # Every presence question this command asks, paired with the reader whose own sentinel answers
 # it. Deciding presence here instead means deciding it by whatever predicate this module wrote,
@@ -2006,6 +2042,10 @@ def cmd_install(args):
                 # rmdir, never rmtree. It succeeds only on an empty directory, so the call is
                 # its own proof that nothing was destroyed, and the exclusive mkdir below still
                 # establishes ownership the way it always did.
+                # This command's own leftovers first. A previous run whose claim write failed
+                # leaves a lock file here, and rmdir refuses a directory that still holds one --
+                # which blocked the deterministic destination for ever.
+                cleared = staging.clear_own(environment)
                 try:
                     os.rmdir(str(environment))
                 except OSError as error:
@@ -2015,7 +2055,7 @@ def cmd_install(args):
                               residualPaths=[str(environment)]))
                     return EXIT_REFUSED
                 performed.append({"step": "take over an empty staging directory", "ok": True,
-                                  "detail": why})
+                                  "detail": why, "clearedOwnFiles": cleared})
             elif decision in staging.REMOVES:
                 try:
                     shutil.rmtree(str(environment))
@@ -2055,9 +2095,20 @@ def cmd_install(args):
         # between its creation and its claim. The advisory lock is held for the RUN: the
         # operating system releases it when this process ends however it ends, which is
         # exactly the question a later run asks.
-        holder = staging.Held(environment).take()
-        staging.write_claim(environment, staging.STAGING, issue=args.issue,
-                            run=str(os.getpid()))
+        try:
+            holder = staging.Held(environment).take()
+            staging.write_claim(environment, staging.STAGING, issue=args.issue,
+                                run=str(os.getpid()))
+        except OSError as error:
+            # Past the exclusive mkdir this run owns the directory, and a claim that could not
+            # be written does not change that. Left to escape, it took the directory and its
+            # lock file with it, and the next run's ADOPT then met a lock file rmdir would not
+            # remove -- the permanent refusal this path exists to prevent, by another door.
+            performed.append({"step": "claim the staging directory", "ok": False,
+                              "detail": type(error).__name__ + ": " + error.__str__()})
+            return _install_failed(record_path, data["definitionVersion"], performed,
+                                   environment, owned,
+                                   failed_step="claim the staging directory")
         performed.append({"step": "claim the staging directory", "ok": True,
                           "claim": str(staging.claim_path(environment))})
     finally:
@@ -2180,7 +2231,7 @@ def cmd_install(args):
         # it, because a rule nobody checks is how the previous three got in.
         landed = None
         try:
-            with hostrecord.Locked(pointer_path):
+            with hostrecord.Exclusive(record_path):
                 fresh = hostrecord.load(record_path, data["definitionVersion"])
                 if not fresh.usable:
                     return _install_failed(record_path, data["definitionVersion"], performed,
@@ -2350,12 +2401,20 @@ def cmd_install(args):
                                   "target": str(environment)})
         except reading.Refused:
             raise
+        except TimeoutError as error:
+            # Another run holds the promotion. A lock this run could not take establishes
+            # nothing, so the candidate is released and nothing owned is touched.
+            performed.append({"step": "take the promotion lock", "ok": False,
+                              "detail": str(error)})
+            return _install_failed(record_path, data["definitionVersion"], performed,
+                                   environment, owned, pointer_path=pointer_path,
+                                   failed_step="take the promotion lock")
         except OSError as error:
-            performed.append({"step": "promote under the pointer lock", "ok": False,
+            performed.append({"step": "promote under the promotion lock", "ok": False,
                               "detail": type(error).__name__ + ": " + error.__str__()})
             return _install_failed(record_path, data["definitionVersion"], performed,
                                    environment, owned, pointer_path=pointer_path,
-                                   failed_step="promote under the pointer lock")
+                                   failed_step="promote under the promotion lock")
 
         # The claim settles last. It says this staging finished, and until the selection and the
         # pointer both name it there is nothing finished to say.
@@ -2413,7 +2472,7 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
     process may already be running out of it. So the pointer is brought into agreement with the
     selection and the claim is settled. Nothing is rebuilt and nothing is removed.
     """
-    with hostrecord.Locked(pointer_path):
+    with hostrecord.Exclusive(record_path):
         # Re-read the selection under the lock rather than trusting the decision that got here.
         # The reading that chose RESUME was taken before this lock existed, and the pointer is
         # only ever aimed at an environment the record is CURRENTLY read to select.
@@ -2433,6 +2492,21 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
             emit(dict(standing, refused="the interrupted promotion could not be finished: "
                                         + str(before["detail"]),
                       pointer={"path": str(pointer_path), "state": before["state"]}))
+            return EXIT_REFUSED
+        # Normal promotion asks whether the link is this command's before replacing it, and
+        # this path did not. A resume necessarily finds the pointer disagreeing with the
+        # selection -- that IS the interruption it repairs -- so the question is narrower: does
+        # the link still name a runtime this record accounts for. One repointed by hand during
+        # the interruption does not, and overwriting it silently is exactly what the pointer
+        # conflict cell exists to stop.
+        if before["state"] == pointer.LINK and not _target_is_recorded(
+                current.value, before.get("target"), data):
+            emit(dict(standing,
+                      refused="the owned pointer names " + str(before.get("target"))
+                              + ", which this host record does not account for, so it was"
+                              " repointed by something other than this command and the"
+                              " interrupted promotion is not this run's to finish",
+                      pointer={"path": str(pointer_path), "target": before.get("target")}))
             return EXIT_REFUSED
         try:
             pointer.place(pointer_path, environment)
@@ -2498,6 +2572,35 @@ def _inherited_registration(registration, record, data):
     }
 
 
+def _target_is_recorded(record, target, data):
+    """Whether a pointer target names a runtime this host record accounts for.
+
+    True for an environment or install location the record holds, and False for anything else
+    INCLUDING a target that could not be resolved, because this answer authorises replacing a
+    link and an unread answer authorises nothing.
+    """
+    if not target:
+        return False
+    try:
+        wanted = Path(target).resolve()
+    except (OSError, ValueError):
+        return False
+    for component in data["components"]:
+        entry = ((record or {}).get("components", {}).get(component["component"]) or {})
+        for install in entry.get("installs") or []:
+            for key in ("environment", "location"):
+                value = install.get(key)
+                if not value:
+                    continue
+                try:
+                    known = Path(value).resolve()
+                except (OSError, ValueError):
+                    continue
+                if wanted == known or wanted in known.parents:
+                    return True
+    return False
+
+
 def _names_environment(record, environment, data):
     """Whether the record's selection lies inside this environment, read and not assumed.
 
@@ -2535,8 +2638,9 @@ def _swap_gate(data, record, *, environment, python, socket_path=None, state=Non
     return swapgate.decide({
         "daemon": swapgate.daemon_cell(scope.relay(
             ["service", "status"], executable=executable, socket=socket_path, state=state)),
-        "inFlight": swapgate.inflight_cell(scope.relay(
-            ["doctor"], executable=executable, socket=socket_path, state=state)),
+        "inFlight": swapgate.inflight_cell(
+            scope.relay(["doctor"], executable=executable, socket=socket_path, state=state),
+            store_presence(interpreter, state, socket_path)),
         "storeTables": swapgate.tables_cell(
             store_tables(interpreter, state, socket_path), candidate_tables(python)),
     })

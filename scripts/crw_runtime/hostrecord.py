@@ -10,6 +10,7 @@ keeps this file from becoming a second compatibility definition that could drift
 committed one.
 """
 
+import errno
 import json
 import os
 import socket
@@ -18,6 +19,14 @@ import time
 from pathlib import Path
 
 from . import reading
+
+try:
+    import fcntl
+except ImportError:                                              # pragma: no cover
+    fcntl = None
+
+# The errnos flock raises for a lock somebody else holds. Anything else failed to ask.
+CONTENDED = (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK)
 
 RECORD_NAME = "host-record.json"
 
@@ -289,6 +298,69 @@ class Locked:
             os.close(self.handle)
             self.handle = None
         self.path.unlink(missing_ok=True)
+        return False
+
+
+# The promotion lock. Its path is fixed beside the host record and its liveness is the
+# kernel's, and both of those are deliberate corrections to Locked above.
+#
+# Locked cannot serve this. Its IDENTITY is whatever path a caller derives, so two installs
+# with different destinations derived different pointer paths, locked different files and never
+# met. Its VALIDITY is a 300-second mtime rule, so a promotion that outstayed it had its lock
+# unlinked by a waiter while it was still working -- and because Locked excludes by filename
+# rather than by lock, the holder's open descriptor gave it no protection at all. Three
+# reported defects, one set drawn wrong.
+#
+# So this excludes by advisory lock on one host-wide file that is created once and never
+# replaced or removed. Nothing expires while its owner lives, and the operating system releases
+# it when the owner dies however it dies.
+PROMOTION_LOCK_SUFFIX = ".promotion-lock"
+PROMOTION_TIMEOUT_SECONDS = 60.0
+
+
+class Exclusive:
+    """A host-wide advisory lock, held for the whole promotion.
+
+    The file is never unlinked. Unlinking is precisely what lets a second holder appear while
+    the first still believes it is alone, so the lock file outlives every run that uses it.
+    """
+
+    def __init__(self, record_path, timeout=None):
+        self.path = Path(str(record_path) + PROMOTION_LOCK_SUFFIX)
+        self.timeout = PROMOTION_TIMEOUT_SECONDS if timeout is None else timeout
+        self.handle = None
+
+    def __enter__(self):
+        if fcntl is None:                                        # pragma: no cover - not POSIX
+            raise TimeoutError("this platform provides no advisory locking, so two promotions"
+                               " could not be kept apart")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o644)
+        deadline = time.time() + self.timeout
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.handle = handle
+                return self
+            except OSError as error:
+                if error.errno not in CONTENDED:
+                    os.close(handle)
+                    raise
+                if time.time() > deadline:
+                    os.close(handle)
+                    raise TimeoutError("another run holds the promotion lock at "
+                                       + str(self.path))
+                time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        # Unlocked and closed, never unlinked. A run that removed the file would hand the next
+        # waiter a lock on an inode nobody else is holding.
+        if self.handle is not None:
+            try:
+                fcntl.flock(self.handle, fcntl.LOCK_UN)
+            finally:
+                os.close(self.handle)
+                self.handle = None
         return False
 
 
