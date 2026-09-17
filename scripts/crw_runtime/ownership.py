@@ -67,11 +67,18 @@ class Signals:
 
     'unreadable' is not a list of failures to work around. Under OPS-2.1 a signal that
     cannot be read is not a signal that agrees, so any entry in it stops classification.
+
+    'pointer_conflict' is here because the owned pointer took over a question the registration
+    used to answer. Once the Codex registration names a stable pointer rather than an
+    environment, LINKED says the configuration names the pointer and stops saying which runtime
+    that is, so a pointer repointed by hand at somebody's fork would leave every other cell
+    satisfied. The cell whose question that is now asks it.
     """
 
     def __init__(self, *, entry_point_recorded=None, commit_matches=None, tree_matches=None,
                  working_tree_clean=None, digest_matches=None, has_point=None,
-                 registration_conflict=None, link_conflict=None, unreadable=None):
+                 registration_conflict=None, link_conflict=None, pointer_conflict=None,
+                 unreadable=None):
         self.entry_point_recorded = entry_point_recorded
         self.commit_matches = commit_matches
         self.tree_matches = tree_matches
@@ -80,6 +87,7 @@ class Signals:
         self.has_point = has_point
         self.registration_conflict = registration_conflict
         self.link_conflict = link_conflict
+        self.pointer_conflict = pointer_conflict
         self.unreadable = list(unreadable or [])
 
 
@@ -91,8 +99,10 @@ def classify(signals):
         ]
 
     reasons = []
-    if signals.registration_conflict or signals.link_conflict:
-        for conflict in (signals.registration_conflict, signals.link_conflict):
+    conflicts = (signals.registration_conflict, signals.link_conflict,
+                 signals.pointer_conflict)
+    if any(conflicts):
+        for conflict in conflicts:
             if conflict:
                 reasons.append(conflict)
         return CONFLICT, reasons

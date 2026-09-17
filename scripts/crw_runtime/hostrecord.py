@@ -10,6 +10,7 @@ keeps this file from becoming a second compatibility definition that could drift
 committed one.
 """
 
+import errno
 import json
 import os
 import socket
@@ -18,6 +19,14 @@ import time
 from pathlib import Path
 
 from . import reading
+
+try:
+    import fcntl
+except ImportError:                                              # pragma: no cover
+    fcntl = None
+
+# The errnos flock raises for a lock somebody else holds. Anything else failed to ask.
+CONTENDED = (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK)
 
 RECORD_NAME = "host-record.json"
 
@@ -111,6 +120,16 @@ def shape(record):
     selected = record.get("selected")
     if selected is not None and not isinstance(selected, dict):
         raise TypeError("selected is an object, found " + type(selected).__name__)
+    owned = record.get("pointer")
+    if owned is not None and not isinstance(owned, dict):
+        raise TypeError("pointer is an object, found " + type(owned).__name__)
+    if isinstance(owned, dict) and "path" in owned and not isinstance(owned["path"], str):
+        # This field is handed straight to Path(), so its TYPE is part of the shape a consumer
+        # requires. Left unchecked, a hand-edited record carrying a list here raised TypeError
+        # out of the middle of install and was reported as a defect in this command rather than
+        # as a record that could not be read -- which is the one substitution the reading
+        # boundary exists to prevent.
+        raise TypeError("pointer.path is a string, found " + type(owned["path"]).__name__)
     return record
 
 
@@ -282,10 +301,74 @@ class Locked:
         return False
 
 
+# The promotion lock. Its path is fixed beside the host record and its liveness is the
+# kernel's, and both of those are deliberate corrections to Locked above.
+#
+# Locked cannot serve this. Its IDENTITY is whatever path a caller derives, so two installs
+# with different destinations derived different pointer paths, locked different files and never
+# met. Its VALIDITY is a 300-second mtime rule, so a promotion that outstayed it had its lock
+# unlinked by a waiter while it was still working -- and because Locked excludes by filename
+# rather than by lock, the holder's open descriptor gave it no protection at all. Three
+# reported defects, one set drawn wrong.
+#
+# So this excludes by advisory lock on one host-wide file that is created once and never
+# replaced or removed. Nothing expires while its owner lives, and the operating system releases
+# it when the owner dies however it dies.
+PROMOTION_LOCK_SUFFIX = ".promotion-lock"
+PROMOTION_TIMEOUT_SECONDS = 60.0
+
+
+class Exclusive:
+    """A host-wide advisory lock, held for the whole promotion.
+
+    The file is never unlinked. Unlinking is precisely what lets a second holder appear while
+    the first still believes it is alone, so the lock file outlives every run that uses it.
+    """
+
+    def __init__(self, record_path, timeout=None):
+        self.path = Path(str(record_path) + PROMOTION_LOCK_SUFFIX)
+        self.timeout = PROMOTION_TIMEOUT_SECONDS if timeout is None else timeout
+        self.handle = None
+
+    def __enter__(self):
+        if fcntl is None:                                        # pragma: no cover - not POSIX
+            raise TimeoutError("this platform provides no advisory locking, so two promotions"
+                               " could not be kept apart")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o644)
+        deadline = time.time() + self.timeout
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.handle = handle
+                return self
+            except OSError as error:
+                if error.errno not in CONTENDED:
+                    os.close(handle)
+                    raise
+                if time.time() > deadline:
+                    os.close(handle)
+                    raise TimeoutError("another run holds the promotion lock at "
+                                       + str(self.path))
+                time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        # Unlocked and closed, never unlinked. A run that removed the file would hand the next
+        # waiter a lock on an inode nobody else is holding.
+        if self.handle is not None:
+            try:
+                fcntl.flock(self.handle, fcntl.LOCK_UN)
+            finally:
+                os.close(self.handle)
+                self.handle = None
+        return False
+
+
 # ------------------------------------------------------------------ the one way to write
 
 def update(path, definition_version, *, installs=None, points=None, select=None,
-           component_facts=None, outgoing=None, drop_environment=None):
+           component_facts=None, outgoing=None, drop_environment=None, pointer=None,
+           deselect=None, drop_pointer=None):
     """Apply narrow deltas to state this helper loads itself, inside the lock, at write time.
 
     The helper never accepts a record, and that is the whole point. A caller that loads a
@@ -298,6 +381,15 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
     'drop_environment' is the recovery delta: it removes the install records this run created
     and leaves the selection exactly as found, because another run's successful promotion is
     not this run's to undo.
+
+    'deselect' and 'drop_pointer' are the two deltas that say NOTHING IS THERE. Every other
+    delta asserts a value, and an answer set that can only assert cannot roll back to a state
+    where there was nothing: a first install that failed left its own candidate selected
+    because a select delta had no way to say "nothing was selected before this run", and left
+    an ownership record for a link it had just taken away. Both are compare-and-remove rather
+    than remove, for the same reason the selection restore is narrow -- an entry another run
+    has since moved on belongs to that run, and undoing a promotion this run never made is a
+    worse outcome than the failure being rolled back.
 
     Returns the Reading it loaded, so a caller can report an unreadable record rather than
     guess. Nothing is written when the record could not be read.
@@ -320,10 +412,30 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
                                      if i.get("environment") != str(drop_environment)]
         if outgoing is not None:
             record["outgoing"] = outgoing
+        if pointer is not None:
+            # The owned pointer's path, recorded when it is first placed. The registration
+            # compares command strings, so an expectation rebuilt from a destination argument
+            # spelled differently on a later run is a different string for the same directory.
+            # Reading it back from here is what keeps one installation's registration valid.
+            record.setdefault("pointer", {}).update(pointer)
         if select:
             # Only the assignments this run made. A whole selection map would carry back
             # entries the caller read before its slow work and re-assert them as current.
             record.setdefault("selected", {}).update(select)
+        for name, location in (deselect or {}).items():
+            # Put a selection back to nothing. Only an entry that still names what this run
+            # wrote: one another run has moved on is that run's to keep.
+            selected = record.get("selected")
+            if isinstance(selected, dict) and selected.get(name) == str(location):
+                del selected[name]
+        if drop_pointer is not None:
+            # Put the pointer ownership back to nothing, and only for the path this run
+            # recorded. Left behind, this record says this command owns a link at a path where
+            # it removed one, and the guard that refuses to replace a link nobody recorded then
+            # reads a stranger's link at that path as this command's own.
+            owned = record.get("pointer")
+            if isinstance(owned, dict) and owned.get("path") == str(drop_pointer):
+                del record["pointer"]
         save(path, record)
     return current
 
@@ -341,7 +453,7 @@ def _under(location, environment):
     return candidate == root or root in candidate.parents
 
 
-def release_candidate(path, definition_version, environment):
+def release_candidate(path, definition_version, environment, *, pointer_names=None):
     """Drop the install records for an environment, unless it is the selected one.
 
     Returns (reading, decision). The decision is READ from the record under the lock rather
@@ -369,6 +481,18 @@ def release_candidate(path, definition_version, environment):
             if any(_under(location, environment) for location in selected.values() if location):
                 return current, ("kept: this environment is the selected one, so the run that"
                                  " promoted it committed before it failed")
+            # The second truth. The selection and the pointer are written one after the other,
+            # so a run can commit one and fail at the next, and removing an environment the
+            # pointer still names would leave the registered command aimed at nothing. The
+            # caller reads the pointer and passes what it read; None means it could not, and a
+            # pointer nobody could read says nothing about what it names.
+            if pointer_names is not False:
+                if pointer_names:
+                    return current, ("kept: the owned pointer names this environment, so the"
+                                     " command a host reaches still resolves into it")
+                return current, ("kept: whether the owned pointer names this environment could"
+                                 " not be established, and an unread pointer is not a pointer"
+                                 " aimed elsewhere")
             for name in list(record.get("components") or {}):
                 entry = record["components"][name]
                 entry["installs"] = [i for i in entry.get("installs") or []
