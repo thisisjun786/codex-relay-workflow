@@ -1214,15 +1214,22 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
         # the documented behaviour of a mount entry rather than something measured here - this
         # host refuses an unprivileged mount namespace - and the grading above does not depend
         # on it: an agreeing pair is not proof whether or not the extra pathname is countable.
-        names = store.get("links")
-        if names is None:
+        #
+        # Every count that was measured is consulted, not just the caller's. The nonce answer
+        # carries the count seen at ITS read, and grading only the earlier one took half of a
+        # fresher measurement and left the other half: a hardlink created between the two
+        # leaves device and inode untouched, so a stale count of one could not veto a nonce
+        # found through the original name. A second name at either moment is the same hazard.
+        counted = [count for count in (store.get("links"), (nonce or {}).get("links"))
+                   if count is not None]
+        if not counted:
             reasons.append((
                 UNPROVEN, "the number of names this database has could not be measured",
             ))
-        elif names > 1:
+        elif max(counted) > 1:
             reasons.append((UNPROVEN, (
-                f"this database has {names} names, so a shared device and inode cannot say"
-                " which one the other participant opened, and each name carries its own"
+                f"this database has {max(counted)} names, so a shared device and inode cannot"
+                " say which one the other participant opened, and each name carries its own"
                 " write-ahead log"
             )))
 

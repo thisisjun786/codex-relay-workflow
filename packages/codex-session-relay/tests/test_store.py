@@ -689,6 +689,39 @@ class Identity(unittest.TestCase):
             (answer["device"], answer["inode"]), (mine["device"], mine["inode"]),
         )
 
+    def test_a_name_added_after_the_probe_still_vetoes_a_found_nonce(self):
+        """The hazard is the same whether the second name was there at the probe or arrived.
+
+        The nonce answer carries the name count observed at ITS read, and grading only the
+        probe's count took one half of the fresher measurement and left the other: both
+        physical identifiers are unchanged by a hardlink created in between, the nonce is
+        found through the original name, and a stale count of one cannot veto it.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        measured = probe(resolve_state_dir(self.a))["store"]
+        self.assertEqual(measured["links"], 1, "the probe has to see one name first")
+
+        other = os.path.join(self.tmp, "late-hardlink")
+        os.makedirs(other)
+        os.link(os.path.join(self.a, "relay.sqlite3"), os.path.join(other, "relay.sqlite3"))
+
+        answer = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+
+        graded = compare_store(measured, nonce=answer)
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "a second name created after the probe did not veto the nonce",
+        )
+        self.assertIn("names", graded["detail"], graded)
+
+        # The case is the one described: the read saw the second name, the probe did not.
+        self.assertTrue(answer["found"], answer)
+        self.assertEqual(answer["links"], 2, answer)
+        self.assertEqual(
+            (answer["device"], answer["inode"]), (measured["device"], measured["inode"]),
+        )
+
     def test_a_store_with_no_identity_is_never_proven_equal(self):
         """Absence must not become agreement; an old store predates the identity rows."""
         self.assertEqual(
