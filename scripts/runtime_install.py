@@ -1916,30 +1916,55 @@ def cmd_hook(args):
     # about the adapters this repository happens to own.
     adapter = getattr(args, "adapter", None)
     if adapter == COMPLETION:
-        # The settings are written first, and a refusal there stops before the hook file is
-        # touched. Only one order is safe: a hook registered against settings that are not there
-        # answers config_absent on every Stop and releases, which is an installed hook that does
-        # nothing and says so nowhere. Settings with no hook cost nothing at all.
+        # EVERY precondition is checked before ANY write, and that ordering is the whole point
+        # of this block rather than an accident of how it grew. Five rounds of review each found
+        # one more condition being evaluated after a write it should have preceded, and the last
+        # of them was the expensive shape: the settings were written, the duplicate registration
+        # was refused afterwards, and a hook already in the file immediately began running
+        # against settings this command had just reported it would not install.
         #
-        # The budget is checked here rather than inside the settings, because it is the one
-        # value whose meaning needs both files: the adapter's wall clock lives in the settings
-        # and the host's timeout lives in the registration, and only this command holds both.
-        budget = completion.budget_complaints(args.guard_timeout, args.timeout)
-        refused = completion.registration_complaints(args.event) + budget
+        # So a new precondition belongs in this list, not in a new branch further down.
+        event = args.event or completion.EVENT
+        refused = (completion.registration_complaints(args.event)
+                   + completion.budget_complaints(args.guard_timeout, args.timeout))
+        interpreter = wanted = None
+        if not refused:
+            try:
+                interpreter = completion.interpreter_for(args.python or sys.executable)
+                wanted = completion.configuration(
+                    destination=args.dest, relay=args.relay_command,
+                    marker_root=args.marker_root, database=args.db_path, mode=args.mode,
+                    timeout=args.guard_timeout, journal_root=args.journal_root,
+                    codex_home=codex_home, issue=args.issue,
+                    isolation=getattr(args, "isolation_asserted_by", None),
+                )
+            except ValueError as error:
+                refused = [str(error)]
         if refused:
-            emit({"command": "hook", "adapter": adapter, "error": "; ".join(refused)})
+            emit({"command": "hook", "adapter": adapter, "error": "; ".join(refused),
+                  "hookFile": str(path), "settings": None, "result": None,
+                  "note": "nothing was written: every precondition is checked first."})
             return EXIT_USAGE
-        try:
-            interpreter = completion.interpreter_for(args.python or sys.executable)
-            wanted = completion.configuration(
-                destination=args.dest, relay=args.relay_command, marker_root=args.marker_root,
-                database=args.db_path, mode=args.mode, timeout=args.guard_timeout,
-                journal_root=args.journal_root, codex_home=codex_home, issue=args.issue,
-                isolation=getattr(args, "isolation_asserted_by", None),
-            )
-        except ValueError as error:
-            emit({"command": "hook", "adapter": adapter, "error": str(error)})
-            return EXIT_USAGE
+        command = completion.command_for(interpreter,
+                                         ROOT / "scripts" / completion.ENTRY_POINT_NAME)
+        already = hooks.read(path)
+        if not already.usable:
+            emit({"command": "hook", "adapter": adapter, "hookFile": str(path),
+                  "settings": None, "result": None, "reading": already.refusal(),
+                  "note": "the hook file could not be read, so nothing was written: whether"
+                          " this adapter is already registered could not be established."})
+            return EXIT_REFUSED
+        duplicate = completion.duplicate_complaints(already.value, event, command, args.timeout)
+        if duplicate:
+            emit({"command": "hook", "adapter": adapter, "settings": None,
+                  "hookFile": str(path), "result": None, "error": "; ".join(duplicate),
+                  "note": "nothing was written. Writing the settings first would have handed"
+                          " them to the registration already in this file, which this command"
+                          " is refusing to join."})
+            return EXIT_REFUSED
+        # Preconditions are settled. Now the writes, settings before the hook that reads them:
+        # a hook registered against settings that are not there releases on every Stop and says
+        # so nowhere, while settings with no hook cost nothing at all.
         settings = completion.write_configuration(
             completion.configuration_path(codex_home), wanted, apply=args.apply)
         if settings["outcome"] not in completion.CONFIG_SETTLED:
@@ -1949,22 +1974,30 @@ def cmd_hook(args):
                            " registered against settings it cannot act on is installed and"
                            " inert, which is the one outcome worth refusing outright.")})
             return EXIT_REFUSED
-        command = completion.command_for(interpreter,
-                                         ROOT / "scripts" / completion.ENTRY_POINT_NAME)
-        event = args.event or completion.EVENT
-        already = hooks.read(path)
-        if already.usable:
-            duplicate = completion.duplicate_complaints(already.value, event, command,
-                                                        args.timeout)
-            if duplicate:
-                emit({"command": "hook", "adapter": adapter, "settings": settings,
-                      "hookFile": str(path), "result": None, "error": "; ".join(duplicate)})
-                return EXIT_REFUSED
     else:
         command = args.hook_command
         event = args.event or SESSION_START
     hook = {"type": "command", "command": command, "timeout": args.timeout}
     result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
+    landed = None
+    if adapter == COMPLETION and args.apply:
+        # Read back after the append, because the duplicate check above and the append itself
+        # are not one atomic step: hooks.install takes its own lock, so two runs can both pass
+        # the check and both append. Detected and reported rather than claimed away; the append
+        # cannot be undone here, because removal renumbers later identities.
+        after = hooks.read(path)
+        if after.usable:
+            landed = completion.adapter_entries(after.value, event)
+            if len(landed) > 1:
+                emit({"command": "hook", "adapter": adapter, "settings": settings,
+                      "hookFile": str(path), "result": result,
+                      "registrations": [entry["identity"] for entry in landed],
+                      "error": "this adapter is now registered more than once for " + event
+                               + "; another run appended between this one's check and its"
+                                 " append. Reduce it to one registration by editing the hook"
+                                 " file, which this command does not do because removal"
+                                 " renumbers later identities."})
+                return EXIT_REFUSED
     emit({
         "command": "hook",
         "adapter": adapter,
@@ -1972,6 +2005,7 @@ def cmd_hook(args):
         "settings": settings,
         "hookFile": str(path),
         "result": result,
+        "registrations": None if landed is None else [entry["identity"] for entry in landed],
         "note": (
             "Installed, enabled and observed to have fired are three separate claims. This"
             " command appends and reads back; it never enables a daemon and never reports"

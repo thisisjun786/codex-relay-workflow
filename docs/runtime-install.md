@@ -1162,6 +1162,18 @@ A second registration of this adapter that differs from the one already there is
 than appended. Installation appends and never removes, so appending would leave two copies
 running on every `Stop`; the existing identity is named so it can be edited.
 
+Every precondition is checked before any write, and that ordering is the point rather than an
+accident of how the command grew. The interpreter, the budget, the event, the settings' own
+readability and the duplicate registration are one list. The shape this protects against is the
+expensive one: settings written, duplicate refused afterwards, and a hook already in the file
+running against settings the command had just reported it would not install. The duplicate check
+and the append are still not one atomic step, so the registration is read back afterwards and a
+second copy is reported rather than claimed away.
+
+`hook-status` writes nothing of its own, but it is not inert: answering whether the runtime
+offers `guard-evaluate` means running that runtime with `--help`, and what that runtime does
+is outside this command's control. The command says so in its own output.
+
 `hook-status` probes these paths through the four reading states rather than asking whether a
 file is there. A runtime behind a permission wall and one that was never installed answer
 differently, because they are repaired in different places, and a runtime that could not be

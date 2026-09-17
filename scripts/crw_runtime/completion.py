@@ -277,9 +277,12 @@ def configuration_path(codex_home=None, environ=None):
     environ = os.environ if environ is None else environ
     override = environ.get(CONFIG_ENV)
     if override:
-        return Path(override).expanduser()
+        # Settled for the same reason every other path here is: the installer and the hook run
+        # from different directories, so a relative override would name one file at install
+        # time and a different one, or none, at every Stop.
+        return _settled(override)
     home = codex_home or environ.get("CODEX_HOME") or (Path.home() / ".codex")
-    return Path(home).expanduser() / CONFIG_NAME
+    return _settled(Path(home) / CONFIG_NAME)
 
 
 def complaints(document):
@@ -389,33 +392,57 @@ def invoke_guard(config, payload):
     budget = config.get("timeoutSeconds") or DEFAULT_TIMEOUT_SECONDS
     started = time.monotonic()
     try:
-        finished = subprocess.run(
-            argv, input=payload if isinstance(payload, bytes) else str(payload).encode("utf-8"),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=budget,
+        opened = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True,
         )
-    except subprocess.TimeoutExpired as expired:
-        return {"ending": TIMED_OUT, "argv": argv, "code": None, "signal": None,
-                "elapsedMs": round((time.monotonic() - started) * 1000),
-                "stdout": _text(expired.stdout), "stderr": _text(expired.stderr),
-                "detail": "the guard did not answer within " + str(budget) + "s and was killed"}
     except OSError as error:
         return {"ending": NOT_STARTED, "argv": argv, "code": None, "signal": None,
                 "elapsedMs": round((time.monotonic() - started) * 1000),
                 "stdout": "", "stderr": "",
                 "errno": errno.errorcode.get(error.errno, error.errno),
                 "detail": "the configured runtime could not be run: " + str(error)}
-    code = finished.returncode
+    sent = payload if isinstance(payload, bytes) else str(payload).encode("utf-8")
+    try:
+        out, err = opened.communicate(input=sent, timeout=budget)
+    except subprocess.TimeoutExpired:
+        # The whole group, not just the process this started. A relay that forks keeps the
+        # inherited pipes open, and waiting on those is what would carry this past its own
+        # budget and let the host kill the adapter before it records why it did not answer.
+        _end_group(opened)
+        try:
+            out, err = opened.communicate(timeout=budget)
+        except subprocess.TimeoutExpired:
+            out, err = b"", b""
+        return {"ending": TIMED_OUT, "argv": argv, "code": None, "signal": None,
+                "elapsedMs": round((time.monotonic() - started) * 1000),
+                "stdout": _text(out), "stderr": _text(err),
+                "detail": "the guard did not answer within " + str(budget)
+                          + "s and its process group was ended"}
+    code = opened.returncode
     return {
         "ending": SIGNALLED if code is not None and code < 0 else EXITED,
         "argv": argv,
         "code": None if code is None or code < 0 else code,
         "signal": None if code is None or code >= 0 else -code,
         "elapsedMs": round((time.monotonic() - started) * 1000),
-        "stdout": _text(finished.stdout),
-        "stderr": _text(finished.stderr),
+        "stdout": _text(out),
+        "stderr": _text(err),
         "detail": None,
     }
+
+
+def _end_group(opened):
+    """End the session this call started, then the process itself as a fallback."""
+    for ending in (os.killpg, None):
+        try:
+            if ending is None:
+                opened.kill()
+            else:
+                ending(os.getpgid(opened.pid), 9)
+            return
+        except (OSError, AttributeError, ProcessLookupError):
+            continue
 
 
 def _text(raw):
@@ -570,10 +597,13 @@ def interpreter_for(python):
         raise ValueError("an interpreter is required")
     found = shutil.which(str(python))
     if found:
-        return _settled(found)
+        settled = _settled(found)
+        _require_python(settled)
+        return settled
     settled = _settled(python)
     probe = presence(settled, "an interpreter")
     if probe["value"] == reading.PRESENT and os.access(str(settled), os.X_OK):
+        _require_python(settled)
         return settled
     if probe["value"] == reading.PRESENT:
         raise ValueError(str(settled) + " is not executable; every Stop would fail before the"
@@ -582,6 +612,25 @@ def interpreter_for(python):
                      + " (" + probe["evidence"] + ")"
                      + "; the hook runs from each session's workspace, so this has to name one"
                        " that can be found from anywhere")
+
+
+def _require_python(candidate):
+    """Ask the candidate to be a Python before registering it as one.
+
+    Executable is not the question. /bin/true is executable, exits 0, and would be registered
+    happily; every Stop would then succeed at running it and never reach the adapter, so there
+    would be no guard decision and no journal entry, and the install would have reported success.
+    """
+    try:
+        finished = subprocess.run([str(candidate), "-c", "import sys; print(sys.version_info[0])"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(str(candidate) + " could not be run as an interpreter: "
+                         + str(error)) from error
+    if finished.returncode != 0 or not (finished.stdout or b"").strip().isdigit():
+        raise ValueError(str(candidate) + " is executable but does not run Python; every Stop"
+                                          " would succeed at running it and never reach the"
+                                          " adapter")
 
 
 def registered_argv(command):
@@ -635,12 +684,20 @@ def duplicate_complaints(document, event, command, timeout):
     rather than appended, and the existing identity is named so the operator can edit it.
     """
     already = adapter_entries(document, event)
-    same = [entry for entry in already
-            if entry["command"] == command and entry["timeout"] == timeout]
-    if same or not already:
+    if not already:
         return []
-    return ["this adapter is already registered for " + event + " as "
-            + ", ".join(entry["identity"] for entry in already)
+    names = ", ".join(entry["identity"] for entry in already)
+    if len(already) > 1:
+        # Two already there is the state this check exists to reject, and an identical one among
+        # them does not make it acceptable: every copy asks the guard and journals every Stop.
+        return ["this adapter is registered more than once for " + event + " as " + names
+                + "; every copy asks the guard on every " + event + ", and removal renumbers"
+                  " later identities so this command does not perform one. Reduce it to one"
+                  " registration first"]
+    entry = already[0]
+    if entry["command"] == command and entry["timeout"] == timeout:
+        return []
+    return ["this adapter is already registered for " + event + " as " + names
             + " with different settings; appending would run two copies on every " + event
             + ", and removal renumbers later identities so this command does not perform one."
             " Edit or remove that registration first"]
@@ -1134,5 +1191,8 @@ def status(codex_home=None, environ=None, event=EVENT):
                                   " one from a hook result"),
         "note": ("Registered, offered and observed to have fired are separate claims. A"
                  " registration says a line is in the hook file; it does not say the host ran"
-                 " it, that the runtime it names can answer, or that any turn was judged."),
+                 " it, that the runtime it names can answer, or that any turn was judged."
+                 " This command writes nothing of its own, but it is not inert: answering"
+                 " whether the runtime offers " + GUARD_COMMAND + " means running that runtime"
+                 " with --help, and what that runtime does is outside this command's control."),
     }

@@ -756,6 +756,63 @@ class OneAdapterIsRegisteredOnce(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(emitted[1]["result"]["outcome"], hooks.LINKED)
 
+    def test_a_refused_duplicate_writes_no_settings_for_the_existing_hook_to_pick_up(self):
+        """The expensive shape: settings written, duplicate refused afterwards, and the hook
+        already in the file immediately running against settings this command said it would
+        not install."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command",
+                            "command": "/usr/bin/python3 /elsewhere/completion_hook.py",
+                            "timeout": 10}]}]}}), encoding="utf-8")
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.HOLD, guard_timeout=5, timeout=10, issue="CRW-37", apply=True,
+                isolation_asserted_by="a test")
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+            self.assertFalse(completion.configuration_path(home).exists(),
+                             "the registration already in this file must not be handed settings"
+                             " by an install that refused")
+        self.assertEqual(code, 1)
+        self.assertIsNone(emitted[0]["settings"])
+
+    def test_a_second_copy_already_there_is_refused_even_when_one_of_them_matches(self):
+        command = completion.command_for("/usr/bin/python3", "/a/completion_hook.py")
+        document = {"hooks": {completion.EVENT: [
+            {"hooks": [{"type": "command", "command": command, "timeout": 10}]},
+            {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}
+        found = completion.duplicate_complaints(document, completion.EVENT, command, 10)
+        self.assertTrue(found, "an identical entry among two does not make two acceptable")
+        self.assertIn("more than once", found[0])
+
+
+class AnInterpreterHasToBeOne(unittest.TestCase):
+    def test_an_executable_that_is_not_python_is_refused(self):
+        """/bin/true is executable and exits 0. Registered, every Stop would succeed at running
+        it and never reach the adapter: no guard decision, no journal entry, install reported
+        as success."""
+        if not Path("/bin/true").is_file():
+            self.skipTest("this host has no /bin/true")
+        with self.assertRaises(ValueError) as raised:
+            completion.interpreter_for("/bin/true")
+        self.assertIn("Python", str(raised.exception))
+
+    def test_a_real_interpreter_passes(self):
+        self.assertTrue(Path(completion.interpreter_for(sys.executable)).is_file())
+
+
+class TheConfigOverrideIsSettledToo(unittest.TestCase):
+    def test_a_relative_override_names_one_file_rather_than_one_per_workspace(self):
+        found = completion.configuration_path(None, {completion.CONFIG_ENV: "crw-hook.json"})
+        self.assertTrue(os.path.isabs(str(found)), found)
+        self.assertEqual(Path(found).name, "crw-hook.json")
+
 
 class AnUnknownDecisionIsNotARelease(unittest.TestCase):
     def test_a_verdict_deciding_something_else_entirely_is_incomplete(self):
