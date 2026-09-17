@@ -316,10 +316,11 @@ has already opened the next generation before anything can be read back.
 
 Confirmation therefore comes from a dispatched attempt and what the child actually received. A
 queued rendering is the bytes the next attempt would send, not evidence that any send happened,
-and reading it settles nothing about delivery. Where the content did not arrive, that is an
-undelivered correction to record and report on the assignment, recovered on the child's own task
-the way an unemitted receipt is. Treat all of these limits as this version's behaviour rather than
-constants.
+and reading it settles nothing about delivery. Where the content did not arrive there is no second
+correction to send: the verdict does not resend, and this workflow forbids the route around it. So
+it is recorded as an undelivered correction on the assignment and handed to the coordinator to
+decide, rather than repaired here. Treat all of these limits as this version's behaviour rather
+than constants.
 
 Queued is not sent. That revision request travels the same way a completion does, so the
 host-capable `deliver`, or a `daemon` already running, is what puts it in front of the child. A

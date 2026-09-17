@@ -283,12 +283,14 @@ time anything could discover the block missing.
 So delivery of the block is a claim that needs evidence rather than a consequence of
 placement. Confirm it from a dispatched attempt and what the child actually received,
 never from a queued rendering, which is the bytes a next attempt would send rather than
-proof of a send. Where the block did not arrive, record an undelivered correction on
-that assignment and recover the child on its own task, the way an unemitted receipt is
-recovered; do not open the parallel route to compensate. Whether an installed relay can
-carry a restoration block at all is a property of that package, `unmeasured` for any
-version but the one relay.md names, and where it cannot the gap is reported rather than
-quietly skipped.
+proof of a send. Where the block did not arrive, say so plainly: there is no supported
+way to send it again, because the verdict does not resend and the parallel route stays
+forbidden. Record it as an undelivered correction on that assignment and hand it to the
+coordinator, whose decision it is — to let the child proceed on the context it has, or
+to change the relay so the section cannot be dropped. Do not invent a transport to close
+the gap, and do not describe that correction as delivered. Whether an installed relay
+can carry a restoration block at all is a property of that package and `unmeasured` for
+any version but the one relay.md names.
 
 ## Coordination record
 
