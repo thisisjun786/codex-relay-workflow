@@ -906,10 +906,34 @@ class OfferingIsNotExitingZero(unittest.TestCase):
 
     def test_a_runtime_that_describes_the_subcommand_is_offering_it(self):
         with tempfile.TemporaryDirectory() as temporary:
-            fake_relay(temporary, stdout="usage: guard-evaluate [-h]", code=0)
+            fake_relay(temporary, stdout="usage: guard-evaluate [-h] [--marker-root ROOT]",
+                       code=0)
             settings(temporary)
             found = completion.status(codex_home=temporary, environ={})
         self.assertEqual(found["guardEvaluateOffered"]["value"], completion.GUARD_COMMAND)
+
+    def test_a_program_that_echoes_its_arguments_is_not_offering_it(self):
+        """/bin/echo prints the subcommand's own name back while offering nothing."""
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=completion.GUARD_COMMAND + " --help", code=0)
+            settings(temporary)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["guardEvaluateOffered"]["value"],
+                         completion.GUARD_REJECTED_THE_CALL)
+
+
+class ARelativeAdapterTargetAnswersForNoFile(unittest.TestCase):
+    def test_a_relative_script_path_is_reported_rather_than_resolved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            command = "python3 scripts/completion_hook.py " + shlex.quote(str(home / "c.json"))
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredCommandTarget"]["value"],
+                         completion.REGISTRATION_RELATIVE_TARGET)
+        self.assertIn("each session's workspace", found["registeredCommandTarget"]["evidence"])
 
 
 class AmbiguousRegistrationsAnswerForNobody(unittest.TestCase):

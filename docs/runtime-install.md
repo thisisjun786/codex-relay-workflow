@@ -1175,6 +1175,12 @@ and the cell says so rather than implying the program behind it was checked.
 Whether the runtime offers `guard-evaluate` requires it to describe the subcommand, not merely
 to exit 0. A program that ignores its arguments and succeeds would otherwise be reported as
 offering one it has never heard of.
+A flag the real help carries is required beside the subcommand's own name, because a program
+that echoes its arguments prints that name back while offering nothing.
+
+A registration naming the adapter with a relative path is reported rather than resolved, for
+the same reason a relative settings path is: the file this command would find is not the one
+the host runs.
 
 Registrations naming different settings files are reported as ambiguous and nothing below them
 is read. Every one of them runs, so naming one would describe one hook while reporting the

@@ -261,6 +261,14 @@ REGISTRATION_RELATIVE = "registration_names_a_relative_settings_path"
 # reporting the first would describe one hook and leave the others unmentioned.
 REGISTRATION_AMBIGUOUS = "registrations_name_different_settings"
 
+# A flag only the real subcommand's help carries. Checked alongside the subcommand's own name
+# because a program that echoes its arguments prints that name back without offering anything.
+GUARD_HELP_MARKER = "--marker-root"
+
+# A registration whose adapter target is relative. The hook resolves it against each session's
+# workspace, so no single file answers for it and the one this process would resolve is not it.
+REGISTRATION_RELATIVE_TARGET = "registration_names_a_relative_adapter"
+
 
 def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1162,11 +1170,13 @@ def _offers_guard(executable, timeout):
                      errno=errno.errorcode.get(error.errno, error.errno))
     if finished.returncode == GUARD_EXIT_OK:
         said = _text(finished.stdout) + _text(finished.stderr)
-        if GUARD_COMMAND not in said:
+        if GUARD_COMMAND not in said or GUARD_HELP_MARKER not in said:
             # Exit 0 alone does not answer this question. A program that ignores its arguments
             # and succeeds - /bin/true is the whole family - would otherwise be reported as
             # offering a subcommand it has never heard of, and every Stop would then fail
-            # somewhere this cell said it would not.
+            # somewhere this cell said it would not. Nor is the subcommand's own name enough:
+            # a program that echoes its arguments prints that name back while offering nothing,
+            # so a flag the real help carries is required beside it.
             return _cell(GUARD_REJECTED_THE_CALL,
                          "the configured runtime exited 0 without describing " + GUARD_COMMAND
                          + ", so it was not asked anything it recognised",
@@ -1313,11 +1323,23 @@ def status(codex_home=None, environ=None, event=EVENT):
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     interpreter = _cell(NOT_READ, "no registration for this adapter was found to check")
     if ours:
-        probes = [presence(entry["target"], "the adapter script") for entry in ours]
-        worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
-        target = _cell((worst or probes[0])["value"], (worst or probes[0])["evidence"],
-                       commands=[entry["command"] for entry in ours],
-                       probes=probes)
+        loose = [entry["target"] for entry in ours
+                 if not os.path.isabs(os.path.expanduser(entry["target"]))]
+        if loose:
+            # Not resolved here, for the same reason a relative settings path is not: the hook
+            # resolves it against each session's workspace, so the file this process would find
+            # is not the one the host runs, and reporting on it answers about the wrong program.
+            target = _cell(REGISTRATION_RELATIVE_TARGET,
+                           "the registration names the adapter with the relative path "
+                           + loose[0] + ", which the hook resolves against each session's"
+                           " workspace; no single file answers for it and none was read",
+                           commands=[entry["command"] for entry in ours])
+        else:
+            probes = [presence(entry["target"], "the adapter script") for entry in ours]
+            worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
+            target = _cell((worst or probes[0])["value"], (worst or probes[0])["evidence"],
+                           commands=[entry["command"] for entry in ours],
+                           probes=probes)
         # Its own cell, because the script being there says nothing about the program that has
         # to run it. A virtual environment that moved after installation leaves the script in
         # place and the interpreter gone, and then the host cannot start the adapter at all: no
