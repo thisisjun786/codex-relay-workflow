@@ -678,6 +678,11 @@ for recovery. Do not loop on waits expecting that blocker to clear, fake an ackn
 reroute the registered work, reset CXC state or create a replacement writer. Continue unrelated
 ready work only within its verified ownership and authorized scope.
 
+Those deferrals are the relay's own receipt gates, not proof that a running task cannot be reached.
+A coordinator can still instruct an active task through the turn-guarded steer path in OPS-8.2,
+which delivers an instruction and produces no receipt, acknowledgement or verdict. Keep the two
+apart, and never let a steer stand in for a gate the relay still owes.
+
 A CRW coordinator may select event-driven idle handoff instead of active observation only
 when the registered assignment, live delivery service and supported parent-resume path have
 been verified for its operating scope. A package installation, capability flag or staged receipt
@@ -706,11 +711,26 @@ second delivery route. Respect pause/cancellation and resource limits in either 
 
 ### OPS-8.2 Busy, paused, cancelled and archived parents
 
-A parent that is mid-turn is waited for and retried, not interrupted, since a transport that
-refuses a message to an active task is protecting that task's turn. A paused, cancelled or archived
+A task that is mid-turn is instructed through the turn-guarded steer path, not interrupted and not
+waited out. Read its status and active turn, steer that exact turn id, and re-read and reclassify
+when the host refuses because the turn moved on. An idle task takes the ordinary message path, and
+a task reporting a system error is neither: it is its own problem to resolve. A message transport
+that refuses an active task is protecting that task's turn, and that refusal is a reason to choose
+the steer path, never evidence that the task cannot be reached. Ordinary communication still never
+interrupts a peer or changes its goal. A paused, cancelled or archived
 task is never automatically resumed to receive a delivery: the delivery waits and is reported as
 waiting, and resuming that task is a human decision. Automatic resumption would restart work the
 user deliberately stopped, which is the one outcome nobody can undo by retrying.
+
+An explicit stop is two steps and two claims. Pause the goal through the supported status-only
+pause, then re-read the active turn and steer it to finish safely, because pausing a goal does not
+end a turn already running. Record "goal paused" and "turn stopped" separately; neither implies the
+other. Where the goal pause carries no host-side precondition, it is not atomic, so read the goal
+again rather than treating the receipt as exclusive.
+
+Whether a tool exposes steering, pausing or interrupting is a separate question from whether the
+host supports it. Establish each on its own evidence, use only paths whose permission and support
+are confirmed, and never report a missing tool as a missing host capability.
 
 ### OPS-8.3 Fairness, limits and error isolation, proposed
 

@@ -56,6 +56,9 @@ API key is needed; the existing App Server owns its authentication and model usa
 | `create_thread` | Create one durable session in an existing directory; optionally name it and send its initial prompt |
 | `create_worktree_thread` | Create a locked, retained bridge-managed Git worktree at an explicit commit and start a task; no Desktop-managed lifecycle |
 | `send_message_to_thread` | Resume an explicitly selected idle thread, optionally under stated settings, then send one message |
+| `get_active_turn` | Report a thread's status and the turn id a steer would guard, without resuming it |
+| `steer_thread` | Put an instruction into the turn a thread is already running, guarded by that turn id |
+| `pause_goal` | Pause an active Goal by status alone, without touching its objective or budget |
 | `list_threads` | Read a page of unarchived backend thread summaries |
 | `read_thread` | Read metadata and a paginated history without resuming |
 | `wait_thread` | Wait up to 50 seconds for the supplied recent turn ID |
@@ -210,9 +213,56 @@ Reading, listing, waiting, and Goal inspection never resume or modify a thread.
 Messaging explicitly calls `thread/resume` without configuration overrides before
 `turn/start`. It refuses a thread observed active or a resumed interactive approval
 policy. Concurrent external clients can still change a thread between those
-steps; the App Server remains authoritative. There is no automatic steering or
-interruption. Unsupported client-side tool/approval requests receive an explicit
+steps; the App Server remains authoritative. Nothing steers or interrupts on its own.
+Unsupported client-side tool/approval requests receive an explicit
 error; continue those tasks in Desktop.
+
+## Reaching a thread that is already working
+
+Four ways of reaching a task are different actions, and the bridge keeps them apart:
+
+| Situation | Action | What it does |
+| --- | --- | --- |
+| The thread is idle | `send_message_to_thread` | Resumes it and starts a new turn |
+| A turn is already running | `steer_thread` | Adds input to that exact turn; starts nothing |
+| You need the turn to stop | not exposed | The host has `turn/interrupt`; this bridge withholds it |
+| You need the goal to stop | `pause_goal` | Changes goal status; stops no turn |
+
+Ordinary communication therefore never interrupts a peer and never changes its goal.
+
+Steering is guarded by the turn it targets. The host's active status carries
+`activeFlags` and no turn id, so `get_active_turn` derives the id from the newest
+turn still reported in progress; pass that exact id to `steer_thread`, which the
+host rejects if the active turn has moved on. A rejection means the turn changed,
+so read the thread again and reclassify rather than retrying. A thread that is
+`idle`, `notLoaded` or in `systemError` is refused by name, because only `idle`
+has a delivery path and a system error is not a quiet peer.
+
+An accepted steer says the host took the input into that turn. It does not say the
+peer read it, and it does not say the peer acted on it; the receipt records this as
+`accepted_not_applied`. Each steer is sent with `clientUserMessageId` of
+`steer:<request_id>`, so after an uncertain response you replay the same request id
+and read the turn's recorded items for that id instead of sending the instruction
+again. Carry your own identity and the issue or revision in the message text; a
+steer changes no acknowledgement, receipt or verification contract.
+
+`pause_goal` sends only `status`, so it cannot rewrite an objective or restore a
+stale one, and it compares the goal the host returns against the one it read a
+moment earlier. It refuses a thread with no goal, returns `already_paused` without
+calling the host, and refuses any other status naming what it saw, so a goal that
+already ended is never reopened as paused. Two limits are reported rather than
+worked around: the protocol offers no expected-status precondition on
+`thread/goal/set`, so the pause is not atomic and the goal should be read again
+afterwards; and pausing a goal does not stop a turn already in flight. To stop
+work, pause the goal, re-read the active turn, and steer that turn to finish
+safely. "Goal paused" and "turn stopped" stay separate claims.
+
+`get_capabilities` answers two different questions separately. `exposure` is what
+this bridge offers. `hostSupport` names the host version these paths were built
+against and the server actually connected; when they disagree it reports
+`unknown_host_version` rather than letting this tool list stand in for a statement
+about that host. A `-32601` means the connected host lacks that method, not that
+the capability is missing everywhere, and it never triggers a fallback.
 
 ## Desktop compatibility
 

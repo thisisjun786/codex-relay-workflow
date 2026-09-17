@@ -130,13 +130,14 @@ creation: registration needs the task id creation returns, so two coordinators c
 both find an issue unassigned and both create a child before either registers. The
 lookup makes reuse the first move and names an existing owner; the registration
 transaction is what settles which child owns the issue. A coordinator refused with
-`duplicate_assignment` has therefore just created a losing writer, and the transport
-offers no way to interrupt it: the bridge's observed capabilities are creation,
-messaging, read/list/wait and goal reads, and a follow-up message refuses an active
-task. So assign it nothing further, wait for it to stop being active, then tell it to
-stand down and preserve its artifact, and reconcile that artifact with the owner the
-refusal named. Treat its writes as unreviewed until then, and do not describe stopping
-it as something already done. Commands are in
+`duplicate_assignment` has therefore just created a losing writer. Assign it nothing
+further, and tell it to stand down and preserve its artifact without waiting for it to
+go idle: read its status and active turn, steer that exact turn with the stand-down
+instruction, and use the ordinary message path only if it is already idle. Then
+reconcile that artifact with the owner the refusal named. The bridge withholds an
+interrupt, so nothing here stops its turn; a delivered instruction is not a stop, its
+writes stay unreviewed until reconciled, and stopping it is never described as
+something already done. Commands are in
 [codex-session-relay](references/relay.md), transport limits in
 [codex-thread-bridge](references/bridge.md).
 
@@ -366,6 +367,10 @@ Describe evidence separately:
 | Independent child assigned | Creation or reuse receipt from the independent-task interface, actual task/host ID and ownership; not an internal-subagent handle |
 | New task created | Creation receipt and recoverable task ID; reuse is recorded separately |
 | Prompt dispatched | Accepted turn ID and matching user message |
+| Instruction delivered into a running turn | Accepted steer receipt naming the guarded turn ID; a refused or mismatched turn ID is not delivery |
+| Peer read an instruction | The task's own transcript showing the steered input; an acceptance receipt does not establish it |
+| Peer acted on an instruction | The changed work, revision or reply; neither acceptance nor a read establishes it |
+| Goal paused | The goal read back as paused; it does not establish that a running turn stopped |
 | Requested settings applied | Actual returned settings, not prompt text |
 | CXC Loop active | Child's active goal and current goalplan/FSM evidence |
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
@@ -454,10 +459,17 @@ message path to deliver it. Without a relay, send the packet as described above.
 
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, permissions,
-and delivery scope. Use the transport's supported follow-up path; if it cannot
-accept a message while the task is active, observe until it can. A timeout or an
+and delivery scope. Route by what the task is actually doing: an idle task takes the
+ordinary message path, and a task whose turn is running is steered into that turn
+using its verified thread and active turn id. A transport that refuses a message to
+an active task is protecting its turn, and that is a reason to steer rather than a
+reason to wait for idle. If the turn changes between reading the state and sending,
+the send is refused: read the state again and reclassify instead of retrying. Send
+one correction by one route, never both. A timeout or an
 uncertain send requires reconciliation, never a duplicate writer or blind resend.
 Report a concrete access or ownership blocker when no supported path is available.
+Whether a tool exposes steering and whether the host supports it are established
+separately; a capability this bridge withholds is not a capability the host lacks.
 
 Confirm the accepted turn, then inspect the returned revision and rerun the
 failed criterion and relevant regression checks. Continue within the same scope
