@@ -97,6 +97,20 @@ class Atomicity(RelayTestCase):
 
 
 class StateDirectory(unittest.TestCase):
+    def setUp(self):
+        """Pin HOME. Resolving a socket's directory reads the siblings next to it, and with
+        the real home that means opening the databases this host actually runs on - a test
+        has no business reaching those, even to read them."""
+        self.tmp = tempfile.mkdtemp(prefix="relay-statedir-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        home = os.path.join(self.tmp, "home")
+        os.makedirs(home)
+        patch = mock.patch.dict(os.environ, {"HOME": home}, clear=False)
+        patch.start()
+        self.addCleanup(patch.stop)
+        for name in ("CODEX_SESSION_RELAY_STATE", "XDG_STATE_HOME"):
+            os.environ.pop(name, None)
+
     def test_explicit_override_wins(self):
         os.environ["CODEX_SESSION_RELAY_STATE"] = "/tmp/relay-state-test"
         try:
