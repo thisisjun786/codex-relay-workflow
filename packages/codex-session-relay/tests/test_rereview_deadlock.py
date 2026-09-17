@@ -283,6 +283,27 @@ class AReClaimIsNotAFreePass(ReReviewTestCase):
             self.ack.claim_verification(event_id, turn_id="fourth-turn"), "already_claimed"
         )
 
+    def test_an_attested_re_review_does_not_leave_the_claim_open_either(self):
+        """The stated digest is an alternative to claiming, so it never touches the binding.
+
+        Reading only that stale binding would call the review stale for as long as the
+        assignment lived, and hand the claim to whoever asked next.
+        """
+        event_id = self.claimed(register=False)
+        self.ack.record_verdict(event_id, verdict="verified", verdict_turn_id="v1")
+        self.criteria.register(self._rid, SET, source_ref="https://linear.app/doc/1")
+        # Straight to the ruling, naming the set it read, without claiming again.
+        record = self.ack.record_verdict(
+            event_id, verdict="verified", verdict_turn_id="v2", findings=PASSING,
+            expect_criteria_digest=self.criteria.get(self._rid)["setDigest"],
+        )
+        self.assertFalse(record.get("_replay"))
+        self.assertEqual(self.state()["state"], VERIFIED)
+        self.assertIsNone(self.criteria.bound_digest(event_id))
+        self.assertEqual(
+            self.ack.claim_verification(event_id, turn_id="fifth-turn"), "already_claimed"
+        )
+
     def test_a_re_review_cannot_strand_the_assignment_as_unverified(self):
         """unverified has no assignment state, so replacing a certification with it sticks."""
         event_id = self.managed_verified()

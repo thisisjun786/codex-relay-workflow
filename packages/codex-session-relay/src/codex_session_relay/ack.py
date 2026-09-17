@@ -119,9 +119,10 @@ class AckService:
             )
             claimed = cursor.rowcount == 1
             reclaimed = False
-            if not claimed and self._re_review_open(
-                db, event_id, self.criteria.bound_digest(event_id)
-            ):
+            if (not claimed and not self._ruling_is_current(db, event_id)
+                    and self._re_review_open(
+                        db, event_id, self.criteria.bound_digest(event_id)
+                    )):
                 db.execute(
                     "UPDATE verification_claims SET claim_turn_id = ?, claimed_at = ?"
                     " WHERE event_id = ?",
@@ -145,6 +146,31 @@ class AckService:
         # reopened is recorded in the journal rather than smuggled into a return value callers
         # compare against a fixed string.
         return "proceed" if (claimed or reclaimed) else "already_claimed"
+
+    def _ruling_is_current(self, db, event_id) -> bool:
+        """Has a ruling already been made against the set in force?
+
+        There are two records of what a review was decided against, because there are two ways
+        to decide one. Claiming binds the set, and the ruling inherits that binding; stating
+        the digest is the alternative record_verdict accepts instead, and that path never
+        touches claim_context. So an attested re-review leaves the binding naming a set nobody
+        judges by any more, and a claim reading only the binding would call that review stale
+        forever and hand out the claim again on an assignment the ruling already brought up to
+        date.
+
+        Only claiming asks this. Ruling asks whether the RULING is stale, which is a different
+        question with a different answer once a review has been claimed again.
+        """
+        row = db.execute(
+            "SELECT set_digest FROM verdict_context WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        event = self.intake.row(event_id)
+        if event is None:
+            return False
+        registered = self.criteria.get(event["relationship_id"])
+        return row["set_digest"] == (registered["setDigest"] if registered else None)
 
     def _re_review_open(self, db, event_id, decided_digest) -> bool:
         """Has the criteria set moved out from under a review already decided against it?
