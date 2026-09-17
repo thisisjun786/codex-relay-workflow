@@ -225,14 +225,17 @@ Resolve installed paths from the current catalog. Read `cxc-dev` for development
 
 An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the current CXC dispatch protocol and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations, `crw-loop` owns the default project parent lifecycle, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
-The default project parent follows [crw-loop](../../crw-loop/SKILL.md) using the existing
-coordination record, without initializing an implementation goalplan/FSM. Verified
-scoped deliveries establish its progress; parent-local source changes are not a
-completion condition. Children keep their own CXC lifecycle. Explicit parent workflow
-choices and existing CXC state require that workflow's supported transition, not a
-silent reset or guard bypass. `crw-loop` owns those entry and recovery rules.
+`crw-run` supplies goal-free parent execution for the requested operation/current
+batch. Its project shorthand does not activate Loop or adopt newly ready successor
+batches automatically. Explicit continuous execution uses [crw-loop](../../crw-loop/SKILL.md),
+which creates or restores the native parent goal and repeats Run within the agreed
+scope. A Run pass inside that Loop returns to the existing owner, without another goal.
+Verified scoped deliveries establish progress; parent-local source changes and CXC
+implementation phases are not completion conditions. Children keep their own CXC
+lifecycle. Explicit parent workflow choices and existing CXC state require supported
+transitions; `crw-loop` owns goal/hook preflight, activation and recovery rules.
 
 ### Completion follow-up in an existing execution workflow
 

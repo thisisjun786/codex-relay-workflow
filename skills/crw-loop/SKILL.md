@@ -1,12 +1,12 @@
 ---
 name: crw-loop
-description: "Keep one Linear project's fixed parent coordinating its agreed scope: fill independent ready capacity, observe issue children, verify and integrate deliveries, and continue with successors. Use for a project coordination loop or resuming that run; crw-run supplies dispatch and review operations. Children keep their own implementation workflow."
+description: "Create or restore a project parent goal and automatically repeat CRW execution through the agreed scope: dispatch independent issue children, observe, verify, integrate and advance. Use for a project coordination loop or resuming that run; crw-run supplies dispatch and review operations. Children keep their own implementation workflow."
 ---
 
 # CRW Loop
 
 One parent coordinates one project; one independent child owns one issue and its
-one delivery PR. This skill owns the parent's repetition and completion decision.
+one delivery PR. This skill owns the parent's host goal, automatic repetition and completion decision.
 Use [crw-run](../crw-run/SKILL.md) for operation selection, ownership, parallel
 scheduling, task packets, delivery verification and authorized integration. Read
 its linked [shared rules](../crw-plan/references/integrations.md) and applicable
@@ -15,12 +15,18 @@ same parent, not a request to start another coordinator or recursively invoke sk
 
 ## Enter or resume
 
-A submitted `$crw-loop <Linear project link>` execution request has the same scope
-and authority as the project shorthand in `crw-run`: designate or restore the fixed
-parent with [crw-focus](../crw-focus/SKILL.md), then coordinate the agreed scope.
+A submitted `$crw-loop <Linear project link>` execution request explicitly requests
+a parent coordination goal and automatic execution of the agreed scope. Designate or
+restore the fixed parent with [crw-focus](../crw-focus/SKILL.md), then follow
+[Parent goal lifecycle](references/parent-goal.md) before dispatch. Run alone requests
+neither this goal nor automatic successor passes. A Loop may also own an explicitly
+limited milestone/batch while keeping one project parent.
+
 Status, explanation, quoted examples, automatic skill discovery and unsubmitted UI
-prompts do not start execution. Explicit batch, milestone, no-create, no-goal,
-no-merge, pause, model and resource limits survive routing and resumption.
+prompts do not authorize goal creation or execution. Explicit no-goal, read-only,
+no-create, no-merge, pause, model and resource limits survive routing. No-goal prevents
+activation of this goal-backed Loop: report that limit, and perform goal-free Run only
+if the request separately covers it. Do not silently substitute Run and call it Loop.
 
 Read the existing project coordination record and live ownership before acting.
 Restore project/parent IDs, agreed issue scope and finish boundary, permissions,
@@ -29,22 +35,15 @@ blockers and next actions. Reuse compatible children and reconcile uncertain sen
 a missing transcript or elapsed wait does not permit a second writer. Keep future
 backlog outside this run unless the user expands its scope.
 
-The default parent uses this CRW coordination loop, without initializing a CXC
-implementation goalplan or FSM. Children retain their effective workflow, normally
-CXC Loop; load CXC development skills for development/review work as applicable.
-Parent delivery evidence comes from verified scoped results and integrations,
-not a source diff in the parent's checkout or a child's phase state.
+The parent's native goal tracks verified results and integrations for the agreed
+scope. It has no CXC implementation goalplan/FSM and needs no source diff in the
+parent checkout. Children retain their effective workflow, normally CXC Loop. Load
+CXC development skills for development/review work as applicable.
 
-An explicitly requested CXC parent workflow still follows its installed lifecycle.
-If this parent already has an active or blocked CXC goal/FSM, inspect it and preserve
-its binding, goalplan, evidence and recovery record. Do not reset it, edit phases,
-fabricate a source delta, mark it complete, or silently switch owners to avoid a
-guard. Reconcile an authorized transition using that workflow's supported lifecycle;
-if unsupported, record the concrete transition blocker and do not start CRW execution.
-This skill does not initialize a host goal merely because its name contains Loop.
-Any explicitly requested host goal remains subject to host completion/blocked rules
-and the actual hooks governing it; do not claim an independent lifecycle if those
-hooks still require CXC phases.
+The goal lifecycle reference owns preflight, create/reuse, blocked recovery and
+completion. Inspect existing CXC state and effective hooks before activation. An
+unsupported transition or a hook that forces implementation phases is a compatibility
+blocker, not permission to reset state, bypass a guard or claim the Loop is active.
 
 ## Repeat within the agreed scope
 
@@ -65,7 +64,8 @@ hooks still require CXC phases.
    observing a transcript is not delivery. Record remaining obligations explicitly.
 4. **Integrate and advance.** Serialize authorized merges into each shared target,
    recheck candidate/base and verify landing. Update the coordination record and
-   issue state within existing authority, then release newly ready successors.
+   issue state within existing authority, then release newly ready successors. Each
+   Run pass returns to this Loop; it does not end the parent objective.
    Keep one implementation issue per PR; a child report or green CI alone is not Done.
 
 Keep the record current after meaningful transitions, with the latest evidence and
@@ -85,14 +85,18 @@ Finish when every obligation in the agreed scope meets its verified delivery bou
 and no owned work, correction, receipt or integration remains pending. For implementation
 scope that includes integration, verify each required PR landed; non-PR work requires
 its agreed result evidence. A no-merge or batch boundary can finish that limited run,
-but does not make the whole project complete. Cancellation is not successful delivery.
+but does not make the whole project complete. Then close the matching parent goal
+under [its lifecycle](references/parent-goal.md). Cancellation is not successful delivery.
 
 Otherwise stop only for a user stop, a stated resource limit, or a concrete blocker
-leaving no authorized action available. Preserve unfinished issues, owners, artifacts,
+leaving no authorized action available. Host goal status changes must follow
+[the goal lifecycle](references/parent-goal.md), including its blocked threshold; do not
+mark a goal blocked on the first failed wait. Preserve unfinished issues, owners, artifacts,
 receipts, blocker evidence and the exact resume step in the same record. Continue
 independent scoped work before declaring the whole run blocked.
 
-This is an agent-followed loop, not a daemon or a new wake mechanism. If the host ends
+The host goal supplies persistence; bounded waits and a supported host continuation
+or verified relay path supply execution. This skill installs no daemon or wake mechanism. If the host ends
 the turn or no usable wait/resume path remains, record an interrupted run and the
 manual resume step; do not promise unattended progress. On resumption, refresh the
 same record and ownership, then continue the first actionable obligation.
