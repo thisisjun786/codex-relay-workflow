@@ -290,9 +290,12 @@ class ExecutionPolicy:
                 # Named apart from the wrong-directory case: the caller supplied no directory at
                 # all, and on the resume path cwd is otherwise optional, so a message about which
                 # directories are covered would not tell it what to add.
+                # The field names cwd rather than the exception, because that is the argument the
+                # caller has to add; the mismatched case below names the exception, because there
+                # the directory is legitimate and the exception is what fails to cover it.
                 raise ExecutionRefused(
                     EXCEPTION_OUT_OF_SCOPE,
-                    "policy_exception",
+                    "cwd",
                     None,
                     f"exception {exception!r} is bound to directories, so a request citing it "
                     f"must also state its cwd; it covers {list(entry['cwd'])}",

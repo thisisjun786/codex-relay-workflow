@@ -605,6 +605,7 @@ async def test_an_exception_on_the_resume_path_must_state_its_directory(
             "one-task",
         )
     assert raised.value.code == "execution_exception_out_of_scope"
+    assert raised.value.field == "cwd", "the refusal names the argument the caller must add"
     assert "must also state its cwd" in str(raised.value)
     assert fake.calls[settled:] == []
 

@@ -105,8 +105,10 @@ use them with `wait_thread`. After checking the session in Desktop, use
 
 Creation defaults to `read-only` and approval policy `never`. `workspace-write`
 and `danger-full-access` are explicit options; obtain authorization for the
-chosen environment before calling. `model` and `reasoning_effort` are required on
-every mutation and are never inherited from the server's configuration.
+chosen environment before calling. `model` and `reasoning_effort` are required on the three
+mutations that start a turn, `create_thread`, `create_worktree_thread` and
+`send_message_to_thread`, and are never inherited from the server's configuration.
+`steer_thread` and `pause_goal` start no turn and take neither.
 
 ## Which model a task may run on
 
