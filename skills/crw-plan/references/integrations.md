@@ -1,6 +1,6 @@
 # Linear, CXC, and Paperthin integration
 
-Shared guidance and Jun's workflow defaults for `crw-define`, `crw-focus`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
+Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
 ## Resolve the project target
 
@@ -15,11 +15,12 @@ IDs using the supplied link, verified binding, and semantic scope. If same-name
 candidates remain ambiguous, ask before writing or binding; do not pick by
 title alone. A rename or changed initiative relation does not change a binding.
 
-Use [crw-focus](../../crw-focus/SKILL.md) to designate, record, restore,
+Use [Project parent binding](project-binding.md) to designate, record, restore,
 or switch the fixed management task, including its app title and pin. Refresh
 volatile state before acting. An old or copied record locates context but does
 not transfer another task's ownership or execution permissions. Keep binding
-setup with `crw-focus` and the requested operation with its existing owner.
+setup in that shared procedure and the requested operation with its existing owner.
+Run and Loop perform this setup themselves. A binding-only request does not execute work.
 
 ## Linear operating model
 
@@ -227,11 +228,13 @@ An effective CXC Loop workflow loads `cxc-loop` and `cxc-pabcd` and follows thei
 
 Only one owner controls an operation. `crw-define` defines initiative intent, `crw-next` selects the next action, `crw-plan` decomposes agreed goals into projects and issues, `crw-run` supplies execution operations, `crw-loop` owns explicitly requested parent goals and automatic repetition, `crw-check` compares delivery with intent, and `crw-logic` investigates contradictions. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
-`crw-run` supplies goal-free parent execution for the requested operation/current
-batch. Its project shorthand does not activate Loop or adopt newly ready successor
-batches automatically. Explicit continuous execution uses [crw-loop](../../crw-loop/SKILL.md),
-which creates or restores the native parent goal and repeats Run within the agreed
-scope. A Run pass inside that Loop returns to the existing owner, without another goal.
+`crw-run` owns goal-free execution of one project's agreed scope, including parallel
+issue children, verification, integration and newly ready successors. A ready batch
+is a scheduling unit; only an explicit narrower request limits delivery to that batch.
+[crw-loop](../../crw-loop/SKILL.md) adds creation/restoration of the native parent goal
+and automatic host continuation to the same Run execution and scope. Run alone does
+not create a parent goal or promise future wake-ups. Run inside Loop returns to the
+existing owner without another goal. Both reuse [Project parent binding](project-binding.md).
 Verified scoped deliveries establish progress; parent-local source changes and CXC
 implementation phases are not completion conditions. Children keep their own CXC
 lifecycle. Explicit parent workflow choices and existing CXC state require supported

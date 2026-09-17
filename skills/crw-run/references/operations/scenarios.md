@@ -206,9 +206,9 @@ user deliberately stopped is the one thing a retry cannot undo.
 A native subagent completes inside its parent's own turn and is not this independent-task case.
 The active CRW parent keeps its coordination record and continues bounded transport waits
 using actual child identifiers. The timeout does not finish the project or justify a resend.
-After verifying and integrating the child's delivery, an owning Loop dispatches the next
-ready issue within its agreed scope. Plain Run fills only its recorded batch and reports
-newly unblocked successors as next actions unless wider delivery was explicitly requested. A blocked issue holds its dependents, not independent ready work. Without a
+After verifying and integrating the child's delivery, Run or Loop dispatches the next
+ready issue within its agreed project scope. An explicit batch-only limit excludes
+successors outside that batch in either mode. A blocked issue holds its dependents, not independent ready work. Without a
 usable observation path it records the blocker and resume step instead of promising automatic
 progress. A service installation or staged receipt alone does not qualify for idle handoff.
 
@@ -554,7 +554,7 @@ resume requirement; do not reset the FSM, edit phases or report a new loop as ar
 Preserved: child identities and delivery evidence, the distinct parent completion boundary,
 and the existing CXC parent's binding, goalplan, pending obligations and recovery evidence.
 
-## S25 Run and Loop have different return boundaries
+## S25 Run and Loop share project scope but differ in parent goal ownership
 
 Observed: the user submits Run with a project link and no automatic-continuation
 request. A and B are ready; C depends on A. In another run the user explicitly submits
@@ -564,15 +564,15 @@ Clauses: OPS-8.1, OPS-9.2; operation selection belongs to
 [crw-run](../../../crw-run/SKILL.md) and goal ownership to
 [crw-loop](../../../crw-loop/SKILL.md).
 
-Action: Run records A/B as the current batch, executes them within capacity and
-verifies their authorized delivery, then reports C as the next action. It creates no
-parent goal and does not dispatch C by default. Loop reads/creates or reuses its
-matching parent goal and repeats Run; when A lands and capacity is available it can
-start C without waiting for B. A pass's return does not finish Loop. Dispatch-only
-Run can hand off pending children. After compaction or a resume request, plain Run
-recovers and finishes its recorded batch; if already delivered, it reports the next action
-without admitting C. Neither that handoff nor status-only Run promises
-or requests future wake-ups. Explicitly wider delivery scope is still honored.
+Action: both record A/B/C as the agreed project scope and A/B as the initial ready
+batch. When A's prerequisite delivery is verified and available, both can start C
+without waiting for B if capacity permits. Run creates no parent goal; Loop creates
+or reuses the matching goal and preserves it across host continuations. An explicitly
+limited A/B batch excludes C in either mode. After compaction or a resume request,
+Run recovers the project scope and continues C rather than asking for a new batch
+authorization. If the host ends a Run turn before completion, it preserves the
+unfinished project and resume step without promising a future wake-up. Dispatch-only
+Run may hand off pending children; status-only Run reads without waking them.
 
 Preserved: one project parent, existing issue children and PRs, requested batch/merge
 limits, child CXC defaults, and the difference between parent and child goal authority.
@@ -599,3 +599,25 @@ transition. A paused goal resumes only through authorized supported controls.
 
 Preserved: existing goal identity/status, all child ownership, explicit user limits,
 CXC state and guards, and the difference between a created goal and observed auto-resume.
+
+## S27 Binding-only requests and retired Focus preserve ownership
+
+Observed: a user asks Run to connect this task to a project without executing it.
+The project already has a coordination document. Variants include the same parent
+binding, another active parent, and a temporary question about a different project.
+An installation still has an old Focus entry after updating the checkout.
+
+Clauses: OPS-2.3, OPS-7.1, OPS-7.2, OPS-8.1; binding decisions belong to
+[Project parent binding](../../../crw-plan/references/project-binding.md).
+
+Action: reuse and verify the same parent binding and suitable coordination document.
+Apply supported title/pin changes only within the designation request. Do not create
+children or a goal. Inspect another parent's ownership without waking it; settle a
+material conflict before replacement. A temporary question does not switch the binding.
+Run or Loop execution requests do the same setup and then continue their requested
+operation. The installer reports the retired Focus entry and preserves it; the owner
+can move a verified owned link outside discovery, then recheck the seven current skills.
+It does not recreate Focus or replace foreign files/links.
+
+Preserved: stable project/task IDs, existing specifications and coordination history,
+active child ownership, explicit execution limits, old installation contents and runtime state.

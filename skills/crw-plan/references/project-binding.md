@@ -1,16 +1,13 @@
----
-name: crw-focus
-description: "Designate, restore, or switch the current Codex task as a Linear project's fixed management task. Use for '이 세션을 이 프로젝트 고정용으로', '프로젝트 진행 창구로', or restoring that link; route planning, execution, and checks to their existing Linear skill owners. Formerly linear-focus."
----
+# Project parent binding
 
-# CRW Focus
+Shared setup and recovery for Run and Loop; this reference is not an execution entrypoint.
 
 Make this Codex task the continuing management point for one Linear project.
 Preserve that target across follow-up requests and context recovery. This parent
 orchestrates one project; its independent children each orchestrate one issue
-under the shared [parent and child scope](../crw-plan/references/integrations.md#parent-and-child-scope).
+under the shared [parent and child scope](integrations.md#parent-and-child-scope).
 
-Read [Integrations](../crw-plan/references/integrations.md) for shared target
+Read [Integrations](integrations.md) for shared target
 resolution, document authority, access, and inherited authorization.
 
 ## Establish the link
@@ -46,7 +43,7 @@ question. Resolve same-name projects by stable ID under the shared target rules
 before binding. If their management titles would be indistinguishable, append a
 short project-ID suffix. Do not rename the initiative or project itself. This
 convention names the management task; execution-task titles follow
-[Child task titles](../crw-run/references/task-packet.md#child-task-titles).
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles).
 
 Discover the supported task rename and sidebar tools and their current schemas.
 Apply changes only to the verified current task, and check its resulting title
@@ -93,20 +90,21 @@ Load the existing owner for the requested operation:
 
 | Request | Owner |
 |---|---|
-| Where to start or what to do next | [crw-next](../crw-next/SKILL.md) |
-| Define initiative intent or goal | [crw-define](../crw-define/SKILL.md) |
-| Plan, roadmap, milestones, or issue scope | [crw-plan](../crw-plan/SKILL.md) |
-| Run work, coordinate progress, or follow up on delivery | [crw-run](../crw-run/SKILL.md) |
-| Compare delivery with accepted requirements | [crw-check](../crw-check/SKILL.md) |
-| Investigate contradictions or broken invariants | [crw-logic](../crw-logic/SKILL.md) |
+| Where to start or what to do next | [crw-next](../../crw-next/SKILL.md) |
+| Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
+| Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
+| Execute the project without a parent goal, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
+| Create/restore a parent goal for automatic project continuation | [crw-loop](../../crw-loop/SKILL.md) |
+| Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
+| Investigate contradictions or broken invariants | [crw-logic](../../crw-logic/SKILL.md) |
 
 Keep one operation owner and load only the helpers it needs. Jun need not name
 the skills. Binding alone does not launch the backlog, create workers or goals,
 activate a CXC Loop, change model settings, or install an automation. When the
 same request also authorizes execution, finish the link and continue through
-`crw-run` in that scope. Preserve an existing authorized run and its routine
+the requesting Run or Loop owner in that scope. Preserve an existing authorized run and its routine
 follow-up; a status question does not pause it. When another operation owner
-calls this skill for binding setup or recovery, return the result to that caller
+uses this reference for binding setup or recovery, return the result to that caller
 instead of recursively starting its operation.
 
 Return the linked project/document, actual app result, recorded scope, and one

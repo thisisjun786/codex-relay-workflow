@@ -6,7 +6,7 @@ CRW is a community project designed to work with CXC; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
-This is an experimental workflow built from a personal setup. It contains eight
+This is an experimental workflow built from a personal setup. It contains seven
 skill instruction sets, a symlink installer, and the two Python packages the
 workflow delegates and reports through. CXC and Paperthin remain separate
 dependencies. Having the package source here does not install or activate a
@@ -15,12 +15,11 @@ compatibility.
 
 | Skill | Purpose |
 |---|---|
-| [crw-focus](skills/crw-focus/SKILL.md) | Make this task a project's fixed management point and restore its recorded link |
 | [crw-next](skills/crw-next/SKILL.md) | Choose one next action when starting or after finishing work, using readchk and nba |
 | [crw-define](skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
 | [crw-plan](skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
-| [crw-run](skills/crw-run/SKILL.md) | Delegate ready work to independent Codex tasks and verify CXC execution and delivery |
-| [crw-loop](skills/crw-loop/SKILL.md) | Create/restore a parent goal and automatically repeat execution through the agreed scope |
+| [crw-run](skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal |
+| [crw-loop](skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
 | [crw-check](skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
 | [crw-logic](skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
 
@@ -105,14 +104,16 @@ Installation creates a symlink per skill to this checkout. Repeating it preserve
 
 Edits in this checkout are visible through the installed paths immediately. Already-loaded conversation context may still contain an earlier version; read the updated skill or use a fresh task. Keep this checkout available while its skills are linked. If it moves, deliberately relink after checking the old destinations.
 
-### Upgrade from linear-* to crw-*
+### Retired skill migration
 
-The six skills now use CRW names. Their Linear, CXC, and Paperthin behavior is
-unchanged; this rename does not add a GitHub-only workflow.
+The former `linear-*` entrypoints use CRW names. `crw-focus` is now retired:
+Run and Loop perform [project binding](skills/crw-plan/references/project-binding.md)
+as shared setup. A request to connect or restore the parent without execution still
+does only that setup. Existing project/task IDs and coordination records remain valid.
 
 | Previous name | Current name |
 | --- | --- |
-| `linear-focus` | `crw-focus` |
+| `linear-focus`, `crw-focus` | `crw-run` with a binding-only request |
 | `linear-next` | `crw-next` |
 | `linear-plan` | `crw-plan` |
 | `linear-run` | `crw-run` |
@@ -120,7 +121,7 @@ unchanged; this rename does not add a GitHub-only workflow.
 | `linear-logic` | `crw-logic` |
 
 Run `python3 scripts/install.py --check` after updating your checkout. It reports
-`LEGACY` for any of these six old destination names, including dangling links,
+`LEGACY` for any of these retired destination names, including dangling links,
 ordinary files, directories, and links to another checkout. It never changes them.
 `--check` exits nonzero while a canonical link is missing, a conflict exists, or
 a legacy entry remains.
@@ -179,7 +180,7 @@ The bundled validator has its own dependencies. It checks skill structure, not t
 ## Usage
 
 ```text
-$crw-focus [Linear project] 이 작업을 이 프로젝트의 고정 진행 관리 창구로 지정하고 연결을 기록해줘.
+$crw-run [Linear project] 실행하지 말고 이 프로젝트 부모로 연결만 해줘.
 $crw-next [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
 $crw-define [idea or initiative] 목표·완료 기준·범위를 정의해 Linear에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
@@ -191,15 +192,17 @@ $crw-logic [Linear document or project] 설계와 계산 규칙의 모순을 찾
 
 These are invocation examples, not requests to execute while reading this file.
 
-A submitted `$crw-run <Linear project link>` performs a current execution pass:
-restore the fixed parent, select the ready batch, reuse/create its children and
-verify/integrate within the requested delivery boundary. It does not create a parent
-goal or automatically take on successor batches. Status-only requests remain read-only.
+A submitted `$crw-run <Linear project link>` executes one project's agreed scope:
+restore the fixed parent, reuse/create independent issue children, verify/integrate
+their deliveries and start newly ready successors as capacity opens. Run creates no
+parent goal; the first ready batch is not its finish boundary. An explicit issue,
+milestone or batch request narrows the assignment. Status-only requests remain read-only.
 
 Use `$crw-loop <Linear project link>` to explicitly request a parent goal and automatic
-continuation through the agreed scope. Loop creates or restores that goal and repeats
-Run; independent ready work fills available capacity and shared-target merges remain
-serial. A Run pass inside Loop returns to the same owner. Children keep their own issue
+continuation of that same project execution. Run owns scheduling and delivery; Loop
+creates or restores the parent's goal and keeps it across continuations. Both fill
+available capacity and serialize shared-target merges. Run inside Loop returns to
+the same owner. Children keep their own issue
 goals and CXC implementation workflow. Parent completion uses verified scoped deliveries,
 without requiring a parent-local diff or CXC implementation phases.
 
@@ -241,12 +244,12 @@ intent. The submitted project-run shorthand above does express that intent.
 Host restrictions and explicit current-task, read-only, or no-create limits still
 apply. See [Independent implementation tasks](skills/crw-run/SKILL.md#independent-implementation-tasks).
 
-`crw-focus` records the project and current task IDs in a linked Linear
-document, sets the task title and sidebar pin when supported, and restores that
-context for later requests. Management titles use a concise project summary;
+Run and Loop use the shared [project binding procedure](skills/crw-plan/references/project-binding.md)
+to record project/task IDs in Linear, set the task title and sidebar pin when
+supported, and restore context. Management titles use a concise project summary;
 the binding uses the stable project ID regardless of names or initiative membership.
-It routes each request to its existing operation
-owner. Designating the management task alone does not start project execution;
+The requesting skill remains the operation owner.
+Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
 
 `crw-define` explores intent and defines the initiative’s goal, finish condition

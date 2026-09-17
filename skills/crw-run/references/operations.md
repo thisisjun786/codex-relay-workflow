@@ -652,13 +652,15 @@ than the host, so a lookup by issue happens before anything is created.
 ### OPS-8.1 Parent continuation and waiting
 
 Select the waiting mode from the parent's requested workflow and observed host capability.
-A plain Run uses its selected pass's delivery boundary without a parent goal or
-successor loop. An explicitly requested [crw-loop](../../crw-loop/SKILL.md) owns the
-native parent goal and repeated passes; a CXC parent follows its installed lifecycle.
+A plain Run executes the agreed project scope, including successors, without a parent
+goal. An explicitly requested [crw-loop](../../crw-loop/SKILL.md) adds the native parent
+goal and automatic host continuation to the same execution scope; a CXC parent follows
+its installed lifecycle.
 Goal/Stop hook compatibility must pass the Loop's preflight before activation. In active observation mode, keep the
 authorized run active, use bounded transport waits, inspect meaningful results and continue
-ready work within that operation. Run may finish its selected pass and report the next
-action; Loop continues successive passes. A child assignment or active child goal does not arm the parent's Loop. Do not
+ready work within that operation. Neither Run nor Loop stops just because the first
+ready batch finished when scoped successors remain. Explicit batch/dispatch-only limits
+still apply. A child assignment or active child goal does not arm the parent's Loop. Do not
 end the parent turn expecting a Stop hook or a relay to restart it; neither is guaranteed by
 these instructions. If the host releases the turn, preserve recovery evidence and report the
 interruption without calling the run complete.
