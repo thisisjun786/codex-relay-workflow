@@ -4283,7 +4283,7 @@ class OwnReadingTests(unittest.TestCase):
                 self.assertIn(outcome, outcomes)
                 if outcome in (runtime_install.SIGNAL_UNREADABLE, runtime_install.SIGNAL_REFUSED):
                     self.assertTrue(observations, cell + " names no observation")
-                else:
+                elif outcome == runtime_install.SIGNAL_NOT_A_READING:
                     self.assertEqual(observations, (), cell + " is not a reading of this command")
                 for observation in observations:
                     self.assertEqual(len(observation), 3,
@@ -4557,6 +4557,187 @@ class RecordShapeTests(unittest.TestCase):
                     len(accepted["components"]["codex-session-relay"]["installs"]), 1)
                 self.assertEqual(
                     len(accepted["components"]["codex-session-relay"]["measuredPoints"]), 1)
+
+
+# =========================================================================================
+# Check 15 - "no reading answers this cell" is a claim, and the claim is checked
+#
+# Check 13 verifies that every cell NAMES its reading. It cannot see whether the naming is
+# true, so a cell declared to have no reading is simply skipped -- and that is the path this
+# defect took. link_conflict sat empty while skill_links() was answering the very question,
+# because the declaration said "the skill installer's reading, not this command's" and nothing
+# tested that sentence.
+#
+# The subject of a cell is recovered from its own name by stripping the suffixes the
+# declaration lists, so the correspondence is mechanical rather than a table somebody keeps in
+# step by hand.
+# =========================================================================================
+
+def _command_producers():
+    """Every function this command defines, read from its source."""
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    return {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+
+def _cell_subject(cell, prefixes, suffixes):
+    name = cell
+    for prefix in prefixes:
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    for suffix in suffixes:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return (name.rstrip("s") or cell)
+
+
+def _unclaimed_readings(cells, producers, prefixes, suffixes):
+    """Cells that say no reading answers them while a producer names their subject."""
+    offenders = []
+    for cell, (_outcome, observations) in sorted(cells.items()):
+        if observations:
+            continue
+        subject = _cell_subject(cell, prefixes, suffixes)
+        matching = sorted(name for name in producers if subject in name)
+        if matching:
+            offenders.append(cell + " names no reading, but this command defines "
+                             + ", ".join(matching))
+    return offenders
+
+
+class UnclaimedReadingTests(unittest.TestCase):
+    def test_the_producer_inventory_is_not_empty(self):
+        producers = _command_producers()
+        # Guards the reader: an empty set would make every claim below pass vacuously.
+        self.assertIn("skill_links", producers)
+        self.assertIn("registration_state", producers)
+
+    def test_no_cell_claims_to_have_no_reading_while_one_answers_it(self):
+        import runtime_install
+
+        self.assertEqual(
+            _unclaimed_readings(runtime_install.SIGNAL_READINGS, _command_producers(),
+                                runtime_install.SIGNAL_SUBJECT_PREFIXES,
+                                runtime_install.SIGNAL_SUBJECT_SUFFIXES),
+            [])
+
+    def test_the_subject_of_a_cell_comes_off_its_own_name(self):
+        import runtime_install
+
+        subject = lambda cell: _cell_subject(cell, runtime_install.SIGNAL_SUBJECT_PREFIXES,
+                                             runtime_install.SIGNAL_SUBJECT_SUFFIXES)
+        self.assertEqual(subject("link_conflict"), "link")
+        self.assertEqual(subject("has_point"), "point")
+        self.assertEqual(subject("tree_matches"), "tree")
+        self.assertEqual(subject("commit_matches"), "commit")
+
+    def test_the_scan_sees_a_false_claim(self):
+        import runtime_install
+
+        cells = dict(runtime_install.SIGNAL_READINGS)
+        cells["link_conflict"] = (runtime_install.SIGNAL_NOT_A_READING, ())
+        offenders = _unclaimed_readings(cells, _command_producers(),
+                                        runtime_install.SIGNAL_SUBJECT_PREFIXES,
+                                        runtime_install.SIGNAL_SUBJECT_SUFFIXES)
+        self.assertTrue(any("link_conflict" in o and "skill_links" in o for o in offenders),
+                        offenders)
+
+
+class LinkConflictTests(unittest.TestCase):
+    """A foreign skill path reaches the conflict signal, and a caller that makes no such
+    reading says so rather than reporting no conflict."""
+
+    def _classified(self, links):
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        return runtime_install.classify_component(
+            component, record=hostrecord.empty(1), app_server="a-server", links=links)
+
+    def test_a_foreign_skill_path_makes_the_component_a_conflict(self):
+        classified = self._classified({"conflict": ["/home/someone/.codex/skills/crw-run"],
+                                       "linked": [], "missing": [], "legacy": []})
+        self.assertEqual(classified["class"], ownership.CONFLICT, classified["reasons"])
+        self.assertTrue(any("foreign skill path" in reason for reason in classified["reasons"]),
+                        classified["reasons"])
+
+    def test_a_skill_layer_that_could_not_be_read_stops_the_classification(self):
+        classified = self._classified({"unreadable": "TimeoutError: expired"})
+        self.assertEqual(classified["class"], ownership.UNREADABLE, classified["reasons"])
+        self.assertTrue(any("skill-link layer" in reason for reason in classified["reasons"]),
+                        classified["reasons"])
+
+    def test_a_caller_that_made_no_reading_says_so(self):
+        classified = self._classified(None)
+        self.assertIsNone(classified["linkConflict"])
+        self.assertFalse(classified["linkConflictRead"],
+                         "no conflict found and nobody looked are different answers")
+
+    def test_diagnosis_reads_the_skill_layer_before_it_classifies(self):
+        """Order is the defect: the reading was made, reported, and thrown away."""
+        source = RUNTIME.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        diagnose = next(node for node in ast.walk(tree)
+                        if isinstance(node, ast.FunctionDef) and node.name == "cmd_diagnose")
+        reads = [node.lineno for node in ast.walk(diagnose)
+                 if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "skill_links"]
+        classifies = [node.lineno for node in ast.walk(diagnose)
+                      if isinstance(node, ast.Call)
+                      and getattr(node.func, "id", None) == "classify_component"]
+        self.assertTrue(reads and classifies)
+        self.assertLess(min(reads), min(classifies),
+                        "the skill layer is read after the classes are decided")
+
+
+class BusyLockTests(unittest.TestCase):
+    """A lock this run could not take established nothing, and that is an answer.
+
+    Letting the TimeoutError out made the cleanup path of an already-failing install raise, so
+    the run reported an internal error instead of whether its destination is retriable.
+    """
+
+    def test_a_busy_lock_keeps_the_candidate_and_says_why(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            record = Path(temporary) / "host-record.json"
+            hostrecord.save(record, hostrecord.empty(1))
+            held = Path(str(record) + hostrecord.LOCK_SUFFIX)
+            held.write_text("999999", encoding="utf-8")
+            try:
+                with mock.patch.object(hostrecord, "STALE_LOCK_SECONDS", 10 ** 6), \
+                     mock.patch.object(hostrecord, "LOCK_TIMEOUT_SECONDS", 0.05):
+                    answer, decision = hostrecord.release_candidate(
+                        record, 1, Path(temporary) / "env")
+            finally:
+                held.unlink()
+        self.assertIn("kept", decision)
+        self.assertIn("lock", decision)
+        self.assertFalse(answer.usable)
+        self.assertEqual(answer.state, reading.ACCESS_ERROR)
+
+    def test_a_failing_install_reports_retriability_rather_than_an_internal_error(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            record = Path(temporary) / "host-record.json"
+            hostrecord.save(record, hostrecord.empty(1))
+            environment = Path(temporary) / "env"
+            environment.mkdir()
+            held = Path(str(record) + hostrecord.LOCK_SUFFIX)
+            held.write_text("999999", encoding="utf-8")
+            printed = []
+            try:
+                with mock.patch.object(hostrecord, "STALE_LOCK_SECONDS", 10 ** 6), \
+                     mock.patch.object(hostrecord, "LOCK_TIMEOUT_SECONDS", 0.05), \
+                     mock.patch.object(runtime_install, "emit", side_effect=printed.append):
+                    code = runtime_install._install_failed(
+                        record, 1, [], environment, owned=environment)
+            finally:
+                held.unlink()
+        self.assertEqual(code, runtime_install.EXIT_REFUSED)
+        payload = printed[-1]
+        self.assertIsNone(payload["internalError"])
+        self.assertIn("lock", payload["candidate"])
+        self.assertFalse(payload["retriable"])
+        self.assertTrue(payload["recoveryRequires"])
 
 
 if __name__ == "__main__":

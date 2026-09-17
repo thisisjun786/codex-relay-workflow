@@ -204,6 +204,10 @@ def points_for(record, name, *, location, interpreter, install_digest,
 
 LOCK_SUFFIX = ".crw-lock"
 STALE_LOCK_SECONDS = 300
+# How long a run waits for another run's lock before it reports that it could not take it.
+# Declared rather than left as a default argument so a check can shrink it without reaching
+# into the constructor.
+LOCK_TIMEOUT_SECONDS = 10.0
 
 
 def atomic_write(path, text):
@@ -236,9 +240,9 @@ class Locked:
     it does not have.
     """
 
-    def __init__(self, target, timeout=10.0):
+    def __init__(self, target, timeout=None):
         self.path = Path(str(target) + LOCK_SUFFIX)
-        self.timeout = timeout
+        self.timeout = LOCK_TIMEOUT_SECONDS if timeout is None else timeout
         self.handle = None
 
     def __enter__(self):
@@ -341,20 +345,32 @@ def release_candidate(path, definition_version, environment):
 
     Absence of evidence is not permission either. When the record cannot be read the
     candidate is kept, because an unreadable record says nothing about what is selected.
+
+    A lock this call could not take is the same answer in a different disguise: nothing about
+    the selection was established, so the candidate is kept and the caller is told why. Letting
+    the TimeoutError out instead made the cleanup path of an already-failing run raise, and the
+    run then reported an internal error rather than whether its destination is retriable.
     """
-    with Locked(path):
-        current = load(path, definition_version)
-        if not current.usable:
-            return current, ("kept: the record could not be read, so nothing about the"
-                             " selection could be established")
-        record = current.value
-        selected = record.get("selected") or {}
-        if any(_under(location, environment) for location in selected.values() if location):
-            return current, ("kept: this environment is the selected one, so the run that"
-                             " promoted it committed before it failed")
-        for name in list(record.get("components") or {}):
-            entry = record["components"][name]
-            entry["installs"] = [i for i in entry.get("installs") or []
-                                 if i.get("environment") != str(environment)]
-        save(path, record)
+    try:
+        with Locked(path):
+            current = load(path, definition_version)
+            if not current.usable:
+                return current, ("kept: the record could not be read, so nothing about the"
+                                 " selection could be established")
+            record = current.value
+            selected = record.get("selected") or {}
+            if any(_under(location, environment) for location in selected.values() if location):
+                return current, ("kept: this environment is the selected one, so the run that"
+                                 " promoted it committed before it failed")
+            for name in list(record.get("components") or {}):
+                entry = record["components"][name]
+                entry["installs"] = [i for i in entry.get("installs") or []
+                                     if i.get("environment") != str(environment)]
+            save(path, record)
+    except TimeoutError as error:
+        return (reading.Reading(state=reading.ACCESS_ERROR, source=path,
+                                exception=type(error).__name__,
+                                detail="the host record lock could not be taken: " + str(error)),
+                ("kept: the host record lock could not be taken, so nothing about the"
+                 " selection could be established"))
     return current, "dropped: the selection does not name this environment"

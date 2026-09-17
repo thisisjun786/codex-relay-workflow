@@ -227,6 +227,33 @@ refusal at the boundary, absence is sometimes a real *no*, and some cells are an
 observation this command makes. The cells come from `ownership.Signals` itself, so a signal
 added without saying which reading answers it fails the inventory.
 
+### A cell that says no reading answers it is checked, not believed
+
+The cells come from `ownership.Signals` and each names the observation that answers it. That
+catches a cell whose reading is wrong; it cannot catch a cell whose declaration is a lie. A cell
+declared to have no reading is simply skipped, and that is the path the next defect took:
+`link_conflict` sat empty while this command's own `skill_links()` was answering the very
+question, because the declaration read "the skill installer's reading, not this command's" and
+nothing tested that sentence.
+
+So the claim is verified. A cell's subject comes off its own name by stripping the suffixes the
+declaration lists, and for a cell that names no observation no function of this command may
+carry that subject. `link_conflict` against `skill_links` is the case that would have failed.
+
+The reading itself moved ahead of classification, where it should have been: `scripts/install.py --check` reports `CONFLICT` for a path this command does not own, and that is an
+OPS-2.1 conflict exactly as a differing MCP registration is. A caller that makes no such reading
+says so - `linkConflictRead` - because no conflict found and nobody looked are different
+answers, and `install` has no Codex home in scope to read.
+
+### A lock that could not be taken established nothing
+
+`release_candidate` takes the host-record lock, and a `TimeoutError` used to leave it. That meant
+the cleanup path of an already-failing install raised, and the run reported an internal error
+instead of whether its destination is retriable - the two things criterion 2 and criterion 4 ask
+of a failed run. A lock another run holds establishes nothing about the selection, which is the
+answer the same function already gives for a record it cannot read, so it takes that branch: the
+candidate is kept and the refusal says why.
+
 ### One cell, one question
 
 Two readings that answer different questions are never joined into one value. `summarise`

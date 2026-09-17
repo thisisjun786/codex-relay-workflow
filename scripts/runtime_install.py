@@ -84,16 +84,24 @@ SIGNAL_READINGS = {
     # than a classification. Only a returned None reaches the comparison.
     "digest_matches": (SIGNAL_REFUSED, (("definition", "ops12_digest", None),)),
     # An entry point that is not there really is absent; that is an answer, not a gap.
-    "entry_point_recorded": (SIGNAL_NEGATIVE, ()),
+    "entry_point_recorded": (SIGNAL_NEGATIVE, (("runtime_install", "resolve_entry_point", None),)),
     # Read and reported beside the tree, never used as the identity test (OPS-1.5).
     "commit_matches": (SIGNAL_NOT_A_READING, ()),
-    # An outcome of registration_state, which answers with a state rather than with nothing.
-    "registration_conflict": (SIGNAL_NOT_A_READING, ()),
-    # The skill installer's reading, not this command's.
-    "link_conflict": (SIGNAL_NOT_A_READING, ()),
+    # Conflict cells: the reading answers with a state or a list, and finding none really is
+    # "no conflict". A reading that could not be made goes to the collector instead.
+    "registration_conflict": (SIGNAL_NEGATIVE, (("runtime_install", "registration_state", None),)),
+    "link_conflict": (SIGNAL_NEGATIVE, (("runtime_install", "skill_links", None),)),
     # The collector itself, not a cell.
     "unreadable": (SIGNAL_NOT_A_READING, ()),
 }
+
+# Naming a cell "not a reading" is a claim about this command, and a claim nobody checks is
+# how link_conflict sat empty while skill_links was answering the very question. The check
+# verifies the claim: for a cell that names no observation, no function of this command may
+# carry that cell's subject in its name. These are the suffixes a cell name adds to its
+# subject, so the subject can be recovered mechanically rather than listed.
+SIGNAL_SUBJECT_SUFFIXES = ("_matches", "_conflict", "_recorded", "_clean", "_point")
+SIGNAL_SUBJECT_PREFIXES = ("has_",)
 UNUSABLE_REGISTRATIONS = tuple(dict.fromkeys(reading.UNUSABLE + (codexconfig.UNREADABLE,)))
 
 # register-mcp's own three answers, beside the ones those modules own. A partial application is
@@ -193,6 +201,25 @@ def skill_links(codex_home):
         "legacy": [l.split(" ", 1)[1] for l in lines if text_prefix(l, "LEGACY ")],
         "note": "scripts/install.py is unchanged and was run read-only with --check",
     }
+
+
+def link_conflict_of(links):
+    """The skill-link conflict this command's own reading found, and what it could not read.
+
+    Returns (conflict, unreadable). scripts/install.py --check reports CONFLICT for a path
+    this command does not own, and that is an OPS-2.1 conflict signal like a differing MCP
+    registration. The reading existed and its answer was thrown away: classification consulted
+    a link_conflict cell that nothing ever filled.
+    """
+    if links is None:
+        return None, None
+    if links.get("unreadable"):
+        return None, "the skill-link layer (" + str(links["unreadable"]) + ")"
+    found = links.get("conflict") or []
+    if not found:
+        return None, None
+    return ("scripts/install.py --check reports a foreign skill path: "
+            + "; ".join(str(path) for path in found)), None
 
 
 # ------------------------------------------------------------------------- ownership
@@ -363,7 +390,7 @@ def interpreter_for(record, name, entry_point):
 
 
 def classify_component(component, *, record, entry_override=None, registration=None,
-                       record_state=None, app_server=None):
+                       record_state=None, app_server=None, links=None):
     """Gather the four OPS-2.1 signals and classify."""
     # Every signal below is filled by the reading its own question produced. A reading that did
     # not answer leaves its cell empty and names itself here instead of being flattened into a
@@ -459,6 +486,13 @@ def classify_component(component, *, record, entry_override=None, registration=N
         unreadable.append("the Codex configuration (" + str(registration.get("outcome")) + "): "
                           + str(registration.get("detail")))
 
+    # This command's own reading of the skill-link layer. A CONFLICT there is an OPS-2.1
+    # conflict exactly as a differing MCP registration is, and a layer that could not be read
+    # is an unread signal. The cell existed and nothing filled it.
+    link_conflict, link_unreadable = link_conflict_of(links)
+    if link_unreadable:
+        judged.note(link_unreadable)
+
     signals = ownership.Signals(
         entry_point_recorded=entry_recorded,
         commit_matches=commit_matches,
@@ -467,6 +501,7 @@ def classify_component(component, *, record, entry_override=None, registration=N
         digest_matches=digest_matches,
         has_point=bool(points),
         registration_conflict=conflict,
+        link_conflict=link_conflict,
         unreadable=unreadable,
     )
     classification, reasons = ownership.classify(signals)
@@ -480,6 +515,11 @@ def classify_component(component, *, record, entry_override=None, registration=N
         "interpreter": version,
         "interpreterPath": python,
         "interpreterFrom": interpreter_from,
+        "linkConflict": link_conflict,
+        # Whether this caller made the skill-link reading at all. install has no Codex home in
+        # scope and makes none, and saying so is the difference between "no conflict was found"
+        # and "nobody looked".
+        "linkConflictRead": links is not None,
         "importedLocation": location,
         "importError": import_error,
         "importCommand": import_command,
@@ -572,10 +612,15 @@ def cmd_diagnose(args):
     bridge_entry = resolve_entry_point(bridge["consoleScript"], args.bridge_command)
     app_server = observe_app_server(
         interpreter_for(record, BRIDGE, bridge_entry)[0] or sys.executable, args.socket)
+    # Read before classification, not after it. This command already ran scripts/install.py
+    # --check and reported the result; it just did so once the classes were decided, so a
+    # foreign skill path never reached the conflict signal it exists to raise.
+    links = skill_links(codex_home)
     try:
         classes = {
             c["component"]: classify_component(
                 c, record=record, record_state=host_record.state, app_server=app_server,
+                links=links,
                 # Every component that takes an override gets its own. Wired for the relay alone,
                 # the bridge was classified against whatever PATH resolved while --bridge-command
                 # named a different executable, so the class reported and the entry point being
@@ -697,7 +742,7 @@ def cmd_diagnose(args):
             " none of them is inferred from another."
         ),
         "hostRecordReading": None if host_record.ok else host_record.refusal(),
-        "skillLinks": skill_links(codex_home),
+        "skillLinks": links,
         "components": classes,
         "mcpRegistration": registration,
         "scope": summary,
