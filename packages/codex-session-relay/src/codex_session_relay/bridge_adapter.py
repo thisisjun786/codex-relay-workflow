@@ -279,6 +279,23 @@ class _Transport:
     """
 
     POLL_SECONDS = 0.005
+    # Every stage of one send that the bridge bounds separately, counted rather than guessed.
+    # Two earlier versions of this number were wrong in the same direction - four, then five -
+    # because both assumed a connection is established at most once per send. It is not:
+    # AppServer.call awaits connect() before EVERY request, and connect() rebuilds the socket
+    # whenever its reader task has finished. A connection that drops mid-send is therefore
+    # re-established in front of the NEXT request rather than once at the start.
+    #
+    #   per request:  unix_connect   bounded by open_timeout=self.timeout, only on reconnect
+    #                 initialize     a _request bounded by self.timeout, only on reconnect
+    #                 the request    thread/read, thread/resume or turn/start
+    RPC_STAGES_PER_REQUEST = 3
+    # _guarded_send makes exactly these three: thread/read, thread/resume, turn/start.
+    RPC_REQUESTS_PER_SEND = 3
+    # The worst case a legitimately progressing send can reach. A send holding a live
+    # connection throughout spends only three of these; the bound exists for the one that
+    # does not.
+    RPC_STAGES_PER_SEND = RPC_STAGES_PER_REQUEST * RPC_REQUESTS_PER_SEND
     # How long in-flight work gets to finish on the way out before it is cancelled.
     DRAIN_SECONDS = 5.0
     # How much longer than the RPC timeout a caller waits before giving up. It was written
@@ -435,13 +452,18 @@ class _Transport:
             await lock.acquire()
             held = lock
         try:
-            # The chain is three sequential RPCs, each bounded by the bridge's own wait_for,
-            # plus a connect bounded the same way. Four budgets give a legitimate send room to
-            # finish. The bound exists because rpc.py awaits ws.send() OUTSIDE its response
-            # timeout, so without it a write that never drains would hold this recipient's
-            # turn forever. Cancellation reaches _guarded_send, which records its own
-            # outcome_unknown receipt before re-raising.
-            result = await asyncio.wait_for(work(), self.timeout * 4)
+            # One budget per stage the bridge bounds separately - see RPC_STAGES_PER_SEND for
+            # what they are. This exists to make the worst case FINITE, not to match any
+            # caller: rpc.py awaits ws.send() OUTSIDE its response timeout, so without it a
+            # write that never drains would hold this recipient's turn forever. The caller is
+            # long gone by the time it fires, having given up at timeout + caller slack, so
+            # what this bound really decides is whether the bridge ledger ends up holding a
+            # real receipt for this request id or an uncertain one - which is what
+            # reconciliation reads later. Cancellation reaches _guarded_send, which records
+            # its own outcome_unknown receipt before re-raising.
+            result = await asyncio.wait_for(
+                work(), self.timeout * self.RPC_STAGES_PER_SEND
+            )
         except BaseException as error:  # noqa: BLE001 - returned to the caller
             # Hand over the failure, but not this worker's own frame. The traceback starts at
             # the await above, inside a coroutine that is still suspended and still serving
@@ -479,9 +501,22 @@ class _Transport:
 
         Closing resources used to be ordinary queued work, which under concurrent dispatch
         could close the ledger while a send still needed to save its receipt. So: stop taking
-        work, answer what is still queued without running it, give what is in flight a
-        bounded chance to finish, then cancel it WHILE THE LEDGER IS STILL OPEN - that is
-        what lets a cancelled send record its own outcome_unknown - and only then close.
+        work, give what is in flight a bounded chance to finish, then cancel it WHILE THE
+        LEDGER IS STILL OPEN - that is what lets a cancelled send record its own
+        outcome_unknown - and only then close.
+
+        On the drain loop below, which is not what it looks like. By the time this runs the
+        inbox is normally empty: the worker takes one submission per iteration and dispatches
+        each as a task, so anything queued ahead of the sentinel has already been STARTED, and
+        it finishes or is cancelled as in-flight work like everything else. That is deliberate.
+        Those submissions were accepted while the transport was still accepting - _submit holds
+        _admission across the check and the enqueue, and close() takes the same lock to end
+        acceptance - and their callers are blocked on them right now. Refusing work that could
+        finish inside the drain window would turn it into "nothing was sent" for no gain.
+
+        So the loop is a backstop rather than the main path. It answers anything that did land
+        in the inbox without being dispatched, which is what a submission enqueued in the
+        narrow window between the last get_nowait and the sentinel looks like.
         """
         import asyncio
         import queue
