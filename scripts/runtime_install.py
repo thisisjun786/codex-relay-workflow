@@ -2377,9 +2377,15 @@ def cmd_install(args):
                     # before the build.
                     performed.append({"step": "replace the owned pointer", "ok": False,
                                       "detail": type(error).__name__ + ": " + error.__str__()})
+                    # place() can fail with the link already replaced, so the same restoration
+                    # answers this branch: whatever is there now goes back to what was found.
+                    put_back = _restore_pointer(pointer_path, before, environment)
+                    performed.append({"step": "put the pointer back", "ok": put_back["verified"],
+                                      "detail": put_back["detail"]})
                     return _install_failed(
                         record_path, data["definitionVersion"], performed, environment, owned,
                         pointer_path=pointer_path, failed_step="replace the owned pointer",
+                        pointer_restored=put_back,
                         restored=_restore_selection(record_path, data["definitionVersion"],
                                                     previous_selection, installs))
 
@@ -2389,11 +2395,13 @@ def cmd_install(args):
                 if landed is not True:
                     performed.append({"step": "read the owned pointer back", "ok": False,
                                       "detail": pointer.read(pointer_path).get("detail")})
-                    if before["state"] == pointer.LINK and before.get("target"):
-                        pointer.place(pointer_path, before["target"])
+                    put_back = _restore_pointer(pointer_path, before, environment)
+                    performed.append({"step": "put the pointer back", "ok": put_back["verified"],
+                                      "detail": put_back["detail"]})
                     return _install_failed(
                         record_path, data["definitionVersion"], performed, environment, owned,
                         pointer_path=pointer_path, failed_step="read the owned pointer back",
+                        pointer_restored=put_back,
                         restored=_restore_selection(record_path, data["definitionVersion"],
                                                     previous_selection, installs))
                 performed.append({"step": "replace the owned pointer", "ok": True,
@@ -2661,6 +2669,44 @@ def _selected_install(record, name):
     return None
 
 
+def _restore_pointer(pointer_path, before, environment):
+    """Put the pointer back the way this run found it, INCLUDING finding it absent.
+
+    The rollback could only restore a previous target, which has no answer for a first or legacy
+    install where there was no pointer at all. There, place() creates one, and a failed read-back
+    left it naming a candidate the selection had just been taken away from -- and _install_failed
+    then kept that candidate precisely BECAUSE the pointer named it, so the staging could never
+    be reclaimed. That is the permanent refusal this command exists to remove, arriving from the
+    other side, on the very path that was just made to work.
+
+    'Restore to absence' was the value missing from this answer set, the same shape as the
+    established-absent answer the in-flight cell was missing.
+
+    A restoration that cannot be read back is reported as residual rather than claimed: the
+    caller then keeps the candidate, which is the safe direction when the disk and the record
+    may disagree.
+    """
+    if before["state"] == pointer.NO_POINTER:
+        removed, detail = pointer.remove(pointer_path, environment)
+        return {"restoredTo": "absent" if removed else None, "verified": removed,
+                "residualPointer": None if removed else str(pointer_path), "detail": detail}
+    if before["state"] == pointer.LINK and before.get("target"):
+        try:
+            pointer.place(pointer_path, before["target"])
+        except OSError as error:
+            return {"restoredTo": None, "verified": False,
+                    "residualPointer": str(pointer_path),
+                    "detail": "the previous target could not be put back: "
+                              + type(error).__name__ + ": " + str(error)}
+        back = pointer.names(pointer_path, before["target"]) is True
+        return {"restoredTo": str(before["target"]) if back else None, "verified": back,
+                "residualPointer": None if back else str(pointer_path),
+                "detail": ("the previous target was put back and read back" if back
+                           else "the previous target could not be read back after restoring it")}
+    return {"restoredTo": None, "verified": True, "residualPointer": None,
+            "detail": "this run placed no pointer, so there is nothing to put back"}
+
+
 def _restore_selection(record_path, definition_version, previous, installs):
     """Put back the selection this run just moved, for the components it moved.
 
@@ -2736,7 +2782,7 @@ def _outgoing_runtime(record, data):
 
 def _install_failed(record_path, definition_version, performed, environment, owned=None,
                     failed_reading=None, failed_error=None, pointer_path=None,
-                    failed_step=None, restored=None, gate=None):
+                    failed_step=None, restored=None, gate=None, pointer_restored=None):
     """Release a destination this run created, and report whether it is retriable.
 
     Two outcomes, because saying "refused" does not delete a directory. When removal is
@@ -2790,12 +2836,14 @@ def _install_failed(record_path, definition_version, performed, environment, own
             (step.get("step") for step in reversed(performed) if step.get("ok") is False), None),
         "pointer": None if pointer_path is None else {
             "path": str(pointer_path), "namesThisEnvironment": reached,
-            "restored": restored,
+            "restored": restored, "pointerRestored": pointer_restored,
             "meaning": ("the pointer was not moved by this run unless 'restored' says so."
                         " Whatever a host reached before this run, it still reaches"),
         },
         "swapGate": gate,
-        "residualPaths": [str(owned)] if (owned is not None and not removed) else [],
+        "residualPaths": ([str(owned)] if (owned is not None and not removed) else [])
+                         + ([(pointer_restored or {}).get("residualPointer")]
+                            if (pointer_restored or {}).get("residualPointer") else []),
         "recoveryRequires": None if retriable else (
             ("this environment is selected, so it was kept deliberately and the destination"
              " cannot be retried until the selection moves") if keeping

@@ -5698,11 +5698,34 @@ class UpdateRecoveryTests(unittest.TestCase):
                               return_value={"class": ownership.OWN, "reasons": ["for this case"]}),
         ]
         if breaking == "replace the owned pointer":
+            # The link LANDS and then the call fails, which is the case the code claims to
+            # handle: place() can raise with the replacement already made. Raising before it
+            # touches anything would leave the restoration with nothing to undo and the test
+            # would pass without exercising it.
+            real_place = runtime_install.pointer.place
+
+            def place_then_fail(path, target):
+                real_place(path, target)
+                raise OSError("read-only filesystem")
+
             patches.append(mock.patch.object(runtime_install.pointer, "place",
-                                             side_effect=OSError("read-only filesystem")))
+                                             side_effect=place_then_fail))
         if breaking == "read the owned pointer back":
+            # Transient, which is the reported scenario: the verification cannot establish the
+            # target once. A permanent failure would also stop the RESTORATION from confirming
+            # itself, and then the honest outcome is a reported residual rather than a rollback
+            # -- which the restoration test injects directly instead.
+            real_names = runtime_install.pointer.names
+            failed_once = []
+
+            def flaky_names(path, environment):
+                if not failed_once:
+                    failed_once.append(True)
+                    return False
+                return real_names(path, environment)
+
             patches.append(mock.patch.object(runtime_install.pointer, "names",
-                                             return_value=False))
+                                             side_effect=flaky_names))
         for entered in patches:
             entered.__enter__()
         try:
@@ -6980,6 +7003,109 @@ class ResumeConflictTests(unittest.TestCase):
         self.assertEqual(code, 0, json.dumps(payload)[:900])
         self.assertTrue(payload["resumed"])
         self.assertEqual(reached, str(host.candidate))
+
+
+
+class AbsentPointerRollbackTests(unittest.TestCase):
+    """The rollback could put a target back and could not put ABSENCE back.
+
+    A first or legacy install has no pointer, so place() creates one. A failed read-back then
+    left that link naming a candidate the selection had just been taken away from -- and the
+    candidate was kept precisely BECAUSE the pointer named it, so the staging could never be
+    reclaimed. The permanent refusal this command exists to remove, reached from the other side,
+    on the path the previous round had just made work.
+    """
+
+    def _first_install(self, host):
+        """A host with a runtime selected and no pointer: what a pre-pointer install looks like."""
+        record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+        record.pop("pointer", None)
+        hostrecord.save(host.record_path, record)
+        host.pointer_path.unlink()
+        self.assertEqual(pointer.read(host.pointer_path)["state"], pointer.NO_POINTER)
+
+    def test_a_first_install_that_fails_at_the_read_back_leaves_no_pointer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._first_install(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="read the owned pointer back")
+            state = pointer.read(host.pointer_path)["state"]
+            leftover = sorted(p.name for p in host.destination.iterdir())
+
+        self.assertEqual(code, 1)
+        self.assertEqual(state, pointer.NO_POINTER,
+                         "the pointer this run placed goes with the run that placed it")
+        self.assertEqual(payload["pointer"]["pointerRestored"]["restoredTo"], "absent")
+        self.assertTrue(payload["pointer"]["pointerRestored"]["verified"])
+        self.assertTrue(payload["retriable"], json.dumps(payload)[:900])
+        self.assertNotIn(host.candidate.name, leftover,
+                         "and the destination is retriable, not held by a link nothing selects")
+
+    def test_a_first_install_that_fails_at_the_swap_leaves_no_pointer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._first_install(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="replace the owned pointer")
+            state = pointer.read(host.pointer_path)["state"]
+
+        self.assertEqual(code, 1)
+        self.assertEqual(state, pointer.NO_POINTER)
+        self.assertTrue(payload["retriable"])
+
+    def test_an_update_still_puts_the_previous_target_back(self):
+        """The half that must not regress while the other half is added."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="read the owned pointer back")
+            target = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 1)
+        self.assertEqual(target, str(host.previous))
+        self.assertEqual(payload["pointer"]["pointerRestored"]["restoredTo"],
+                         str(host.previous))
+
+    def test_a_restoration_that_cannot_be_verified_keeps_the_candidate(self):
+        """Reporting a residual is the honest outcome; claiming a completed rollback is not."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._first_install(host)
+            with mock.patch.object(runtime_install.pointer, "remove",
+                                   return_value=(False, "the pointer could not be removed")):
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="read the owned pointer back")
+
+        self.assertEqual(code, 1)
+        self.assertFalse(payload["pointer"]["pointerRestored"]["verified"])
+        self.assertEqual(payload["pointer"]["pointerRestored"]["restoredTo"], None)
+        self.assertIn(str(host.pointer_path), payload["residualPaths"])
+        self.assertFalse(payload["retriable"],
+                         "a candidate the pointer may still name is kept, not reported gone")
+
+    def test_removing_a_pointer_is_guarded_the_way_placing_one_is(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "mine").mkdir()
+            (root / "theirs").mkdir()
+            path = pointer.pointer_path(root)
+
+            self.assertEqual(pointer.remove(path, root / "mine")[0], True,
+                             "absence is already the state this restores to")
+            pointer.place(path, root / "theirs")
+            removed, detail = pointer.remove(path, root / "mine")
+            self.assertFalse(removed, detail)
+            self.assertEqual(pointer.read(path)["target"], str(root / "theirs"),
+                             "a link that has stopped naming this run's environment is"
+                             " somebody else's to remove")
+
+            real = root / "real"
+            real.mkdir()
+            self.assertFalse(pointer.remove(real, root / "mine")[0])
+            self.assertTrue(real.is_dir(), "a real directory is never unlinked")
 
 
 if __name__ == "__main__":

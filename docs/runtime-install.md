@@ -590,6 +590,15 @@ because nobody could ask it.
 This command never starts or stops a daemon. OPS-4.1 gives the service to the scope operator, so a
 running daemon is a refusal here and not something to resolve.
 
+What the daemon cell does **not** guarantee is worth stating, because the gate would otherwise
+read as stronger than it is. The relay's own liveness answer releases its lock before returning,
+so `STOPPED` describes a moment that has already passed. Taking the reading inside the promotion
+lock narrows the window to the promotion's own length; it cannot close it, because that lock
+excludes other runs of this command and says nothing to a supervisor. Closing it would mean
+holding the store's daemon lock across the gate and the promotion — a lock OPS-4.1 deliberately
+keeps in the scope operator's hands — so it is a question about the contract rather than about
+this code, and it is left open rather than answered here.
+
 ### Why the schema reading compares statements and not versions
 
 The obvious reading would compare the store's recorded schema version with the candidate's. It
@@ -705,6 +714,16 @@ the result says so in `movedOnByAnotherRun`: rolling back on top of somebody els
 worse outcome than the failure being rolled back. A component that had no previous selection
 cannot be unselected through a delta either, and the result names it rather than reporting a
 restoration that did not happen.
+
+What the pointer is put back to includes being put back to nothing. A first or legacy install
+has no pointer, so the swap creates one, and a rollback that could only restore a previous
+target left that link naming a candidate the selection had just been taken away from — after
+which recovery kept the candidate precisely BECAUSE the pointer named it, and the staging could
+never be reclaimed. Absence was the value missing from that answer set, the same shape as the
+established-absent answer the in-flight cell was missing. Removing a pointer is guarded the way
+placing one is: only a symbolic link, only while it still names what this run placed, and the
+absence is read back before it is claimed. A restoration that cannot be read back reports a
+residual pointer and keeps the candidate rather than claiming the rollback completed.
 
 The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
 destination is retriable; removal that could not finish reports the residual path, what recovery

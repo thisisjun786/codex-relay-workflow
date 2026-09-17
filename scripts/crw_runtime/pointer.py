@@ -112,6 +112,39 @@ def place(path, target):
     return {"pointer": str(path), "target": str(target)}
 
 
+def remove(path, expected_target):
+    """Take away a pointer this run placed, and only while it still names what it placed.
+
+    The counterpart of place(), and it exists because "put it back" had no answer for a pointer
+    that was not there before. A first or legacy install has none, so place() creates one, and a
+    rollback that can only restore a previous TARGET left that new link behind naming a
+    candidate nothing selects.
+
+    Guarded the way placing is. A path that is not a symbolic link is somebody's real directory
+    and is never unlinked. A link that has stopped naming what this run placed has been moved by
+    something else in the meantime, and taking it away would be removing another run's pointer.
+    Absence is read back before it is claimed, because an unlink that reported success and did
+    not happen is the one outcome that would be reported as a completed rollback.
+    """
+    answer = read(path)
+    if answer["state"] == NO_POINTER:
+        return True, "there is no pointer here, which is the state this restores to"
+    if answer["state"] != LINK:
+        return False, ("this path is not a pointer this run placed: " + str(answer["detail"]))
+    if names(path, expected_target) is not True:
+        return False, ("the pointer names " + str(answer.get("target")) + " rather than "
+                       + str(expected_target) + ", so it is not this run's to remove")
+    try:
+        os.unlink(str(path))
+    except OSError as error:
+        return False, ("the pointer could not be removed: " + type(error).__name__ + ": "
+                       + str(error))
+    after = read(path)
+    if after["state"] == NO_POINTER:
+        return True, "the pointer this run placed was removed and its absence was read back"
+    return False, ("the pointer is still there after removing it: " + str(after["detail"]))
+
+
 def names(path, environment):
     """Whether the pointer names this environment. True, False, or None for could not tell.
 
