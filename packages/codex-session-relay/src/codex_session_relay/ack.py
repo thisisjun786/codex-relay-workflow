@@ -105,14 +105,10 @@ class AckService:
         Re-claiming is allowed exactly where the set moved and nothing else did, so a duplicate
         delivery still cannot obtain the claim (I-54).
 
-        Re-claiming CLEARS the binding rather than moving it. An original claim pins the set
-        because the relay watched that review start; once the set has been edited it cannot tell
-        whether the caller that rules next is the one that re-read the artifact. Moving the
-        binding would have let a caller still holding findings made against the old wording be
-        certified by somebody else's re-claim, which is the very substitution the invalidation
-        exists to prevent. Unbound, the ruling has to name the set it read - the alternative
-        criteria.coverage already provides for - and a stale caller has nothing it can
-        truthfully name.
+        Re-claiming rebinds to the set in force, and that is what keeps this idempotent again
+        afterwards: the next claim finds the binding current and is refused like any other
+        duplicate. Leaving it unbound would make every later claim look like another re-review
+        and hand the event to whoever asked last, which is I-54 undone.
         """
         now = self.clock.iso()
         with self.store.transaction() as db:
@@ -131,12 +127,13 @@ class AckService:
                     " WHERE event_id = ?",
                     (turn_id, now, event_id),
                 )
+                # bind_review below is INSERT OR IGNORE, so the stale binding has to go first.
                 db.execute("DELETE FROM claim_context WHERE event_id = ?", (event_id,))
                 reclaimed = True
                 self.store.journal(
                     "review_reclaimed", event_id, {"claimTurnId": turn_id}, at=now
                 )
-            if claimed:
+            if claimed or reclaimed:
                 event = self.intake.row(event_id)
                 if event is not None:
                     # Bind this review to the criteria set as it stands now. Editing a
@@ -422,6 +419,37 @@ class AckService:
                 # revision rather than from the existence of some old verdict.
                 record["_replay"] = True
                 return record
+
+            if re_review and verdict not in ("verified", "needs_changes"):
+                # A re-review exists to resolve re_review_needed, and only these two do.
+                # unverified and aborted have no assignment state of their own, so replacing a
+                # standing certification with either would drop the assignment back to
+                # verifying with the claim still held - and _re_review_open would then refuse
+                # to reopen it, because the ruling of record is no longer a verified one. That
+                # is the deadlock this change exists to remove, rebuilt one disposition over.
+                # Neither is lost: both remain available on an event that has no ruling yet,
+                # and an assignment nobody intends to finish is paused or cancelled on the
+                # relationship rather than annotated on one of its events.
+                raise AckRefused(
+                    RefusalReason.DISPOSITION_CONFLICT,
+                    f"{verdict!r} cannot replace the verified ruling this re-review is "
+                    "reopening: it would leave the assignment with no state to act on. Rule "
+                    "verified or needs_changes, or change the relationship's status",
+                )
+
+            if re_review and expect_criteria_digest is None:
+                # The ruling being replaced was decided against a different set. A caller that
+                # does not name the set it read cannot be told apart from one re-submitting the
+                # old ruling unchanged, and that is not a review of anything: it would clear
+                # re_review_needed without anybody having read the new wording. Naming the
+                # digest is the attestation criteria.coverage already accepts in place of a
+                # binding, and the CLI already carries it as --expect-criteria-digest.
+                raise AckRefused(
+                    RefusalReason.CRITERIA_SET_CHANGED,
+                    f"{event_id!r} was ruled against a different criteria set, so this is a "
+                    "re-review, and a re-review names the set it read: pass the reviewed "
+                    "digest explicitly",
+                )
 
             ack = self.store.one("SELECT * FROM acks WHERE event_id = ?", (event_id,))
             if ack is None or not ack["accepted"] or ack["verified"] != "verified":

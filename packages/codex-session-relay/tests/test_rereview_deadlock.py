@@ -90,13 +90,15 @@ class ReReviewIsReachable(ReReviewTestCase):
         self.assertEqual(record["state"], REREVIEW_NEEDED)
         self.assertEqual(record["nextExpectedAction"], "parent_verifies")
 
-    def test_the_review_can_be_claimed_again_and_the_stale_binding_goes(self):
+    def test_the_review_can_be_claimed_again_onto_the_current_set(self):
         event_id = self.managed_verified()
         self.edit_criteria()
         self.assertEqual(
             self.ack.claim_verification(event_id, turn_id="re-review-turn"), "proceed"
         )
-        self.assertIsNone(self.criteria.bound_digest(event_id))
+        self.assertEqual(
+            self.criteria.bound_digest(event_id), self.criteria.get(self._rid)["setDigest"]
+        )
         self.assertEqual(
             self.ack.claim_holder(event_id)["claim_turn_id"], "re-review-turn"
         )
@@ -212,9 +214,9 @@ class ReviewClaimedBeforeTheEdit(ReReviewTestCase):
         self.assertEqual(
             self.ack.claim_verification(event_id, turn_id="re-review-turn"), "proceed"
         )
-        # The legacy review was bound to nothing, so it cannot stand for the new set either.
+        # The legacy ruling named no set, so the re-review has to name the one it read.
         self.assertRefused(
-            RefusalReason.REVIEW_NOT_BOUND,
+            RefusalReason.CRITERIA_SET_CHANGED,
             lambda: self.ack.record_verdict(
                 event_id, verdict="verified", verdict_turn_id="v2", findings=PASSING,
             ),
@@ -228,38 +230,13 @@ class ReviewClaimedBeforeTheEdit(ReReviewTestCase):
 
 
 class AReClaimIsNotAFreePass(ReReviewTestCase):
-    """Reopening a review must not hand the new wording to whoever was holding the old one.
+    """Reopening must not become a way to certify without reviewing, or to claim without end.
 
-    Re-claiming clears the binding rather than moving it. An original claim pins the set because
-    the relay watched that review start; once the set has been edited it cannot tell whether the
-    caller that rules next is the one that re-read the artifact. So the ruling names the set it
-    read, which is the alternative criteria.coverage already provides for, and a caller still
-    carrying findings made against the old wording has nothing it can truthfully name.
+    A re-review names the set it read. Without that, re-submitting the very ruling being
+    replaced is indistinguishable from an actual re-review, and would clear re_review_needed
+    with nobody having read the new wording. Re-claiming also settles once it has happened, so
+    it does not turn the claim into something anyone can take.
     """
-
-    def test_a_stale_reviewer_cannot_ride_somebody_else_re_claim(self):
-        event_id = self.claimed()
-        old = self.criteria.get(self._rid)["setDigest"]
-        self.edit_criteria()
-        # A second reviewer reopens the review.
-        self.assertEqual(
-            self.ack.claim_verification(event_id, turn_id="second-reviewer-turn"), "proceed"
-        )
-        # The first one submits what it read against the old wording.
-        self.assertRefused(
-            RefusalReason.REVIEW_NOT_BOUND,
-            lambda: self.ack.record_verdict(
-                event_id, verdict="verified", verdict_turn_id="v1", findings=PASSING,
-            ),
-        )
-        # Naming the set it actually read is refused too, because that set is gone.
-        self.assertRefused(
-            RefusalReason.CRITERIA_SET_CHANGED,
-            lambda: self.ack.record_verdict(
-                event_id, verdict="verified", verdict_turn_id="v1", findings=PASSING,
-                expect_criteria_digest=old,
-            ),
-        )
 
     def test_a_recorded_verdict_cannot_be_re_submitted_as_its_own_re_review(self):
         """Retrying the original ruling is not a review of anything."""
@@ -268,7 +245,7 @@ class AReClaimIsNotAFreePass(ReReviewTestCase):
         self.edit_criteria()
         self.ack.claim_verification(event_id, turn_id="re-review-turn")
         self.assertRefused(
-            RefusalReason.REVIEW_NOT_BOUND,
+            RefusalReason.CRITERIA_SET_CHANGED,
             lambda: self.ack.record_verdict(
                 event_id, verdict="verified", verdict_turn_id="v1", findings=PASSING,
             ),
@@ -282,6 +259,68 @@ class AReClaimIsNotAFreePass(ReReviewTestCase):
         )
         # And the assignment is still waiting, not quietly certified.
         self.assertEqual(self.state()["state"], REREVIEW_NEEDED)
+
+    def test_re_claiming_does_not_become_an_unlimited_claim(self):
+        """I-54 again: one criteria edit reopens the review once, not from then on."""
+        event_id = self.managed_verified()
+        self.edit_criteria()
+        self.assertEqual(
+            self.ack.claim_verification(event_id, turn_id="re-review-turn"), "proceed"
+        )
+        self.assertEqual(
+            self.ack.claim_verification(event_id, turn_id="third-reviewer-turn"),
+            "already_claimed",
+        )
+        self.assertEqual(
+            self.ack.claim_holder(event_id)["claim_turn_id"], "re-review-turn"
+        )
+
+    def test_a_landed_re_review_does_not_leave_the_claim_open(self):
+        event_id = self.managed_verified()
+        self.edit_criteria()
+        self.re_review(event_id)
+        self.assertEqual(
+            self.ack.claim_verification(event_id, turn_id="fourth-turn"), "already_claimed"
+        )
+
+    def test_a_re_review_cannot_strand_the_assignment_as_unverified(self):
+        """unverified has no assignment state, so replacing a certification with it sticks."""
+        event_id = self.managed_verified()
+        self.edit_criteria()
+        self.ack.claim_verification(event_id, turn_id="re-review-turn")
+        self.assertRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            lambda: self.ack.record_verdict(
+                event_id, verdict="unverified", verdict_turn_id="v2",
+                findings=[{"id": "c1", "verdict": "unverified", "note": "could not reach it"}],
+                expect_criteria_digest=self.criteria.get(self._rid)["setDigest"],
+            ),
+        )
+        # Still actionable: the parent can still verify or ask for changes.
+        self.assertEqual(self.state()["state"], REREVIEW_NEEDED)
+        self.assertEqual(self.state()["nextExpectedAction"], "parent_verifies")
+
+    def test_a_re_review_cannot_strand_the_assignment_as_aborted(self):
+        event_id = self.managed_verified()
+        self.edit_criteria()
+        self.ack.claim_verification(event_id, turn_id="re-review-turn")
+        self.assertRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            lambda: self.ack.record_verdict(
+                event_id, verdict="aborted", verdict_turn_id="v2", reason="stopping",
+                expect_criteria_digest=self.criteria.get(self._rid)["setDigest"],
+            ),
+        )
+        self.assertEqual(self.state()["state"], REREVIEW_NEEDED)
+
+    def test_an_event_with_no_ruling_can_still_be_recorded_unverified(self):
+        """The refusal above is about REPLACING a certification, not about the disposition."""
+        event_id = self.claimed()
+        record = self.ack.record_verdict(
+            event_id, verdict="unverified", verdict_turn_id="v1",
+            findings=[{"id": "c1", "verdict": "unverified", "note": "could not reach it"}],
+        )
+        self.assertEqual(record["verdict"], "unverified")
 
 
 class ProtectionsThatMustSurvive(ReReviewTestCase):
