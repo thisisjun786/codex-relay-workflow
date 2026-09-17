@@ -4,7 +4,7 @@ Codex records a trusted hash against a hook's identity, and that identity is pos
 <source>:<event>:<matcher-index>:<hook-index>. So inserting a hook renumbers every later
 hook in the same file and detaches the trusted hash recorded against the old identity.
 Removing one does the same. That is why installation only ever appends a new matcher group
-at the end of its event, why a hook is disabled rather than deleted, and why nothing here
+at the end of its event, why removal is refused rather than performed, and why nothing here
 rewrites the content of an existing hook.
 
 Installed, enabled and observed to have fired are three different claims and this module
@@ -192,7 +192,14 @@ def install(path, event, hook, *, issue, apply=False):
 
 
 def disable(document, event, matcher_index, hook_index):
-    """Disabling is the supported removal. Deleting renumbers, so it is refused."""
+    """Removal is refused, and nothing here performs one.
+
+    Not "disabled rather than deleted": that would name an operation this module does not
+    provide and no command exposes. Removing a hook renumbers every later hook in the same
+    file and detaches the trusted hash Codex recorded against their identities, so the honest
+    answer is that this command appends and does not remove. Whoever needs a hook gone edits
+    the file and accepts the renumbering, knowingly.
+    """
     return {
         "outcome": "REFUSED",
         "detail": (

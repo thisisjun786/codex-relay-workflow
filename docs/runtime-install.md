@@ -58,7 +58,7 @@ repository never commits one.
 The host record at `${XDG_STATE_HOME:-~/.local/state}/codex-relay-workflow/host-record.json` is the
 other half of the definition and is never committed. It holds the repository commit and tree
 measured at run time, checkout cleanliness, one entry per install location
-(`location`, `installMode`, `entryPoint`, `entryPointTarget`, `environment`, `interpreter`,
+(`location`, `installMode`, `entryPoint`, `environment`, `interpreter`,
 `integrity`, `reachedVia`) and the measured points.
 
 This is what makes reuse reachable. Under OPS-1.3 a point means the combination was exercised, so
@@ -149,6 +149,18 @@ only the install records keyed to that directory. It leaves the selection **exac
 because another run's successful promotion is not this run's to undo.
 
 ### Reading the configuration
+
+**Registering an MCP server needs a controller on Python 3.11 or newer.** `tomllib` arrived in
+3.11 and it is the reader; without it every non-empty configuration is refused, and registration
+refuses even into an empty one because it reads back the content it proposes to write. The refusal
+names the interpreter that is running and says what to do about it.
+
+The controller's interpreter is not the runtime's. This command installs 3.11+ runtimes whatever
+interpreter started it, so an old controller does not mean an old installation - it means the
+process reading your configuration cannot parse TOML, and rerunning `runtime_install.py` on a
+newer interpreter is the whole fix. Diagnosis still reports everything that does not need the
+parser and marks the configuration unreadable rather than guessing at it.
+
 
 `tomllib` reads the configuration wherever it exists, which is Python 3.11 and newer: the host
 interpreter and every runtime this command installs. A hand-written TOML reader is an open
@@ -457,7 +469,7 @@ candidates listed, because adopting one on a guess is how the wrong store gets s
 a hook's identity is `<source>:<event>:<matcher-index>:<hook-index>` and Codex records a trusted
 hash against it, so installation appends at the end and never inserts: inserting renumbers every
 later hook in the same file and detaches the trusted hash recorded against the old identity. For
-the same reason a hook is disabled rather than deleted, and no content is silently updated.
+the same reason removal is refused rather than performed, and no content is silently updated.
 
 The command records the identity, the trusted hash, the hook file path with its SHA-256 and the
 issue that installed it, then reads the registration back. Installed, enabled and observed to have

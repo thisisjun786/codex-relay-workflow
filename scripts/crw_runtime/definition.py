@@ -15,6 +15,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from .text import text_prefix
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFINITION_PATH = Path(__file__).resolve().parent / "components.json"
 PROVENANCE_PATH = "packages/README.md"
@@ -92,7 +94,7 @@ def pyproject_fields(path):
     section = None
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
+        if text_prefix(stripped, "[") and text_prefix(stripped, "]", at="end"):
             section = stripped
             continue
         if section != "[project]":

@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
                          reading, scope)
+from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
 EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
@@ -103,10 +104,10 @@ def skill_links(codex_home):
     return {
         "command": argv,
         "exitCode": done.returncode,
-        "linked": [l.split(" ", 1)[1] for l in lines if l.startswith("LINKED ")],
-        "missing": [l.split(" ", 1)[1] for l in lines if l.startswith("MISSING ")],
-        "conflict": [l.split(" ", 1)[1] for l in lines if l.startswith("CONFLICT ")],
-        "legacy": [l.split(" ", 1)[1] for l in lines if l.startswith("LEGACY ")],
+        "linked": [l.split(" ", 1)[1] for l in lines if text_prefix(l, "LINKED ")],
+        "missing": [l.split(" ", 1)[1] for l in lines if text_prefix(l, "MISSING ")],
+        "conflict": [l.split(" ", 1)[1] for l in lines if text_prefix(l, "CONFLICT ")],
+        "legacy": [l.split(" ", 1)[1] for l in lines if text_prefix(l, "LEGACY ")],
         "note": "scripts/install.py is unchanged and was run read-only with --check",
     }
 
@@ -119,7 +120,7 @@ def resolve_entry_point(console_script, override=None):
         # the same token to subprocess and gets PATH lookup. Treating it as a relative path
         # reports the executable as foreign while diagnosis runs it successfully, so the
         # ownership result would describe something other than what was exercised.
-        if os.sep not in str(override) and not str(override).startswith("."):
+        if os.sep not in str(override) and not text_prefix(override, "."):
             found = shutil.which(str(override))
             return Path(found) if found else Path(override)
         return Path(override)
@@ -133,7 +134,7 @@ def interpreter_of(entry_point):
         first = Path(entry_point).read_text(encoding="utf-8", errors="replace").splitlines()[0]
     except (OSError, IndexError):
         return None
-    return first[2:].strip() if first.startswith("#!") else None
+    return first[2:].strip() if text_prefix(first, "#!") else None
 
 
 def interpreter_version(python):
@@ -886,7 +887,8 @@ def cmd_hook(args):
         "note": (
             "Installed, enabled and observed to have fired are three separate claims. This"
             " command appends and reads back; it never enables a daemon and never reports"
-            " activation. Removing a hook renumbers later identities, so removal is refused."
+            " activation. Removing a hook renumbers later identities, so this command refuses"
+            " removal and provides no way to perform one."
         ),
     })
     return EXIT_OK if result["outcome"] in ("LINKED", "CREATED", "MISSING") else EXIT_REFUSED
@@ -1078,6 +1080,34 @@ def cmd_install(args):
                               or "the candidate was not exercised successfully"})
             return _install_failed(record_path, data["definitionVersion"], performed, environment, owned)
 
+        # The selection moves only to something this command's own classification calls own.
+        # Validated against the STAGED record, before the pointer changes, because recovery
+        # deliberately keeps a selected candidate: promoting first and checking afterwards
+        # would leave an invalid runtime selected and protected from cleanup.
+        staged = hostrecord.load(record_path, data["definitionVersion"])
+        if not staged.usable:
+            return _install_failed(record_path, data["definitionVersion"], performed,
+                                   environment, owned, failed_reading=staged)
+        verdicts = {}
+        for component in data["components"]:
+            name = component["component"]
+            verdicts[name] = classify_component(
+                component, record=staged.value,
+                entry_override=installs[name]["entryPoint"])
+        unqualified = {n: {"class": v["class"], "reasons": v["reasons"]}
+                       for n, v in verdicts.items() if not ownership.reusable(v["class"])}
+        if unqualified:
+            # The pointer moves only to something this command would itself call reusable.
+            # The reasons travel with the refusal because the commonest one is not a fault in
+            # the installation at all: a checkout with uncommitted changes cannot be
+            # attributed to a revision, so what was installed from it is not reusable no
+            # matter how well the installation went.
+            performed.append({"step": "classify the candidate", "ok": False,
+                              "detail": "the candidate would not be reusable: "
+                                        + json.dumps(unqualified)})
+            return _install_failed(record_path, data["definitionVersion"], performed,
+                                   environment, owned)
+
         # Only the components this run installed. A whole selection map would re-assert entries
         # read before the installation as though they were current.
         promoted = hostrecord.update(
@@ -1092,7 +1122,8 @@ def cmd_install(args):
             "command": "install", "applied": True, "environment": str(environment),
             "hostRecord": str(record_path), "steps": performed, "installs": installs,
             "measurement": measurement,
-            "promoted": bool(measurement["qualifyingPoint"]),
+            "promoted": True,
+            "classification": {n: v["class"] for n, v in verdicts.items()},
             "selected": record.get("selected") or {},
             "previousSelection": previous,
             "note": (
@@ -1102,7 +1133,9 @@ def cmd_install(args):
                 " the store."
             ),
         })
-        return EXIT_OK if measurement["qualifyingPoint"] else EXIT_REFUSED
+        # Reached only when the candidate qualified AND classified own, so this is the one
+        # success return after ownership; every other exit goes through the release path.
+        return EXIT_OK
 
 
     except reading.Refused as stop:
@@ -1160,7 +1193,7 @@ def _install_failed(record_path, definition_version, performed, environment, own
     """
     dropped, decision = hostrecord.release_candidate(
         record_path, definition_version, environment)
-    keeping = not decision.startswith("dropped")
+    keeping = not text_prefix(decision, "dropped")
 
     removed, residue, cleanup_error = False, None, None
     if owned is not None and not keeping:
@@ -1173,7 +1206,10 @@ def _install_failed(record_path, definition_version, performed, environment, own
         if not removed:
             residue = str(owned)
 
-    retriable = keeping or removed
+    # Only verified removal makes the destination reusable. Reporting a kept candidate as
+    # retriable was false in the way that matters: the deterministic directory is still there
+    # and the next install refuses at the existence check.
+    retriable = owned is None or removed
     emit({
         "command": "install", "applied": False, "steps": performed,
         "environment": str(environment),
@@ -1183,10 +1219,12 @@ def _install_failed(record_path, definition_version, performed, environment, own
         "removedCandidate": str(owned) if removed else None,
         "cleanupError": cleanup_error,
         "retriable": retriable,
-        "residualPaths": [residue] if residue else [],
+        "residualPaths": [str(owned)] if (owned is not None and not removed) else [],
         "recoveryRequires": None if retriable else (
-            "remove " + str(residue) + " by hand; this run created it and could not remove it,"
-            " so the same destination will keep refusing until it is gone"
+            ("this environment is selected, so it was kept deliberately and the destination"
+             " cannot be retried until the selection moves") if keeping
+            else ("remove " + str(owned) + " by hand; this run created it and could not remove"
+                  " it, so the same destination will keep refusing until it is gone")
         ),
         "refused": (
             failed_reading.detail if failed_reading is not None else
@@ -1304,7 +1342,20 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
         return {"operations": [], "qualifyingPoint": False, "appServer": None, "toolsListed": [],
                 "refused": mismatch}
 
-    doctor = scope.relay(["doctor"], executable=relay_command, socket=socket_path, state=state)
+    # The executable is bound the way the modules are. Without this, a doctor from whatever
+    # PATH or --relay-command supplied could record an exercised point against THIS
+    # environment, and the point would name a run that never happened.
+    recorded_entry = bound[relay_component["component"]]["install"].get("entryPoint")
+    if recorded_entry and not within(Path(relay_command).resolve(),
+                                    Path(recorded_entry).resolve().parent):
+        return {"operations": [], "qualifyingPoint": False, "points": [], "appServer": None,
+                "toolsListed": [],
+                "refused": "the relay to exercise is " + str(relay_command) + " but the install"
+                           " recorded for " + str(environment) + " is " + str(recorded_entry)
+                           + ", so a successful doctor would describe a different runtime"}
+
+    doctor = scope.relay(["doctor"], executable=recorded_entry or relay_command,
+                         socket=socket_path, state=state)
     connect = ((doctor.get("payload") or {}).get("actorReachability") or {}).get("socketConnect")
     operations.append({
         "component": relay_component["component"], "command": doctor.get("command"),
@@ -1335,6 +1386,28 @@ def measure_candidate(data, record, *, python, environment, socket_path, state,
     })
 
     qualifying = all(op["exercised"] for op in operations)
+    # A point this run records must be a point this run would later ACCEPT. Recording one the
+    # consumer can never match is worse than recording none: install promotes on it and the
+    # next diagnosis rejects the very evidence that authorized the promotion.
+    refused_reason = None
+    if qualifying:
+        if codex_cli_version() is None:
+            refused_reason = ("the Codex CLI version could not be read, so any point recorded"
+                              " here would carry a null dimension that can never match")
+        else:
+            mismatched = [name for name in bound
+                          if bound[name]["digest"] != next(
+                              c["sourceDigest"] for c in data["components"]
+                              if c["component"] == name)]
+            if mismatched:
+                refused_reason = ("the installed bytes of " + ", ".join(sorted(mismatched))
+                                  + " disagree with the definition, so classification would"
+                                  " call them a fork and no point measured against them can"
+                                  " authorize reuse")
+    if refused_reason:
+        return {"operations": operations, "qualifyingPoint": False, "points": [],
+                "appServer": app_server, "toolsListed": tools_listed,
+                "refused": refused_reason}
     # Points are RETURNED, not written into the record this function was handed. Measuring
     # takes minutes, and a record mutated here and saved by the caller would carry back a
     # value read before all of it, silently dropping whatever another run appended in
@@ -1502,7 +1575,7 @@ def cmd_register_mcp(args):
                        note="nothing was written: the file could not be read back")
     after_text = after.value
 
-    preserved = after_text.startswith(before_text) if wrote else after_text == before_text
+    preserved = text_prefix(after_text, before_text) if wrote else after_text == before_text
     try:
         with reading.region(path, "the Codex configuration"):
             view = codexconfig.scan(after_text)

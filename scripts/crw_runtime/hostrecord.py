@@ -21,6 +21,11 @@ from . import reading
 
 RECORD_NAME = "host-record.json"
 
+# Dimensions a point must carry and a caller must supply. Optional dimensions may be absent
+# on either side; these may not, because an absent one compared as "no constraint" is how a
+# point recorded under an unknown Codex CLI came to match every Codex CLI.
+MANDATORY_DIMENSIONS = ("codexCli", "host")
+
 
 def state_home(env=None):
     env = os.environ if env is None else env
@@ -142,13 +147,27 @@ def points_for(record, name, *, location, interpreter, install_digest,
         # nothing in it says which bytes the run covered.
         if not point.get("installDigest") or point.get("installDigest") != install_digest:
             continue
+        # Bytes that disagree with the definition are the ones classification calls a fork,
+        # so a point measured against them can never authorize reuse. Recorded as "not
+        # false" rather than "true" so a point written before this field existed stays
+        # readable as the non-qualifying evidence it already was.
+        if point.get("digestMatchesDefinition") is False:
+            continue
         # The rest of the combination counts too. A point recorded against another Codex
         # CLI, another App Server or another host describes a run that is not this one,
         # and reusing it would authorize an installation nobody exercised here (OPS-1.3).
-        for field, wanted in (("codexCli", codex_cli), ("appServer", app_server), ("host", host)):
-            if wanted is not None and point.get(field) != wanted:
+        #
+        # MANDATORY dimensions have to be readable on BOTH sides. A null on either side used
+        # to mean "do not compare", so a point that recorded nothing about the Codex CLI
+        # matched every CLI instead of none -- the widest possible answer from the least
+        # possible evidence.
+        for field in MANDATORY_DIMENSIONS:
+            wanted = {"codexCli": codex_cli, "host": host}[field]
+            if wanted is None or point.get(field) is None or point.get(field) != wanted:
                 break
         else:
+            if app_server is not None and point.get("appServer") != app_server:
+                continue
             found.append(point)
     return found
 

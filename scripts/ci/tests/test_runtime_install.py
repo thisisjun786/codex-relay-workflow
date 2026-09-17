@@ -6,6 +6,7 @@ Codex home, an installed runtime, an MCP registration or an operational database
 
 import argparse
 import ast
+import builtins
 import errno
 import json
 import os
@@ -24,6 +25,24 @@ from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, owne
                          reading, scope)
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
+
+try:
+    import tomllib as _tomllib
+    HAS_READER = True
+except ImportError:
+    HAS_READER = False
+
+# Reading a Codex configuration needs tomllib, so on an interpreter without it there is no
+# reader to exercise -- that is the design, not a gap. What 3.10 must still prove is that every
+# non-empty configuration is refused with an actionable message, and
+# ReaderDomainTests.test_without_tomllib_every_non_empty_configuration_is_refused does exactly
+# that by simulating the absence on an interpreter that has it, so the property is checked on
+# both jobs rather than only where it bites.
+needs_reader = unittest.skipUnless(
+    HAS_READER, "reading a configuration needs tomllib; this interpreter refuses instead")
+_BRIDGE_TOOL = next(
+    c["identityTool"] for c in definition.load()["components"]
+    if c["component"] == "codex-thread-bridge")
 
 # Trial fixtures now pass through the same preflight the relay enforces, so they need an
 # artifact that is really there: an absolute, normalised, non-symlink regular file inside the
@@ -124,6 +143,7 @@ class ConfigScannerTests(unittest.TestCase):
         '[mcp_servers.codex-thread-bridge.tools.create_thread]\nenabled = true\n'
     )
 
+    @needs_reader
     def test_a_server_name_is_the_first_segment_and_sub_tables_belong_to_it(self):
         view = codexconfig.scan(self.REAL_SHAPE)
         self.assertTrue(view.readable, view.unreadable)
@@ -131,6 +151,7 @@ class ConfigScannerTests(unittest.TestCase):
         self.assertEqual(view.servers["codex-thread-bridge"]["command"], "/opt/bridge")
         self.assertEqual(view.servers["codex-thread-bridge"]["args"], ["--socket", "/tmp/s.sock"])
 
+    @needs_reader
     def test_a_registration_written_another_way_is_never_appended_to_twice(self):
         """The property these shapes were protecting: a server that is there is found.
 
@@ -148,21 +169,23 @@ class ConfigScannerTests(unittest.TestCase):
         }
         for name, text in cases.items():
             with self.subTest(case=name):
-                self.assertFalse(codexconfig.scan_subset(text).readable, name)
                 after, outcome, detail = codexconfig.register(text, "x", "/opt/new", [])
                 self.assertIn(outcome, ("UNREADABLE", "CONFLICT"), name + ": " + detail)
                 self.assertEqual(after, text, "nothing is appended to any of these")
 
+    @needs_reader
     def test_a_table_header_inside_a_multiline_string_is_not_a_registration(self):
         text = 'note = """\n[mcp_servers.ghost]\n"""\n'
         view = codexconfig.scan(text)
         self.assertTrue(view.readable, view.unreadable)
         self.assertEqual(view.servers, {})
 
+    @needs_reader
     def test_quoted_and_bare_spellings_are_one_server(self):
         view = codexconfig.scan('[mcp_servers."codex-thread-bridge"]\ncommand = "/opt/bridge"\n')
         self.assertEqual(sorted(view.servers), ["codex-thread-bridge"])
 
+    @needs_reader
     def test_registration_is_idempotent_and_refuses_to_replace(self):
         created, outcome, _ = codexconfig.register(self.REAL_SHAPE, "new", "/opt/new", ["--x"])
         self.assertEqual(outcome, "CREATED")
@@ -178,6 +201,7 @@ class ConfigScannerTests(unittest.TestCase):
         self.assertEqual(conflicted, created, "a conflicting registration must write nothing")
         self.assertIn("/opt/other", detail)
 
+    @needs_reader
     def test_a_multiline_array_value_is_read_rather_than_guessed(self):
         text = '[mcp_servers.x]\ncommand = "/opt/x"\nargs = [\n  "--a",\n  "--b",\n]\n'
         view = codexconfig.scan(text)
@@ -263,8 +287,10 @@ class HostRecordTests(unittest.TestCase):
         hostrecord.add_point(record, "codex-session-relay", {
             "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
             "installDigest": "abc", "method": "doctor",
+            "codexCli": "0.1.0", "host": "a-host",
         })
-        matching = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc")
+        matching = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc",
+                        codex_cli="0.1.0", host="a-host")
         self.assertEqual(len(hostrecord.points_for(record, "codex-session-relay", **matching)), 1)
         for change in (dict(location="/other"), dict(interpreter="3.11.0"), dict(install_digest="def")):
             with self.subTest(change=change):
@@ -351,6 +377,7 @@ class EntryPointTests(unittest.TestCase):
         for forbidden in ("import requests", "subprocess", "crw_runtime"):
             self.assertNotIn(forbidden, source)
 
+    @needs_reader
     def test_registration_through_the_cli_is_idempotent_and_preserves_other_servers(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary) / "codex"
@@ -434,6 +461,7 @@ class ReviewFixTests(unittest.TestCase):
         self.assertEqual(runtime_install.recorded_roots(record, "codex-thread-bridge"),
                          [ROOT.resolve()])
 
+    @needs_reader
     def test_diagnosis_without_an_expected_command_compares_nothing(self):
         # Comparing a correct registration against an invented empty command reported
         # CONFLICT for a host that was registered exactly right.
@@ -688,6 +716,7 @@ class AuthorizedRepairTests(unittest.TestCase):
 
     # (a) the reader reads what it wrote, and refuses what it does not model ---------
 
+    @needs_reader
     def test_what_render_writes_scan_reads_back_and_register_calls_linked(self):
         awkward = ["/opt/x", "a" + chr(92) + "b", 'say "hi"', "has " + self.TRI + " seq",
                    "tab" + chr(9) + "char", chr(92) + chr(92) + '"' + chr(92)]
@@ -705,6 +734,7 @@ class AuthorizedRepairTests(unittest.TestCase):
                 self.assertEqual(rerun, "LINKED")
                 self.assertEqual(again, created)
 
+    @needs_reader
     def test_a_literal_value_holding_the_fence_sequence_hides_nothing_after_it(self):
         text = ("command = " + chr(39) + "say " + self.TRI + " hi" + chr(39) + chr(10)
                 + "[mcp_servers.x]" + chr(10) + 'command = "/opt/x"' + chr(10))
@@ -712,6 +742,7 @@ class AuthorizedRepairTests(unittest.TestCase):
         self.assertTrue(view.readable, view.unreadable)
         self.assertEqual(sorted(view.servers), ["x"])
 
+    @needs_reader
     def test_a_member_assignment_inside_the_parent_table_is_never_duplicated(self):
         # Bare and quoted spellings both. The quoted one was blanked before the assignment
         # regex saw it, so the fallback read the server as absent and appended a second
@@ -719,16 +750,15 @@ class AuthorizedRepairTests(unittest.TestCase):
         for spelling in ('x = { command = "/opt/x" }', '"x" = { command = "/opt/x" }'):
             with self.subTest(spelling):
                 text = "[mcp_servers]" + chr(10) + spelling + chr(10)
-                self.assertFalse(codexconfig.scan_subset(text).readable)
                 after, outcome, detail = codexconfig.register(text, "x", "/opt/x", [])
                 self.assertIn(outcome, ("UNREADABLE", "LINKED"), detail)
                 self.assertEqual(after, text)
 
+    @needs_reader
     def test_an_escape_this_reader_does_not_model_is_reported_not_guessed(self):
         # Invalid TOML either way: tomllib rejects the escape and the fallback names it.
         text = '[mcp_servers.x]' + chr(10) + 'command = "a' + chr(92) + 'q"' + chr(10)
         self.assertFalse(codexconfig.scan(text).readable)
-        self.assertIn("escape", codexconfig.scan_subset(text).unreadable[0])
 
     # (b) nothing mutates before the inputs are complete -----------------------------
 
@@ -924,6 +954,7 @@ class RoundTripSymmetryTests(unittest.TestCase):
     parser is what makes this a property rather than a longer list.
     """
 
+    @needs_reader
     def test_every_generated_registration_round_trips_and_agrees_with_tomllib(self):
         # The reader half runs everywhere, because the reader is meant to work on an
         # interpreter with no tomllib -- that is the whole premise of the module. The oracle
@@ -980,17 +1011,20 @@ class RoundTripSymmetryTests(unittest.TestCase):
         self.assertEqual(failures, [], "write -> read must return the name and the value"
                                        " unchanged and a rerun must report LINKED")
 
+    @needs_reader
     def test_a_dotted_name_is_a_server_rather_than_a_sub_table(self):
         text = codexconfig.render("codex.thread.bridge", "/usr/bin/bridge", [])
         self.assertIn('[mcp_servers."codex.thread.bridge"]', text)
         self.assertEqual(sorted(codexconfig.scan(text).servers), ["codex.thread.bridge"])
 
+    @needs_reader
     def test_a_quoted_name_containing_a_bracket_is_read_rather_than_skipped(self):
         text = '[mcp_servers."a[b]"]\ncommand = "/bin/x"\n'
         view = codexconfig.scan(text)
         self.assertTrue(view.readable, view.unreadable)
         self.assertEqual(sorted(view.servers), ["a[b]"])
 
+    @needs_reader
     def test_a_value_carrying_a_unicode_separator_is_not_torn_in_half(self):
         text = '[mcp_servers.one]\ncommand = "a\u2028b"\n\n[mcp_servers.two]\ncommand = "/x"\n'
         view = codexconfig.scan(text)
@@ -998,10 +1032,15 @@ class RoundTripSymmetryTests(unittest.TestCase):
         self.assertEqual(sorted(view.servers), ["one", "two"])
         self.assertEqual(view.servers["one"]["command"], "a\u2028b")
 
-    def test_a_key_escape_is_decoded_the_way_a_value_escape_is(self):
-        self.assertEqual(codexconfig._split_key(r'mcp_servers."a\"b"'), ["mcp_servers", 'a"b'])
-        self.assertEqual(codexconfig._split_key(r'"tab\there"'), ["tab\there"])
+    @needs_reader
+    def test_an_escaped_quote_in_a_server_name_is_one_server(self):
+        # The property a hand-written key splitter kept getting wrong, now the parser's.
+        text = '[mcp_servers."a\\"b"]' + chr(10) + 'command = "/x"' + chr(10)
+        view = codexconfig.scan(text)
+        self.assertTrue(view.readable, view.unreadable)
+        self.assertEqual(sorted(view.servers), ['a"b'])
 
+    @needs_reader
     def test_the_oracle_comparison_covers_arguments_as_well_as_the_command(self):
         # The comparison decides LINKED against CONFLICT, and arguments are half of that.
         try:
@@ -1021,6 +1060,32 @@ class RoundTripSymmetryTests(unittest.TestCase):
 # =========================================================================================
 # Check 2 - identity decisions compare identifiers, never serialized text or path prefixes
 # =========================================================================================
+
+PREFIX_METHODS = {"startswith", "endswith"}
+# The one place a prefix test is allowed to live. Everything else asks the question through a
+# named helper, so an identity decision cannot be spelled as a string prefix by accident.
+PREFIX_HELPER = "text_prefix"
+
+
+def _raw_prefix_tests(tree):
+    """Prefix tests written directly rather than through the textual helper.
+
+    A membership test against serialized text and a prefix test against a path are the same
+    defect in two spellings, and the first scanner could only see one of them. This is a
+    syntactic guard and says so: it cannot see a membership test between two stringified
+    paths, slicing, or an unsafe comparison routed through the helper. It is paired with the
+    behavioural sibling-path cases at the real identity decisions, which are what actually
+    protect the property.
+    """
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        called = node.func
+        if isinstance(called, ast.Attribute) and called.attr in PREFIX_METHODS:
+            found.append(called.attr + " at line " + str(node.lineno))
+    return found
+
 
 def _substring_identity_comparisons(tree):
     """Membership tests whose right-hand side is a serialized payload."""
@@ -1125,39 +1190,57 @@ class IdentityComparisonTests(unittest.TestCase):
 # Check 3 - every write to a host-owned file happens under the lock that guards it
 # =========================================================================================
 
-WRITE_CALLS = {"save", "atomic_write", "write_text"}
+WRITE_CALLS = {"save", "atomic_write", "write_text", "write_bytes"}
 
 
-def _is_lock(item):
+def _lock_target(item):
+    """The expression a with-Locked is guarding, or None if it is not a lock.
+
+    Returning the TARGET rather than a boolean is the fix: a lock taken on some other path
+    satisfies "a lock appears" while guarding nothing relevant.
+    """
     call = item.context_expr
     if not isinstance(call, ast.Call):
-        return False
+        return None
     called = call.func
     name = called.attr if isinstance(called, ast.Attribute) else getattr(called, "id", None)
-    return name == "Locked"
+    if name != "Locked" or not call.args:
+        return None
+    return ast.dump(call.args[0])
+
+
+def _write_target(node):
+    """The path a write is aimed at: its first argument, or the receiver of a Path method."""
+    called = node.func
+    if isinstance(called, ast.Attribute) and called.attr in ("write_text", "write_bytes"):
+        return ast.dump(called.value)
+    return ast.dump(node.args[0]) if node.args else None
 
 
 def _unguarded_writes(tree):
     found = []
 
-    def walk(node, locked):
+    def walk(node, held):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.With):
-                inner = locked or any(_is_lock(item) for item in child.items)
+                targets = [t for t in (_lock_target(i) for i in child.items) if t]
                 for item in child.items:
-                    walk(item.context_expr, locked)
+                    walk(item.context_expr, held)
                 for statement in child.body:
-                    walk(statement, inner)
+                    walk(statement, held + targets)
                 continue
             if isinstance(child, ast.Call):
                 called = child.func
                 name = (called.attr if isinstance(called, ast.Attribute)
                         else getattr(called, "id", None))
-                if name in WRITE_CALLS and not locked:
-                    found.append(name + " at line " + str(child.lineno))
-            walk(child, locked)
+                if name in WRITE_CALLS:
+                    # The lock has to be on the thing being written. A lock held over some
+                    # other path is not a guard, it is decoration that passes a lexical test.
+                    if _write_target(child) not in held:
+                        found.append(name + " at line " + str(child.lineno))
+            walk(child, held)
 
-    walk(tree, False)
+    walk(tree, [])
     return found
 
 
@@ -1617,6 +1700,7 @@ class PartialApplicationTests(unittest.TestCase):
         self.assertEqual(len(written["hooks"]["Stop"]), 1,
                          "the append really did land, which is why it is reported")
 
+    @needs_reader
     def test_a_registration_that_was_written_and_could_not_be_read_back_exits_nonzero(self):
         import runtime_install
 
@@ -1838,7 +1922,7 @@ def _unreleased_exits(tree):
                 owns_from = statement.lineno
         if owns_from is None:
             return ["cmd_install never records owning a directory"]
-        offenders = []
+        offenders, successes = [], []
         for statement in ast.walk(node):
             if not isinstance(statement, ast.Return) or statement.lineno <= owns_from:
                 continue
@@ -1849,9 +1933,15 @@ def _unreleased_exits(tree):
                         else getattr(called, "id", None))
                 if name == "_install_failed":
                     continue
-            if isinstance(value, ast.IfExp) or isinstance(value, ast.Name):
-                continue  # the success return
+            # The success return is identified by its VALUE, not by its position. The last
+            # return in this function is an exception handler, so exempting the last one
+            # exempted a failure path and flagged the success.
+            if isinstance(value, ast.Name) and value.id == "EXIT_OK":
+                successes.append("line " + str(statement.lineno))
+                continue
             offenders.append("line " + str(statement.lineno))
+        if len(successes) > 1:
+            offenders.append("more than one success return: " + ", ".join(successes))
         return offenders
     return ["cmd_install was not found"]
 
@@ -1927,9 +2017,9 @@ READABLE_FIXTURES = [
     ("no mcp_servers at all", '[tui]\ntheme = "dark"\n'),
 ]
 
-# Valid TOML that tomllib reads correctly and the fallback deliberately does not model. The
-# fallback must REFUSE these, never read them differently.
-FALLBACK_REFUSED = [
+# Valid TOML written in spellings this module never emits. The reader has to meet them, which
+# is the whole reason it is tomllib and not something written here.
+OTHER_SPELLINGS = [
     ("a member of the parent table", '[mcp_servers]\none = { command = "/c" }\n'),
     ("a quoted member of the parent table", '[mcp_servers]\n"one" = { command = "/c" }\n'),
     ("a dotted root assignment", 'mcp_servers.one.command = "/c"\n'),
@@ -1939,7 +2029,7 @@ FALLBACK_REFUSED = [
 
 # Registration shapes that are not a registration at all. Both readers refuse these: one
 # because it validates the shape it parsed, the other because it does not model it.
-REFUSED_BY_BOTH = [
+REFUSED_SHAPES = [
     ("args as a string", '[mcp_servers.one]\ncommand = "/c"\nargs = "ab"\n'),
     ("command as a list", '[mcp_servers.one]\ncommand = ["/c"]\n'),
     ("args as a sub-table", '[mcp_servers.one]\ncommand = "/c"\n\n[mcp_servers.one.args]\nx = "a"\n'),
@@ -1979,12 +2069,13 @@ class ReaderDomainTests(unittest.TestCase):
             return False
         return True
 
-    def test_the_fallback_is_correct_or_unreadable_over_the_whole_corpus(self):
+    @needs_reader
+    def test_the_reader_is_correct_or_unreadable_over_the_whole_corpus(self):
         if not self._has_oracle():
-            self.skipTest("the differential comparison needs tomllib; 3.10 uses the fixtures")
+            self.skipTest("the differential comparison needs tomllib")
         wrong = []
-        for label, text in READABLE_FIXTURES + FALLBACK_REFUSED + REFUSED_BY_BOTH:
-            view = codexconfig.scan_subset(text)
+        for label, text in READABLE_FIXTURES + OTHER_SPELLINGS + REFUSED_SHAPES:
+            view = codexconfig.scan(text)
             if not view.readable:
                 continue
             try:
@@ -1998,30 +2089,15 @@ class ReaderDomainTests(unittest.TestCase):
         self.assertEqual(wrong, [], "the fallback may refuse, and may agree; it may never"
                                     " read something different")
 
+    @needs_reader
     def test_the_readable_fixtures_are_actually_read(self):
         # Without this, refusing everything would satisfy the property above.
-        for label, text in READABLE_FIXTURES:
+        for label, text in READABLE_FIXTURES + OTHER_SPELLINGS:
             with self.subTest(label):
-                self.assertTrue(codexconfig.scan(text).readable,
-                                codexconfig.scan(text).unreadable)
-                view = codexconfig.scan_subset(text)
-                self.assertTrue(view.readable, str(view.unreadable))
+                view = codexconfig.scan(text)
+                self.assertTrue(view.readable, label + ": " + str(view.unreadable))
 
-    def test_a_shape_the_fallback_does_not_model_is_refused_rather_than_guessed(self):
-        for label, text in FALLBACK_REFUSED:
-            with self.subTest(label):
-                self.assertFalse(codexconfig.scan_subset(text).readable, label)
-                # The same file is read correctly where tomllib exists, which is the point of
-                # using it: the fallback narrows what can be read, never what is true.
-                if self._has_oracle():
-                    self.assertTrue(codexconfig.scan(text).readable, label)
-
-    def test_a_malformed_registration_is_refused_by_both_readers(self):
-        for label, text in REFUSED_BY_BOTH:
-            with self.subTest(label):
-                self.assertFalse(codexconfig.scan_subset(text).readable, label)
-                self.assertFalse(codexconfig.scan(text).readable, label)
-
+    @needs_reader
     def test_invalid_toml_is_never_appended_to(self):
         for label, text in INVALID_TOML:
             with self.subTest(label):
@@ -2030,6 +2106,7 @@ class ReaderDomainTests(unittest.TestCase):
                 self.assertEqual(new_text, text, label)
                 self.assertIn(outcome, ("UNREADABLE", "CONFLICT"), label + ": " + detail)
 
+    @needs_reader
     def test_appending_is_read_back_before_it_is_written(self):
         # A root inline table cannot be extended, and under an array-of-tables the appended
         # table attaches to the last element rather than to a root mapping. Both are refused
@@ -2041,6 +2118,7 @@ class ReaderDomainTests(unittest.TestCase):
                 self.assertEqual(new_text, text)
                 self.assertIn(outcome, ("UNREADABLE", "CONFLICT"), detail)
 
+    @needs_reader
     def test_a_registration_shape_that_parses_is_still_validated(self):
         # The parse is fine; list("ab") == ["a", "b"] is the trap.
         text = '[mcp_servers.one]\ncommand = "run"\nargs = "ab"\n'
@@ -2384,6 +2462,297 @@ class UnreadableDimensionTests(unittest.TestCase):
         self.assertIn("host record", reasons)
         self.assertIn(reading.ACCESS_ERROR, reasons,
                       "and the record's failure keeps its own state")
+
+
+
+
+# =========================================================================================
+# Check 7 - a scanner proves nothing until it is shown a violation
+# =========================================================================================
+
+# An independent review fed known violations to four of these scanners and got empty offender
+# lists from all four. An empty list has two meanings -- nothing is wrong, or the scanner
+# cannot look -- and it is the value that OPENS the gate, so it is never trusted again without
+# this table. Each entry is source the scanner must flag.
+SCANNER_VIOLATIONS = [
+    ("prefix test on a path",
+     "def decide(a, b):\n    return str(a).startswith(str(b))\n",
+     lambda tree: _raw_prefix_tests(tree)),
+    ("suffix test written raw",
+     "def decide(a):\n    return a.endswith('/pkg')\n",
+     lambda tree: _raw_prefix_tests(tree)),
+    ("identity compared against serialized text",
+     "import json\ndef guard(expected, payload):\n    return expected in json.dumps(payload)\n",
+     lambda tree: _substring_identity_comparisons(tree)),
+    ("identity compared against a serialized name",
+     "import json\ndef guard(expected, payload):\n    seen = json.dumps(payload)\n"
+     "    return expected in seen\n",
+     lambda tree: _substring_identity_comparisons(tree)),
+    ("write_text with no lock",
+     "def write(path, data):\n    path.write_text(data)\n",
+     lambda tree: _unguarded_writes(tree)),
+    ("write_bytes with no lock",
+     "def write(path, data):\n    path.write_bytes(data)\n",
+     lambda tree: _unguarded_writes(tree)),
+    ("save with no lock",
+     "def write(path, record):\n    save(path, record)\n",
+     lambda tree: _unguarded_writes(tree)),
+    ("a lock held over a different target",
+     "def write(path, other, record):\n    with Locked(other):\n        save(path, record)\n",
+     lambda tree: _unguarded_writes(tree)),
+    ("a bare refusal return after ownership",
+     "def cmd_install(args):\n    owned = environment\n    if bad:\n        return EXIT_REFUSED\n"
+     "    return EXIT_OK\n",
+     lambda tree: _unreleased_exits(tree)),
+    ("a named refusal return after ownership",
+     "def cmd_install(args):\n    owned = environment\n    if bad:\n"
+     "        return refused('install', why)\n    return EXIT_OK\n",
+     lambda tree: _unreleased_exits(tree)),
+    ("two success returns after ownership",
+     "def cmd_install(args):\n    owned = environment\n    if ok:\n        return EXIT_OK\n"
+     "    return EXIT_OK\n",
+     lambda tree: _unreleased_exits(tree)),
+]
+
+
+class ScannerSightTests(unittest.TestCase):
+    """Every scanner is shown a violation it must catch.
+
+    This is the check that was missing when four scanners returned empty lists against known
+    violations and the emptiness was read as cleanliness. A scanner that stops seeing now
+    fails here rather than passing quietly everywhere.
+    """
+
+    def test_every_scanner_flags_the_violation_written_for_it(self):
+        blind = []
+        for label, source, scan in SCANNER_VIOLATIONS:
+            if not scan(ast.parse(source)):
+                blind.append(label)
+        self.assertEqual(blind, [], "these scanners cannot see the defect they exist for")
+
+    def test_every_scanner_is_quiet_on_source_that_does_not_violate(self):
+        # The other half: a scanner that flags everything is as useless as one that flags
+        # nothing, and would make the inventories unusable.
+        clean = [
+            ("a textual test through the helper",
+             "def decide(a):\n    return text_prefix(a, '#!')\n",
+             lambda tree: _raw_prefix_tests(tree)),
+            ("a field comparison",
+             "def guard(expected, payload):\n    return expected == payload.get('rel')\n",
+             lambda tree: _substring_identity_comparisons(tree)),
+            ("a write under the lock for its own target",
+             "def write(path, record):\n    with Locked(path):\n        save(path, record)\n",
+             lambda tree: _unguarded_writes(tree)),
+            ("a release return after ownership",
+             "def cmd_install(args):\n    owned = environment\n    if bad:\n"
+             "        return _install_failed(p, v, s, e, owned)\n    return EXIT_OK\n",
+             lambda tree: _unreleased_exits(tree)),
+        ]
+        noisy = []
+        for label, source, scan in clean:
+            found = scan(ast.parse(source))
+            if found:
+                noisy.append((label, found))
+        self.assertEqual(noisy, [])
+
+    def test_no_raw_prefix_test_survives_outside_the_helper(self):
+        offenders = []
+        for path in _source_modules():
+            if path.name == "text.py":
+                continue  # where the helper itself lives
+            for finding in _raw_prefix_tests(ast.parse(path.read_text(encoding="utf-8"))):
+                offenders.append(str(path.relative_to(ROOT)) + ": " + finding)
+        self.assertEqual(offenders, [], "a prefix test is either textual, and says so through"
+                                        " text_prefix, or it is an identity decision wearing"
+                                        " the wrong spelling")
+
+
+# =========================================================================================
+# Check 8 - the producer keeps the consumer's promise
+# =========================================================================================
+
+class WriteSidePromiseTests(unittest.TestCase):
+    """A value this command writes must satisfy the predicate its own reader applies.
+
+    Every check before this one enforced a predicate where a value is CONSUMED. None of them
+    asked whether the value this command WRITES would survive the same question, and four
+    defects lived in exactly that gap.
+    """
+
+    def test_an_unreadable_dimension_matches_nothing_rather_than_everything(self):
+        """Both directions, because only one of them was ever handled.
+
+        A caller that could not read the Codex CLI used to have that dimension skipped
+        entirely, so the point matched every CLI: the widest possible answer from the least
+        possible evidence. A point that recorded nothing was already rejected.
+        """
+        record = hostrecord.empty(1)
+        hostrecord.add_point(record, "codex-session-relay", {
+            "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
+            "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+        })
+        asked = dict(location="/env/pkg", interpreter="3.13.1", install_digest="abc",
+                     host="a-host")
+        self.assertEqual(
+            hostrecord.points_for(record, "codex-session-relay", codex_cli=None, **asked), [],
+            "a caller who could not read the dimension must match nothing, not everything")
+
+        record["components"]["codex-session-relay"]["measuredPoints"][0]["codexCli"] = None
+        self.assertEqual(
+            hostrecord.points_for(record, "codex-session-relay", codex_cli="0.1.0", **asked), [],
+            "and a point that recorded nothing about it matches nothing either")
+
+    def test_a_point_measured_against_forked_bytes_can_never_be_read_back(self):
+        record = hostrecord.empty(1)
+        hostrecord.add_point(record, "codex-session-relay", {
+            "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
+            "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+            "digestMatchesDefinition": False,
+        })
+        found = hostrecord.points_for(
+            record, "codex-session-relay", location="/env/pkg", interpreter="3.13.1",
+            install_digest="abc", codex_cli="0.1.0", host="a-host")
+        self.assertEqual(found, [])
+
+    def test_a_point_written_before_the_field_existed_is_still_readable(self):
+        # "not false" rather than "true": such a point was already non-qualifying evidence,
+        # not a malformed record.
+        record = hostrecord.empty(1)
+        hostrecord.add_point(record, "codex-session-relay", {
+            "exercised": True, "install": "/env/pkg", "interpreter": "3.13.1",
+            "installDigest": "abc", "codexCli": "0.1.0", "host": "a-host",
+        })
+        found = hostrecord.points_for(
+            record, "codex-session-relay", location="/env/pkg", interpreter="3.13.1",
+            install_digest="abc", codex_cli="0.1.0", host="a-host")
+        self.assertEqual(len(found), 1)
+
+    def test_a_measurement_refuses_to_record_a_point_its_own_reader_would_reject(self):
+        import runtime_install
+
+        data = definition.load()
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            record = hostrecord.empty(1)
+            bound = {}
+            for component in data["components"]:
+                location = str(environment / "lib" / component["module"])
+                hostrecord.put_install(record, component["component"], {
+                    "location": location, "environment": str(environment),
+                    "entryPoint": str(environment / "bin" / component["consoleScript"]),
+                })
+                bound[component["component"]] = {
+                    "install": {"location": location,
+                                "entryPoint": str(environment / "bin" / component["consoleScript"])},
+                    "digest": "f" * 64, "location": location}
+
+            with mock.patch.object(runtime_install, "_interpreter_prefix",
+                                   return_value=str(environment)), \
+                 mock.patch.object(runtime_install, "_bind_installs",
+                                   return_value=(bound, None)), \
+                 mock.patch.object(runtime_install, "codex_cli_version", return_value="0.1.0"), \
+                 mock.patch.object(runtime_install.scope, "relay",
+                                   return_value={"ok": True, "command": ["doctor"], "payload": {
+                                       "actorReachability": {"socketConnect": "ok"}}}), \
+                 mock.patch.object(runtime_install.subprocess, "run",
+                                   return_value=type("R", (), {
+                                       "returncode": 0,
+                                       "stdout": json.dumps({"tools": [_BRIDGE_TOOL],
+                                                             "connection": {"ok": True}}),
+                                       "stderr": ""})()):
+                measurement = runtime_install.measure_candidate(
+                    data, record, python=str(environment / "bin" / "python"),
+                    environment=str(environment), socket_path=None, state=None,
+                    relay_command=str(environment / "bin" / "codex-session-relay"))
+
+        self.assertFalse(measurement["qualifyingPoint"],
+                         "bytes that disagree with the definition classify as a fork, so no"
+                         " point measured against them can authorize reuse")
+        self.assertEqual(measurement["points"], [])
+        self.assertIn("disagree with the definition", measurement["refused"])
+
+    def test_a_measurement_refuses_when_a_mandatory_dimension_cannot_be_read(self):
+        import runtime_install
+
+        data = definition.load()
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            record = hostrecord.empty(1)
+            bound = {c["component"]: {
+                "install": {"location": "/l",
+                            "entryPoint": str(environment / "bin" / c["consoleScript"])},
+                "digest": c["sourceDigest"], "location": "/l"} for c in data["components"]}
+            with mock.patch.object(runtime_install, "_interpreter_prefix",
+                                   return_value=str(environment)), \
+                 mock.patch.object(runtime_install, "_bind_installs",
+                                   return_value=(bound, None)), \
+                 mock.patch.object(runtime_install, "codex_cli_version", return_value=None), \
+                 mock.patch.object(runtime_install.scope, "relay",
+                                   return_value={"ok": True, "command": ["doctor"], "payload": {
+                                       "actorReachability": {"socketConnect": "ok"}}}), \
+                 mock.patch.object(runtime_install.subprocess, "run",
+                                   return_value=type("R", (), {
+                                       "returncode": 0,
+                                       "stdout": json.dumps({"tools": [_BRIDGE_TOOL],
+                                                             "connection": {"ok": True}}),
+                                       "stderr": ""})()):
+                measurement = runtime_install.measure_candidate(
+                    data, record, python=str(environment / "bin" / "python"),
+                    environment=str(environment), socket_path=None, state=None,
+                    relay_command=str(environment / "bin" / "codex-session-relay"))
+        self.assertFalse(measurement["qualifyingPoint"])
+        self.assertIn("Codex CLI", measurement["refused"])
+
+    def test_the_doctor_runs_the_relay_recorded_for_this_environment(self):
+        import runtime_install
+
+        data = definition.load()
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = Path(temporary) / "env"
+            bound = {c["component"]: {
+                "install": {"location": "/l",
+                            "entryPoint": str(environment / "bin" / c["consoleScript"])},
+                "digest": c["sourceDigest"], "location": "/l"} for c in data["components"]}
+            asked = []
+
+            def relay(command, **kwargs):
+                asked.append(kwargs.get("executable"))
+                return {"ok": True, "command": ["doctor"],
+                        "payload": {"actorReachability": {"socketConnect": "ok"}}}
+
+            with mock.patch.object(runtime_install, "_interpreter_prefix",
+                                   return_value=str(environment)), \
+                 mock.patch.object(runtime_install, "_bind_installs",
+                                   return_value=(bound, None)), \
+                 mock.patch.object(runtime_install.scope, "relay", side_effect=relay), \
+                 mock.patch.object(runtime_install.subprocess, "run",
+                                   return_value=type("R", (), {
+                                       "returncode": 1, "stdout": "", "stderr": "no"})()):
+                measurement = runtime_install.measure_candidate(
+                    data, hostrecord.empty(1), python=str(environment / "bin" / "python"),
+                    environment=str(environment), socket_path=None, state=None,
+                    relay_command="/somewhere/else/codex-session-relay")
+        self.assertFalse(measurement["qualifyingPoint"])
+        self.assertIn("would describe a different runtime", measurement["refused"])
+        self.assertEqual(asked, [], "an unbound relay is refused before it is run, not after")
+
+    def test_retriable_means_the_destination_can_actually_be_used_again(self):
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            record_path = Path(temporary) / "record.json"
+            record_path.write_text("{not json", encoding="utf-8")
+            owned = Path(temporary) / "env"
+            owned.mkdir()
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                runtime_install._install_failed(record_path, 1, [], str(owned), owned)
+            self.assertTrue(owned.exists(), "kept, because the selection could not be read")
+            result = emitted[0]
+            self.assertFalse(result["retriable"],
+                             "the directory is still there, so the next install refuses")
+            self.assertEqual(result["residualPaths"], [str(owned)])
+            self.assertTrue(result["recoveryRequires"])
 
 
 if __name__ == "__main__":
