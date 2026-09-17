@@ -598,6 +598,69 @@ class ContestedSocket(CliBase):
         self.assertFalse(os.path.exists(refused["wouldHaveCreated"]))
         self.assertEqual(os.listdir(root), ["0123456789abcdef"], "no store was created")
 
+    def test_the_refusal_prints_commands_an_operator_can_actually_run(self):
+        """The payload is all an operator has.
+
+        It used to end with "--state <the directory above> once, to adopt it deliberately",
+        which is not a command, does not say which directory, and drops the --socket that
+        made the two stores candidates for each other in the first place. It also promised an
+        adoption that does not exist: choosing one of two claiming stores leaves both still
+        recording the socket, so default discovery refuses again on the next invocation.
+        """
+        home, root, socket = self.contested("contested-recovery")
+
+        refused = self.run_in_home(home, "--socket", socket, "status", expect=2)
+
+        recover = refused["recover"]
+        commands = [line for line in recover if not line.startswith("  ")]
+        self.assertTrue(commands, "the refusal offered no runnable command")
+        for command in commands:
+            self.assertIn(f"--socket {socket}", command,
+                          f"a recovery command dropped the socket: {command}")
+        for candidate in refused["candidates"]:
+            self.assertTrue(
+                any(f"--state {candidate}" in c for c in commands),
+                f"no command inspects candidate {candidate}",
+            )
+        self.assertTrue(
+            any("doctor" in c for c in commands) and any("service status" in c for c in commands),
+            "recovery must both identify the store and show what it carries",
+        )
+        self.assertNotIn(
+            "the directory above", " ".join(recover),
+            "the payload still points at a directory it never names",
+        )
+        self.assertTrue(
+            any("retired" in line for line in recover),
+            "the payload must say that choosing one store does not retire the other",
+        )
+
+    def test_the_wrong_socket_refusal_offers_a_matching_pair_not_an_adoption(self):
+        """This refusal has nothing to adopt: using a store does not rewrite the socket it
+        recorded. It printed no recovery at all, which left the operator to infer that."""
+        from pathlib import Path
+
+        from codex_session_relay.store import Store
+
+        state = os.path.join(self.tmp, "pair-state")
+        first = os.path.join(self.tmp, "pair-first.sock")
+        second = os.path.join(self.tmp, "pair-second.sock")
+        Store(Path(state) / "relay.sqlite3", socket_path=first).close()
+
+        environment = dict(os.environ, PYTHONPATH=os.path.join(REPO, "src"))
+        completed = subprocess.run(
+            [sys.executable, "-m", "codex_session_relay.cli", "--state", state,
+             "--socket", second, "status"],
+            capture_output=True, text=True, env=environment, timeout=60,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stdout + completed.stderr)
+        refused = json.loads(completed.stdout)
+
+        joined = " ".join(refused["recover"])
+        self.assertIn(first, joined, "no command reads the store under the socket it records")
+        self.assertIn(second, joined, "no command looks for the socket that was asked for")
+        self.assertIn("does not rewrite", refused["note"])
+
     def test_an_explicit_state_directory_resolves_the_contest(self):
         home, root, socket = self.contested("contested-explicit")
         chosen = os.path.join(root, "aaaa444444444444")

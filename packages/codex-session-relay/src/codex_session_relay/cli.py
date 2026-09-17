@@ -1409,6 +1409,63 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _program() -> str:
+    """How the operator invokes this CLI, so a printed command can be pasted.
+
+    Derived from argv rather than hardcoded, because the console script and
+    `python3 -m codex_session_relay.cli` are both ordinary ways to reach here and a recovery
+    list that names the wrong one is a recovery list the operator has to translate.
+    """
+    import os
+    import sys
+
+    name = os.path.basename(sys.argv[0] or "")
+    if name in ("", "__main__.py", "cli.py", "-c"):
+        return "python3 -m codex_session_relay.cli"
+    return name
+
+
+def _recovery_commands(services, selection, contested: bool) -> list:
+    """Complete commands for an operator who has only this refusal to work from.
+
+    Every one of them READS. Provenance is recorded by opening a store with a socket, which
+    is exactly what the refusal prevented, so inspection is safe to repeat and none of these
+    adopts anything by running.
+
+    The socket travels on each command deliberately. Dropping it would compare the candidates
+    under different conditions from the ones that produced the refusal, and for the reason
+    the doctor exemption exists in the first place: the socket is what makes two stores
+    candidates for each other.
+    """
+    program = _program()
+    socket = f" --socket {services.socket_path}" if services.socket_path else ""
+    lines = [
+        f"{program}{socket} doctor",
+        "  lists the candidates under siblingStores",
+    ]
+    for candidate in list(selection.ambiguous or selection.unidentified):
+        lines.append(f"{program} --state {candidate}{socket} doctor")
+        lines.append(f"{program} --state {candidate}{socket} service status")
+    lines.append(
+        "  service status groups by project, so the candidate holding the assignments you"
+        " expect is the one to keep"
+    )
+    if contested:
+        # Said in the payload, not only in the docs. Choosing one of two claiming stores does
+        # not retire the other, so the next default invocation is refused again and every
+        # participant has to be given the same directory until one store is gone.
+        lines.append(
+            "  then pass --state <the chosen directory> on EVERY participant of this"
+            " assignment: both stores still record this socket, so default discovery keeps"
+            " refusing until one of them is retired"
+        )
+    else:
+        lines.append(
+            f"  then pass --state {selection.path} once to create the new store"
+            " deliberately, or --state <the existing directory> to keep using it"
+        )
+    return lines
+
 def _refuse_ambiguous_state(services, args) -> None:
     """Two stores already record this socket, so opening one of them would be a guess.
 
@@ -1458,6 +1515,18 @@ def _refuse_ambiguous_state(services, args) -> None:
                 "recordedSocket": recorded,
                 "requestedSocket": wanted,
                 "stateDirectory": str(selection.path),
+                # No adoption list, and saying so explicitly. Using this store does not
+                # rewrite the socket it recorded, so there is nothing here to adopt: the fix
+                # is to point the command at the store that belongs to this socket, or at the
+                # socket that belongs to this store.
+                "recover": [
+                    f"{_program()} --state {selection.path} --socket {recorded} doctor",
+                    "  reads this store under the socket it actually records",
+                    f"{_program()} --socket {wanted} doctor",
+                    "  finds the store that belongs to the socket you asked for",
+                ],
+                "note": "using a store does not rewrite the socket it recorded, so neither"
+                        " command here adopts anything; choose the matching pair",
             }, EXIT_REFUSED)
     if not (selection.ambiguous or selection.unidentified):
         return
@@ -1478,12 +1547,11 @@ def _refuse_ambiguous_state(services, args) -> None:
         "socketPath": services.socket_path,
         "candidates": list(selection.ambiguous or selection.unidentified),
         "wouldHaveCreated": str(selection.db_path),
-        "recover": [
-            "doctor lists the candidates",
-            "--state <candidate> doctor identifies the store",
-            "--state <candidate> service status shows which assignments it carries",
-            "--state <the directory above> once, to adopt it deliberately",
-        ],
+        # Complete commands, carrying the socket. An operator has only this payload to work
+        # from, and every one of these reads a store without recording anything, so they are
+        # safe to repeat: provenance is written by opening a store, which is what the
+        # refusal prevented.
+        "recover": _recovery_commands(services, selection, contested),
     }, EXIT_REFUSED)
 
 
