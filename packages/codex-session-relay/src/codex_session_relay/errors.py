@@ -60,6 +60,9 @@ class RefusalReason(str, Enum):
     SETTINGS_UNAVAILABLE = "settings_unavailable"
     SETTINGS_INCOMPLETE = "settings_incomplete"
     UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
+    # Same string as the finding code the resume verification reports, so a receipt naming
+    # this refusal and a delivery journal recording it read alike.
+    UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
 
     # Verification currency and canonical criteria. A verdict is a claim about a specific
     # revision judged against a specific set of obligations, so both have to still hold at the

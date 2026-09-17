@@ -477,9 +477,62 @@ class Identity(unittest.TestCase):
         there = nonce_lookup(resolve_state_dir(b), written["nonce"])
         self.assertTrue(here["found"])
         self.assertFalse(there["found"])
-        self.assertEqual(compare_store(self.store.locate(), nonce=here)["sameStore"], "proven")
+        # Proof takes both: the nonce says a write of the peer's reached this file, and the
+        # physical identity says it is still the same file. The ordering this fixture relies
+        # on - challenge written after the copy - is what nothing in the protocol enforces,
+        # which is why the nonce alone is not proof. See
+        # test_a_nonce_copied_with_the_bytes_is_not_proof_of_a_shared_store.
+        mine = self.store.locate()
+        self.assertEqual(
+            compare_store(
+                mine, expect_inode=f"{mine['device']}:{mine['inode']}", nonce=here,
+            )["sameStore"],
+            "proven",
+        )
+        self.assertEqual(compare_store(mine, nonce=here)["sameStore"], "unproven")
         self.assertEqual(
             compare_store(probe(resolve_state_dir(b))["store"], nonce=there)["sameStore"],
+            "mismatch",
+        )
+
+    def test_a_nonce_copied_with_the_bytes_is_not_proof_of_a_shared_store(self):
+        """The order the protocol cannot enforce, and why a nonce alone is not proof.
+
+        The fixture above writes the challenge AFTER the copy, so the copy cannot contain it -
+        and that ordering is what made this look settled. Nothing in `store-challenge --write`
+        followed by `doctor --expect-nonce` establishes it. A copy taken after the write
+        carries the nonce, the store id and the bytes, and it stays stable for the whole
+        invocation, so every check for a replacement or a second name sees nothing wrong.
+
+        What a found nonce says is narrower than proof: the file I read contains a write that
+        was made to the writer's file at some earlier moment. Whether it is STILL one file is
+        what the physical identity says, which is why proof takes both.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        mine = probe(resolve_state_dir(self.a))["store"]
+
+        copied = self.copy_store(os.path.join(self.tmp, "copied-after"))
+        theirs = probe(resolve_state_dir(copied))["store"]
+        here = nonce_lookup(resolve_state_dir(copied), written["nonce"])
+
+        graded = compare_store(theirs, nonce=here)
+        self.assertNotEqual(
+            graded["sameStore"], "proven",
+            "a nonce that travelled with a copy of the bytes proved a shared store",
+        )
+        self.assertIn("copy", graded["detail"], graded)
+
+        # The case is the one described: the copy really carries both the nonce and the id.
+        self.assertTrue(here["found"], here)
+        self.assertEqual(theirs["storeId"], mine["storeId"])
+        self.assertNotEqual(theirs["inode"], mine["inode"])
+
+        # And the evidence that still separates them is the physical identity.
+        self.assertEqual(
+            compare_store(
+                theirs, expect_inode=f"{mine['device']}:{mine['inode']}", nonce=here,
+            )["sameStore"],
             "mismatch",
         )
 
@@ -512,13 +565,272 @@ class Identity(unittest.TestCase):
         mine = self.store.locate()
         through_alias = probe(resolve_state_dir(alias))["store"]
         self.assertNotEqual(through_alias["dbPath"], mine["dbPath"])
+        # One pathname, reached by two spellings: resolve() follows the symlink, so both
+        # participants open the same name and share one write-ahead log.
+        self.assertEqual(through_alias["realPath"], mine["realPath"])
+        self.assertEqual(through_alias["links"], 1, through_alias)
+
+        # Not a mismatch, and not proof either. This side holds its own path and the peer's
+        # device and inode, and nothing in that says the peer resolved to the same pathname.
         self.assertEqual(
             compare_store(
                 through_alias, expect_store=mine["storeId"],
                 expect_inode=f"{mine['device']}:{mine['inode']}",
             )["sameStore"],
+            "unproven",
+        )
+        # What settles it is the nonce, which is an observation rather than an inference.
+        written = self.store.write_challenge(actor="parent")
+        found = nonce_lookup(resolve_state_dir(alias), written["nonce"])
+        self.assertTrue(found["found"], "the alias reaches the same file")
+        self.assertEqual(
+            compare_store(
+                through_alias, expect_inode=f"{mine['device']}:{mine['inode']}", nonce=found,
+            )["sameStore"],
             "proven",
         )
+
+    def test_an_agreeing_device_and_inode_is_never_proof_on_its_own(self):
+        """One inode can be reached at more than one pathname, and the log follows the name.
+
+        `st_nlink` counts hardlink names, and the name count is not the whole question: a file
+        bind mount attaches one inode at a second pathname without changing it. So a count of
+        one is not evidence that both participants opened the same name, and grading an
+        agreeing pair as proof would be sound only for cases this side can tell apart - it
+        holds its own path and the peer's device and inode, and nothing that says which name
+        the peer opened.
+
+        The bind mount itself is not exercised here. This host refuses an unprivileged mount
+        namespace - `unshare -rm` fails writing `/proc/self/uid_map` - so what is asserted is
+        the grading rule, not the mount. The rule is written not to depend on telling the two
+        cases apart, which is why it is asserted on an ordinary single-named store.
+        """
+        mine = self.store.locate()
+        self.assertEqual(mine["links"], 1, "this case is about a single-named inode")
+
+        graded = compare_store(
+            probe(resolve_state_dir(self.a))["store"], expect_store=mine["storeId"],
+            expect_inode=f"{mine['device']}:{mine['inode']}",
+        )
+
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "an agreeing device and inode was graded as proof of one live store",
+        )
+        self.assertIn("pathname", graded["detail"], graded)
+
+        # Conclusive in the direction where it is conclusive: a different pair is a mismatch
+        # rather than merely unproven, and demoting agreement must not cost that.
+        elsewhere = self.copy_store(os.path.join(self.tmp, "elsewhere"))
+        self.assertEqual(
+            compare_store(
+                probe(resolve_state_dir(elsewhere))["store"],
+                expect_inode=f"{mine['device']}:{mine['inode']}",
+            )["sameStore"],
+            "mismatch",
+        )
+
+    def test_a_second_name_for_one_inode_is_not_proof_of_a_shared_store(self):
+        """A hardlink agrees on every identity this compared, and is still not one store.
+
+        Measured here on 2026-09-17 rather than reasoned about. With a store open on
+        `a/relay.sqlite3` and a hardlink at `b/relay.sqlite3`: `st_nlink` is 2 and the
+        device, inode and store id all agree - the first two are properties of the one inode
+        and the third is a row inside it, minted once.
+        A read through the second name while the first connection's write-ahead log was live
+        failed with `OperationalError: disk I/O error` and `probe` returned `storeId: None`;
+        after the first connection closed and checkpointed, the same read succeeded and the
+        second directory had grown its own `relay.sqlite3-wal` and `-shm`. Two names are two
+        write-ahead logs, so agreeing on the inode does not say the two participants are
+        writing and reading one live store.
+
+        This is why the pair is graded the way it is: it is decisive about a DIFFERENT file
+        and not sufficient for the same one. A nonce does not close this either - once the
+        first connection checkpoints, a nonce written through one name is readable through
+        the other - so the name count is measured rather than inferred from either.
+        """
+        mine = self.store.locate()
+        # Closed first so the committed content is in the main file: a probe through the
+        # second name during a live write-ahead log cannot read the store id at all, and
+        # then this case would pass because the identity was MISSING rather than because a
+        # shared inode was refused as proof.
+        self.store.close()
+        other = os.path.join(self.tmp, "hardlink")
+        os.makedirs(other)
+        os.link(os.path.join(self.a, "relay.sqlite3"), os.path.join(other, "relay.sqlite3"))
+
+        theirs = probe(resolve_state_dir(other))["store"]
+
+        graded = compare_store(
+            theirs, expect_store=mine["storeId"],
+            expect_inode=f"{mine['device']}:{mine['inode']}",
+        )
+
+        # The defect first, so a failure says what it is rather than naming a missing field.
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "a second name for one inode was graded as proof of a shared live store",
+        )
+        self.assertIn("names", graded["detail"], graded)
+
+        # And the case really is the one described: every identity agrees, only the number
+        # of names for the inode does not.
+        self.assertEqual(theirs["storeId"], mine["storeId"], "the identities must agree")
+        self.assertEqual(
+            (theirs["device"], theirs["inode"]), (mine["device"], mine["inode"]),
+            "one inode, or this case is not the one being tested",
+        )
+        self.assertNotEqual(theirs["realPath"], mine["realPath"])
+        self.assertEqual(theirs["links"], 2, theirs)
+
+    def test_a_nonce_does_not_talk_the_second_name_up_into_proof(self):
+        """The nonce cannot see this, so it must not outvote it.
+
+        A nonce written through one name and read through the other is found once the
+        writer has checkpointed, which says they shared the file at that moment and says
+        nothing about the separate write-ahead logs they keep writing into. Absence is never
+        agreement here for the same reason a missing identity is not.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        other = os.path.join(self.tmp, "hardlink")
+        os.makedirs(other)
+        os.link(os.path.join(self.a, "relay.sqlite3"), os.path.join(other, "relay.sqlite3"))
+
+        found = nonce_lookup(resolve_state_dir(other), written["nonce"])
+        self.assertTrue(found["found"], "the nonce is readable through the second name")
+
+        graded = compare_store(probe(resolve_state_dir(other))["store"], nonce=found)
+        self.assertEqual(graded["sameStore"], "unproven", graded)
+        self.assertIn("names", graded["detail"], graded)
+
+    def test_a_nonce_read_from_a_replacement_does_not_prove_the_measured_store(self):
+        """The only evidence graded as proof, bound to the file it was read from.
+
+        `nonce_lookup` opens the path itself, after whatever stat'd it for the receipt, so a
+        replacement between the two hands a comparison whose identity came from A an answer
+        that came from B. A copy carries the challenge row with the bytes - `copy_store` is
+        the same copy the identifier tests use - so the replacement does not even have to be
+        crafted to contain the nonce.
+
+        It matters more than it did: this class also stopped grading an agreeing device and
+        inode as proof, which leaves the nonce as the only proving mechanism. Unbound, it is
+        the whole grading rather than one voice in it.
+        """
+        mine = self.store.locate()
+        written = self.store.write_challenge(actor="parent")
+        # Closed first so the committed challenge row is in the main file and the copy below
+        # carries it; a live write-ahead log would leave the replacement without the nonce and
+        # this would pass because the answer was MISSING rather than because it was refused.
+        self.store.close()
+
+        replacement = self.copy_store(os.path.join(self.tmp, "replacement"))
+        os.replace(
+            os.path.join(replacement, "relay.sqlite3"),
+            os.path.join(self.a, "relay.sqlite3"),
+        )
+
+        answer = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+
+        # The defect first, so a failure says what it is: the identity under this comparison
+        # is the one measured from A, and the answer came out of B.
+        graded = compare_store(mine, nonce=answer)
+        self.assertNotEqual(
+            graded["sameStore"], "proven",
+            "a nonce read from a database that replaced the measured one proved it",
+        )
+        self.assertIn("read from", graded["detail"], graded)
+
+        # And the case is the one described rather than a read that simply failed.
+        self.assertTrue(answer["found"], answer)
+        self.assertNotEqual(
+            (answer["device"], answer["inode"]), (mine["device"], mine["inode"]),
+        )
+
+    def test_a_name_added_after_the_probe_still_vetoes_a_found_nonce(self):
+        """The hazard is the same whether the second name was there at the probe or arrived.
+
+        The nonce answer carries the name count observed at ITS read, and grading only the
+        probe's count took one half of the fresher measurement and left the other: both
+        physical identifiers are unchanged by a hardlink created in between, the nonce is
+        found through the original name, and a stale count of one cannot veto it.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        measured = probe(resolve_state_dir(self.a))["store"]
+        self.assertEqual(measured["links"], 1, "the probe has to see one name first")
+
+        other = os.path.join(self.tmp, "late-hardlink")
+        os.makedirs(other)
+        os.link(os.path.join(self.a, "relay.sqlite3"), os.path.join(other, "relay.sqlite3"))
+
+        answer = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+
+        graded = compare_store(measured, nonce=answer)
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "a second name created after the probe did not veto the nonce",
+        )
+        self.assertIn("names", graded["detail"], graded)
+
+        # The case is the one described: the read saw the second name, the probe did not.
+        self.assertTrue(answer["found"], answer)
+        self.assertEqual(answer["links"], 2, answer)
+        self.assertEqual(
+            (answer["device"], answer["inode"]), (measured["device"], measured["inode"]),
+        )
+
+    def test_a_name_that_goes_away_during_the_read_is_still_counted(self):
+        """Both of the read's own observations, not just the one it finished with.
+
+        `nonce_lookup` stats the path before it opens and after it closes. A second name
+        present at the open and unlinked before the close leaves both the caller's count and
+        the closing count at one, while the opening count saw two - and a peer that already
+        opened the removed alias can hold that connection and keep writing through its own
+        write-ahead log. Carrying only the closing count kept half of what the function
+        measured.
+
+        The unlink is injected at the seam rather than raced: both stats are real stats of the
+        real file, and the wrapper only decides WHEN the alias goes away, because the window
+        is inside one call.
+        """
+        written = self.store.write_challenge(actor="parent")
+        self.store.close()
+        measured = probe(resolve_state_dir(self.a))["store"]
+        self.assertEqual(measured["links"], 1, "the caller has to see one name")
+
+        alias = os.path.join(self.tmp, "vanishing.sqlite3")
+        os.link(os.path.join(self.a, "relay.sqlite3"), alias)
+
+        from codex_session_relay import store as store_module
+
+        real = store_module._path_identity
+        seen = []
+
+        def observe(path):
+            answer = real(path)
+            seen.append(answer)
+            if len(seen) == 1:
+                os.unlink(alias)
+            return answer
+
+        store_module._path_identity = observe
+        try:
+            answer = nonce_lookup(resolve_state_dir(self.a), written["nonce"])
+        finally:
+            store_module._path_identity = real
+
+        graded = compare_store(measured, nonce=answer)
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "a name seen only at the open did not veto the nonce",
+        )
+        self.assertIn("names", graded["detail"], graded)
+
+        # The case is the one described: two real observations, two then one.
+        self.assertEqual([count["links"] for count in seen], [2, 1], seen)
+        self.assertTrue(answer["found"], answer)
+        self.assertEqual(answer["links"], 2, answer)
 
     def test_a_store_with_no_identity_is_never_proven_equal(self):
         """Absence must not become agreement; an old store predates the identity rows."""
