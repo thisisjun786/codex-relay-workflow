@@ -954,5 +954,42 @@ class AFactThatNamesNothingHasRegisteredNothing(GuardTestCase):
         self.assertEqual(verdict["decision"], guard.RELEASE)
 
 
+class AReceiptThatNamesNoRevisionVerifiesNothing(GuardTestCase):
+    """The same rule as a blank identity, on the digest a receipt is supposed to stand for."""
+
+    def test_a_stored_receipt_without_a_revision_hash_does_not_verify(self):
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        self.store.db.execute(
+            "UPDATE events SET receipt = json_remove(receipt, '$.revisionHash')"
+            " WHERE relationship_id = ?",
+            (relationship["relationshipId"],),
+        )
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["receiptEvidence"], "artifacts_changed_since_receipt")
+        self.assertIn("names no revision", verdict["receiptDetail"])
+
+    def test_a_malformed_frozen_reference_holds_rather_than_releasing(self):
+        """A manifestRef that traverses a regular file is a broken reference, not an access fault."""
+        relationship = self.managed()
+        path = self.artifact("out.txt", "work")
+        entries, _bindings = manifest.build(
+            [path], relationship["authorizedScope"]["artifactRoots"]
+        )
+        reference = os.path.join(self.tmp, "frozen-malformed")
+        manifest.freeze(entries, reference)
+        payload = self.ready_payload(relationship, [path])
+        # A reference whose parent is a file: stat raises ENOTDIR, which scope interprets.
+        payload["manifestRef"] = os.path.join(reference, "MANIFEST.json", "deeper")
+        self.accept(payload)
+        self.dispose("ready_for_review")
+        self.artifact("out.txt", "the working tree moved on")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "receipt_missing")
+        self.assertEqual(verdict["decision"], guard.BLOCK)
+
+
 if __name__ == "__main__":
     unittest.main()

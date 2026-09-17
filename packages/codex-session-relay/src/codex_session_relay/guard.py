@@ -120,7 +120,12 @@ def deliverable_state(payload, manifest_ref, roots):
         entries = [Entry.from_record(record) for record in records]
         claimed = (payload or {}).get("revisionHash")
         recomputed = revision_hash(entries)
-        if claimed and recomputed != claimed:
+        if not claimed:
+            # A receipt that names no revision cannot be verified against one. Skipping the
+            # comparison when the digest is absent let matching live files release a receipt that
+            # stands for nothing, which is the same mistake as reading a blank identity as one.
+            return DELIVERABLE_CHANGED, None, "the stored receipt names no revision"
+        if recomputed != claimed:
             return (
                 DELIVERABLE_CHANGED,
                 None,

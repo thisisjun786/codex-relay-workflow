@@ -401,14 +401,31 @@ class FrozenAccessIsNotFrozenDisagreement(RelayTestCase):
         self.assertTrue(problems)
         self.assertEqual(unreadable, [])
 
-    def test_an_unreachable_frozen_directory_is_one(self):
-        """is_file() answers False for absent and for out of reach, and those differ."""
-        reference = os.path.join(self.tmp, "frozen-dir-blocked")
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses the permission this depends on")
+    def test_an_unreachable_frozen_directory_raises_rather_than_answering_absent(self):
+        """Path.is_file() does not swallow this one, and that is worth pinning down.
+
+        On this interpreter it raises PermissionError instead of returning False, so the
+        three-state probe beside it never runs for a blocked parent. The error does not disappear:
+        it leaves as an exception, which the guard's classification boundary turns into an
+        unverifiable deliverable. The failure is reported either way; which mechanism reports it
+        depends on the interpreter, so it is asserted rather than assumed.
+        """
+        holder = os.path.join(self.tmp, "blocked-holder")
+        os.makedirs(os.path.join(holder, "frozen"))
+        self.addCleanup(os.chmod, holder, 0o700)
+        os.chmod(holder, 0o000)
+        with self.assertRaises(OSError):
+            manifest.verify_frozen_detailed(os.path.join(holder, "frozen"))
+
+    def test_a_frozen_reference_that_is_not_a_directory_is_not_an_access_failure(self):
+        """ENOTDIR is an errno scope interprets, so it answers about the reference itself."""
+        reference = os.path.join(self.tmp, "frozen-dir-is-a-file")
         with open(reference, "w", encoding="utf-8") as handle:
             handle.write("a file where the frozen directory belongs")
         _digest, problems, unreadable = manifest.verify_frozen_detailed(reference)
         self.assertTrue(problems)
-        self.assertTrue(unreadable, "stat says why is_file said no")
+        self.assertEqual(unreadable, [])
 
     def test_the_two_value_form_answers_exactly_what_it_always_did(self):
         """The invariance the intake depends on, held across every branch that produces it."""

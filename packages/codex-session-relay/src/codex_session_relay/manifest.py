@@ -277,6 +277,12 @@ def _frozen_document_access(document, manifest_ref) -> list:
     except FileNotFoundError:
         return []
     except OSError as error:
+        if error.errno in _INTERPRETED_ERRNOS:
+            # The same rule the blob handler applies: an errno scope gives a name to is an answer
+            # about the frozen copy, not a failure to reach it. A manifestRef traversing a regular
+            # file is a malformed reference, and reporting it unreadable would release a receipt
+            # whose snapshot is provably wrong.
+            return []
         return [f"{manifest_ref}: the frozen manifest could not be reached: {error}"]
     # It is there and it is not a regular file. That is a malformed frozen copy, not a failure to
     # reach one, so it stays a content problem.
