@@ -1104,6 +1104,20 @@ overwritten, because they carry the mode and a silent rewrite changes whether tu
 at all. `observe` is what an install writes; holding depends on per-session write isolation this
 command cannot grant.
 
+Settings this command can generate but its own reader cannot act on are refused rather than
+written, so an install cannot report success and leave every later Stop reading those settings as
+malformed. The adapter's budget is checked against the registered timeout at the same point,
+because that is the one value whose meaning needs both files: a budget the host's timeout does
+not exceed lets the host kill the adapter before it records why it did not answer.
+
+The registered command is a command line, so its two words are joined with shell quoting and
+read back by the same rules. Concatenating them raw fails in two sizes: a path holding a space
+is delivered as more words than it is, and a path holding shell syntax is delivered as syntax
+and runs on every Stop. Ordinary paths are unchanged by the quoting. `hook-status` recognises
+this adapter's own registrations by a complete argument whose last component is the entry point's
+name, never by the command's text containing it: a program called `not-completion_hook.py`
+contains that name and is a different program.
+
 The runtime is named through the owned pointer, `<dest>/current/bin/codex-session-relay`, and
 never through `PATH` or a checkout path. A host can carry a relay on `PATH` whose build
 predates the guard: the file is there, it runs, and it rejects the call. That the executable

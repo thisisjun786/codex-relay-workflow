@@ -1920,6 +1920,14 @@ def cmd_hook(args):
         # touched. Only one order is safe: a hook registered against settings that are not there
         # answers config_absent on every Stop and releases, which is an installed hook that does
         # nothing and says so nowhere. Settings with no hook cost nothing at all.
+        #
+        # The budget is checked here rather than inside the settings, because it is the one
+        # value whose meaning needs both files: the adapter's wall clock lives in the settings
+        # and the host's timeout lives in the registration, and only this command holds both.
+        budget = completion.budget_complaints(args.guard_timeout, args.timeout)
+        if budget:
+            emit({"command": "hook", "adapter": adapter, "error": "; ".join(budget)})
+            return EXIT_USAGE
         try:
             wanted = completion.configuration(
                 destination=args.dest, relay=args.relay_command, marker_root=args.marker_root,
@@ -1938,8 +1946,8 @@ def cmd_hook(args):
                            " registered against settings it cannot act on is installed and"
                            " inert, which is the one outcome worth refusing outright.")})
             return EXIT_REFUSED
-        command = " ".join((args.python or sys.executable,
-                            str(ROOT / "scripts" / completion.ENTRY_POINT_NAME)))
+        command = completion.command_for(args.python or sys.executable,
+                                         ROOT / "scripts" / completion.ENTRY_POINT_NAME)
         event = args.event or completion.EVENT
     else:
         command = args.hook_command

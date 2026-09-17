@@ -484,6 +484,146 @@ class TheInstallerSeam(unittest.TestCase):
         self.assertIsNone(emitted[0]["settings"], "no adapter settings were involved")
 
 
+class TheRegisteredCommandIsArgvAndNotText(unittest.TestCase):
+    """A hook file carries a command line. Writing it and reading it back are inverses.
+
+    Both halves were wrong in the same way and it took two shapes: joining raw made a path with
+    a space into two words and a path with shell syntax into syntax, and matching by substring
+    made a neighbouring program's name into this adapter's registration.
+    """
+
+    def test_a_path_with_a_space_survives_the_round_trip(self):
+        command = completion.command_for("/opt/my python/bin/python3",
+                                         "/checkout/scripts/completion_hook.py")
+        self.assertEqual(completion.registered_argv(command),
+                         ["/opt/my python/bin/python3", "/checkout/scripts/completion_hook.py"],
+                         "the host is handed the two words this names, not four")
+
+    def test_shell_syntax_in_an_interpreter_path_is_not_delivered_as_syntax(self):
+        """This command line runs on every Stop with the Codex user's own privileges."""
+        hostile = "/bin/python3; touch /tmp/crw37-should-not-exist"
+        command = completion.command_for(hostile, "/checkout/scripts/completion_hook.py")
+        self.assertEqual(completion.registered_argv(command),
+                         [hostile, "/checkout/scripts/completion_hook.py"],
+                         "the semicolon is part of one word, not a second command")
+        self.assertTrue(command.startswith("'"),
+                        "a word carrying shell syntax is delivered quoted")
+
+    def test_ordinary_paths_come_back_unchanged(self):
+        self.assertEqual(completion.command_for("/usr/bin/python3", "/a/completion_hook.py"),
+                         "/usr/bin/python3 /a/completion_hook.py")
+
+    def test_a_neighbouring_program_is_not_this_adapter(self):
+        self.assertIsNone(completion.names_this_adapter("/opt/not-completion_hook.py"))
+        self.assertIsNone(completion.names_this_adapter("/opt/not_completion_hook.py"))
+        self.assertEqual(completion.names_this_adapter("/usr/bin/python3 /a/completion_hook.py"),
+                         "/a/completion_hook.py")
+
+    def test_a_command_that_is_not_a_command_line_names_nothing(self):
+        self.assertIsNone(completion.registered_argv("unbalanced 'quote"))
+        self.assertIsNone(completion.names_this_adapter("unbalanced 'quote"))
+
+    def test_status_does_not_claim_an_unrelated_hook_as_this_adapter(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            impostor = home / "not-completion_hook.py"
+            impostor.write_text("", encoding="utf-8")
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": str(impostor), "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registration"]["thisAdapter"], [],
+                         "a program whose name merely contains this one is a different program")
+        self.assertEqual(found["registeredCommandTarget"]["value"], completion.NOT_READ,
+                         "and no target of somebody else's is checked as if it were ours")
+
+    def test_what_installation_writes_is_what_the_status_reader_identifies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-37", apply=True)
+            with mock.patch.object(runtime_install, "emit"):
+                runtime_install.cmd_hook(args)
+            found = completion.status(codex_home=temporary, environ={})
+        target = found["registration"]["thisAdapter"][0]["target"]
+        self.assertEqual(Path(target).name, completion.ENTRY_POINT_NAME)
+        self.assertTrue(Path(target).is_file(), "the writer and the reader agree on the path")
+
+
+class TheWriterSatisfiesItsOwnReader(unittest.TestCase):
+    """Settings this command can generate but its own reader rejects are refused, not written.
+
+    Otherwise an install reports success and every Stop afterwards reads the settings it just
+    wrote as malformed: a hook that is registered, inert, and says so nowhere anybody looks.
+    """
+
+    def test_settings_the_reader_would_reject_are_never_written(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / completion.CONFIG_NAME
+            answer = completion.write_configuration(
+                path, {"relayExecutable": "/r", "markerRoot": "/m", "mode": completion.OBSERVE,
+                       "timeoutSeconds": 0}, apply=True)
+        self.assertEqual(answer["outcome"], completion.CONFIG_WOULD_NOT_BE_READABLE)
+        self.assertFalse(answer["wrote"])
+        self.assertFalse(path.exists())
+        self.assertNotIn(completion.CONFIG_WOULD_NOT_BE_READABLE, completion.CONFIG_SETTLED)
+
+    def test_a_non_positive_budget_is_refused_before_anything_is_installed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python=sys.executable,
+                mode=completion.OBSERVE, guard_timeout=0, timeout=10, issue="CRW-37", apply=True)
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install.cmd_hook(args)
+            self.assertFalse((home / "hooks.json").exists())
+            self.assertFalse(completion.configuration_path(home).exists())
+        self.assertEqual(code, 2)
+        self.assertIn("positive", emitted[0]["error"])
+
+    def test_a_budget_the_host_timeout_does_not_exceed_is_refused(self):
+        """The host can kill the adapter mid-call, and the record that would have explained the
+        timeout is the one the killed process was about to write."""
+        self.assertEqual(completion.budget_complaints(5, 10), [])
+        self.assertTrue(completion.budget_complaints(10, 10))
+        self.assertTrue(completion.budget_complaints(20, 10))
+        self.assertTrue(completion.budget_complaints(-1, 10))
+        self.assertTrue(completion.budget_complaints(True, 10))
+        self.assertTrue(completion.budget_complaints("5", 10))
+
+
+class TheJournalPolicyReadsItsOwnField(unittest.TestCase):
+    """faults_only was reading a key no record carries, so it recorded everything."""
+
+    def test_faults_only_keeps_the_failures_and_drops_the_answers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary, journalPolicy=completion.FAULTS_ONLY)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            self.assertEqual(journalled(temporary), [],
+                             "a guard that answered is not a fault")
+            os.remove(Path(temporary) / "codex-session-relay")
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            records = journalled(temporary)
+        self.assertEqual([r["adapterOutcome"] for r in records],
+                         [completion.GUARD_UNREACHABLE])
+
+    def test_every_invocation_keeps_both(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            settings(temporary)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            self.assertEqual(len(journalled(temporary)), 1)
+
+
 class OwnershipStaysSeparate(unittest.TestCase):
     """Criterion 5: this hook's own file, and nobody else's state."""
 

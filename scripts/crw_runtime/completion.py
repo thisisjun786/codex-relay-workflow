@@ -29,6 +29,7 @@ separate questions, answered separately by status().
 import errno
 import json
 import os
+import shlex
 import subprocess
 import time
 import uuid
@@ -77,6 +78,28 @@ JOURNAL_POLICIES = (EVERY_INVOCATION, FAULTS_ONLY, NO_JOURNAL)
 # database somebody is holding cannot spend the host's whole budget.
 DEFAULT_TIMEOUT_SECONDS = 5
 REGISTERED_TIMEOUT_SECONDS = 10
+
+
+def budget_complaints(guard_timeout, registered_timeout):
+    """Whether the adapter's own budget can do what it is for, against the host's.
+
+    The two numbers only mean something together. A budget the host's timeout does not exceed
+    lets the host kill the adapter mid-call, and the evidence that would have explained the
+    timeout is the record the killed process was about to write. Stated as its own check because
+    the settings hold one number and the hook registration holds the other, so neither reader
+    can see the relationship on its own.
+    """
+    found = []
+    if isinstance(guard_timeout, bool) or not isinstance(guard_timeout, (int, float)) \
+            or guard_timeout <= 0:
+        found.append("the guard budget must be a positive number of seconds")
+    elif (isinstance(registered_timeout, (int, float))
+            and not isinstance(registered_timeout, bool)
+            and guard_timeout >= registered_timeout):
+        found.append("the guard budget must be under the registered hook timeout of "
+                     + str(registered_timeout) + "s, or the host can kill this adapter before"
+                     " it records why it did not answer")
+    return found
 
 # How the guard process ended. Four answers and none of them is inferred from the output: a
 # process that never started and one that started and said nothing are the same silence on
@@ -160,8 +183,12 @@ CONFIG_UNCHANGED = "config_unchanged"
 CONFIG_WOULD_CREATE = "config_would_create"
 CONFIG_DIFFERS = "config_differs"
 CONFIG_CHANGED_UNDERNEATH = "config_changed_underneath"
+# The writer refusing to write a document its own reader would reject. Without it an install
+# reports success and every Stop afterwards reads the settings it just wrote as malformed,
+# which is a hook that is registered, inert, and says so nowhere anybody looks.
+CONFIG_WOULD_NOT_BE_READABLE = "config_would_not_be_readable"
 CONFIG_WRITE_OUTCOMES = (CONFIG_CREATED, CONFIG_UNCHANGED, CONFIG_WOULD_CREATE, CONFIG_DIFFERS,
-                         CONFIG_CHANGED_UNDERNEATH)
+                         CONFIG_CHANGED_UNDERNEATH, CONFIG_WOULD_NOT_BE_READABLE)
 
 # The outcomes that mean these settings now say what this install asked them to, or would with
 # --apply. Everything else, including every unusable reading, is a refusal, and the set is named
@@ -423,6 +450,47 @@ def hook_output(verdict):
     return json.dumps({"decision": BLOCK, "reason": reason, "continue": True})
 
 
+# ------------------------------------------------------------------ the registered command
+
+
+def command_for(interpreter, script):
+    """The registered command, quoted so the host runs the two words this names.
+
+    A hook file carries a command line, not an argv, so the two are joined with shell quoting.
+    Concatenating them raw has two failure modes and they are not the same size: a path holding
+    a space is delivered as more words than it is, and a path holding shell syntax is delivered
+    as syntax and runs on every Stop with the user's own privileges. Ordinary paths come back
+    from the quoting unchanged.
+    """
+    return shlex.join([str(interpreter), str(script)])
+
+
+def registered_argv(command):
+    """The words a registered command is made of, or None when it is not a command line.
+
+    The inverse of the join above, and it has to be the inverse: a reader that splits on
+    whitespace disagrees with the writer exactly where the quoting was needed.
+    """
+    try:
+        return shlex.split(str(command or ""))
+    except ValueError:
+        return None
+
+
+def names_this_adapter(command):
+    """The word of a registered command that runs this adapter, or None.
+
+    An identity decision, taken on a complete argument's own last component. A neighbouring
+    program called not_completion_hook.py contains this name inside its own, and answering that
+    a registration is this adapter's because the text contains the name would report a hook
+    nobody installed, then check a target belonging to somebody else.
+    """
+    for word in registered_argv(command) or []:
+        if Path(word).name == ENTRY_POINT_NAME:
+            return word
+    return None
+
+
 # ------------------------------------------------------------------ this hook's own record
 
 
@@ -440,7 +508,7 @@ def journal(config, record):
     policy = config.get("journalPolicy") or EVERY_INVOCATION
     if policy == NO_JOURNAL:
         return None
-    if policy == FAULTS_ONLY and record.get("outcome") in ANSWERED:
+    if policy == FAULTS_ONLY and record.get("adapterOutcome") in ANSWERED:
         return None
     root = config.get("journalRoot")
     if not root:
@@ -622,6 +690,14 @@ def write_configuration(path, wanted, *, apply=False):
     is a judgment about nothing.
     """
     path = Path(path)
+    unreadable = complaints(wanted)
+    if unreadable:
+        # Checked against the reader rather than against a list of flags, so a document this
+        # command can generate but its own reader cannot act on is refused wherever it came
+        # from, not only where today's caller happened to build it.
+        return {"configuration": str(path), "outcome": CONFIG_WOULD_NOT_BE_READABLE,
+                "applied": False, "wrote": False, "detail": "; ".join(unreadable),
+                "complaints": unreadable}
     found = reading.read_json(path, "the completion hook configuration")
     outcome = config_outcome(wanted, found)
     answer = {"configuration": str(path), "outcome": outcome, "applied": False, "wrote": False}
@@ -677,8 +753,11 @@ def _registration(codex_home, event, command_fragment):
         return _cell(found.state, "the hook file could not be read", hookFile=str(path),
                      reading=found.refusal()), None
     entries = hooks.inventory(found.value, event)
-    ours = [entry for entry in _commands(found.value, event)
-            if command_fragment and command_fragment in entry["command"]]
+    ours = []
+    for entry in _commands(found.value, event):
+        target = names_this_adapter(entry["command"])
+        if target is not None:
+            ours.append({**entry, "target": target})
     return _cell(str(len(entries)), "hooks registered for " + event + " in the user hook file",
                  hookFile=str(path), identities=[entry["identity"] for entry in entries],
                  thisAdapter=ours), ours
@@ -764,8 +843,7 @@ def status(codex_home=None, environ=None, event=EVENT):
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     if ours:
-        missing = [entry for entry in ours
-                   if not Path(_target_of(entry["command"])).is_file()]
+        missing = [entry for entry in ours if not Path(entry["target"]).is_file()]
         target = _cell(
             reading.ABSENT if missing else reading.PRESENT,
             "the registered command names a script that is not there" if missing
@@ -819,17 +897,3 @@ def status(codex_home=None, environ=None, event=EVENT):
                  " registration says a line is in the hook file; it does not say the host ran"
                  " it, that the runtime it names can answer, or that any turn was judged."),
     }
-
-
-def _target_of(command):
-    """Which word of a registered command names the adapter's script.
-
-    An identity decision, decided on the path's own last component rather than on how the
-    command's text ends. A suffix test would accept a neighbouring file whose name merely ends
-    the same way, which is the whole difference between a path and the string that spells it.
-    """
-    parts = command.split()
-    for part in parts:
-        if Path(part).name == ENTRY_POINT_NAME:
-            return part
-    return parts[-1] if parts else ""
