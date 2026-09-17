@@ -1281,7 +1281,11 @@ def cmd_guard_evaluate(services, args) -> dict:
         stop_input,
         now=args.now or services.clock.iso(),
         mode=guard.HOLD if args.mode == guard.HOLD else guard.OBSERVE,
-        db_path=args.db_path or str(services.selection.db_path),
+        # NOT "or the default": passing the resolved default here would make it always present and
+        # the intent's recorded dbPath unreachable, so a hook invoked without the coordinator's
+        # --state would silently read its own store. evaluate() owns the precedence.
+        db_path=args.db_path,
+        default_db_path=str(services.selection.db_path),
         record=not args.no_record,
     )
 

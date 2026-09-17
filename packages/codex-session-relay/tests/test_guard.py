@@ -529,6 +529,79 @@ class ReviewRegressions(GuardTestCase):
         # The generation bound still belongs to the selected assignment alone.
         self.assertEqual(verdict["counters"]["holdsThisGeneration"], 0)
 
+    def test_the_coordinator_recorded_store_beats_the_callers_own_resolution(self):
+        """A hook run without the coordinator's state selection must not read its own store.
+
+        Letting the caller's resolution win is how a correctly receipted child gets held: the wrong
+        store has no such relationship, so readiness reads receipt_missing.
+        """
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        elsewhere = str(self.workspace / "someone-elses.sqlite3")
+        verdict = guard.evaluate(
+            self.markers, self.stop(), now=LATER, mode=guard.HOLD,
+            default_db_path=elsewhere, record=False,
+        )
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_an_explicit_db_path_still_outranks_the_recorded_one(self):
+        relationship = self.managed()
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        elsewhere = str(self.workspace / "someone-elses.sqlite3")
+        verdict = guard.evaluate(
+            self.markers, self.stop(), now=LATER, mode=guard.HOLD,
+            db_path=elsewhere, record=False,
+        )
+        # Named explicitly, so the caller gets the store it asked for, and it cannot be read.
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
+    def test_the_default_is_used_when_the_intent_recorded_nothing(self):
+        relationship = self.register()
+        intent.declare_intent(
+            self.markers, workspace=self.workspace, dispatch_request_id=DISPATCH,
+            issue_key="REL-1", declared_at="2026-01-01T00:00:00+00:00",
+        )
+        self.claim()
+        self.bind()
+        self.register_marker(relationship)
+        self.emit_ready(relationship)
+        self.dispose("ready_for_review")
+        verdict = guard.evaluate(
+            self.markers, self.stop(), now=LATER, mode=guard.HOLD,
+            default_db_path=str(self.store.path), record=False,
+        )
+        self.assertEqual(verdict["observation"], "declared_ready_receipted")
+
+    def test_the_hook_record_refuses_an_identity_that_cannot_be_a_directory_name(self):
+        """The observation's path is built from the delivered Stop payload."""
+        self.managed()
+        directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
+        for bad in ("../escape", "a/b", "..", ".", ""):
+            self.assertIsNone(
+                guard.record_observation(directory, {"sessionId": bad, "turnId": DISPATCH_TURN}),
+                bad,
+            )
+            self.assertIsNone(
+                guard.record_observation(directory, {"sessionId": CHILD, "turnId": bad}), bad
+            )
+        self.assertFalse((directory / "hook").exists())
+
+    def test_an_unreadable_workspace_is_unreadable_rather_than_unmanaged(self):
+        """An OSError folded into an empty listing released the turn and recorded nothing."""
+        blocked = self.markers / marker.workspace_key(self.workspace)
+        blocked.parent.mkdir(parents=True, exist_ok=True)
+        # A regular file where the workspace directory belongs: iterdir raises NotADirectoryError,
+        # which is the same OSError family as a permission or mount fault and needs no chmod.
+        blocked.write_text("not a directory", encoding="utf-8")
+        verdict = self.evaluate()
+        self.assertEqual(verdict["observation"], "state_unreadable")
+        self.assertIn("workspace", verdict["reason"])
+        self.assertEqual(verdict["decision"], guard.RELEASE)
+
 
 if __name__ == "__main__":
     unittest.main()

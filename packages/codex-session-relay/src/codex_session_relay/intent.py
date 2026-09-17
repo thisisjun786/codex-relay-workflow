@@ -32,6 +32,7 @@ from .marker import (
     read_assignment,
     same_identity,
     valid_assignment,
+    valid_segment,
 )
 from .marker import list_assignments as _list_assignments
 
@@ -372,8 +373,14 @@ def select_assignment(root, workspace, session_id):
     because an unreadable store outranks everything: retained state nobody is using would switch
     detection off.
     """
+    listed, readable = _list_assignments(root, workspace)
+    if not readable:
+        # The listing itself failed. Reported as unreadable rather than as no assignments, because
+        # "unmanaged" releases the turn AND records nothing, so a permission or mount fault would
+        # silently switch detection off for the whole workspace.
+        return None, None, ["workspace"]
     candidates = []
-    for directory in _list_assignments(root, workspace):
+    for directory in listed:
         facts, problems = read_assignment(directory)
         if "intent" not in facts and "intent" not in problems:
             continue
@@ -431,6 +438,22 @@ def _assignment(value) -> str:
         raise RegistrationError(
             RefusalReason.UNKNOWN_GENERATION,
             "an assignment id is the hex sha256 of a dispatch request id, not " + repr(value),
+        )
+    return str(value)
+
+
+def _identity(value, what: str) -> str:
+    """Refuse an identity that cannot safely be a directory name, as a refusal with a reason.
+
+    named() asks whether a record names something; this asks whether that name may be written as a
+    path component. A session id of ".." names something perfectly well and would still redirect a
+    create-once write out of its assignment.
+    """
+    if not valid_segment(value):
+        raise RegistrationError(
+            RefusalReason.UNBOUND_GENERATION,
+            "a " + what + " becomes a directory name, so it cannot be empty, . or .., or contain a "
+            "path separator: " + repr(value),
         )
     return str(value)
 
@@ -699,10 +722,7 @@ def publish_claim(
     because a claim whose body disagrees with its path owns nothing and would only ever read as a
     competitor.
     """
-    if not named(session_id):
-        raise RegistrationError(
-            RefusalReason.UNBOUND_GENERATION, "a claim needs an exact session id"
-        )
+    session_id = _identity(session_id, "session id")
     directory = assignment_dir(root, workspace, _assignment(assignment))
     outcome = _publish_or_compare(
         directory / "claims" / session_id / "claim.json",
@@ -725,11 +745,8 @@ def publish_disposition(
     The outcome vocabulary is exhaustive rather than illustrative, and it is checked here so that a
     typo cannot buy a release later: anything outside it is not a declaration at all.
     """
-    if not (named(session_id) and named(turn_id)):
-        raise RegistrationError(
-            RefusalReason.UNBOUND_GENERATION,
-            "a disposition needs an exact session id and turn id",
-        )
+    session_id = _identity(session_id, "session id")
+    turn_id = _identity(turn_id, "turn id")
     if outcome not in DISPOSITION_OUTCOMES:
         raise RegistrationError(
             RefusalReason.OUTCOME_INCONSISTENT,

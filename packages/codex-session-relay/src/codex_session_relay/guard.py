@@ -26,6 +26,7 @@ from . import intent as intents
 from .currency import AMBIGUOUS, head_revision
 from .marker import (
     named,
+    valid_segment,
     publish,
     read_assignment,
     read_disposition,
@@ -270,7 +271,10 @@ def record_observation(directory, record) -> str | None:
     of the identity: a single create-once file per turn would let the first observation consume the
     only name available and silently lose every later one."""
     session_id, turn_id = record.get("sessionId"), record.get("turnId")
-    if not (named(session_id) and named(turn_id)):
+    if not (valid_segment(session_id) and valid_segment(turn_id)):
+        # The observation is built from the delivered Stop payload, so these reach a path from
+        # outside. An identity that cannot be a directory name records nothing here rather than
+        # publishing into a directory the assignment does not own.
         return None
     for _ in range(64):
         index = _next_hook_seq(directory, session_id, turn_id)
@@ -493,12 +497,21 @@ def decide(observation, *, counters=None, mode=OBSERVE):
 # ---------------------------------------------------------------- the whole answer
 
 
-def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, record=True) -> dict:
+def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, default_db_path=None,
+             record=True) -> dict:
     """Gather the records this Stop is judged against, decide, and publish the observation.
 
     The receipt is read only when a readiness was actually declared. A turn that declared itself
     waiting or interrupted is released on its own declaration, and going to the database anyway
     would let an unreadable store overwrite a perfectly good answer the child already gave.
+
+    Which store to read has three sources in a deliberate order: db_path, when the caller named one
+    explicitly; then the dbPath the COORDINATOR recorded in intent.json, because it is the party
+    that registered the relationship and knows where its store lives; then default_db_path, the
+    caller's own resolution, which is only a guess about somebody else's choice. Letting the guess
+    win is the whole defect this ordering exists to prevent: a hook run without the coordinator's
+    state selection would read a different store, find no relationship, and hold a child whose
+    receipt is sitting at the head of the right one.
     """
     stop = stop_input or {}
     workspace = stop.get("cwd")
@@ -526,8 +539,12 @@ def evaluate(root, stop_input, *, now, mode=OBSERVE, db_path=None, record=True) 
         )
         registered = (marker or {}).get("relationship")
         if declared == READY and isinstance(registered, dict):
-            resolved = db_path or ((marker.get("intent") or {}).get("dbPath")
-                                   if isinstance(marker.get("intent"), dict) else None)
+            recorded = (
+                marker.get("intent", {}).get("dbPath")
+                if isinstance(marker.get("intent"), dict)
+                else None
+            )
+            resolved = db_path or recorded or default_db_path
             receipt, readable = lookup_receipt(
                 resolved,
                 relationship_id=registered.get("relationshipId"),

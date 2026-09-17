@@ -387,6 +387,41 @@ class Shape(IntentTestCase):
         self.assertEqual(intent.malformed_counters({"holdsThisTurn": -1}), "counters.holdsThisTurn")
         self.assertEqual(intent.malformed_counters({"holdsThisTurn": "1"}), "counters.holdsThisTurn")
 
+    def test_a_traversing_identity_is_refused_at_every_writer(self):
+        """A session or turn id becomes a directory name, so naming something is not enough."""
+        self.declare()
+        for bad in ("../escape", "a/b", "..", ".", "", "  "):
+            with self.assertRaises(RelayError) as caught:
+                intent.publish_claim(
+                    self.root, workspace=self.workspace, assignment=self.assignment,
+                    session_id=bad, dispatch_request_id=DISPATCH, first_turn_id="turn-1", at=T0,
+                )
+            self.assertEqual(caught.exception.reason, RefusalReason.UNBOUND_GENERATION, bad)
+            with self.assertRaises(RelayError):
+                intent.publish_disposition(
+                    self.root, workspace=self.workspace, assignment=self.assignment,
+                    session_id=bad, turn_id="turn-1", outcome="interrupted", at=T0,
+                )
+            with self.assertRaises(RelayError):
+                intent.publish_disposition(
+                    self.root, workspace=self.workspace, assignment=self.assignment,
+                    session_id=SESSION, turn_id=bad, outcome="interrupted", at=T0,
+                )
+        directory = marker.assignment_dir(self.root, self.workspace, self.assignment)
+        self.assertFalse((directory / "claims").exists())
+        self.assertFalse((directory / "dispositions").exists())
+
+    def test_nothing_is_written_outside_the_assignment_directory(self):
+        self.declare()
+        with self.assertRaises(RelayError):
+            intent.publish_claim(
+                self.root, workspace=self.workspace, assignment=self.assignment,
+                session_id="../../escaped", dispatch_request_id=DISPATCH,
+                first_turn_id="turn-1", at=T0,
+            )
+        self.assertFalse((Path(self.tmp) / "escaped").exists())
+        self.assertFalse((self.root / "escaped").exists())
+
     def test_a_disposition_outside_the_vocabulary_is_refused(self):
         self.declare()
         with self.assertRaises(RelayError) as caught:

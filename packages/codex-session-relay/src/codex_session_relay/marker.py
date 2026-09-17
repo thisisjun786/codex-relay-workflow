@@ -51,6 +51,31 @@ def valid_assignment(assignment) -> bool:
     return bool(ASSIGNMENT_RE.match(str(assignment or "")))
 
 
+def valid_segment(value) -> bool:
+    """Whether this identity may be used as a directory name.
+
+    Session and turn ids reach the writers as arguments and become path components: a claim lives at
+    claims/<session>/claim.json and a disposition at dispositions/<session>/<turn>.json. A value
+    carrying a separator or a parent reference would redirect a create-once write outside the
+    assignment it names, so the identity rule is not enough on its own here - a value can name
+    something and still not be a safe name.
+    """
+    if not named(value):
+        return False
+    if value in (".", ".."):
+        return False
+    return not any(bad in value for bad in ("/", "\\", "\x00"))
+
+
+def _checked_segment(value, what: str) -> str:
+    if not valid_segment(value):
+        raise ValueError(
+            "a " + what + " is used as a directory name and cannot be empty, . or .., or contain a "
+            "path separator: " + repr(value)
+        )
+    return str(value)
+
+
 @dataclass(frozen=True)
 class MarkerSelection:
     """Which rule chose the marker root, and the exact value that won.
@@ -311,7 +336,9 @@ def read_disposition(directory, session_id, turn_id):
     Read at the path the reader's own Stop identity derives rather than by searching for a body that
     matches, so a disposition published for another turn can never answer for this one.
     """
-    if not (named(session_id) and named(turn_id)):
+    if not (valid_segment(session_id) and valid_segment(turn_id)):
+        # Not readable and not absent: an identity that cannot be a path component names no
+        # disposition here, and probing a path built from it would be reading somebody else's.
         return None, True
     path = Path(directory) / "dispositions" / session_id / (turn_id + ".json")
     if not path.exists():
@@ -323,13 +350,20 @@ def read_disposition(directory, session_id, turn_id):
 
 
 def list_assignments(root, workspace):
-    """Every assignment directory declared for this workspace, oldest name first.
+    """Every assignment declared for this workspace, oldest name first. Returns (dirs, readable).
 
     Sorted by name so that every reader of the same listing walks it in the same order, which is
     what makes the contract's tie-break on assignment id reproducible.
+
+    readable is returned rather than folded into an empty list because the two are different
+    answers. A workspace with no assignments is unmanaged and is left alone; a workspace whose
+    directory could not be read is unknown, and reporting it as unmanaged releases the turn AND
+    records nothing, which is how a permission or mount fault silently switches detection off.
     """
     directory = workspace_dir(root, workspace)
+    if not directory.exists():
+        return [], True
     try:
-        return sorted(p for p in directory.iterdir() if p.is_dir())
+        return sorted(p for p in directory.iterdir() if p.is_dir()), True
     except OSError:
-        return []
+        return [], False
