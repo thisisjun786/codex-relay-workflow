@@ -1452,7 +1452,8 @@ class ReadingBoundaryTests(unittest.TestCase):
     def test_every_registered_command_has_a_boundary_fixture(self):
         self.assertEqual(
             sorted(_cli_entry_points()),
-            ["diagnose", "hook", "install", "measure", "register-mcp", "verify-definition"],
+            ["diagnose", "hook", "hook-status", "install", "measure", "register-mcp",
+             "verify-definition"],
             "a command added without a boundary fixture fails this check")
 
     def _assert_named_refusal(self, done, where):
@@ -7245,7 +7246,8 @@ class AbsenceAnswerTests(unittest.TestCase):
         derived = _prior_state_functions(_runtime_trees(), PRIOR_STATE_SEEN)
         self.assertEqual(set(derived), {"runtime_install._restore_pointer",
                                         "runtime_install._restore_selection",
-                                        "swapgate.inflight_cell"})
+                                        "swapgate.inflight_cell",
+                                        "completion.config_outcome"})
         self.assertEqual(tuple(runtime_install.PRIOR_STATE_ARGUMENTS), PRIOR_STATE_SEEN,
                          "the source and this check derive from the same observation")
         self.assertEqual(set(derived), set(runtime_install.ABSENCE_ANSWERS),

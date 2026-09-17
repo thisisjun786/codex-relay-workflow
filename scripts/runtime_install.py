@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crw_runtime import (check, codexconfig, definition, hooks, hostrecord, ownership,
-                         pointer, reading, scope, staging, swapgate)
+from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
+                         ownership, pointer, reading, scope, staging, swapgate)
 from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +36,13 @@ EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
 BRIDGE = "codex-thread-bridge"
 RELAY = "codex-session-relay"
 MCP_NAME = BRIDGE
+
+# The hooks this repository owns and can therefore derive a command for, and the event a hook
+# lands on when nothing names one. A named adapter is not a second install path: it reaches the
+# same append-only installation, with the command derived instead of typed.
+COMPLETION = "completion"
+ADAPTERS = (COMPLETION,)
+SESSION_START = "SessionStart"
 
 # Which command-line override supplies each component's entry point. Diagnosis used to classify
 # the bridge against whatever was on PATH while --bridge-command pointed somewhere else, because
@@ -151,6 +158,11 @@ ABSENCE_ANSWERS = {
     "runtime_install._restore_pointer": ("pointer.remove", "hostrecord.drop_pointer"),
     "runtime_install._restore_selection": ("hostrecord.deselect",),
     "swapgate.inflight_cell": ("swapgate.NO_ATTEMPTS",),
+    # The hook's own settings are the fourth place, and the first one that arrived declared
+    # rather than as a review round: a write handed the file it found has to be able to say that
+    # there was no file, because a first install and an install over somebody else's settings
+    # need opposite handling.
+    "completion.config_outcome": ("completion.no_configuration",),
 }
 
 # How a function says it receives the state as it was found. These are the parameter names the
@@ -1899,10 +1911,46 @@ def _trial(args, relay_executable, relay_interpreter=None):
 def cmd_hook(args):
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     path = codex_home / "hooks.json"
-    hook = {"type": "command", "command": args.hook_command, "timeout": args.timeout}
-    result = hooks.install(path, args.event, hook, issue=args.issue, apply=args.apply)
+    settings = None
+    # Read once, defaulted, so a caller that names a command outright needs to know nothing
+    # about the adapters this repository happens to own.
+    adapter = getattr(args, "adapter", None)
+    if adapter == COMPLETION:
+        # The settings are written first, and a refusal there stops before the hook file is
+        # touched. Only one order is safe: a hook registered against settings that are not there
+        # answers config_absent on every Stop and releases, which is an installed hook that does
+        # nothing and says so nowhere. Settings with no hook cost nothing at all.
+        try:
+            wanted = completion.configuration(
+                destination=args.dest, relay=args.relay_command, marker_root=args.marker_root,
+                database=args.db_path, mode=args.mode, timeout=args.guard_timeout,
+                journal_root=args.journal_root, codex_home=codex_home, issue=args.issue,
+            )
+        except ValueError as error:
+            emit({"command": "hook", "adapter": adapter, "error": str(error)})
+            return EXIT_USAGE
+        settings = completion.write_configuration(
+            completion.configuration_path(codex_home), wanted, apply=args.apply)
+        if settings["outcome"] not in completion.CONFIG_SETTLED:
+            emit({"command": "hook", "adapter": adapter, "settings": settings,
+                  "hookFile": str(path), "result": None,
+                  "note": ("The settings were not written, so no hook was appended. A hook"
+                           " registered against settings it cannot act on is installed and"
+                           " inert, which is the one outcome worth refusing outright.")})
+            return EXIT_REFUSED
+        command = " ".join((args.python or sys.executable,
+                            str(ROOT / "scripts" / completion.ENTRY_POINT_NAME)))
+        event = args.event or completion.EVENT
+    else:
+        command = args.hook_command
+        event = args.event or SESSION_START
+    hook = {"type": "command", "command": command, "timeout": args.timeout}
+    result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
     emit({
         "command": "hook",
+        "adapter": adapter,
+        "event": event,
+        "settings": settings,
         "hookFile": str(path),
         "result": result,
         "note": (
@@ -1914,6 +1962,20 @@ def cmd_hook(args):
     })
     # The set comes from the module that produces the outcomes, not from a list respelled here.
     return EXIT_OK if result["outcome"] in hooks.SETTLED else EXIT_REFUSED
+
+
+# ------------------------------------------------------------------------- hook-status
+
+def cmd_hook_status(args):
+    """Read what is registered and what this hook recorded about itself, without merging them.
+
+    Writes nothing. A registration says a line is in the hook file; it does not say the host ran
+    it, that the runtime it names can answer the call, or that any turn was ever judged. Those
+    are separate cells here for exactly that reason.
+    """
+    codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    emit(completion.status(codex_home=codex_home, event=args.event or completion.EVENT))
+    return EXIT_OK
 
 
 # ------------------------------------------------------------------------- install
@@ -3461,12 +3523,35 @@ def build_parser():
 
     hook = sub.add_parser("hook")
     hook.add_argument("--codex-home")
-    hook.add_argument("--event", default="SessionStart")
-    hook.add_argument("--hook-command", required=True)
+    hook.add_argument("--event", default=None,
+                      help="defaults to " + SESSION_START + ", or to " + completion.EVENT
+                           + " when --adapter names the completion hook")
+    named = hook.add_mutually_exclusive_group(required=True)
+    named.add_argument("--hook-command", help="an explicit command to register")
+    named.add_argument("--adapter", choices=ADAPTERS,
+                       help="a hook this repository owns, whose command is derived rather than"
+                            " typed and whose settings are written before it is registered")
+    hook.add_argument("--dest", help="the install destination whose pointer names the runtime")
+    hook.add_argument("--relay-command", help="an explicit relay executable, instead of --dest")
+    hook.add_argument("--marker-root")
+    hook.add_argument("--db-path")
+    hook.add_argument("--journal-root")
+    hook.add_argument("--python", help="the interpreter the registered command runs under")
+    hook.add_argument("--mode", choices=completion.MODES, default=completion.OBSERVE,
+                      help="observe classifies and records and never holds, which is the"
+                           " default because holding depends on per-session write isolation"
+                           " the caller has to have granted")
+    hook.add_argument("--guard-timeout", type=int, default=completion.DEFAULT_TIMEOUT_SECONDS,
+                      help="the adapter's own budget for one guard call, kept under --timeout")
     hook.add_argument("--timeout", type=int, default=10)
     hook.add_argument("--issue", default="JUN-104")
     hook.add_argument("--apply", action="store_true")
     hook.set_defaults(handler=cmd_hook)
+
+    hook_status = sub.add_parser("hook-status")
+    hook_status.add_argument("--codex-home")
+    hook_status.add_argument("--event", default=None)
+    hook_status.set_defaults(handler=cmd_hook_status)
     return parser
 
 
