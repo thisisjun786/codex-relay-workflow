@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shlex
 import stat
 import subprocess
 import sys
@@ -876,6 +877,57 @@ class OneAdapterIsRegisteredOnce(unittest.TestCase):
             found = completion.status(codex_home=temporary, environ={})
         self.assertEqual(found["registeredCommandTarget"]["value"], reading.PRESENT)
         self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT)
+
+    def test_a_bare_interpreter_name_is_resolved_the_way_the_host_resolves_it(self):
+        """Reporting a PATH name absent because no file sits at that spelling would fail a
+        working hook in diagnosis."""
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            command = "python3 " + shlex.quote(str(ENTRY_POINT))
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT)
+        self.assertIn("wrapper", found["registeredInterpreter"]["evidence"],
+                      "and it says what it did not follow")
+
+
+class OfferingIsNotExitingZero(unittest.TestCase):
+    def test_a_program_that_ignores_its_arguments_is_not_offering_the_subcommand(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout="", code=0)  # succeeds, says nothing
+            settings(temporary)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["relayExecutable"]["value"], reading.PRESENT)
+        self.assertEqual(found["guardEvaluateOffered"]["value"],
+                         completion.GUARD_REJECTED_THE_CALL,
+                         "exit 0 alone would report a subcommand it has never heard of")
+
+    def test_a_runtime_that_describes_the_subcommand_is_offering_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout="usage: guard-evaluate [-h]", code=0)
+            settings(temporary)
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["guardEvaluateOffered"]["value"], completion.GUARD_COMMAND)
+
+
+class AmbiguousRegistrationsAnswerForNobody(unittest.TestCase):
+    def test_two_registrations_naming_different_settings_are_reported_as_ambiguous(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            one = completion.command_for(sys.executable, str(ENTRY_POINT), home / "a.json")
+            two = completion.command_for(sys.executable, str(ENTRY_POINT), home / "b.json")
+            (home / "hooks.json").write_text(json.dumps({"hooks": {completion.EVENT: [
+                {"hooks": [{"type": "command", "command": one, "timeout": 10}]},
+                {"hooks": [{"type": "command", "command": two, "timeout": 10}]}]}}),
+                encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS)
+        self.assertIn("a.json", found["configuration"]["evidence"])
+        self.assertIn("b.json", found["configuration"]["evidence"])
+        self.assertEqual(found["relayExecutable"]["value"], completion.NOT_READ,
+                         "every one of them runs, so none of them answers for the others")
 
 
 class AnInterpreterHasToBeOne(unittest.TestCase):

@@ -257,6 +257,10 @@ NOT_READ = "not_read"
 # never opens.
 REGISTRATION_RELATIVE = "registration_names_a_relative_settings_path"
 
+# More than one registration naming more than one settings file. Every one of them runs, so
+# reporting the first would describe one hook and leave the others unmentioned.
+REGISTRATION_AMBIGUOUS = "registrations_name_different_settings"
+
 
 def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1157,7 +1161,18 @@ def _offers_guard(executable, timeout):
         return _cell(NOT_STARTED, "the runtime could not be run: " + str(error),
                      errno=errno.errorcode.get(error.errno, error.errno))
     if finished.returncode == GUARD_EXIT_OK:
-        return _cell(GUARD_COMMAND, "the configured runtime offers " + GUARD_COMMAND)
+        said = _text(finished.stdout) + _text(finished.stderr)
+        if GUARD_COMMAND not in said:
+            # Exit 0 alone does not answer this question. A program that ignores its arguments
+            # and succeeds - /bin/true is the whole family - would otherwise be reported as
+            # offering a subcommand it has never heard of, and every Stop would then fail
+            # somewhere this cell said it would not.
+            return _cell(GUARD_REJECTED_THE_CALL,
+                         "the configured runtime exited 0 without describing " + GUARD_COMMAND
+                         + ", so it was not asked anything it recognised",
+                         exitCode=finished.returncode, said=said[:200])
+        return _cell(GUARD_COMMAND, "the configured runtime describes " + GUARD_COMMAND
+                                    + " when asked for its help")
     return _cell(GUARD_REJECTED_THE_CALL,
                  "the configured runtime does not offer " + GUARD_COMMAND,
                  exitCode=finished.returncode,
@@ -1183,6 +1198,40 @@ def _budget_cell(config, ours):
                  "seconds between this adapter's own budget and the timeout the host registered"
                  " it with; measured cost per invocation is journalled as elapsedMs",
                  guardBudgetSeconds=budget, registeredTimeoutSeconds=registered)
+
+
+def _interpreter_cell(ours):
+    """The program that has to run the adapter, probed as its own question.
+
+    The first word of a registered command is the thing the host executes, and it is not always
+    a path: a bare name is resolved on PATH, which is what the host does too, so reporting it
+    absent because no file sits at that spelling would fail a working hook in diagnosis.
+
+    What this does not follow is a wrapper. A command whose first word runs something else - an
+    env, a shell, a launcher script - is reported on the word that was checked, and the evidence
+    says so, because following it would mean guessing at an argument convention this command did
+    not write.
+    """
+    checked = []
+    for entry in ours:
+        first = (registered_argv(entry["command"]) or [None])[0]
+        if not first:
+            continue
+        resolved = shutil.which(first) or first
+        probe = presence(resolved, "the registered interpreter")
+        if probe["value"] == reading.PRESENT and not os.access(str(resolved), os.X_OK):
+            probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
+                          path=str(resolved))
+        checked.append({"word": first, "resolved": str(resolved), "probe": probe})
+    if not checked:
+        return _cell(NOT_READ, "no registration named a program to run the adapter")
+    unusable = next((one for one in checked if one["probe"]["value"] != reading.PRESENT), None)
+    chosen = unusable or checked[0]
+    return _cell(chosen["probe"]["value"],
+                 chosen["probe"]["evidence"]
+                 + "; this is the first word of the registered command, and a wrapper's own"
+                   " target is not followed",
+                 interpreters=[one["resolved"] for one in checked])
 
 
 def _journal_cell(config):
@@ -1238,7 +1287,15 @@ def status(codex_home=None, environ=None, event=EVENT):
     # downstream of it.
     relative = [named for named in carried
                 if not os.path.isabs(os.path.expanduser(named))]
-    if relative:
+    distinct = sorted({str(_settled(named)) for named in carried if named not in relative})
+    if len(distinct) > 1:
+        # Every registration runs, so naming one of them would describe one hook while
+        # reporting the others' state as if it were that one's.
+        path, source, config = Path(distinct[0]), "the registered commands", None
+        failed, detail, found = REGISTRATION_AMBIGUOUS, (
+            "registrations name different settings files (" + ", ".join(distinct)
+            + ") and every one of them runs, so none of them answers for the others"), None
+    elif relative:
         # Not settled here. A relative path in a registration is resolved by the hook against
         # each session's workspace, so there is no one file to inspect, and inspecting the one
         # THIS process would resolve would report an unrelated file as the hook's own.
@@ -1265,20 +1322,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # to run it. A virtual environment that moved after installation leaves the script in
         # place and the interpreter gone, and then the host cannot start the adapter at all: no
         # decision, no journal entry, and a registration that still looks correct.
-        runners = [(registered_argv(entry["command"]) or [None])[0] for entry in ours]
-        named = [word for word in runners if word]
-        if named:
-            checks = [presence(word, "the registered interpreter") for word in named]
-            unusable = next((check for check in checks
-                             if check["value"] != reading.PRESENT), None)
-            if unusable is None:
-                unusable = next((_cell(reading.UNREADABLE,
-                                       "the registered interpreter is not executable",
-                                       path=word)
-                                 for word in named if not os.access(word, os.X_OK)), None)
-            interpreter = unusable or _cell(reading.PRESENT,
-                                            "the registered interpreter is there and executable",
-                                            interpreters=named)
+        interpreter = _interpreter_cell(ours)
 
     if failed is not None:
         settings = _cell(failed, detail or "", configuration=str(path),
