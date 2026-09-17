@@ -11,8 +11,61 @@ from codex_session_relay.bridge_adapter import BridgeHostAdapter
 from codex_session_relay.hostadapter import HostUnavailable
 from codex_session_relay.settings import TaskSettings
 
-from .support import RelayTestCase
+from .support import DeliveryTestCase, RelayTestCase
 
+
+def capture_shutdown_cancellation(tmp):
+    """Run a real send, stall it at its first RPC, then close() with a drain too short.
+
+    Returns whatever the transport actually hands a caller whose work `_shut_down` had to
+    cancel. Nothing here stands in for anything: it is the real BridgeHostAdapter, its real
+    worker thread and its real shutdown path, with the stall injected at the RPC boundary
+    through the `_build` factory seam.
+    """
+    import asyncio
+    import threading
+    from pathlib import Path
+
+    from codex_thread_bridge.ledger import Ledger
+
+    entered = threading.Event()
+    gates = {}
+
+    class Stalling:
+        socket_path = None
+        info = {}
+
+        async def call(self, method, params):
+            entered.set()
+            await gates.setdefault("held", asyncio.Event()).wait()
+            raise AssertionError("the stall was released, which this never does")
+
+        async def close(self):
+            return None
+
+    socket = Path(tmp) / "cancel-socket"
+    built = BridgeHostAdapter(
+        str(socket), timeout=0.25, caller_slack=0.75, drain_seconds=0.05,
+        app_server_factory=lambda canonical: Stalling(),
+        ledger_factory=lambda: (socket, Ledger(Path(tmp) / "cancel-operations.sqlite3")),
+    )
+    outcome = {}
+
+    def run():
+        try:
+            outcome["receipt"] = built.send_message(
+                "req-cancelled", "thread-a", "hello", AUTHORIZED,
+            )
+        except BaseException as error:  # noqa: BLE001 - catching it is the whole point
+            outcome["error"] = error
+
+    caller = threading.Thread(target=run, daemon=True)
+    caller.start()
+    if not entered.wait(5):
+        raise AssertionError("the send never reached the RPC boundary")
+    built.close()
+    caller.join(timeout=10)
+    return outcome
 # Shaped after the real correction receipt: a single local environment, workspaceWrite with
 # networkAccess false, approvals never, Opus 5 at xhigh. The original dispatch receipt stays in
 # the maintainer's private task record; the path below is synthetic and only has to be absolute.
@@ -1241,3 +1294,84 @@ class TransportIsolation(RelayTestCase):
             self.assertIn("nothing was sent", str(error), outcome)
         else:
             self.assertEqual(outcome["receipt"]["status"], "accepted", outcome)
+
+    def test_a_send_cancelled_by_shutdown_reaches_its_caller_catchably(self):
+        """`_shut_down` cancels work that outlived the drain, and the caller must be able to catch it.
+
+        `asyncio.CancelledError` inherits from BaseException, so forwarded unchanged it walks
+        past every `except Exception` between here and the tick - including the one the
+        delivery layer wraps the send in.
+        """
+        outcome = capture_shutdown_cancellation(self.tmp)
+
+        error = outcome.get("error")
+        self.assertIsNotNone(error, f"the cancelled send was not reported at all: {outcome}")
+        self.assertIsInstance(
+            error, Exception,
+            f"a caller's 'except Exception' cannot see {type(error).__name__}",
+        )
+        self.assertIn("outcome unknown", str(error))
+        # The reason is still readable rather than replaced.
+        import asyncio
+        self.assertIsInstance(error.__cause__, asyncio.CancelledError)
+
+
+class ShutdownCancellationSettlesItsDelivery(DeliveryTestCase):
+    """Criterion 4: what a cancelled send leaves behind has to be accountable after a restart.
+
+    The transport half is asserted in TransportIsolation. This is the consequence that made
+    it worth fixing: `DeliveryService.attempt` claims the delivery and inserts its attempt row
+    in one transaction, then wraps only the send in `except Exception`. An exception it cannot
+    catch unwinds the tick between those two points and leaves the delivery leased, in
+    `sending`, with an attempt row nothing settles.
+    """
+
+    def setUp(self):
+        super().setUp()
+        try:
+            import codex_thread_bridge.ledger  # noqa: F401
+        except ImportError:
+            self.skipTest("the pinned bridge is not importable in this interpreter")
+
+    def test_a_claimed_delivery_is_settled_when_shutdown_cancels_its_send(self):
+        # The exception is the real one: produced by a real transport cancelling a real send,
+        # not a hand-written stand-in for what that path might raise.
+        error = capture_shutdown_cancellation(self.tmp).get("error")
+        self.assertIsNotNone(error, "the helper produced no error to work from")
+        _relationship, event_id = self.queued_event()
+
+        class CancelledByShutdown:
+            """The ordinary adapter, except its send ends the way shutdown ends one."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+            def send_message(self, *args, **kwargs):
+                raise error
+
+        record = self.delivery.attempt(
+            event_id, CancelledByShutdown(self.adapter), now=self.clock.now(),
+        )
+
+        self.assertIsNotNone(record, "attempt() unwound instead of settling its own claim")
+        attempts = self.attempts_for(event_id)
+        self.assertEqual(len(attempts), 1, attempts)
+        self.assertEqual(
+            attempts[0]["internal_state"], "settled",
+            "the claim was taken and the attempt row was left open",
+        )
+
+        # The restart. A fresh service over the same store is what a supervisor segment
+        # boundary produces, and it must not find a claim nobody can account for.
+        from codex_session_relay.delivery import DeliveryService
+
+        restarted = DeliveryService(self.store, self.registry, self.intake, self.clock)
+        row = restarted.get(event_id)
+
+        self.assertEqual(row["state"], "held_uncertain", dict(row))
+        self.assertNotEqual(row["state"], "sending", "the delivery is still mid-send")
+        self.assertIsNone(row["lease_owner"], "the lease outlived the process that took it")
+        self.assertIsNone(row["lease_until"])

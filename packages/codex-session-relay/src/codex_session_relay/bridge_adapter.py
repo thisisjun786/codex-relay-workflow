@@ -457,7 +457,7 @@ class _Transport:
             # guards against.
             inner = error.__traceback__
             BaseException.with_traceback(error, inner.tb_next if inner else None)
-            self._settle(future, error=error)
+            self._settle(future, error=_for_a_caller(error))
         else:
             self._settle(future, result=result)
         finally:
@@ -634,6 +634,40 @@ class _Transport:
         except Exception:  # noqa: BLE001 - the join below is the real answer
             pass
         self.thread.join(timeout=self._drain_seconds + 10)
+
+
+class _ShutdownCancelled(Exception):
+    """Cancellation, in a shape an ordinary `except Exception` can catch.
+
+    `asyncio.CancelledError` inherits from BaseException, so handing it across the thread
+    boundary unchanged walks it straight past the delivery layer's `except Exception` around
+    the send. The tick unwinds and the delivery it had already claimed is left leased, in
+    `sending`, with an attempt row nothing ever settles - which is the opposite of what the
+    diagnostics contract asks for and leaves a restart with a claim it cannot account for.
+
+    The outcome genuinely is unknown rather than "nothing was sent": `_shut_down` cancels
+    only work that outlived the drain window, so the write may well have reached the host
+    before the cancel landed. This says that, and the delivery layer renders it as the
+    `outcome_unknown` receipt it already knows how to settle.
+    """
+
+
+def _for_a_caller(error):
+    """Translate what a caller cannot catch; pass everything else through untouched.
+
+    The original is kept as `__cause__` with the trimmed traceback already applied, so the
+    reason a send ended is still readable from the exception that reaches the caller.
+    """
+    import asyncio
+
+    if not isinstance(error, asyncio.CancelledError):
+        return error
+    translated = _ShutdownCancelled(
+        "the relay transport was shut down while this send was in flight;"
+        " outcome unknown, do not resend under a new request id"
+    )
+    translated.__cause__ = error
+    return translated
 
 
 class _Refusal(Exception):
