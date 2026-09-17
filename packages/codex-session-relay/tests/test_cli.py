@@ -1155,10 +1155,10 @@ class ParticipantAccessReceipts(CliBase):
     The device and inode pair is decisive in one direction only. A DIFFERENT pair means a
     different file and that is conclusive; an agreeing pair is not sufficient for the same
     one. It is namespace-local, so participants in separate mount namespaces or on different
-    hosts can hold one pair while sharing nothing, and a hardlink gives one inode a second
-    name that carries its own write-ahead log. `store-challenge` with `doctor --expect-nonce`
-    is what settles a shared store, and `compare_store` (store.py) is where each of these is
-    graded.
+    hosts can hold one pair while sharing nothing, and one inode can be reached at more than
+    one pathname - a hardlink name or a file bind mount - each of which carries its own
+    write-ahead log. `store-challenge` with `doctor --expect-nonce` is what settles a shared
+    store, and `compare_store` (store.py) is where each of these is graded.
     """
 
     def probe_socket(self):

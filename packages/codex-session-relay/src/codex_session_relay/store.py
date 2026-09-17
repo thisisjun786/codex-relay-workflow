@@ -1106,9 +1106,16 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
     What each piece of evidence can carry differs, and the grades follow that. A store id is
     minted once and copied with the bytes, so agreement is never proof. A device and inode
     pair is conclusive when it DIFFERS and insufficient when it agrees, because one inode can
-    have more than one name. A nonce is live evidence that the other participant's write
-    landed in the file being read - the strongest of the three, and still blind to the name
-    the peer opened, which is why the name count is graded beside it rather than inside it.
+    be reached at more than one pathname and SQLite derives the write-ahead log from the
+    pathname a connection opens. Neither a hardlink name nor a file bind mount is visible from
+    this side: the caller holds its own path and the peer's device and inode, and nothing that
+    says which pathname the peer opened. A nonce is the only live evidence here - the peer's
+    write is readable in the file being read - and it is what the contract designates as proof.
+
+    The name count is graded beside all of that rather than folded into any of it. It catches
+    one concrete case and only one: `st_nlink` counts hardlink names, and a bind mount adds a
+    pathname without changing it. So more than one name refuses, and one name is not evidence
+    of a single pathname - which is exactly why an agreeing pair is not proof by itself.
     """
     reasons = []
     if expect_store is not None:
@@ -1128,7 +1135,12 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
                 MISMATCH, f"device:inode {here[0]}:{here[1]} is not {expect_inode}",
             ))
         else:
-            reasons.append((PROVEN, "same device and inode"))
+            # Agreement, not proof. Two pathnames for one inode agree here and still keep
+            # separate write-ahead logs, and this side cannot see the second pathname.
+            reasons.append((None, (
+                "device and inode match, which does not say both participants opened the"
+                " same pathname for that inode"
+            )))
     if nonce is not None:
         if nonce.get("readable") is False:
             # Not being able to read is not the same as the nonce being absent. Calling it a
@@ -1141,13 +1153,18 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
             reasons.append((MISMATCH, "a nonce written by another participant is not here"))
 
     if reasons:
-        # SQLite derives -wal and -shm from the path a connection opens, so two names for one
-        # inode are two write-ahead logs. Measured on this host on 2026-09-17: with a store
-        # open on one name, a read through a hardlinked second name failed with
-        # `OperationalError: disk I/O error` while the first connection's log was live, and
-        # after that connection closed and checkpointed the second name grew its own -wal and
-        # -shm. Two participants can therefore agree on device, inode AND store id, and read a
-        # nonce one of them wrote, while still not writing into one live store.
+        # One detected case of a second pathname, refused outright. Measured on this host on
+        # 2026-09-17: with a store open on one name, a read through a hardlinked second name
+        # failed with `OperationalError: disk I/O error` while the first connection's log was
+        # live, and after that connection closed and checkpointed the second name grew its own
+        # -wal and -shm. Two participants can therefore agree on device, inode AND store id,
+        # and read a nonce one of them wrote, while still not writing into one live store - so
+        # this refuses even a found nonce. It is not the general answer: a bind mount reaches
+        # one inode at a second pathname without changing st_nlink, which is why an agreeing
+        # device and inode is graded as agreement rather than proof above. That last part is
+        # the documented behaviour of a mount entry rather than something measured here - this
+        # host refuses an unprivileged mount namespace - and the grading above does not depend
+        # on it: an agreeing pair is not proof whether or not the extra pathname is countable.
         names = store.get("links")
         if names is None:
             reasons.append((
@@ -1168,10 +1185,14 @@ def compare_store(store: dict, *, expect_store=None, expect_inode=None, nonce=No
             if verdict is PROVEN and any(g == UNPROVEN for g, _ in reasons):
                 continue
             return {"sameStore": verdict, "detail": "; ".join(matched)}
-    # Every expectation agreed, but none of them was physical or live evidence: an identical
-    # store id alone is satisfied by a copy of the file, so this is not proof.
+    # Every expectation agreed and none of them was live evidence. A copy of the file carries
+    # the store id, and an agreeing device and inode does not say the two participants opened
+    # one pathname for it, so neither is proof however they are combined.
+    agreed = [detail for grade, detail in reasons if grade is None]
     return {
         "sameStore": UNPROVEN,
-        "detail": "only the store id was compared, and copying a database copies it too;"
-                  " supply --expect-inode or a nonce for proof",
+        "detail": (
+            f"{'; '.join(agreed)}. Neither a store id nor a device and inode pair is live"
+            " evidence, so supply a nonce for proof"
+        ),
     }

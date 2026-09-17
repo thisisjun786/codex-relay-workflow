@@ -512,16 +512,64 @@ class Identity(unittest.TestCase):
         mine = self.store.locate()
         through_alias = probe(resolve_state_dir(alias))["store"]
         self.assertNotEqual(through_alias["dbPath"], mine["dbPath"])
-        # One name, reached by two spellings. This is the case the device/inode pair is
-        # proof for, and it is here beside the hardlink case below to keep the difference
-        # between them visible: there the inode has a second name, here it does not.
+        # One pathname, reached by two spellings: resolve() follows the symlink, so both
+        # participants open the same name and share one write-ahead log.
+        self.assertEqual(through_alias["realPath"], mine["realPath"])
         self.assertEqual(through_alias["links"], 1, through_alias)
+
+        # Not a mismatch, and not proof either. This side holds its own path and the peer's
+        # device and inode, and nothing in that says the peer resolved to the same pathname.
         self.assertEqual(
             compare_store(
                 through_alias, expect_store=mine["storeId"],
                 expect_inode=f"{mine['device']}:{mine['inode']}",
             )["sameStore"],
-            "proven",
+            "unproven",
+        )
+        # What settles it is the nonce, which is an observation rather than an inference.
+        written = self.store.write_challenge(actor="parent")
+        found = nonce_lookup(resolve_state_dir(alias), written["nonce"])
+        self.assertTrue(found["found"], "the alias reaches the same file")
+        self.assertEqual(compare_store(through_alias, nonce=found)["sameStore"], "proven")
+
+    def test_an_agreeing_device_and_inode_is_never_proof_on_its_own(self):
+        """One inode can be reached at more than one pathname, and the log follows the name.
+
+        `st_nlink` counts hardlink names, and the name count is not the whole question: a file
+        bind mount attaches one inode at a second pathname without changing it. So a count of
+        one is not evidence that both participants opened the same name, and grading an
+        agreeing pair as proof would be sound only for cases this side can tell apart - it
+        holds its own path and the peer's device and inode, and nothing that says which name
+        the peer opened.
+
+        The bind mount itself is not exercised here. This host refuses an unprivileged mount
+        namespace - `unshare -rm` fails writing `/proc/self/uid_map` - so what is asserted is
+        the grading rule, not the mount. The rule is written not to depend on telling the two
+        cases apart, which is why it is asserted on an ordinary single-named store.
+        """
+        mine = self.store.locate()
+        self.assertEqual(mine["links"], 1, "this case is about a single-named inode")
+
+        graded = compare_store(
+            probe(resolve_state_dir(self.a))["store"], expect_store=mine["storeId"],
+            expect_inode=f"{mine['device']}:{mine['inode']}",
+        )
+
+        self.assertEqual(
+            graded["sameStore"], "unproven",
+            "an agreeing device and inode was graded as proof of one live store",
+        )
+        self.assertIn("pathname", graded["detail"], graded)
+
+        # Conclusive in the direction where it is conclusive: a different pair is a mismatch
+        # rather than merely unproven, and demoting agreement must not cost that.
+        elsewhere = self.copy_store(os.path.join(self.tmp, "elsewhere"))
+        self.assertEqual(
+            compare_store(
+                probe(resolve_state_dir(elsewhere))["store"],
+                expect_inode=f"{mine['device']}:{mine['inode']}",
+            )["sameStore"],
+            "mismatch",
         )
 
     def test_a_second_name_for_one_inode_is_not_proof_of_a_shared_store(self):

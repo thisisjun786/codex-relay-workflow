@@ -883,8 +883,10 @@ def _access_receipt(services, report) -> dict:
     The pair is decisive in one direction only, and `compare_store` (store.py) grades it that
     way. A DIFFERENT pair means a different file; an agreeing pair is not sufficient for the
     same one. It is namespace-local, so participants in separate mount namespaces or on
-    different hosts can hold one pair while sharing nothing, and one inode can have more than
-    one name - which is why `links` is reported beside it. `store-challenge` and
+    different hosts can hold one pair while sharing nothing, and one inode can be reached at
+    more than one pathname, which is what decides the write-ahead log. `links` is reported
+    beside the pair because it catches one kind of second pathname, the hardlink; a bind mount
+    adds one without changing it, so a count of one settles nothing. `store-challenge` and
     `doctor --expect-nonce` are what settle a shared store: a value one participant writes
     and another reads back, however the paths and the mounts are arranged.
 

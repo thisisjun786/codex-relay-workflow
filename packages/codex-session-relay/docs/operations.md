@@ -100,20 +100,25 @@ A path string is not proof: symlinks, bind mounts and per-sandbox mounts all mak
 paths unequal and unequal paths equal. A stored identifier alone is not proof either,
 because copying the database copies the identifier. A device and inode pair is conclusive
 when it differs and insufficient when it agrees, because one inode can have more than one
-name and SQLite derives the write-ahead log from the path a connection opens.
+pathname - a hardlink name or a file bind mount - and SQLite derives the write-ahead log from
+the pathname a connection opens. Neither second pathname is visible to the participant doing
+the comparing: it holds its own path and the peer's device and inode, and nothing that says
+which pathname the peer opened. A nonce is the only live evidence, and it is the proof.
 
 | Evidence | Verdict |
 |---|---|
 | a nonce written by one participant is readable by the other | proven |
-| equal store id and equal device/inode, for an inode with one name | proven |
-| equal store id, different inode, no nonce | unproven - a copy is possible |
+| equal store id and equal device/inode, nothing live | unproven - a copy carries the id, and one inode can be reached at more than one pathname |
 | an inode with more than one name | unproven - the peer may have opened a different name |
-| different store id | mismatch |
+| a store that states no identity, or a nonce that could not be read | unproven - absence is not agreement |
+| different store id, different device/inode, or the nonce absent | mismatch |
 
 Insufficient evidence is decided before agreeing evidence, so an inode with more than one
 name is unproven even when a nonce was found: the nonce says the peer's write reached this
-file and cannot say which name the peer keeps writing through. `compare_store` grades all
-of it.
+file and cannot say which name the peer keeps writing through. That row catches one case and
+only one - `st_nlink` counts hardlink names, and a bind mount adds a pathname without
+changing it - so one name is not evidence of one pathname either, which is why the row above
+it is unproven rather than proven. `compare_store` grades all of it.
 
 `doctor --expect-store <id>` exits non-zero on a mismatch. An unproven result is never
 reported as healthy.
