@@ -168,6 +168,28 @@ class Lifecycle(RelayTestCase):
             self.registry.set_status, rid, "active", actor="test",
         )
 
+    def test_a_restatement_names_every_registered_recipient(self):
+        """The scope is compared whole, which is why the instructions repeat the flag.
+
+        An ordinary registration authorizes both the parent and the child, so a resume that
+        names one of them is a different scope rather than a subset of the same one.
+        """
+        relationship = self.register(recipients=[PARENT, CHILD])
+        rid = relationship["relationshipId"]
+        self.registry.set_status(rid, "paused", actor="test")
+        self.assertRefused(
+            RefusalReason.RELATIONSHIP_NOT_ACTIVE,
+            lambda: self.registry.resume(
+                rid, expect_generation=1, expect_artifact_roots=[self.root],
+                expect_allowed_recipients=[PARENT], actor="test",
+            ),
+        )
+        resumed = self.registry.resume(
+            rid, expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT, CHILD], actor="test",
+        )
+        self.assertEqual(resumed["status"], "active")
+
     def test_resume_requires_restating_the_generation_and_the_scope(self):
         relationship = self.register()
         rid = relationship["relationshipId"]
