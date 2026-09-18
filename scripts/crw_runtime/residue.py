@@ -221,7 +221,13 @@ def _pointer_finding(pointer_path, recorded_pointer, destination):
         return {"path": None, "finding": NOT_SCANNED, "residual": False,
                 "detail": "no pointer was named to read"}
     path = str(Path(pointer_path))
-    if destination is not None and Path(path).parent != Path(destination):
+    # Compared on a lexically normalised form. Path.absolute() keeps '..' components, so
+    # /tmp/detour/../dest and /tmp/dest are the same directory written two ways and compared
+    # unequal -- which disowned an owned dangling pointer sitting in the surveyed destination.
+    # Normalised lexically rather than resolved, because resolve() walks symlinks and this
+    # comparison must not depend on what a link along the way points at, or fail on a loop.
+    if destination is not None and (os.path.normpath(str(Path(path).parent))
+                                    != os.path.normpath(str(destination))):
         return {"path": path, "finding": POINTER_OUTSIDE_DESTINATION, "residual": False,
                 "destination": str(destination),
                 "detail": ("this pointer sits under " + str(Path(path).parent) + " and this"

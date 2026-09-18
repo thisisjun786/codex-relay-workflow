@@ -2188,6 +2188,30 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             sorted(entry["cause"] for entry in cell.get("candidates") or []),
             sorted((firing.ADAPTER_CANNOT_RUN, firing.JOURNALLING_OFF)))
 
+    def test_one_journal_read_serves_both_the_count_and_the_cause(self):
+        """Reading the journal twice opened a window: a Stop landing between the two reads
+        produced a payload whose firingJournal said ABSENT while the cause beside it said
+        records_found, so the explanation contradicted the cell it was explaining."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            calls = []
+            real_cell = completion._journal_cell
+
+            def counting(config):
+                calls.append(str((config or {}).get("journalRoot")))
+                return real_cell(config)
+
+            with mock.patch.object(completion, "_journal_cell", side_effect=counting):
+                found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(len(calls), 1,
+                         "the same journal was read twice in one status call, so the count and"
+                         " the cause can disagree about a host that changed between them: "
+                         + repr(calls))
+        self.assertEqual(found["firingJournal"],
+                         found["configuration"]["namedSettings"][0]["journal"],
+                         "the cell and the reading the cause used are one reading")
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

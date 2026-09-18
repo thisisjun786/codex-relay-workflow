@@ -9127,6 +9127,19 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         self.assertEqual(found["residue"]["pointer"]["finding"], residue.FOREIGN_POINTER,
                          "the record claims no pointer, so the link is reported and kept")
 
+    def test_two_spellings_of_one_destination_are_one_destination(self):
+        """Path.absolute() keeps '..', so /tmp/detour/../dest and /tmp/dest are the same
+        directory written two ways. Compared lexically unequal, an owned dangling pointer in
+        the surveyed destination was disowned."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            detour = host.destination.parent / "detour" / ".." / host.destination.name
+            found = _diagnose(host, dest=str(detour))
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER,
+                         "one destination written two ways read as two destinations")
+        self.assertIn(str(host.pointer_path), found["residualPaths"])
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here

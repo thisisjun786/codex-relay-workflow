@@ -1497,32 +1497,6 @@ def status(codex_home=None, environ=None, event=EVENT):
         # decision, no journal entry, and a registration that still looks correct.
         interpreter = _interpreter_cell(ours)
 
-    if failed is not None:
-        settings = _cell(failed, detail or "", configuration=str(path),
-                         configurationSource=source)
-        relay = _cell(NOT_READ, "no usable configuration names a runtime")
-        offers = _cell(NOT_READ, "no usable configuration names a runtime")
-        marker = _cell(NOT_READ, "no usable configuration names a marker root")
-        # Asked separately from the cell below, because settings that could not be read and
-        # settings that deliberately configure no journal are different answers. Reporting the
-        # first as an empty journal would say this hook has recorded nothing, when what
-        # happened is that nobody could tell where it would record.
-        journal_cell = _cell(NOT_READ, "no usable configuration names a journal to read")
-    else:
-        settings = _cell(found.state, "settings read", configuration=str(path),
-                         configurationSource=source, mode=config.get("mode"),
-                         dbPath=config.get("dbPath"),
-                         isolationAssertedBy=config.get("isolationAssertedBy"))
-        executable = Path(config["relayExecutable"])
-        relay = presence(executable, "the configured runtime")
-        offers = (_offers_guard(executable, config.get("timeoutSeconds")
-                                or DEFAULT_TIMEOUT_SECONDS)
-                  if relay["value"] == reading.PRESENT
-                  else _cell(NOT_READ, "the configured runtime could not be asked: "
-                                       + relay["evidence"]))
-        marker = presence(config["markerRoot"], "the configured marker root", directory=True)
-        journal_cell = _journal_cell(config)
-
     # Startability PER REGISTRATION, paired by the registration's own identity. The two cells
     # above report the worst probe they took, which answers "is anything broken" and was read
     # as "is everything broken": one missing target among several registrations then claimed
@@ -1555,6 +1529,41 @@ def status(codex_home=None, environ=None, event=EVENT):
                       if entry.get("settings") and entry["settings"] not in relative else None)}
          for entry in (ours or [])
     ])
+    if failed is not None:
+        settings = _cell(failed, detail or "", configuration=str(path),
+                         configurationSource=source)
+        relay = _cell(NOT_READ, "no usable configuration names a runtime")
+        offers = _cell(NOT_READ, "no usable configuration names a runtime")
+        marker = _cell(NOT_READ, "no usable configuration names a marker root")
+        # Asked separately from the cell below, because settings that could not be read and
+        # settings that deliberately configure no journal are different answers. Reporting the
+        # first as an empty journal would say this hook has recorded nothing, when what
+        # happened is that nobody could tell where it would record.
+        journal_cell = _cell(NOT_READ, "no usable configuration names a journal to read")
+    else:
+        settings = _cell(found.state, "settings read", configuration=str(path),
+                         configurationSource=source, mode=config.get("mode"),
+                         dbPath=config.get("dbPath"),
+                         isolationAssertedBy=config.get("isolationAssertedBy"))
+        executable = Path(config["relayExecutable"])
+        relay = presence(executable, "the configured runtime")
+        offers = (_offers_guard(executable, config.get("timeoutSeconds")
+                                or DEFAULT_TIMEOUT_SECONDS)
+                  if relay["value"] == reading.PRESENT
+                  else _cell(NOT_READ, "the configured runtime could not be asked: "
+                                       + relay["evidence"]))
+        marker = presence(config["markerRoot"], "the configured marker root", directory=True)
+        # Taken from the registration that named this very file rather than read a
+        # second time. Two reads of one journal in one status call opened a window: a
+        # Stop landing between them produced a payload whose count said ABSENT while
+        # the cause beside it said records_found, so the explanation contradicted the
+        # cell it was explaining. One reading, two outputs.
+        journal_cell = next((entry["journal"] for entry in named_journals
+                             if entry["settings"] == str(path) and entry.get("journal")),
+                            None)
+        if journal_cell is None:
+            journal_cell = _journal_cell(config)
+
     # Attached to the settings cell rather than replacing it: the cell above still answers
     # about the one file this command settled on, and this says what every registration named.
     settings["namedSettings"] = named_journals
