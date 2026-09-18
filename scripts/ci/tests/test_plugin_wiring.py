@@ -560,6 +560,16 @@ class DeclaredComponentTest(unittest.TestCase):
                                             "release")
         self.assertTrue(any("does not ship" in problem for problem in errors), errors)
 
+    def test_a_command_that_is_not_a_string_is_reported_not_raised(self):
+        """A finding that ends the run in a traceback hides itself and everything after it."""
+        for command in (1, True, {"a": 1}, None):
+            document = json.dumps({"mcpServers": {"b": {
+                "command": command, "cwd": ".", "args": ["./w/run.py"]}}})
+            errors = plugin.mcp_document_errors("m.json", document.encode(),
+                                                self.payload(**{"w/run.py": "x"}), "release")
+            self.assertTrue(any("needs a command" in problem for problem in errors),
+                            (command, errors))
+
     def test_the_shipped_package_passes_its_own_rules(self):
         """A positive control, so the rules above are not merely rejecting everything."""
         errors, result = plugin.check_revision("HEAD")

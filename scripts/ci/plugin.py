@@ -291,8 +291,10 @@ def mcp_document_errors(name, data, payload, label):
         if not isinstance(declared, dict):
             errors.append(where + "a server must be an object")
             continue
-        if not nonempty(declared.get("command")):
+        command = declared.get("command")
+        if not nonempty(command):
             errors.append(where + "a server needs a command")
+            command = None
         if declared.get("cwd") != ".":
             errors.append(where + "cwd must be \".\": a relative command resolves against it,"
                           " and a server declared without one never starts")
@@ -300,7 +302,10 @@ def mcp_document_errors(name, data, payload, label):
         if not isinstance(arguments, list) or not all(isinstance(w, str) for w in arguments):
             errors.append(where + "args must be a list of strings")
             arguments = []
-        for word in [declared.get("command") or ""] + list(arguments):
+        # Only values the checks above accepted as strings. A truthy non-string command such as
+        # 1 or true would otherwise reach the membership tests below and end the whole package
+        # check in a TypeError, hiding this finding and every other one in the run.
+        for word in ([command] if command else []) + list(arguments):
             if "$" in word or "%" in word:
                 errors.append(where + repr(word) + " carries a variable; a plugin MCP server"
                               " runs without a shell and inherits no plugin root, so it would"
