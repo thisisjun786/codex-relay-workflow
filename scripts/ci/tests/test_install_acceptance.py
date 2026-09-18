@@ -1487,7 +1487,7 @@ def _held_by_class(tree, spelled):
                 node.value, spelled, klass, bound.get(function, set())):
             continue
         for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-            if isinstance(target, ast.Attribute) and _dotted(target.value) == "self":
+            if isinstance(target, ast.Attribute) and _dotted(target.value) in ("self", "cls"):
                 held.setdefault(klass, set()).add(target.attr)
             elif isinstance(target, ast.Name) and function == MODULE_LEVEL:
                 held.setdefault(klass, set()).add(target.id)
@@ -1538,6 +1538,19 @@ def _hands_on(tree, spelled):
                               (args.posonlyargs + args.args + args.kwonlyargs
                                + ([args.vararg] if args.vararg else [])
                                + ([args.kwarg] if args.kwarg else []))}
+    # A name a scope assigns is local to that scope for the whole of it, whatever it is assigned.
+    # An alias is looked up first, so this only stops the search where the binding is something
+    # this reader cannot follow -- carrier = str -- which is a name Python resolves locally and
+    # never to the enclosing definition.
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
+        if where == MODULE_LEVEL:
+            continue
+        for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+            if isinstance(named, ast.Name):
+                taken_names.setdefault(where, set()).add(named.id)
 
     def outwards(caller, named, aliases=None):
         """Every place this name may reach, innermost scope first.
@@ -1578,7 +1591,8 @@ def _hands_on(tree, spelled):
             function, _klass = places.get(id(node), (MODULE_LEVEL, None))
             if isinstance(node.value, ast.Name):
                 targets = outwards(function, node.value.id, aliases)
-            elif isinstance(node.value, ast.Attribute) and _dotted(node.value.value) == "self":
+            elif (isinstance(node.value, ast.Attribute)
+                    and _dotted(node.value.value) in ("self", "cls")):
                 # A bound method put behind a name reaches exactly what calling it directly
                 # would, and alias = self.carrier is as ordinary as alias = carrier. Resolved
                 # against this class, so a same-named method on another class is not dragged in.
@@ -1604,7 +1618,8 @@ def _hands_on(tree, spelled):
         """Every place this call may reach."""
         if isinstance(node.func, ast.Name):
             return outwards(function, node.func.id, aliases)
-        if isinstance(node.func, ast.Attribute) and _dotted(node.func.value) == "self":
+        if isinstance(node.func, ast.Attribute) and _dotted(node.func.value) in ("self", "cls"):
+            # cls.name in a classmethod names a method of this class exactly as self.name does.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
             reached = methods.get((klass, node.func.attr))
             return {reached} if reached else set()
