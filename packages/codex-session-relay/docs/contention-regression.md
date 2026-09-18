@@ -83,6 +83,25 @@ preserving records across replacements. Whether a replacement worker can read th
 back is a separate question, answered by a real process in
 \`test_operational_scale.py\` and reported as separate evidence.
 
+## What has landed
+
+Filled in as each module lands, so the table above can be read against something
+countable rather than against an intention.
+
+| Module | Cases | Covers | Clock |
+|---|---|---|---|
+| \`test_registration_contention.py\` | 4 | 1 | injected |
+| \`test_failure_recovery.py\` | 6 | 2, 3 | injected, plus one real lock wait |
+| \`test_multi_parent_isolation.py\` | — | 5, 6 | injected |
+| \`test_operational_scale.py\` | — | 7, 8 | injected, plus one real worker |
+| \`test_regression_map.py\` | — | 9 | none |
+
+The lock wait in \`test_failure_recovery.py\` is the only new test that spends real
+seconds: an exclusive writer makes the guard's read raise after a measured 2.00s, and
+the same check decides on the receipt in milliseconds once the holder lets go. Two
+seconds is deliberate rather than incidental — it is the bound being demonstrated,
+and it sits under the five-second budget the hook contract gives the whole evaluation.
+
 ## Scale, stated as a bound rather than a guarantee
 
 Criterion 8 asks for a number, so the suite declares its parent count and event
