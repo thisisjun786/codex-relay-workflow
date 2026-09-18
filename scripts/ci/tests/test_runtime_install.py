@@ -855,9 +855,18 @@ class AuthorizedRepairTests(unittest.TestCase):
                 self.assertEqual(sent, [], "an incomplete trial must write nothing")
 
     def test_a_recipient_that_is_not_the_parent_is_refused_before_any_write(self):
+        """Refused before the first command, and refused by the CONSUMER's rule.
+
+        The gate used to compare the two values itself. Its own sentence read well and was a
+        second copy of scope.check_recipient, so the assertion is on the property that matters:
+        nothing was sent, and the refusal names the rule the relay would have applied.
+        """
+        import runtime_install
+
         result, sent = self.run_trial(self.trial_args(recipient="somebody-else"))
         self.assertEqual(result["value"], "not_verified")
-        self.assertIn("not the parent task", result["evidence"])
+        self.assertIn(runtime_install.RELAY_RECIPIENT[-1], result["evidence"])
+        self.assertIn("--recipient", result["evidence"])
         self.assertEqual(sent, [])
 
     def test_recorded_settings_stay_reusable_through_an_explicit_claim(self):
@@ -5049,6 +5058,19 @@ class PairedMemberTests(unittest.TestCase):
                 if predicate == runtime_install.NON_BLANK:
                     continue
                 self.assertIsInstance(predicate, tuple, name + " names a consumer's callable")
+                if predicate[0] == runtime_install.RESTATED_HERE:
+                    # A rule the consumer holds where nothing read-only can ask it. The pair
+                    # names where it lives and this reads that back, because a restatement
+                    # whose original has moved is a restatement of nothing -- which is the
+                    # shape every layer of this class has been made of.
+                    self.assertGreaterEqual(len(pair), 3,
+                                            name + " restates a relational rule and must name"
+                                            " the member it is judged with")
+                    self.assertTrue(
+                        _relay_defines(predicate[1:]),
+                        name + " restates " + str(predicate[1:]) + ", which the relay's own"
+                        " source no longer holds there")
+                    continue
                 self.assertTrue(
                     _relay_defines(predicate),
                     name + " is governed by " + str(predicate) + ", which the relay's own"
@@ -7843,3 +7865,359 @@ class PromotionPointerPathTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# =========================================================================================
+# Check 19 - a member carries the STRONGEST predicate, and a cell is answered at EVERY site
+#
+# Layer 18 made a member a pair. A pair fixes that a member HAS a predicate and a cell HAS a
+# reading; it fixes neither which predicate nor how many places write the cell. So the same
+# defect arrived once more, one dimension up, in two shapes:
+#
+#   a member left on this command's own minimum, with the rest of its question answered here
+#   a cell declaring one reading while a second assignment fills it from another
+#
+# Both scans are derived. Neither names a member, a rule or a cell.
+# =========================================================================================
+
+
+def _bound(target):
+    return {node.id for node in ast.walk(target) if isinstance(node, ast.Name)}
+
+
+def _calls_in(node):
+    """Every callable name mentioned in an expression, bare or through a module."""
+    found = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            if isinstance(sub.func, ast.Name):
+                found.add(sub.func.id)
+            elif isinstance(sub.func, ast.Attribute):
+                found.add(sub.func.attr)
+    return found
+
+
+def _undeclared_member_rules(members, probes, minimum="_supplied"):
+    """Decisions this command makes ITSELF about a declared member's value.
+
+    A member's value may be read for two purposes: handed to this command's own minimum, or
+    handed to the consumer whose predicate governs it. Anything else is a rule written here,
+    and a rule written here is a rule that drifts from the one that will actually be applied.
+
+    A comparison against a CONSUMER's answer is not such a rule, which is why the taint is
+    two-coloured: looking a member's value up in what the relay said about it is reading the
+    relay's answer, not inventing one.
+    """
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    functions = {node.name: node for node in ast.walk(tree)
+                 if isinstance(node, ast.FunctionDef)}
+    offenders, seen = [], set()
+
+    def touches(node, member):
+        for sub in ast.walk(node):
+            if (isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name)
+                    and sub.value.id == "args" and sub.attr in members):
+                return True
+            if isinstance(sub, ast.Name) and sub.id in member:
+                return True
+            if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                    and sub.func.id == "getattr" and sub.args
+                    and isinstance(sub.args[0], ast.Name) and sub.args[0].id == "args"):
+                return True
+        return False
+
+    def preflight(function):
+        """The statements before the trial hands its steps over to be sent.
+
+        Everything after that binding decides on the RELAY's answers, not on a member's value,
+        and taint carried into it would report the trial reading its own results as a rule it
+        invented. The boundary is the one this whole class is about: what is decided before
+        anything is written.
+        """
+        for index, statement in enumerate(function.body):
+            if isinstance(statement, ast.Assign) and "steps" in set().union(
+                    *(_bound(t) for t in statement.targets)):
+                return function.body[:index]
+        return function.body
+
+    def visit(function, member):
+        key = (function.name, tuple(sorted(member)))
+        if key in seen or function.name in probes or function.name == minimum:
+            return
+        seen.add(key)
+        member, verdict = set(member), set()
+        body = preflight(function) if function.name == "_trial" else [function]
+        walked = [node for statement in body for node in ast.walk(statement)]
+        for node in walked:
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.For):
+                targets, value = [node.target], node.iter
+            else:
+                continue
+            bound = set().union(*(_bound(t) for t in targets)) if targets else set()
+            if _calls_in(value) & set(probes):
+                verdict |= bound
+            elif touches(value, member):
+                member |= bound
+        for node in walked:
+            if not isinstance(node, ast.Compare):
+                continue
+            operands = [node.left] + list(node.comparators)
+            if not any(touches(operand, member) for operand in operands):
+                continue
+            if any({n.id for n in ast.walk(operand) if isinstance(n, ast.Name)} & verdict
+                   for operand in operands):
+                continue
+            offenders.append(function.name + ":" + str(node.lineno) + " decides "
+                             + ast.unparse(node))
+        for node in walked:
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            callee = functions.get(node.func.id)
+            if callee is None:
+                continue
+            names = [argument.arg for argument in callee.args.args]
+            passed = {names[index] for index, argument in enumerate(node.args)
+                      if index < len(names) and touches(argument, member)}
+            if passed:
+                visit(callee, passed)
+
+    visit(functions["_trial"], set())
+    return sorted(offenders)
+
+
+def _cell_locals(cells):
+    """Which local name feeds each judgment cell, read from the Signals call itself."""
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "Signals"):
+            continue
+        found = {}
+        for keyword in node.keywords:
+            if keyword.arg not in cells:
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+                    and value.func.id == "bool" and len(value.args) == 1:
+                value = value.args[0]
+            if isinstance(value, ast.Name):
+                found[keyword.arg] = value.id
+        return found
+    return {}
+
+
+def _signals_owner(tree):
+    """The function that assembles the judgment, so a local of the same name elsewhere is not
+    mistaken for a cell."""
+    for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for node in ast.walk(function):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "Signals"):
+                return function
+    return None
+
+
+def _undeclared_write_sites(readings, cells):
+    """Assignments to a cell that reference no reading the cell declares.
+
+    An assignment of None or an empty container is an initialisation: it says the cell is
+    unanswered, which is the one thing every cell is allowed to say without a reading.
+
+    A value is traced one hop through the locals it was built from, because a reading's answer
+    is normally bound to a name first and the cell is written from that name.
+
+    A cell declared to be answered by no reading of this command is left alone here; whether
+    that claim is true is what the unclaimed-reading check already asks.
+    """
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    locals_for = _cell_locals(cells)
+    owner = {local: cell for cell, local in locals_for.items()
+             if readings.get(cell, (None, ()))[0] != "not-a-reading"}
+    offenders, covered = [], set()
+    for function in [f for f in [_signals_owner(tree)] if f is not None]:
+        produced, sites = {}, []
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Assign):
+                continue
+            calls = _calls_in(node.value)
+            for name in set().union(*(_bound(t) for t in node.targets)):
+                produced.setdefault(name, set())
+                produced[name] |= calls
+                for sub in ast.walk(node.value):
+                    if isinstance(sub, ast.Name) and sub.id in produced:
+                        produced[name] |= produced[sub.id]
+                if name in owner:
+                    sites.append((owner[name], node))
+        parameters = {a.arg for a in function.args.args} | {a.arg for a in function.args.kwonlyargs}
+        # The collector records a comparison; it does not make one. A call on it, and bool(),
+        # are transparent: the reading is what they were handed, not the recording of it.
+        collector = next(
+            (name for node in ast.walk(function) if isinstance(node, ast.Assign)
+             for name in set().union(*(_bound(t) for t in node.targets))
+             if isinstance(node.value, ast.Call)
+             and isinstance(node.value.func, ast.Attribute)
+             and node.value.func.attr == "Judgement"), None)
+
+        def unwrapped(value):
+            while isinstance(value, ast.Call):
+                if isinstance(value.func, ast.Name) and value.func.id == "bool" \
+                        and len(value.args) == 1:
+                    value = value.args[0]
+                    continue
+                if (collector and isinstance(value.func, ast.Attribute)
+                        and isinstance(value.func.value, ast.Name)
+                        and value.func.value.id == collector and value.args):
+                    value = value.args[0]
+                    continue
+                break
+            return value
+
+        def answered_by(value):
+            """The readings that produced what is written, not the ones that fed them.
+
+            A cell written from a CALL is answered by that call. A cell written from anything
+            else is answered by whatever produced the names it was built from, because a
+            reading's answer is normally bound to a name first.
+            """
+            value = unwrapped(value)
+            if isinstance(value, ast.Call):
+                return set(_calls_in(value)) - {"bool"}
+            reached = set(_calls_in(value))
+            for sub in ast.walk(value):
+                if isinstance(sub, ast.Name) and sub.id in produced:
+                    reached |= produced[sub.id]
+            return reached
+
+        for cell, node in sites:
+            value = node.value
+            if isinstance(value, ast.Constant) and value.value is None:
+                continue
+            if isinstance(value, (ast.List, ast.Tuple)) and not value.elts:
+                continue
+            declared = {name for _module, name, _only in readings.get(cell, ((),))[1]} \
+                if readings.get(cell) else set()
+            covered.add(cell)
+            reached = answered_by(value)
+            if reached & declared:
+                continue
+            if any(isinstance(sub, ast.Name) and sub.id in parameters
+                   for sub in ast.walk(value)):
+                # Answered by the CALLER's reading, which the caller-set check owns.
+                continue
+            offenders.append(cell + " at " + function.name + ":" + str(node.lineno)
+                             + " is written from " + ast.unparse(value)
+                             + ", which names none of its declared readings "
+                             + repr(sorted(declared)))
+    return sorted(offenders), covered
+
+
+class StrengthAndSiteTests(unittest.TestCase):
+    """The fourth layer: which predicate a member carries, and how many places write a cell."""
+
+    def test_the_inventories_are_not_empty(self):
+        import runtime_install
+
+        # Guards both readers. An empty members map or an empty cell map would make every
+        # claim below pass while seeing nothing at all.
+        self.assertIn("artifact_root", runtime_install.TRIAL_PREFLIGHT_INPUTS)
+        self.assertIn("entry_point_recorded", _cell_locals(_signal_cells()))
+        self.assertIn("_supplied", {node.name for node in ast.walk(
+            ast.parse(RUNTIME.read_text(encoding="utf-8"))) if isinstance(node, ast.FunctionDef)})
+
+    def test_no_member_is_judged_by_a_rule_this_command_wrote_and_did_not_declare(self):
+        """A member left on the supplied-minimum has the rest of its question answered here.
+
+        The artifact root was the instance: declared NON_BLANK, and then judged for containment
+        by a second copy of the relay's rule. That copy disagreed with the relay in BOTH
+        directions, so it was neither the safe approximation it looked like nor the relay's
+        answer. The count comes off the declarations, so a rule restated without being declared
+        fails here rather than at the relay once rows exist.
+        """
+        import runtime_install
+
+        offenders = _undeclared_member_rules(runtime_install.TRIAL_PREFLIGHT_INPUTS,
+                                             runtime_install.PREFLIGHT_PROBES)
+        restated = sorted(
+            name for name, pair in runtime_install.TRIAL_PREFLIGHT_INPUTS.items()
+            if isinstance(pair[1], tuple) and pair[1][0] == runtime_install.RESTATED_HERE)
+        self.assertEqual(
+            len(offenders), len(restated),
+            "every rule this command applies to a declared member's value must be the"
+            " consumer's, or be declared a restatement. Undeclared: " + repr(offenders)
+            + "; declared restatements: " + repr(restated))
+
+    def test_the_scan_sees_a_rule_written_here_again(self):
+        """The negative control: the scan is red on the shape it exists to catch."""
+        import runtime_install
+
+        source = RUNTIME.read_text(encoding="utf-8")
+        put_back = source.replace(
+            "        if raw in outside:",
+            "        base = Path(str(root))\n"
+            "        if not (path == base or base in path.parents):", 1)
+        self.assertNotEqual(put_back, source, "the scan's fixture no longer matches the source")
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary) / "runtime_install.py"
+            copy.write_text(put_back, encoding="utf-8")
+            with mock.patch.object(sys.modules[__name__], "RUNTIME", copy):
+                offenders = _undeclared_member_rules(
+                    runtime_install.TRIAL_PREFLIGHT_INPUTS, runtime_install.PREFLIGHT_PROBES)
+        self.assertTrue(any("path.parents" in offender for offender in offenders), offenders)
+
+    def test_every_write_site_of_a_cell_names_a_reading_that_cell_declares(self):
+        """A cell is answered by every reading written into it, not by the first one declared.
+
+        entry_point_recorded had two write sites and named one reading. The second filled the
+        ownership cell from the interpreter a console script's FIRST LINE names, which
+        interpreter_of already calls the fallback rather than the answer -- so a wrapper this
+        command never created classified as this installation.
+        """
+        import runtime_install
+
+        offenders, covered = _undeclared_write_sites(runtime_install.SIGNAL_READINGS,
+                                                     _signal_cells())
+        self.assertIn("entry_point_recorded", covered,
+                      "the scan saw no write site for the cell this layer is about")
+        self.assertEqual(offenders, [])
+
+    def test_the_write_site_scan_sees_a_site_that_declares_nothing(self):
+        import runtime_install
+
+        readings = dict(runtime_install.SIGNAL_READINGS)
+        outcome, observations = readings["entry_point_recorded"]
+        readings["entry_point_recorded"] = (
+            outcome, tuple(o for o in observations if o[1] != "interpreter_in_recorded_path"))
+        offenders, _covered = _undeclared_write_sites(readings, _signal_cells())
+        self.assertTrue(any("entry_point_recorded" in offender for offender in offenders),
+                        offenders)
+
+    @unittest.skipUnless(sys.version_info >= (3, 11), "the relay requires Python 3.11 or newer")
+    def test_the_preflight_answers_the_root_question_with_the_relays_own_verdict(self):
+        """Agreement, not one-sided safety.
+
+        A copy of a rule is wrong in whichever direction it happens to differ. This one refused
+        a root the relay accepts end to end, and for a root the relay refuses it named the
+        deliverable as the thing at fault. The corpus is written as forms of one root, so each
+        case differs from the canonical one only in the way the relay has a rule about.
+        """
+        import runtime_install
+
+        root = TRIAL_ROOT
+        corpus = (root, root + "/", str(Path(root).parent) + "/./" + Path(root).name,
+                  root + "/../" + Path(root).name, os.path.relpath(root, os.getcwd()),
+                  "~" + root)
+        for candidate in corpus:
+            with self.subTest(candidate):
+                refusals, reason = runtime_install._relay_contains(
+                    [TRIAL_ARTIFACT], candidate, RELAY_RUNTIME)
+                self.assertIsNone(reason, reason)
+                consumer_holds = TRIAL_ARTIFACT not in refusals
+                problems = runtime_install._unusable_artifacts(
+                    [TRIAL_ARTIFACT], candidate, RELAY_RUNTIME)
+                self.assertEqual(
+                    consumer_holds, not problems,
+                    "the relay " + ("holds" if consumer_holds else "refuses")
+                    + " this root and the preflight " + ("refuses" if problems else "accepts")
+                    + " it: " + repr(problems))

@@ -90,8 +90,13 @@ SIGNAL_READINGS = {
     # The digest is read inside a region, so a filesystem failure is a named refusal rather
     # than a classification. Only a returned None reaches the comparison.
     "digest_matches": (SIGNAL_REFUSED, (("definition", "ops12_digest", None),)),
-    # An entry point that is not there really is absent; that is an answer, not a gap.
-    "entry_point_recorded": (SIGNAL_NEGATIVE, (("runtime_install", "resolve_entry_point", None),)),
+    # An entry point that is not there really is absent; that is an answer, not a gap. TWO
+    # readings fill this cell -- where the entry point resolves, and whether the interpreter the
+    # record names for it is in a recorded path -- and both are named, because a cell is
+    # answered by every reading written into it and not by the first one somebody declared.
+    "entry_point_recorded": (SIGNAL_NEGATIVE,
+                             (("runtime_install", "resolve_entry_point", None),
+                              ("runtime_install", "interpreter_in_recorded_path", None))),
     # Read and reported beside the tree, never used as the identity test (OPS-1.5).
     "commit_matches": (SIGNAL_NOT_A_READING, ()),
     # Conflict cells: the reading answers with a state or a list, and finding none really is
@@ -666,6 +671,15 @@ def recorded_install_for(record, name, entry_point):
     return innermost[0], None
 
 
+# Where interpreter_for's answer came from. Declared rather than spelled at each site, because
+# one consumer decides an OWNERSHIP cell on the difference between them: an interpreter the
+# record names was written by the run that installed it, and a first line is whatever somebody
+# put in a file.
+INTERPRETER_RECORDED = "recorded with the install"
+INTERPRETER_FROM_ENVIRONMENT = "the recorded environment"
+INTERPRETER_FROM_SHEBANG = "the script's first line"
+
+
 def interpreter_for(record, name, entry_point):
     """The interpreter a console script runs under, and where that answer came from.
 
@@ -691,13 +705,34 @@ def interpreter_for(record, name, entry_point):
     if install:
         recorded = install.get("interpreterPath")
         if recorded:
-            return str(recorded), "recorded with the install"
+            return str(recorded), INTERPRETER_RECORDED
         environment = install.get("environment")
         if environment:
             # Records written before interpreterPath existed still name the environment, and
             # the interpreter of an environment this command built is the one it created there.
-            return str(Path(environment) / "bin" / "python"), "the recorded environment"
-    return interpreter_of(entry_point), "the script's first line"
+            return str(Path(environment) / "bin" / "python"), INTERPRETER_FROM_ENVIRONMENT
+    return interpreter_of(entry_point), INTERPRETER_FROM_SHEBANG
+
+
+# The interpreter sources the RECORD stands behind. Both were written by a run of this command
+# into the host record; the first line of a script was not, and a wrapper this command never
+# created carries whatever first line its author wrote.
+RECORDED_INTERPRETER_SOURCES = (INTERPRETER_RECORDED, INTERPRETER_FROM_ENVIRONMENT)
+
+
+def interpreter_in_recorded_path(python, roots):
+    """Whether the interpreter a console script runs under lives in a recorded path.
+
+    Its own reading, and named, because it fills the same cell resolve_entry_point fills. A
+    cell is answered by the readings it declares, and this one was a second write site nobody
+    had to declare: an entry point outside every recorded root reached the ownership cell
+    through it on the strength of a first line, which interpreter_of already says is the
+    fallback rather than the answer.
+    """
+    with reading.region("the installed entry point", "the interpreter it names",
+                        field="shebang"):
+        interpreter_path = Path(python).resolve()
+    return any(within(interpreter_path, r) for r in roots)
 
 
 # The checkout artifacts this command EXECUTES to produce a component's exercise, named as
@@ -751,11 +786,13 @@ def classify_component(component, *, record, entry_override=None, registration=N
     if resolved and python is None and interpreter_from:
         # An ambiguous record is a signal that could not be read, not a reason to pick one.
         unreadable.append(interpreter_from)
-    if resolved and not entry_recorded and python:
-        with reading.region("the installed entry point", "the interpreter it names",
-                            field="shebang"):
-            interpreter_path = Path(python).resolve()
-        entry_recorded = any(within(interpreter_path, r) for r in roots)
+    if (resolved and not entry_recorded and python
+            and interpreter_from in RECORDED_INTERPRETER_SOURCES):
+        # The second write site of this cell, and it answers only from an interpreter the
+        # RECORD names. Reached from the fallback first line it let an external wrapper decide
+        # ownership: a script outside every recorded root, whose author wrote a shebang naming
+        # an interpreter inside a recorded environment, classified as this installation.
+        entry_recorded = interpreter_in_recorded_path(python, roots)
 
     if python is None and resolved is None:
         python = sys.executable
@@ -1280,6 +1317,29 @@ SETTINGS_PREDICATE = ("codex_session_relay.settings", "TaskSettings", "require_u
 # inputs it governs below and asked of the relay's own code, never restated here.
 RELAY_TURN_ID = ("codex_session_relay.registry", "validated_turn_id")
 
+# The relay's own containment test for an artifact root. Named as the second half of the pair
+# AuthorizedFile asks -- normalise the declared path, then ask which root holds it -- because
+# asking only the first half answers only half the question, and the half left over is the one
+# this command had been answering itself.
+#
+# Relational, unlike every predicate above: a root is not acceptable or unacceptable on its
+# own, it is acceptable FOR the artifacts declared with it. A member declaring this one names
+# the member that supplies the other operand.
+RELAY_WITHIN = ("codex_session_relay.scope", "assert_within")
+
+# The relay's own test for whether a task may receive a completion. Relational for the same
+# reason: a recipient is authorised FOR a relationship's allowed set, never on its own.
+RELAY_RECIPIENT = ("codex_session_relay.scope", "check_recipient")
+
+# A member whose consumer applies a rule that is reachable through no read-only callable. The
+# receipt's thread check lives inside a method that needs a store, so the rule is restated in
+# the gate -- and the pair records WHERE it lives in the consumer's source, so a check fails
+# when the consumer stops holding it there. Every layer of this class has been made of
+# restatements nobody checked; a restatement that is declared and checked is not one of them.
+RESTATED_HERE = "restated-here"
+RELAY_TURN_THREAD = (RESTATED_HERE, "codex_session_relay.receipts", "ReceiptIntake",
+                     "_check_turn_identity")
+
 # This command's own minimum for a flag that was supplied: a value with something in it.
 NON_BLANK = "non-blank"
 
@@ -1293,15 +1353,23 @@ NON_BLANK = "non-blank"
 # family rather than for the two members a reviewer named, and a member whose consumer applies
 # a stricter rule names that rule so it can be asked of the consumer's own code.
 #
+# Carrying A predicate is not carrying the RIGHT one. NON_BLANK is this command's own minimum
+# and nothing more, so a member left on it has every further question about its value answered
+# here -- which is how the artifact root came to be judged by a second copy of the relay's
+# containment rule. That copy disagreed with the relay in both directions: it refused a root
+# the relay accepts end to end, and for a root the relay refuses it blamed the deliverable
+# rather than the root. A member carries the STRONGEST predicate its consumer applies, and
+# where that predicate is relational it names the member supplying the other operand.
+#
 # Split in two because the two halves are checked differently, and saying so here is what keeps
 # the check itself free of a literal naming one member of the set it is iterating.
 TRIAL_REQUIRED_INPUTS = {
     "issue": ("--issue", NON_BLANK),
     "parent_task": ("--parent-task", NON_BLANK),
     "child_task": ("--child-task", NON_BLANK),
-    "recipient": ("--recipient", NON_BLANK),
-    "artifact_root": ("--artifact-root", NON_BLANK),
-    "turn_thread": ("--turn-thread", NON_BLANK),
+    "recipient": ("--recipient", RELAY_RECIPIENT, "parent_task"),
+    "artifact_root": ("--artifact-root", RELAY_WITHIN, "artifact"),
+    "turn_thread": ("--turn-thread", RELAY_TURN_THREAD, "child_task"),
     "artifact": ("--artifact", NON_BLANK),
     "turn_id": ("--turn-id", RELAY_TURN_ID),
     "dispatch_turn_id": ("--dispatch-turn-id", RELAY_TURN_ID),
@@ -1315,7 +1383,8 @@ TRIAL_PREFLIGHT_INPUTS = dict(TRIAL_REQUIRED_INPUTS, **TRIAL_ACKNOWLEDGED_INPUTS
 # A probe running sys.executable asks this checkout instead, and a checkout whose rule differs
 # from the installed relay's accepts what the relay refuses -- after four mutating steps.
 PREFLIGHT_PROBES = ("settings_usable", "values_usable", "_relay_normalizes",
-                    "store_presence", "store_tables", "candidate_tables")
+                    "_relay_contains", "_relay_admits", "store_presence", "store_tables",
+                    "candidate_tables")
 
 # Every presence question this command asks, paired with the reader whose own sentinel answers
 # it. Deciding presence here instead means deciding it by whatever predicate this module wrote,
@@ -1334,6 +1403,20 @@ def _supplied(value):
     if isinstance(value, (list, tuple)):
         return bool(value) and all(_supplied(item) for item in value)
     return bool(str(value).strip())
+
+
+def _relational(pair):
+    """Whether a member's predicate is asked about it TOGETHER with another member's value.
+
+    Containment is the case that needs it. An artifact root cannot be judged on its own: it is
+    judged for the artifacts declared with it, and a pair able to carry only a single-value
+    predicate would have to leave that question here. Leaving it here is what produced a second
+    copy of a rule the relay owns.
+
+    The third slot names the member supplying the other operand, so the gate reads it from the
+    declaration instead of knowing which members go together.
+    """
+    return len(pair) > 2
 
 
 def _settings_program():
@@ -1570,12 +1653,101 @@ def _relay_normalizes(paths, interpreter):
         return {}, "the relay's normalizer returned nothing readable"
 
 
+def _relay_contains(paths, root, interpreter):
+    """Whether the relay would hold each artifact inside this root, asked of the relay.
+
+    The pair AuthorizedFile asks, in the order it asks them: the declared path is normalised,
+    then the roots are asked which of them holds it. Deciding it here is what the member's
+    predicate had been left free to allow, and the copy written here disagreed with the relay in
+    both directions -- it refused a root the relay accepts end to end, and where the relay
+    refuses a root it named the deliverable as the thing at fault.
+
+    The root itself is never normalised, because the relay does not normalise one. is_within
+    compares normalised forms without requiring the recorded root to already be in one, so
+    asking more of the root here than the relay asks would refuse a registration it performs.
+
+    Returns (refusals, reason). A reason means the question could not be asked, which is a
+    refusal of its own and never a fall back to a rule of this command's making.
+    """
+    if not interpreter:
+        return {}, ("the relay's interpreter could not be resolved, so its own containment rule"
+                    " could not be asked here. Pass --relay-command naming an installed entry"
+                    " point, or record the install first")
+    module, containment = RELAY_WITHIN
+    probe = "\n".join([
+        "import json, sys",
+        "from " + module + " import normalize_declared_path, " + containment,
+        "root, out = sys.argv[1], {}",
+        "for path in json.loads(sys.argv[2]):",
+        "    try:",
+        "        " + containment + "(normalize_declared_path(path), [root])",
+        "    except Exception as error:",
+        "        out[path] = type(error).__name__ + ': ' + str(error)",
+        "print(json.dumps(out))",
+        "",
+    ])
+    argv = [str(interpreter), "-B", "-c", probe, str(root), json.dumps(list(paths))]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {}, "the relay's containment rule could not be run: " + type(error).__name__
+    if done.returncode != 0:
+        return {}, ("the relay's containment rule could not be asked: "
+                    + (done.stderr or "").strip()[-200:])
+    try:
+        return json.loads(done.stdout), None
+    except ValueError:
+        return {}, "the relay's containment rule returned nothing readable"
+
+
+def _relay_admits(predicate, subject, allowed, interpreter):
+    """Whether the relay's own rule admits this subject against this allowed value.
+
+    The shape every relational rule here has: a value, and the set it must belong to. Asked of
+    the relay, in the runtime that will act on the answer, for the same reason the single-value
+    predicates are. A rule restated here is a rule that drifts, and the drift is discovered
+    after the rows the refusal was meant to prevent.
+
+    Returns (refusal, reason). Both None means admitted; a reason means the question could not
+    be asked, which is a refusal of its own.
+    """
+    if not interpreter:
+        return None, ("the relay's interpreter could not be resolved, so its own rule for "
+                      + predicate[-1] + " could not be asked here. Pass --relay-command naming"
+                      " an installed entry point, or record the install first")
+    module, callable_name = predicate
+    probe = "\n".join([
+        "import json, sys",
+        "from " + module + " import " + callable_name,
+        "try:",
+        "    " + callable_name + "(sys.argv[1], [sys.argv[2]])",
+        "except BaseException as error:",
+        "    print(json.dumps(type(error).__name__ + ': ' + str(error)))",
+        "else:",
+        "    print(json.dumps(None))",
+        "",
+    ])
+    argv = [str(interpreter), "-B", "-c", probe, str(subject), str(allowed)]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, "the relay's rule could not be run: " + type(error).__name__
+    if done.returncode != 0:
+        return None, ("the relay's rule could not be asked: "
+                      + (done.stderr or "").strip()[-200:])
+    try:
+        return json.loads(done.stdout), None
+    except ValueError:
+        return None, "the relay's rule returned nothing readable"
+
+
 def _unusable_artifacts(artifacts, root, interpreter):
     """Why the relay would refuse each artifact, checked before anything is written.
 
-    The path shape is the relay's own rule, asked of the relay's own function. What remains
-    here is what that function deliberately does not cover: the file has to exist, be a regular
-    file with no symbolic link at any component, be readable, and be inside the declared root.
+    Both path questions belong to the relay and both are asked of it: the shape of a declared
+    path, and whether the declared root holds it. What remains here is what neither of those
+    covers: the file has to exist, be a regular file with no symbolic link at any component,
+    and be readable.
     """
     paths = [str(raw) for raw in (artifacts or [])]
     if not paths:
@@ -1583,9 +1755,11 @@ def _unusable_artifacts(artifacts, root, interpreter):
     refusals, reason = _relay_normalizes(paths, interpreter)
     if reason:
         return [reason + "; artifacts are not checked against a second copy of the rule"]
+    outside, unasked = _relay_contains(paths, root, interpreter)
+    if unasked:
+        return [unasked + "; the artifact root is not checked against a second copy of the rule"]
 
     problems = []
-    base = Path(str(root))
     for raw in paths:
         if raw in refusals:
             problems.append(raw + ": " + refusals[raw])
@@ -1605,11 +1779,9 @@ def _unusable_artifacts(artifacts, root, interpreter):
         except OSError as error:
             problems.append(raw + " could not be read: " + type(error).__name__)
             continue
-        try:
-            if not (path == base or base in path.parents):
-                problems.append(raw + " is not inside the artifact root " + str(base))
-        except (OSError, ValueError):
-            problems.append(raw + " could not be compared with the artifact root")
+        if raw in outside:
+            problems.append("the artifact root " + str(root) + " does not hold " + raw + ": "
+                            + outside[raw])
     return problems
 
 
@@ -1630,7 +1802,7 @@ def _trial(args, relay_executable, relay_interpreter=None):
     # applies rather than by whatever this gate would otherwise invent. A reviewable receipt
     # with an empty manifest is refused and a generation with no anchor cannot be emitted
     # against; both were discovered at the relay, after the trial had written rows.
-    blank = sorted(flag for name, (flag, _) in TRIAL_REQUIRED_INPUTS.items()
+    blank = sorted(pair[0] for name, pair in TRIAL_REQUIRED_INPUTS.items()
                    if not _supplied(getattr(args, name, None)))
     if blank:
         return check.field(
@@ -1642,12 +1814,14 @@ def _trial(args, relay_executable, relay_interpreter=None):
             acting_process=acting_process(), measured_at=now(),
         )
     # The members whose consumer applies a stricter rule than "supplied", asked of that
-    # consumer's own code in the runtime that will act on the answer.
+    # consumer's own code in the runtime that will act on the answer. A relational member is
+    # not asked here: its predicate takes the value it is judged WITH, so it is asked where
+    # that other value is, and asking it with one operand would be a third rule again.
     for predicate in sorted({pair[1] for pair in TRIAL_REQUIRED_INPUTS.values()
-                             if pair[1] != NON_BLANK}):
-        governed = {flag: str(getattr(args, name))
-                    for name, (flag, declared) in TRIAL_REQUIRED_INPUTS.items()
-                    if declared == predicate}
+                             if pair[1] != NON_BLANK and not _relational(pair)}):
+        governed = {pair[0]: str(getattr(args, name))
+                    for name, pair in TRIAL_REQUIRED_INPUTS.items()
+                    if pair[1] == predicate and not _relational(pair)}
         answer = values_usable(predicate, governed, relay_interpreter)
         if not answer.get("usable"):
             return check.field(
@@ -1657,15 +1831,30 @@ def _trial(args, relay_executable, relay_interpreter=None):
                 " asked before the first mutating step. Nothing was written.",
                 acting_process=acting_process(), measured_at=now(),
             )
-    if args.recipient != args.parent_task:
-        return check.field(
-            "not_verified",
-            "the recipient " + str(args.recipient) + " is not the parent task "
-            + str(args.parent_task) + ". A completion is queued to the relationship parent and"
-            " that parent must be an allowed recipient, so this combination can only be"
-            " refused after the store has been written to.",
-            acting_process=acting_process(), measured_at=now(),
-        )
+    # The relational members whose consumer exposes an askable rule. Which member is judged
+    # WITH which comes off the declaration, so this loop does not know that a recipient goes
+    # with a parent task. A member whose operand is a list is asked by the probe that reads
+    # that list, because the question needs its members and they are read there.
+    for name, pair in sorted(TRIAL_REQUIRED_INPUTS.items()):
+        if not _relational(pair) or pair[1][0] == RESTATED_HERE:
+            continue
+        operand = getattr(args, pair[2])
+        if isinstance(operand, (list, tuple)):
+            continue
+        refusal, unasked = _relay_admits(pair[1], str(operand), str(getattr(args, name)),
+                                         relay_interpreter)
+        if unasked or refusal:
+            return check.field(
+                "not_verified",
+                str(pair[0]) + " and " + str(TRIAL_REQUIRED_INPUTS[pair[2]][0]) + " are not a"
+                " combination " + pair[1][-1] + " accepts: " + str(unasked or refusal)
+                + ". This is the relay's own rule for them, asked before the first mutating"
+                " step. Nothing was written.",
+                acting_process=acting_process(), measured_at=now(),
+            )
+    # The one rule the consumer holds in a method that needs a store, so there is nowhere to
+    # ask it. Restated here, and declared as restated by RELAY_TURN_THREAD, which names the
+    # place in the consumer's source a check reads back.
     if str(args.turn_thread) != str(args.child_task):
         return check.field(
             "not_verified",
@@ -1679,7 +1868,8 @@ def _trial(args, relay_executable, relay_interpreter=None):
     if unusable:
         return check.field(
             "not_verified",
-            "these artifacts do not satisfy what the relay requires of a manifest entry: "
+            "the declared root and its artifacts do not satisfy what the relay requires of a"
+            " manifest entry: "
             + "; ".join(unusable) + ". They are checked here because the relay checks them"
             " while building the manifest, which happens after four mutating steps.",
             acting_process=acting_process(), measured_at=now(),
