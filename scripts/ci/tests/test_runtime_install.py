@@ -8147,6 +8147,62 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
 
         self.assertIn("owned_before", runtime_install.PROMOTION_FRESH)
 
+    def test_malformed_placement_evidence_does_not_authorise_replacing_a_link(self):
+        """SUPPORT. The record is a file a person can edit and the shape check accepts any JSON
+        under these keys, so truthiness is the wrong question: 'true' and '   ' are truthy and
+        neither records when or by whom a link was placed. This answer authorises replacing a
+        link, which is the one direction it may not fail open in."""
+        self.assertTrue(hostrecord.placement_recorded(
+            {"path": "/dest/current", "recordedAt": "2026-09-18T00:00:00Z",
+             "recordedBy": "CRW-95"}))
+        for malformed in ({"path": "/dest/current", "recordedAt": True, "recordedBy": True},
+                          {"path": "/dest/current", "recordedAt": ["t"], "recordedBy": ["who"]},
+                          {"path": "/dest/current", "recordedAt": "   ", "recordedBy": "   "},
+                          {"path": "/dest/current", "recordedAt": 1, "recordedBy": 2},
+                          {"path": "   ", "recordedAt": "t", "recordedBy": "CRW-95"}):
+            with self.subTest(repr(malformed)):
+                self.assertFalse(hostrecord.placement_recorded(malformed),
+                                 "a record that states nothing is not evidence that this"
+                                 " command placed a link")
+
+    def test_a_legacy_adoption_that_fails_takes_back_the_entry_it_introduced(self):
+        """The other side of the same rule, in the branch where the link IS put back.
+
+        An installation older than claims has no ownership entry, so _finish_promotion writes
+        one before placing. When the placement then fails, that entry is this run's to take
+        away -- and taking it away is what leaves the record as the run found it. It is the
+        introduced case, so it is dropped rather than withdrawn.
+
+        Adjacent to CRW-95 rather than its subject: it pins a cleanup this change introduced in
+        the link-restored branch, and it is not counted toward the issue's criteria.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # An installation this record selects, carrying no claim, with the link in place and
+            # nothing recording who put it there.
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record.pop("pointer", None)
+            record["selected"] = {c["component"]: str(host.candidate / "site" / c["module"])
+                                  for c in host.data["components"]}
+            hostrecord.save(host.record_path, record)
+
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="replace the owned pointer")
+            entry = self._entry(host)
+            still = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RECORDED)
+        self.assertIsNone(entry,
+                          "the entry this run introduced is not left behind for a link it did"
+                          " not manage to place")
+        self.assertEqual(still, str(host.previous), "and the link a host reaches through is the"
+                                                    " one that was there")
+        self.assertEqual(payload["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_DROPPED)
+
 
 class LegacyInstallTests(unittest.TestCase):
     """An installation older than claims is not somebody else's directory.

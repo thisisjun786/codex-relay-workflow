@@ -495,7 +495,10 @@ which keeps the path and still refuses a link that turns up there afterwards. It
 against the path **this run wrote** and carries the entry it **found** as two separate values,
 because a caller handed its path before the lock can have written over an entry naming
 somewhere else. What the rollback actually did is read back from the record rather than inferred
-from the delta having been sent, so it can answer `moved on` truthfully.
+from the delta having been sent, so it can answer `moved on` truthfully. It reports the state
+the record was left IN, which is not the same claim as "this call wrote it": a compare that
+matched what was already there reports the same answer, and that is the honest one, because the
+question is what a later run will read.
 
 ### The failure contract
 
@@ -939,11 +942,23 @@ placing one is: only a symbolic link, only while it still names what this run pl
 absence is read back before it is claimed. A restoration that cannot be read back reports a
 residual pointer and keeps the candidate rather than claiming the rollback completed.
 
-The ownership record goes with the link. The record is what makes a link this command's — the
-promotion refuses to replace one the record never recorded placing — so a rollback that removed
-the link and left the record behind said this command owns a link that is not there, and armed
-that guard in favour of whatever appeared at that path next. It is dropped only after the link is
-verifiably gone, and only for the path this run recorded.
+The ownership record goes with the link, for the run that PUT IT THERE. The record is what makes
+a link this command's — the promotion refuses to replace one the record never recorded placing —
+so a rollback that removed the link and left the record behind said this command owns a link that
+is not there, and armed that guard in favour of whatever appeared at that path next. An entry this
+run introduced is therefore dropped, only after the link is verifiably gone and only for the path
+this run recorded.
+
+An entry this run INHERITED is a different question, because a link that is missing does not mean
+a record that is missing: a host whose recorded link was deleted out from under it has the entry
+and no link. Erasing it takes away the path the registration names, and a retry aimed at a
+different `--dest` then derives another path and reads a registration nobody changed as a
+conflict. So the entry stays and its PLACEMENT is withdrawn — the path the registration depends
+on is kept, and the guard goes on refusing whatever link turns up at that path, which is stricter
+than the state the update found. Where the link is instead put back, the entry goes back whole,
+which also takes this run's refreshed stamp off one it did not introduce; that happens whenever
+the link was replaced, including when the restoration could not be read back, because the path in
+the record is the same either way and the payload reports `verified: false` for the link itself.
 
 The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
 destination is retriable; removal that could not finish reports the residual path, what recovery

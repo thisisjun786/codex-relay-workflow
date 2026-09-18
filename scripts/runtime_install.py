@@ -3184,6 +3184,10 @@ def _ownership_answer(written, wanted):
     "the entry is what this rollback meant to leave" are two facts, and only the second one is
     the answer this reports.
 
+    It is the state the record was left IN, which is not the claim that this call wrote it: a
+    compare that matched what was already there reports the same answer, and that is the honest
+    one, because the question a reader has is what the NEXT run will read.
+
     'wanted' is the entry the rollback meant to leave, and None when it meant to leave nothing.
     """
     if not written.usable:

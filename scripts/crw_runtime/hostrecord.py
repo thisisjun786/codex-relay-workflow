@@ -403,10 +403,21 @@ def placement_recorded(entry):
     answers two questions and the guard deciding whether a link may be replaced needs the
     narrower one. An entry carrying only a path is a path this host's pointer is KNOWN BY and
     not a link anybody recorded placing.
+
+    Non-blank STRINGS, not truthiness. This answer authorises replacing a link, and the record
+    is a file a person can edit: the shape check accepts any JSON under these keys, so 'true',
+    '[]' and '   ' are all truthy and none of them is a record of when or by whom a link was
+    placed. A guard that reads malformed evidence as evidence fails open, which is the one
+    direction this question may not fail in.
     """
-    if not isinstance(entry, dict) or not entry.get("path"):
+    if not isinstance(entry, dict) or not _stated(entry.get("path")):
         return False
-    return all(entry.get(key) for key in POINTER_PLACEMENT)
+    return all(_stated(entry.get(key)) for key in POINTER_PLACEMENT)
+
+
+def _stated(value):
+    """A value a record actually states: a string with something in it."""
+    return isinstance(value, str) and bool(value.strip())
 
 
 def without_placement(entry):
