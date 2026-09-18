@@ -382,6 +382,19 @@ class StopLauncherTest(unittest.TestCase):
         self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
         self.assertFalse(self.seen.exists())
 
+    def test_the_settings_override_is_settled_the_way_the_installer_settles_it(self):
+        """A ~ in the override is a path, not a directory named ~, and this hook runs from the
+        session's own workspace where either reading would otherwise be plausible."""
+        self.settings()
+        done = subprocess.run(
+            [sys.executable, str(self.LAUNCHER)], input=self.PAYLOAD, capture_output=True,
+            text=True, cwd="/",
+            env={"PATH": os.environ["PATH"], "HOME": str(self.home),
+                 "CODEX_HOME": "/nonexistent",
+                 "CRW_COMPLETION_HOOK_CONFIG": "~/crw-completion-hook.json"})
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, '{"decision": "block"}', done.stderr)
+
     def test_an_adapter_that_crashes_still_costs_nothing(self):
         self.adapter.write_text("raise SystemExit(2)\n", encoding="utf-8")
         self.settings()
@@ -483,6 +496,46 @@ class BridgeLauncherTest(unittest.TestCase):
         self.assertIn("pointer names the runtime", done.stderr)
 
     def test_it_starts_the_executable_the_record_names(self):
+        proof = self.home / "started"
+        executable = self.home / "bridge"
+        executable.write_text("#!/bin/sh\necho started > %s\n" % proof, encoding="utf-8")
+        executable.chmod(0o755)
+        self.record(bridgeExecutable=str(executable), args=["--stdio"])
+        done = self.start()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(proof.exists(), done.stderr)
+
+    def test_a_record_version_this_launcher_does_not_read_is_refused(self):
+        self.record(recordVersion=2)
+        done = self.start()
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("version", done.stderr)
+
+    def test_falsy_arguments_that_are_not_a_list_are_refused(self):
+        """or [] would turn each of these into no arguments and start the runtime anyway."""
+        for arguments in (False, 0, "", {}, [1], "--stdio"):
+            self.record(args=arguments)
+            done = self.start()
+            self.assertEqual(done.returncode, 2, repr(arguments))
+            self.assertIn("args", done.stderr, repr(arguments))
+
+    def test_a_record_naming_another_server_is_refused(self):
+        self.record(serverName="something-else")
+        done = self.start()
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("something-else", done.stderr)
+
+    def test_the_launcher_and_the_declaration_agree_on_the_server_name(self):
+        declared = json.loads((ROOT / "plugins/crw/wiring/mcp.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(declared["mcpServers"]), ["codex-thread-bridge"])
+        self.assertIn('DECLARED_SERVER = "codex-thread-bridge"',
+                      self.LAUNCHER.read_text(encoding="utf-8"))
+
+    def test_the_launcher_and_the_writer_agree_on_the_record_version(self):
+        self.assertIn("RECORD_VERSION = " + str(bridgerecord.RECORD_VERSION),
+                      self.LAUNCHER.read_text(encoding="utf-8"))
+
+    def test_it_starts_the_executable_the_record_names_unchanged(self):
         proof = self.home / "started"
         executable = self.home / "bridge"
         executable.write_text("#!/bin/sh\necho started > %s\n" % proof, encoding="utf-8")

@@ -3928,6 +3928,14 @@ def _register_mcp_owned(args, codex_home):
     # verified that nobody could read back.
     if outcome in REGISTER_REFUSALS:
         return EXIT_REFUSED
+    if record is not None and record["outcome"] not in bridgerecord.SETTLED:
+        # The registration landed and the record that names its owner did not. Reported as a
+        # refusal rather than a success, because a host left in that state answers "nobody owns
+        # this" to the launcher: installing the package would then start a second bridge beside
+        # the registration this run just made. Nothing is undone here, since the registration is
+        # already in the file; the emitted result carries both halves so the record can be
+        # repaired on its own.
+        return EXIT_REFUSED
     return EXIT_OK
 
 

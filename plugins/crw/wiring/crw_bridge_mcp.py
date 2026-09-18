@@ -28,6 +28,13 @@ from pathlib import Path
 
 RECORD_NAME = "crw-bridge-mcp.json"
 PLUGIN_OWNER = "plugin"
+# The record contract, mirrored from scripts/crw_runtime/bridgerecord.py, which this file
+# cannot import. Reading a weaker shape than the writer guarantees is how a record written for
+# a later contract gets started under this one: a changed version would be ignored, and a
+# falsy non-list args would quietly become no arguments at all. Tests assert both halves still
+# agree, here and with the server name wiring/mcp.json declares.
+RECORD_VERSION = 1
+DECLARED_SERVER = "codex-thread-bridge"
 # version/wiring/this-file -> version -> plugin -> marketplace -> cache -> plugins -> home
 CACHE_DEPTH = 6
 
@@ -69,14 +76,29 @@ def main():
         fail("the record at " + str(record) + " could not be read: " + str(error))
     if not isinstance(document, dict):
         fail("the record at " + str(record) + " is not an object")
+    if document.get("recordVersion") != RECORD_VERSION:
+        fail("the record at " + str(record) + " is version "
+             + repr(document.get("recordVersion")) + ", and this package reads version "
+             + str(RECORD_VERSION) + ". Rewrite it with the runtime_install.py that ships with"
+             " this package rather than starting a runtime under a contract this launcher does"
+             " not implement.")
     if document.get("owner") != PLUGIN_OWNER:
         fail("the record at " + str(record) + " names " + repr(document.get("owner"))
              + " as the owner of this server, so the Codex configuration registers it and this"
                " package must not start a second one")
+    name = document.get("serverName")
+    if name is not None and name != DECLARED_SERVER:
+        fail("the record at " + str(record) + " names the server " + repr(name)
+             + ", and this package declares " + repr(DECLARED_SERVER)
+             + "; the record belongs to a registration this launcher does not start")
     executable = document.get("bridgeExecutable")
     if not isinstance(executable, str) or not os.path.isabs(executable):
         fail("the record at " + str(record) + " must name bridgeExecutable as an absolute path")
-    arguments = document.get("args") or []
+    arguments = document.get("args")
+    if arguments is None:
+        arguments = []
+    # Checked before any defaulting. "args": false, 0, "" or {} would otherwise become an empty
+    # list and start the runtime without the arguments the record was written to carry.
     if not isinstance(arguments, list) or not all(isinstance(word, str) for word in arguments):
         fail("the record at " + str(record) + " must list args as strings")
     try:

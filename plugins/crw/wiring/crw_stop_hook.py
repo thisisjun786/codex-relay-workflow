@@ -52,10 +52,15 @@ def settings_path():
     A plugin-declared hook command runs through a shell and its process carries CODEX_HOME, so
     the home is read rather than guessed. The explicit override comes first because a caller
     that set it has already decided which file this hook reads.
+
+    The override is settled to an absolute path before it is used. This hook runs with the
+    session's own workspace as its directory, so a relative value would name one file where the
+    install ran and a different one, or none, at every Stop -- and a Stop that cannot find its
+    settings releases in silence, which is the failure that looks like nothing happening.
     """
     override = os.environ.get(SETTINGS_ENV)
     if override:
-        return Path(override)
+        return Path(os.path.abspath(str(Path(override).expanduser())))
     home = os.environ.get("CODEX_HOME")
     return Path(home if home else Path.home() / ".codex") / SETTINGS_NAME
 
