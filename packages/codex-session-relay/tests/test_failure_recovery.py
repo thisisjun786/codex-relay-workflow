@@ -16,11 +16,9 @@ produce - and tests/test_regression_map.py is what keeps this module named as re
 evidence in the map.
 """
 
-import re
 import sqlite3
 import time
 import unittest
-from pathlib import Path
 
 from codex_session_relay import guard, intent, marker
 from codex_session_relay.ack import AckService
@@ -217,29 +215,28 @@ class TheStoreUnderContention(GuardTestCase):
         )
         self.assertEqual(again["decision"], guard.RELEASE)
 
-    def test_the_bound_that_applies_is_not_the_constant_that_documents_it(self):
-        """A declared number nothing reads is a number that can drift without anyone noticing.
+    def test_the_bound_that_applies_is_decided_by_read_only_connection(self):
+        """Where the lock wait this hook can spend is actually decided, asked of the object.
 
-        Asserted rather than repaired: wiring SQLITE_TIMEOUT would have to pass a timeout
-        through intent.read_only_connection, which also serves dispatch_generation_state, and
-        that is a source decision with its own acceptance. Failing here the day somebody wires
-        it is the point - it turns a silent drift into a visible choice.
+        The measured two seconds above come from intent.read_only_connection, so that is the
+        place a change to the bound has to pass through, and this asks the function itself
+        rather than reading anybody's source text. The day someone gives it a timeout
+        parameter - which is what wiring guard.SQLITE_TIMEOUT would require - the signature
+        moves and this fails, which turns a silent drift into a visible choice.
+
+        Deliberately narrower than it once was. An earlier version also counted occurrences of
+        the name in guard.py and claimed from that count that nothing anywhere reads the
+        constant. One file is not the repository, so the claim was wider than the check, and a
+        second mention in a comment would have broken it with nothing wired. Whether a second
+        literal survives anywhere is CRW-96's question and its acceptance criteria say so.
         """
-        source = Path(guard.__file__).read_text(encoding="utf-8")
-        self.assertEqual(
-            len(re.findall(r"\bSQLITE_TIMEOUT\b", source)), 1,
-            "SQLITE_TIMEOUT is now referenced somewhere; if it was wired, say so here and drop"
-            " this test",
-        )
         import inspect
 
         self.assertEqual(
             list(inspect.signature(intent.read_only_connection).parameters), ["db_path"],
-            "read_only_connection now takes a timeout, so the guard can pass its own bound;"
-            " update this test to assert that it does",
+            "read_only_connection now takes a timeout, so the bound can be passed in rather"
+            " than fixed here; CRW-96 owns what that should be and this test should follow it",
         )
-
-
 class TheGenerationBoundReleasesIntoTheNextGeneration(GuardTestCase):
     """Repetition stops at the bound, and the next generation is not serving the old sentence."""
 

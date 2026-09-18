@@ -190,15 +190,19 @@ is that pair together rather than the timeout alone.
 
 ## Findings owned elsewhere, reported rather than fixed
 
-- `guard.SQLITE_TIMEOUT` documents the lock wait the readiness check may spend, and
-  nothing passes it anywhere. Its name occurs once in the repository, its own definition;
-  `intent.read_only_connection` carries a separate literal of the same value, and
-  `guard.lookup_receipt` calls that function without a timeout at all. The wait is
-  real and reachable - an exclusive writer makes the guard's read raise after a measured
-  2.00 seconds - but the number producing it is the literal, not the constant, so changing
-  the constant would change nothing. `test_failure_recovery.py` pins both halves.
-  Wiring or removing it would also move `intent.dispatch_generation_state`, so it is
-  reported rather than fixed here.
+- `guard.SQLITE_TIMEOUT` documents the lock wait the readiness check may spend, and the
+  bound that actually applies is set elsewhere: `intent.read_only_connection` carries its
+  own literal of the same value, and `guard.lookup_receipt` calls that function without
+  passing a timeout at all. The wait is real and reachable - an exclusive writer makes the
+  guard's read raise after a measured 2.00 seconds - and it is that literal producing it.
+  What `test_failure_recovery.py` pins is only the deciding place: it asks
+  `read_only_connection` for its signature, so the day a timeout parameter appears there
+  the test fails and the change becomes a decision rather than a drift. It does NOT establish
+  that nothing anywhere reads the constant; a check over the whole import graph, and the
+  question of whether a second literal should survive at all, belong to CRW-96, whose
+  acceptance already states that leaving the second literal in place is not satisfaction.
+  Wiring or removing it would also move `intent.dispatch_generation_state`, which is why it
+  is reported here rather than fixed.
 - `intent.register_relationship` reads the dispatch generation state and then publishes
   `relationship.json` as two operations with nothing held between them. An advance
   committing in that window returns success over a generation the store has already moved
