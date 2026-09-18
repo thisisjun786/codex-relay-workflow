@@ -1408,10 +1408,12 @@ python3 scripts/runtime_install.py hook-status --codex-home <codex-home>
 # Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
 # registration above deliberately appended a table, so a whole-file diff reports a change that
 # is this procedure's own doing and would report it whether or not anything was preserved.
-# Needs 3.11 or later, because the reader does. On the 3.10 floor there is none, and the
-# honest outcome is the one the suite records: this reading was not made. Do not substitute a
-# pattern match -- a value guessed out of TOML is a value whose wrongness is invisible.
-python3 -c 'import sys, tomllib
+# Name a 3.11 or later interpreter, because the reader arrives there. On a host whose python3
+# is the 3.10 floor this command exits before it reads anything, and the receipt then records
+# what the suite records on that interpreter: the reading was not made, and the row is
+# unreadable rather than preserved. Do not substitute a pattern match for it -- a value guessed
+# out of TOML is a value whose wrongness is invisible.
+<python3.11-or-later> -c 'import sys, tomllib
 keys = ("model", "approval_policy", "sandbox_mode")
 for path in sys.argv[1:]:
     with open(path, "rb") as handle:

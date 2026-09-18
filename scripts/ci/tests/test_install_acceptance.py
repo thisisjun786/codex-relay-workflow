@@ -148,6 +148,11 @@ TEXT_EVIDENCE = {
         " says so; the property it approximates is proved by the mutation cases instead.",
     "test_every_text_reading_place_is_declared":
         "the derivation that polices the others has to read this file to find them.",
+    "test_every_place_that_settles_for_a_refusal_is_declared":
+        "the answers an assertion requires are in the assertions, so the inventory of places"
+        " that settle for a refusal is derived from this file the same way -- and it is derived"
+        " by the answer required rather than by the shape of the call, because a shape sweep is"
+        " what missed two of them.",
 }
 
 # Rows whose reading is a check.field cell and therefore answers in check.VALUES. The others
@@ -523,6 +528,112 @@ BOUNDARIES = (
 GATE_REFUSAL = "read whether it is safe to swap"
 
 
+# The answer each acceptance row reads when the thing it judges actually worked. Declared, and
+# then required: a row that can never reach its success answer is a row whose assertion accepts
+# its own failure, and an install acceptance suite that passes when nothing installed is worse
+# than none, because the next person believes the ground is covered.
+SUCCESS_ANSWERS = {
+    # A listing answers in its own shape, so its success is stated in that shape: the check ran,
+    # nothing is missing and nothing conflicts.
+    "skillLink": {"exitCode": 0, "missing": [], "conflict": []},
+    "runtimeImport": "verified",
+    "mcpToolExposure": "verified",
+    "appServerConnection": "verified",
+    "hookCallback": "1",
+    "modelPermissionPreservation": PRESERVED,
+    "deliveryAcceptance": "verified",
+}
+
+# Every answer that means a question was not settled. Named so the check below can derive the
+# places that REQUIRE one, rather than recognising assertions by their shape -- a sweep over
+# shapes misses a refusal reached through a helper, and it was a shape sweep that missed twice.
+REFUSAL_ANSWERS = ("not_verified", "unknown", "not_applicable", reading.UNREADABLE,
+                   reading.ABSENT, reading.ACCESS_ERROR, CHANGED,
+                   completion.NOT_READ, completion.NO_JOURNAL)
+
+# The places that require a refusal, and what makes the refusal the right answer there. None of
+# them is an acceptance row accepting its own failure: every one of the seven is separately
+# required to read its success answer. A new place that settles for a refusal has to say which
+# of these it is, and a check derives the set from this file so it cannot arrive unannounced.
+ACCEPTS_A_REFUSAL = {
+    "test_a_daemon_that_could_not_be_read_is_neither_running_nor_stopped":
+        "the refusal IS the question: a daemon that could not be read is a third answer, and"
+        " collapsing it into running or stopped is the defect.",
+    "test_a_missing_registration_and_a_claimed_one_are_not_the_same_answer":
+        "absence is the answer being distinguished from a conflict.",
+    "test_an_install_that_succeeded_is_not_reported_as_an_activation":
+        "not_verified is the correct answer and the criterion: installation is not activation,"
+        " so this row succeeds by never reading verified.",
+    "test_changing_one_condition_moves_only_the_reading_that_asked_about_it":
+        "the refusals are the BEFORE ends of transitions that must finish at verified.",
+    "test_every_declared_path_is_one_its_source_actually_writes":
+        "the refusal is what proves the walk is load-bearing: the key is removed and the row"
+        " has to go unreadable.",
+    "test_every_row_is_readable_and_answers_in_its_own_vocabulary":
+        "only on the interpreter with no configuration reader, where the row must say it could"
+        " not take the reading and name why.",
+    "test_the_hook_row_counts_an_invocation_that_really_happened":
+        "absence is the BEFORE end: the claim is the transition to exactly one invocation.",
+    "test_the_model_and_permission_row_is_not_taken_from_a_neighbouring_verdict":
+        "changed is the correct answer to a posture that moved, and unreadable only where there"
+        " is no reader.",
+    "test_withholding_a_source_leaves_only_its_own_rows_unreadable":
+        "the refusal is the property: a command that did not run must not read as an answer.",
+    "test_without_a_reader_the_row_reports_itself_unread_rather_than_preserved":
+        "the property is that an unread row says so instead of reading as preserved.",
+}
+# Rows whose success answer cannot be required on every supported interpreter, with the reason.
+# The exception exists because absence is a real state here and the answer set can say so; it
+# is not a place to file a row that simply never succeeds.
+CONDITIONAL_SUCCESS = {
+    "modelPermissionPreservation":
+        "reading a configuration needs tomllib, which arrives in 3.11, and the supported floor",
+    "mcpToolExposure":
+        "exposure is verified by comparing the REGISTERED command with the tools observed, and"
+        " the registration lives in the configuration -- so on the interpreter with no reader"
+        " for it this row cannot reach verified either, for the same one reason",
+}
+
+
+def succeeding(root):
+    """One run in which every one of the seven readings has something that worked to read.
+
+    The skills are really linked, the registration really names the command the diagnosis is
+    asked about, both components really import from this checkout, the relay really answers the
+    doctor and every step of a trial, and the hook has really fired. Nothing here is a fixture
+    standing in for an answer: the stand-ins are the things being asked, and what they answer is
+    what the readings report.
+    """
+    host = base._Host(root)
+    clean(host)
+    seed_settings(host)
+    earlier = host.config.read_text(encoding="utf-8")
+    install(host, clean_store=True)
+    later = host.config.read_text(encoding="utf-8")
+
+    linked_skills(host)
+    bridge = base.component_of_for_test(host.data, runtime_install.MCP_NAME)
+    registered = str(host.pointer_path / "bin" / bridge["consoleScript"])
+    # The supplied runtime first: it writes the console scripts the entry points resolve to and
+    # records the interpreter, and only then is that interpreter given a path it can import from.
+    stand_in_runtime(host)
+    sources = importable_runtime(host, root, paths=component_sources())
+
+    hook_directory = root / "hook"
+    hook_directory.mkdir(exist_ok=True)
+    _before, after = fire_the_hook(hook_directory)
+
+    return {
+        "diagnose": diagnose_for(
+            root, host,
+            "--bridge-command", registered, "--observed-tool", "get_capabilities",
+            "--relay-command", str(delivering_relay(root)),
+            "--trial", *trial_inputs(root),
+            import_path=sources),
+        "hook-status": after,
+        ACCEPTANCE: _model_permission_delta(earlier, later),
+    }, host
+
 class ComposedLifecycleTests(unittest.TestCase):
     """One destination, four stages, and the install that has to come back at the end of them.
 
@@ -756,7 +867,7 @@ def stand_in_runtime(host):
     hostrecord.save(host.record_path, record)
     return binaries, interpreter
 
-def importable_runtime(host, root):
+def importable_runtime(host, root, paths=None):
     """A supplied runtime that CAN import the components, from inside the temporary directory.
 
     The import row is the one question whose answer nothing here was moving. A cell that holds
@@ -769,16 +880,19 @@ def importable_runtime(host, root):
     is a directory under the temporary root. What moves is what can be imported, not where it
     is allowed to look.
     """
-    stubs = root / "importable"
-    for component in host.data["components"]:
-        package = stubs / component["module"]
-        package.mkdir(parents=True, exist_ok=True)
-        (package / "__init__.py").write_text("", encoding="utf-8")
+    if paths is None:
+        stubs = root / "importable"
+        for component in host.data["components"]:
+            package = stubs / component["module"]
+            package.mkdir(parents=True, exist_ok=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+        paths = str(stubs)
     interpreter = host.candidate / "bin" / "python"
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
     interpreter.write_text(
         "#!/bin/sh\nexec \"" + sys.executable + "\" -S \"$@\"\n", encoding="utf-8")
     interpreter.chmod(interpreter.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
-    return stubs
+    return paths
 
 def diagnose_for(root, host, *extra, import_path=None):
     """Ask this host for a diagnosis, with whatever extra input the case is varying."""
@@ -803,6 +917,87 @@ def diagnose_for(root, host, *extra, import_path=None):
     return json.loads(done.stdout)
 
 
+# Everything a trial sends, answered. A relay that refuses a step leaves the delivery row at
+# not_verified, which is an honest answer to "did a delivery complete" and no answer at all to
+# "can this command complete one".
+TRIAL_ANSWERS = {
+    "assignment-find": {},
+    "register": {"relationshipId": "rel-1"},
+    "settings-record": {},
+    "generation-open": {"executionGeneration": 1},
+    "generation-bind": {},
+    "admit-turn": {},
+    "emit": {"receipt": {"eventId": "event-1"}},
+    "deliver": {"attempt": {"turnId": "turn-1"}},
+    "doctor": {"contents": {"available": True, "openAttempts": 0},
+               "actorReachability": {"socketConnect": "ok"}},
+}
+
+# What the relay own predicate requires of a recipient settings document, supplied in full so
+# the preflight passes for the reason it exists rather than by being skipped.
+RECIPIENT_SETTINGS = {"sandbox": {"type": "readOnly"}, "approvalPolicy": "never",
+                      "cwd": "/tmp", "runtimeWorkspaceRoots": ["/tmp"], "model": "a-model",
+                      "reasoningEffort": "low", "environments": {}}
+
+
+def delivering_relay(root, *, doctor=True):
+    """A relay that answers every step of a trial, so a delivery can actually complete.
+
+    Its first line names a real interpreter inside the temporary directory. A console script
+    whose shebang is a wrapper cannot be executed -- the kernel does not follow one shebang to
+    another -- and one naming env answers the preflight with the literal two-word string, which
+    is the trampoline shape the installer documents.
+    """
+    interpreter = root / "relay-python"
+    if not interpreter.exists():
+        interpreter.symlink_to(sys.executable)
+    path = root / "delivering-relay"
+    answers = dict(TRIAL_ANSWERS)
+    if not doctor:
+        # The connection cell asks the doctor and the delivery cell does not, so a relay used to
+        # move delivery answers the trial and stays silent about reachability. Otherwise one
+        # input would move two questions and neither could be said to answer on its own.
+        answers["doctor"] = {"contents": {"available": True, "openAttempts": 0}}
+    path.write_text(
+        "#!" + str(interpreter) + "\n"
+        "import json, sys\n"
+        "answers = json.loads(" + repr(json.dumps(answers)) + ")\n"
+        "step = next((a for a in sys.argv[1:] if a in answers), \"\")\n"
+        "print(json.dumps(answers.get(step, {})))\n",
+        encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
+    return path
+
+
+def trial_inputs(root):
+    """The required trial inputs, every one of them, written where the command can read them."""
+    artifacts = root / "artifacts"
+    artifacts.mkdir(exist_ok=True)
+    artifact = artifacts / "result.txt"
+    artifact.write_text("a deliverable this trial names", encoding="utf-8")
+    settings = root / "recipient-settings.json"
+    settings.write_text(json.dumps(RECIPIENT_SETTINGS), encoding="utf-8")
+    return ["--issue", "CRW-69", "--parent-task", "parent", "--child-task", "child",
+            "--recipient", "parent", "--artifact-root", str(artifacts),
+            "--artifact", str(artifact), "--turn-thread", "child", "--turn-id", "turn-1",
+            "--dispatch-turn-id", "anchor-1", "--recipient-settings", "@" + str(settings)]
+
+
+def linked_skills(host):
+    """Actually install the skill links, so the link row has something to read as linked."""
+    done = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "install.py"), "--apply",
+         "--dest", str(host.codex_home / "skills")],
+        capture_output=True, text=True, timeout=120)
+    return done
+
+
+def component_sources():
+    """The two package roots of this checkout, which is what makes an import real here."""
+    return os.pathsep.join(
+        str(ROOT / Path(component["packageLocation"]).parent)
+        for component in definition.load()["components"])
+
 def observe_all(root):
     """Every reading the criterion asks for, each taken from the source that answers it.
 
@@ -819,6 +1014,9 @@ def observe_all(root):
     later = host.config.read_text(encoding="utf-8")
 
     stand_in_runtime(host)
+    # Linked for real, so the listing row has a success to read here too rather than a baseline
+    # of "every skill missing" that an assertion would then have to accept.
+    linked_skills(host)
 
     hook_directory = root / "hook"
     hook_directory.mkdir(exist_ok=True)
@@ -1019,8 +1217,11 @@ class SevenReadingsTests(unittest.TestCase):
 
         links = rows["skillLink"]["value"]
         self.assertIn("command", links)
-        self.assertTrue("exitCode" in links or "unreadable" in links,
-                        "a listing either ran or says it could not")
+        self.assertEqual(links.get("exitCode"), 0,
+                         "the listing ran and found nothing missing; accepting a failed check"
+                         " here would leave this row green with no skill linked at all")
+        self.assertEqual(links.get("missing"), [])
+        self.assertTrue(links.get("linked"), "and it names what it linked")
 
         preservation = rows["modelPermissionPreservation"]["value"]
         if HAS_READER:
@@ -1051,6 +1252,103 @@ class SevenReadingsTests(unittest.TestCase):
         self.assertEqual(len(set(declared)), len(declared),
                          "a question in two vocabularies is checked against one it does not"
                          " answer in")
+
+    def test_every_acceptance_row_reaches_its_success_answer(self):
+        """The one that decides whether this suite is worth having.
+
+        Every row here judges whether something worked. A row whose assertion accepts a refusal,
+        an absence or a not_verified is a row that stays green when the thing it judges never
+        happens -- and an install acceptance suite that passes while nothing installed is worse
+        than no suite, because the next person reads that ground as covered.
+
+        So one run is made in which all seven have something that worked to read, and each row
+        is required to read its declared success answer. The skills are really linked, the
+        registration really names the command the diagnosis is asked about, both components
+        really import from this checkout, the relay really answers the doctor and every step of
+        a trial, and the hook has really fired.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            payloads, _host = succeeding(Path(temporary).resolve())
+        rows = table(payloads)
+
+        self.assertEqual(sorted(SUCCESS_ANSWERS), sorted(SEVEN),
+                         "every question declares the answer it reads when the thing worked")
+
+        for cell in SEVEN:
+            wanted = SUCCESS_ANSWERS[cell]
+            with self.subTest(cell):
+                if cell in CONDITIONAL_SUCCESS and not HAS_READER:
+                    # The declared condition, asserted rather than assumed: the success answer
+                    # is excused only where the thing it names is genuinely absent. Where the
+                    # row can still be read, what it reads is checked by the vocabulary case;
+                    # what is not claimed here is that it succeeded.
+                    self.assertFalse(HAS_READER,
+                                     cell + ": excused from its success answer on an"
+                                     " interpreter that does have the reader")
+                    continue
+                self.assertTrue(rows[cell]["readable"], str(rows[cell].get("detail")))
+                found = rows[cell]["value"]
+                if isinstance(wanted, dict):
+                    self.assertEqual({key: found.get(key) for key in wanted}, wanted,
+                                     cell + ": the listing does not read as a success")
+                elif cell in OWN_SHAPE_ROWS:
+                    self.assertEqual(found, wanted, cell + ": not its success answer")
+                else:
+                    self.assertEqual(found["value"], wanted,
+                                     cell + ": read " + repr(found["value"]) + " where the thing it judges had worked, so this row would stay green if it never did")
+
+
+    def test_every_place_that_settles_for_a_refusal_is_declared(self):
+        """The inventory of accepted answers, derived from what the assertions require.
+
+        Derived by the ANSWER an assertion requires, not by the shape of the assertion. A sweep
+        over shapes misses a refusal reached through a helper or spelled as a constant, and that
+        is how two of these survived earlier passes.
+
+        The point is not that refusals are forbidden -- this repository is built on absence
+        being a real answer. It is that a place settling for one has to say why the refusal is
+        the right answer to the question it asks, so that no acceptance row quietly accepts its
+        own failure.
+        """
+        refusals = set(REFUSAL_ANSWERS)
+        constants = {"UNREADABLE", "ABSENT", "ACCESS_ERROR", "NOT_READ", "NO_JOURNAL"}
+        settles = set()
+        for node in ast.walk(ast.parse(HERE.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for call in ast.walk(node):
+                if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and call.func.attr.startswith("assert")):
+                    continue
+                for part in ast.walk(call):
+                    if isinstance(part, ast.Constant) and part.value in refusals:
+                        settles.add(node.name)
+                    if isinstance(part, ast.Attribute) and part.attr in constants:
+                        settles.add(node.name)
+                    if isinstance(part, ast.Name) and part.id == "CHANGED":
+                        settles.add(node.name)
+
+        self.assertEqual(settles, set(ACCEPTS_A_REFUSAL),
+                         "a place requires an answer that means the question was not settled,"
+                         " and does not say why that is the right answer there: "
+                         + json.dumps(sorted(settles ^ set(ACCEPTS_A_REFUSAL))))
+        for place, why in ACCEPTS_A_REFUSAL.items():
+            with self.subTest(place):
+                self.assertTrue(why.strip(), place + " settles for a refusal without a reason")
+    def test_a_row_that_cannot_require_success_says_why_absence_is_normal(self):
+        """The only exception, and it has to carry its reason.
+
+        Absence is a real state in this repository and an answer set has to be able to express
+        it. What it must not become is a place to file a row that simply never succeeds, so a
+        conditional row names the condition rather than the fact that it is conditional.
+        """
+        self.assertEqual(set(CONDITIONAL_SUCCESS) - set(SEVEN), set(),
+                         "a condition is declared for a question nobody asks")
+        for cell, why in CONDITIONAL_SUCCESS.items():
+            with self.subTest(cell):
+                self.assertTrue(why.strip(), cell + " is excepted without a reason")
+                self.assertIn(cell, SUCCESS_ANSWERS,
+                              cell + " has no success answer to fall back from")
     def test_each_row_reads_its_own_path_and_no_other(self):
         """The property, stated as a change rather than as a declaration.
 
@@ -1194,7 +1492,10 @@ class SevenReadingsTests(unittest.TestCase):
             plain = diagnose_for(root, host)
             exposed = diagnose_for(root, host, "--bridge-command", registered,
                                    "--observed-tool", "get_capabilities")
-            tried = diagnose_for(root, host, "--trial")
+            tried = diagnose_for(root, host, "--relay-command",
+                                 str(delivering_relay(root, doctor=False)),
+                                 "--trial", *trial_inputs(root),
+                                 import_path=component_sources())
             reached = diagnose_for(root, host, "--relay-command",
                                    str(answering_relay(root)))
             # Last, because it rebuilds the supplied interpreter: the readings above are taken
@@ -1209,12 +1510,18 @@ class SevenReadingsTests(unittest.TestCase):
         # copying into it, and it cannot tell a live reading from a command that quietly stopped
         # attempting one: both look like the same answer forever.
         directions = [
-            ("deliveryAcceptance", tried, "not_applicable", "not_verified"),
-            ("appServerConnection", reached, "unknown", "verified"),
-            ("runtimeImport", able, "not_verified", "verified"),
+            # The last field says which neighbours are compared on their evidence as well as
+            # their value. A completing trial needs a runtime that has the relay in it, and the
+            # import row reads where that same runtime finds things -- so that one direction
+            # moves the relay's import EVIDENCE by construction while its verdict stays put.
+            # Naming the coupling is honest; comparing evidence there anyway would be asserting
+            # that two questions with a shared input never touch, which is not true.
+            ("deliveryAcceptance", tried, "not_applicable", "verified", False),
+            ("appServerConnection", reached, "unknown", "verified", True),
+            ("runtimeImport", able, "not_verified", "verified", True),
         ]
         if HAS_READER:
-            directions.append(("mcpToolExposure", exposed, "not_verified", "verified"))
+            directions.append(("mcpToolExposure", exposed, "not_verified", "verified", True))
         else:
             without = read("mcpToolExposure", {"diagnose": exposed})["value"]
             self.assertEqual(without["value"], "not_verified",
@@ -1222,7 +1529,7 @@ class SevenReadingsTests(unittest.TestCase):
                              " be compared, so exposure stays unverified -- and it must stay so"
                              " for that reason rather than rise on a tool list alone")
 
-        for moved_cell, varied, was_expected, now_expected in directions:
+        for moved_cell, varied, was_expected, now_expected, compare_evidence in directions:
             with self.subTest(moved_cell):
                 before = read(moved_cell, {"diagnose": plain})["value"]
                 after = read(moved_cell, {"diagnose": varied})["value"]
@@ -1236,8 +1543,9 @@ class SevenReadingsTests(unittest.TestCase):
                     with self.subTest(other):
                         was = read(other, {"diagnose": plain})["value"]
                         now = read(other, {"diagnose": varied})["value"]
-                        self.assertEqual((now["value"], now["evidence"]),
-                                         (was["value"], was["evidence"]),
+                        compared = ("value", "evidence") if compare_evidence else ("value",)
+                        self.assertEqual(tuple(now[key] for key in compared),
+                                         tuple(was[key] for key in compared),
                                          other + " moved when only " + moved_cell + " was asked"
                                          " about, so it is not answering on its own reading")
     def test_the_diagnosis_reads_nothing_outside_the_directory_it_was_given(self):
