@@ -40,6 +40,7 @@ this arrangement cannot reach are reported as not performed. Procedure: docs/hoo
 """
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -1007,6 +1008,72 @@ def supplemental(scenarios):
 # ------------------------------------------------------------------ the run
 
 
+# The two names a judgment is written under anywhere in this document. Collected by walking what
+# was assembled rather than by listing the places that produce them: the list was wrong three times
+# in a row, and each time the thing left out was a judgment that could fail while the command
+# exited 0. A walk cannot leave one out, and a judgment added later joins it without being noticed.
+JUDGMENT_KEYS = ("passed", "met")
+
+
+def judgments(payload, path=()):
+    """Every judgment in the document, by where it sits and what it said."""
+    found = []
+    if isinstance(payload, dict):
+        for key, value in sorted(payload.items()):
+            here = path + (key,)
+            if key in JUDGMENT_KEYS:
+                found.append(("/".join(str(one) for one in here), value))
+            found.extend(judgments(value, here))
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload):
+            found.extend(judgments(value, path + (index,)))
+    return found
+
+
+def source_identity():
+    """What actually ran, which is not always what the commit names.
+
+    A commit identifies bytes only when the checkout is clean. Run from a working tree with edits
+    in it - which is how anyone developing this runs it - the commit names something else, and a
+    result attributing itself to that commit attributes the run to source it did not execute. So
+    the dirty state is recorded beside it, and the files whose contents decide a run are digested,
+    which identifies them whether or not anything is committed.
+    """
+    identity = {"repositoryCommit": repository_commit(), "workingTree": reading.UNREADABLE}
+    try:
+        done = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
+                              capture_output=True, text=True, timeout=60)
+        if done.returncode == 0:
+            identity["workingTree"] = "dirty" if done.stdout.strip() else "clean"
+    except OSError:
+        pass
+    digests = {}
+    for name, target in (("harness", Path(__file__).resolve()),
+                         ("installer", RUNTIME),
+                         ("entryPoint", ROOT / "scripts" / completion.ENTRY_POINT_NAME),
+                         ("runtimeModules", ROOT / "scripts" / "crw_runtime"),
+                         ("relay", RELAY_SOURCE)):
+        digests[name] = _digest(target)
+    identity["sourceDigests"] = digests
+    return identity
+
+
+def _digest(target):
+    """One digest over a file, or over a directory's files by path and content."""
+    summed = hashlib.sha256()
+    try:
+        paths = [target] if target.is_file() else sorted(
+            path for path in target.rglob("*.py") if path.is_file())
+        if not paths:
+            return reading.UNREADABLE
+        for path in paths:
+            summed.update(str(path.relative_to(ROOT)).encode("utf-8"))
+            summed.update(path.read_bytes())
+    except OSError:
+        return reading.UNREADABLE
+    return summed.hexdigest()
+
+
 def repository_commit():
     try:
         done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(ROOT), capture_output=True,
@@ -1095,10 +1162,10 @@ def document(scenarios, root):
     answers = measures(scenarios)
     missed = sorted(name for name, measure in answers.items()
                     if measure.get("answer") == MEASURED and not measure.get("met"))
-    return {
+    body = {
         "source": SOURCE,
         "harnessVersion": HARNESS_VERSION,
-        "repositoryCommit": repository_commit(),
+        "sourceIdentity": source_identity(),
         "pythonVersion": ".".join(str(part) for part in sys.version_info[:3]),
         "root": str(root),
         "mode": completion.HOLD,
@@ -1119,11 +1186,15 @@ def document(scenarios, root):
         "rowsThatDisagreed": failed,
         "measuresThatMissedTheirBound": missed,
         "everyRowPassed": not failed and not armed,
-        # The answer, and the only thing the exit status is taken from. Keeping the rows and the
-        # measures apart let a run whose latency exceeded the contract's bound, or whose wrong
-        # block criterion was unmet, exit 0 because every row had agreed with its own table.
-        "passed": not failed and not armed and not missed,
     }
+    # The answer, derived from every judgment this document carries rather than from the three
+    # kinds someone remembered to collect. Rows, arms and measures were collected and the
+    # supplemental observations were not, so one of them could fail while the command exited 0.
+    counted = judgments(body)
+    body["judgmentsCounted"] = len(counted)
+    body["judgmentsThatFailed"] = [where for where, value in counted if value is False]
+    body["passed"] = not body["judgmentsThatFailed"]
+    return body
 
 
 def main(argv=None):
@@ -1163,4 +1234,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

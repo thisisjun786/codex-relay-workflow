@@ -187,6 +187,8 @@ class ComparisonRunTests(unittest.TestCase):
                         + json.dumps(answer.get("measuresThatMissedTheirBound")))
         self.assertEqual(answer.get("measuresThatMissedTheirBound"), [],
                          "a criterion this command exists to judge was not met")
+        self.assertEqual(answer.get("judgmentsThatFailed"), [],
+                         "a judgment in the document said false while the run reported passing")
 
     def test_the_inventories_are_the_ones_this_check_names(self):
         """Counted against literals, so a scenario that vanished takes no assertion with it."""
@@ -352,6 +354,40 @@ class ComparisonRunTests(unittest.TestCase):
             cells = firing(answer, scenario, "on", 0)["cells"]
             self.assertEqual(cells["heldFile"]["value"], "not_reserved")
             self.assertEqual(cells["printedBlock"]["value"], "printed_nothing")
+
+    def test_every_judgment_the_document_carries_reaches_the_answer(self):
+        """Derived from the document, because the enumerated list was wrong three times.
+
+        A judgment is any field named passed or met. Collecting only the kinds someone remembered
+        left the supplemental observations out of the answer, so one of them could have failed
+        while the command exited zero. This walks the document the way the harness does and
+        requires the two to agree.
+        """
+        answer = run_once()
+        counted = []
+
+        def walk(payload, path=()):
+            if isinstance(payload, dict):
+                for key, value in sorted(payload.items()):
+                    here = path + (key,)
+                    if key in ("passed", "met"):
+                        counted.append(("/".join(str(one) for one in here), value))
+                    walk(value, here)
+            elif isinstance(payload, list):
+                for index, value in enumerate(payload):
+                    walk(value, path + (index,))
+
+        walk(dict((key, value) for key, value in answer.items() if key != "passed"))
+        self.assertGreater(len(counted), 20, "the document carries almost no judgments, so this"
+                                             " check is watching something that stopped judging")
+        self.assertEqual(answer["judgmentsCounted"], len(counted),
+                         "the run counted a different number of judgments from this walk")
+        self.assertEqual(sorted(answer["judgmentsThatFailed"]),
+                         sorted(where for where, value in counted if value is False),
+                         "the run collected different failures from the ones in its own document")
+        for kind in ("scenarios", "arms", "measures", "supplemental"):
+            self.assertTrue(any(where.startswith(kind) for where, _v in counted),
+                            kind + " carries no judgment, so nothing there can fail")
 
     def test_a_measured_criterion_that_misses_its_bound_is_collected(self):
         """The overall answer covers the criteria, not only the rows.
@@ -828,4 +864,3 @@ class RefusalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

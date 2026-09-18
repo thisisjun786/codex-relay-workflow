@@ -178,19 +178,22 @@ One JSON object on stdout, and nothing else on stdout.
 | Field | What it carries |
 | -- | -- |
 | `source` | `hook-comparison`, the stamp a reader checks before walking a path into this document |
-| `repositoryCommit` | the revision the harness ran from |
+| `sourceIdentity` | the commit, whether the working tree was clean when the run started, and a digest of each source whose contents decide a run: the harness, the installer, the entry point, the runtime modules and the relay. A commit identifies bytes only in a clean checkout, and anyone developing this runs it in a dirty one |
 | `pythonVersion` | the interpreter that ran it |
 | `mode` and `isolation` | the mode the on arm was registered in, and what makes holding legitimate here |
 | `arms` | per arm, the install reading, the registration reading, the Codex home and the argv of the install |
 | `scenarios` | per scenario, per arm, every cell as a value with the source that answered it, the path it was read from, whether it was readable, and the detail when it was not; beside the observation and decision the scenario declared in advance, and the provenance of what was handed to the command |
 | `measures` | the six, each with its answer, the rows it was computed from, and its narrowing sentence |
 | `supplemental` | observations reported under their own name because they are not one of the six |
-| `measuresThatMissedTheirBound` | the measured criteria that were not met, and the only thing the exit status is taken from beside the rows and the arms |
+| `judgmentsCounted` and `judgmentsThatFailed` | every field in this document named passed or met, and which of them said false. The exit status is taken from that list and from nothing else |
+| `measuresThatMissedTheirBound` | the measured criteria that were not met, kept as a readable summary of part of the list above |
 | `notPerformed` | what was not run and why, including the CRW-68 criteria this arrangement cannot reach |
 | `standIns` | per stand-in, what it replaces and what a row travelling through it therefore does not prove |
 
-A run passes when every row passes, both arms installed as they declare, and no measured criterion
-missed its bound. A row on the on arm passes when the install succeeded as its arm declares, exactly
+A run passes when no judgment in its document said false. A judgment is any field named
+`passed` or `met`, wherever it sits, and they are collected by walking what was assembled
+rather than from a list of the kinds that produce them: three times that list left one out, and
+each time the thing left out was a judgment that could fail while the command exited zero. A row on the on arm passes when the install succeeded as its arm declares, exactly
 one entry names this adapter, the hook process exited zero, the adapter outcome is `guard_answered`, the observation and the decision and the
 decision state and the printed answer and the reservation are all the ones the scenario declared in
 advance, and a managed scenario resolves its published observation on disk. A row on the off arm
