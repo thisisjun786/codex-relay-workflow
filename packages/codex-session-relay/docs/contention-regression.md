@@ -97,7 +97,7 @@ overstatement this map exists to avoid.
 | `test_failure_recovery.py` | 14 | 2, 3 |
 | `test_multi_parent_isolation.py` | 8 | 5, 6 |
 | `test_operational_scale.py` | 8 | 7, 8 |
-| `test_regression_map.py` | 17 | 9, the sweep's own reach, and where the faults are injected |
+| `test_regression_map.py` | 26 | 9, the sweep's own reach, and where the faults are injected |
 
 ## Clock provenance, derived rather than asserted
 

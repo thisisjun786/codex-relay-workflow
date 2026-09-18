@@ -25,6 +25,7 @@ of them were wrong when this landed and review caught both by mutation rather th
 import ast
 import pathlib
 import re
+import textwrap
 import unittest
 
 from .support import written_table
@@ -1011,15 +1012,26 @@ class TheSweepDerivesItsOwnReachRatherThanClaimingIt(unittest.TestCase):
 # pass in a situation its own name does not describe. Every arming is enumerated from
 # source and carries the interval it reaches and a reading.
 #
-# What this does NOT claim, written down because the claim was wrong twice before it was
-# narrowed. The rule is total over the grammar it accepts: an attribute assignment naming
-# the hook, a call to the helper including one reached through a single-level alias, and
-# the shapes that could hide an arming - a string containing the hook's name, a call to
-# setattr, exec or eval or a single-level alias of one, a __dict__ subscript assignment, an
-# __setattr__ call. Every one of those either becomes a site or fails here as an
-# unaccounted occurrence. Anything outside that grammar - arbitrary reflective mutation,
-# transitive aliasing, a name assembled at runtime and reached another way - is OUT OF
-# REACH, and this says so rather than claiming such a thing is absent.
+# What this is, and what it does NOT claim. The claim was rewritten four times under review
+# and was wrong three of them, which is the best argument for stating it exactly.
+#
+# This is a scope-blind, flow-blind reader of syntax, not Python name resolution. It
+# recognises: an attribute assignment whose attribute is the hook; a call whose callee names
+# the helper; a call to setattr, exec, eval or __setattr__; a __dict__ subscript assignment;
+# a string containing the hook's name; a read of the hook; the helper named without being
+# called; and a binding of the helper or of setattr, exec or eval to some other name,
+# whether by assignment, tuple, walrus or import-as. Every one of those becomes a site or an
+# unaccounted occurrence, and THAT is the only totality claimed.
+#
+# It deliberately does not follow a binding. Resolving aliases is what an earlier version
+# did, and it answered wrongly twice: once reporting a raw reflective arming as a helper site
+# because the same local name appeared in two functions, and once for obj.arm(). A reader
+# that answers "helper" for a raw arming hides exactly what this exists to surface, which is
+# worse than one that says "somebody bound this name, go and read it". So a binding is
+# reported and the call made through it is not classified at all.
+#
+# Out of reach, and not claimed absent: an arming reached through a resolved alias, a
+# closure, a callback, a name looked up at runtime, or any other reflection.
 #
 # As with SUMMARY_SITES above: the scan supplies the reach, a person supplies the verdict,
 # and a wrong verdict fails nothing here.
@@ -1064,12 +1076,15 @@ FAULT_SITES = (
      " to land. Left raw: there is nothing for a predicate to disambiguate"),
 )
 
-# A shape that could hide an arming and that this reader cannot classify. The one entry is
-# this module's own HOOK constant: from the outside a string naming the hook is a string
-# naming the hook, and nothing here can tell a scan's own subject from an attribute name
-# assembled for a setattr. Declared rather than excluded, because excluding this file would
-# create the one place an arming could sit unseen.
+# A shape that could hide an arming and that this reader cannot classify. Two entries, and
+# both are this machinery looking at itself. The HOOK constant: from the outside a string
+# naming the hook is a string naming the hook, and nothing here can tell a scan's own
+# subject from an attribute name assembled for a setattr. The helper's own def: nothing
+# here can tell the real definition from one that shadows it, and a shadow is how a call
+# gets classified as the helper when it is something else. Both are declared rather than
+# excluded, because excluding a file is how you create the one place an arming sits unseen.
 UNACCOUNTED_FAULT_OCCURRENCES = (
+    ("support.py", "killed_before_commit", "defines the helper"),
     ("test_regression_map.py", "<module>", "names the hook in a string"),
 )
 
@@ -1083,107 +1098,145 @@ def _referred(node):
     return None
 
 
-def _single_level_aliases(tree, names):
-    """name = <one of names>, one level. Deliberately not followed further.
+TRACKED = (HELPER, *HIDING_CALLS)
 
-    Following an alias chain is a different reader with a different failure mode. One level
-    covers the spelling a test would actually use, and anything deeper lands in the
-    leftovers instead of being silently missed.
+
+def _binds_a_tracked_name(node):
+    """The tracked names this statement binds to some other name, reported and not followed.
+
+    Seven review rounds each produced another spelling of "bind it elsewhere and call that":
+    a plain assignment, an annotated one, a tuple, a starred tuple, a walrus, an import-as.
+    Resolving them answered WRONGLY twice - a raw reflective arming was reported as a helper
+    site once the same local name appeared in two functions, and again for obj.arm(). Name
+    resolution is not an AST-shape problem, so this stopped trying.
+
+    A binding is reported; the call made through it is not classified at all. What the
+    resolver was pretending to do, a person now has to do: read the binding and write down
+    what it is.
+
+    Shallow on purpose. The right-hand side is read one level - the value itself, or the
+    elements of a tuple or list literal. A binding buried deeper is not seen, and the reach
+    comment says so rather than implying otherwise.
     """
-    aliases, sources = {}, set()
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return [alias.name.split(".")[-1] for alias in node.names
+                if alias.asname and alias.name.split(".")[-1] in TRACKED]
+    if isinstance(node, ast.Assign):
+        values = [node.value]
+    elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+        values = [node.value] if node.value is not None else []
+    else:
+        return []
+    found = []
+    for value in values:
+        parts = value.elts if isinstance(value, (ast.Tuple, ast.List)) else [value]
+        for part in parts:
+            part = part.value if isinstance(part, ast.Starred) else part
+            if _referred(part) in TRACKED:
+                found.append(_referred(part))
+    return found
+
+
+def _predicate_of(call):
+    """The writing predicate a helper call passes, or that it cannot be read."""
+    writing = None
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            # **something. The predicate may be in there and this reader cannot see it;
+            # answering None would assert there is none, which is a different claim.
+            return UNREADABLE
+        if keyword.arg == "writing":
+            writing = (
+                keyword.value.value
+                if isinstance(keyword.value, ast.Constant) else UNREADABLE
+            )
+    return writing
+
+
+def _injection_sites_in(tree, module):
+    """Sites and leftovers for one parsed module.
+
+    Split out from the file walk so the rules can be pinned against synthetic source.
+    Review measured the reason: replacing the binding reader with one that returns nothing
+    left every other case in this module green, so the behaviour was checked by a scratch
+    harness and by nothing that ships.
+    """
+    sites, leftover = [], []
+    owner = {}
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(node):
+                owner.setdefault(child, node.name)
+    # A string whose value is thrown away cannot name an attribute for any purpose, so a
+    # docstring mentioning the hook is not a hiding place.
+    discarded = {
+        id(node.value) for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+    accounted = set()
+
+    for node in ast.walk(tree):
+        for bound in _binds_a_tracked_name(node):
+            leftover.append((module, owner.get(node, "<module>"), "binds " + bound + " elsewhere"))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == HELPER:
+            # This reader cannot tell the real definition from one that shadows it, so it
+            # declines to and says which module it found.
+            leftover.append((module, node.name, "defines the helper"))
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            if isinstance(target, ast.Attribute) and target.attr == HOOK:
+                accounted.add(id(target))
+                value = node.value
+                if isinstance(value, ast.Constant) and value.value is None:
+                    continue
+                sites.append((module, owner.get(node, "<module>"), "raw", None))
+            if isinstance(target, ast.Subscript) and _referred(target.value) == "__dict__":
+                leftover.append((module, owner.get(node, "<module>"), "assigns through __dict__"))
+        if isinstance(node, ast.Call):
+            callee = _referred(node.func)
+            if isinstance(node.func, ast.Name) and callee == HELPER:
+                accounted.add(id(node.func))
+                sites.append((module, owner.get(node, "<module>"), "helper", _predicate_of(node)))
+            elif callee == HELPER:
+                # obj.killed_before_commit(). Same final name, no reason to believe it is the
+                # same function, and guessing is how a raw arming got called a helper site.
+                accounted.add(id(node.func))
+                leftover.append((module, owner.get(node, "<module>"), "calls a helper-named attribute"))
+            elif callee in HIDING_CALLS or callee == "__setattr__":
+                leftover.append((module, owner.get(node, "<module>"), "calls " + str(callee)))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if HOOK in node.value and id(node) not in discarded:
+                leftover.append((module, owner.get(node, "<module>"), "names the hook in a string"))
             continue
-        target = node.targets[0]
-        referred = _referred(node.value)
-        if isinstance(target, ast.Name) and referred in names:
-            aliases[target.id] = referred
-            sources.add(id(node.value))
-    return aliases, sources
+        if isinstance(node, ast.Attribute) and node.attr == HOOK:
+            if id(node) not in accounted:
+                leftover.append((module, owner.get(node, "<module>"), "reads the hook"))
+        if isinstance(node, (ast.Name, ast.Attribute)) and _referred(node) == HELPER:
+            if id(node) not in accounted:
+                leftover.append((module, owner.get(node, "<module>"), "names the helper uncalled"))
+    return sites, leftover
 
 
 def fault_injection_sites():
     """Every arming of the store's fault hook in this suite, and everything it cannot read.
 
-    Occurrence accounting, like producer_paths above: a shape that could hide an arming and
-    is not one of the forms this reader knows becomes a leftover and fails this module,
-    rather than disappearing from a reach that calls itself complete.
+    Occurrence accounting, in the same spirit as producer_paths above: a shape that could
+    hide an arming and is not one of the forms this reader knows becomes a leftover and
+    fails this module, rather than disappearing from a reach that calls itself complete.
     """
     sites, leftover = [], []
     for path in sorted(TESTS.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        owner = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                for child in ast.walk(node):
-                    owner.setdefault(child, node.name)
-        aliases, alias_sources = _single_level_aliases(tree, {HELPER, *HIDING_CALLS})
-        helpers = {HELPER} | {n for n, t in aliases.items() if t == HELPER}
-        hiding = set(HIDING_CALLS) | {n for n, t in aliases.items() if t in HIDING_CALLS}
-        # A string whose value is thrown away cannot name an attribute for any purpose, so a
-        # docstring mentioning the hook is not a hiding place.
-        discarded = {
-            id(node.value) for node in ast.walk(tree)
-            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
-        }
-        accounted = set(alias_sources)
-
-        for node in ast.walk(tree):
-            targets = []
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-            elif isinstance(node, ast.AnnAssign):
-                targets = [node.target]
-            for target in targets:
-                if isinstance(target, ast.Attribute) and target.attr == HOOK:
-                    accounted.add(id(target))
-                    value = node.value
-                    if isinstance(value, ast.Constant) and value.value is None:
-                        continue
-                    sites.append((path.name, owner.get(node, "<module>"), "raw", None))
-                if isinstance(target, ast.Subscript) and _referred(target.value) == "__dict__":
-                    leftover.append(
-                        (path.name, owner.get(node, "<module>"), "assigns through __dict__")
-                    )
-            if isinstance(node, ast.Call):
-                callee = _referred(node.func)
-                if callee in helpers:
-                    accounted.add(id(node.func))
-                    writing = None
-                    for keyword in node.keywords:
-                        if keyword.arg != "writing":
-                            continue
-                        writing = (
-                            keyword.value.value
-                            if isinstance(keyword.value, ast.Constant) else UNREADABLE
-                        )
-                    sites.append((path.name, owner.get(node, "<module>"), "helper", writing))
-                elif callee in hiding or callee == "__setattr__":
-                    leftover.append(
-                        (path.name, owner.get(node, "<module>"), "calls " + str(callee))
-                    )
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if HOOK in node.value and id(node) not in discarded:
-                    leftover.append(
-                        (path.name, owner.get(node, "<module>"), "names the hook in a string")
-                    )
-                continue
-            if isinstance(node, ast.Attribute) and node.attr == HOOK:
-                if id(node) not in accounted:
-                    leftover.append(
-                        (path.name, owner.get(node, "<module>"), "reads the hook")
-                    )
-            if isinstance(node, (ast.Name, ast.Attribute)) and _referred(node) in helpers:
-                if id(node) not in accounted:
-                    bound = isinstance(node, ast.Name) and node.id in aliases
-                    leftover.append(
-                        (path.name, owner.get(node, "<module>"),
-                         "binds the helper to another name" if bound
-                         else "names the helper uncalled")
-                    )
+        found, left = _injection_sites_in(ast.parse(path.read_text(encoding="utf-8")), path.name)
+        sites.extend(found)
+        leftover.extend(left)
     return tuple(sorted(sites, key=_site_order)), tuple(sorted(leftover))
+
 
 
 def _site_order(site):
@@ -1308,6 +1361,132 @@ class TheWriteClassifierSaysWhatItCannotRead(unittest.TestCase):
             f"only {screened} write statements were screened, so this scan stopped matching",
         )
 
+
+
+class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
+    """Synthetic source, because this suite is not a test corpus for its own reader.
+
+    Review measured the gap that made this necessary: replacing the binding reader with one
+    that returns nothing left every other case in this module green. The reach was checked
+    by a scratch harness and by nothing that ships, which is the same shape as a fault hook
+    that fires before the interval a case is named for - right today, and right for a reason
+    nothing records.
+
+    Every fixture is built from HOOK and HELPER rather than repeating them, so a fixture
+    cannot drift from the names the rules use, and this module does not become an occurrence
+    of its own scan. The wrong-answer rows matter most: they are not gaps, they are the
+    reader saying "helper" about something that is not one, which hides the very thing the
+    inventory exists to surface.
+    """
+
+    def read(self, source):
+        sites, leftover = _injection_sites_in(
+            ast.parse(textwrap.dedent(source).strip() + "\n"), "probe.py",
+        )
+        return sorted(sites, key=_site_order), sorted(leftover)
+
+    def kinds(self, leftover):
+        return sorted(reason for _module, _where, reason in leftover)
+
+    def test_a_direct_arming_is_a_site_however_it_is_spelled(self):
+        for source in (
+            f"def t(store, die):\n    store.{HOOK} = die\n",
+            f"def t(store, die):\n    store.{HOOK}: object = die\n",
+        ):
+            sites, _leftover = self.read(source)
+            self.assertEqual(sites, [("probe.py", "t", "raw", None)], source)
+
+    def test_disarming_is_not_an_arming(self):
+        sites, leftover = self.read(f"def t(store):\n    store.{HOOK} = None\n")
+        self.assertEqual(sites, [])
+        self.assertEqual(leftover, [])
+
+    def test_a_direct_helper_call_carries_the_predicate_it_passes(self):
+        sites, _leftover = self.read(
+            f"def t(store):\n"
+            f"    with {HELPER}(store, writing='attempts'):\n"
+            f"        pass\n"
+        )
+        self.assertEqual(sites, [("probe.py", "t", "helper", "attempts")])
+
+    def test_a_predicate_this_reader_cannot_see_says_so_rather_than_saying_none(self):
+        """None means the case passes no predicate. That is a claim, and ** is not it."""
+        sites, _leftover = self.read(
+            f"def t(store, options):\n"
+            f"    with {HELPER}(store, **options):\n"
+            f"        pass\n"
+        )
+        self.assertEqual(sites, [("probe.py", "t", "helper", UNREADABLE)])
+
+    def test_a_reflective_arming_is_visible_in_every_spelling_review_proposed(self):
+        hide = HIDING_CALLS[0]
+        for label, source in (
+            ("direct call", f"def t(store, die):\n    {hide}(store, 'x', die)\n"),
+            ("object.__setattr__",
+             "def t(store, die):\n    object.__setattr__(store, 'x', die)\n"),
+            ("__dict__ subscript", "def t(store, die):\n    store.__dict__['x'] = die\n"),
+            ("assigned alias",
+             f"def t(store, die):\n    arm = {hide}\n    arm(store, 'x', die)\n"),
+            ("annotated alias",
+             f"def t(store, die):\n    arm: object = {hide}\n    arm(store, 'x', die)\n"),
+            ("tuple alias",
+             f"def t(store, die):\n    arm, spare = {hide}, None\n    arm(store, 'x', die)\n"),
+            ("starred tuple alias",
+             f"import builtins\ndef t(store, die):\n"
+             f"    arm, *spare = (builtins.{hide},)\n    arm(store, 'x', die)\n"),
+            ("walrus alias", f"def t(store, die):\n    (arm := {hide})(store, 'x', die)\n"),
+            ("import alias", f"from builtins import {hide} as arm\n"),
+            ("helper import alias", f"from support import {HELPER} as arm\n"),
+        ):
+            _sites, leftover = self.read(source)
+            self.assertTrue(
+                leftover,
+                f"{label} can arm the hook and this reader reported nothing at all",
+            )
+
+    def test_a_bound_name_never_produces_a_site(self):
+        """The wrong answer that cost two review rounds, pinned so it cannot come back.
+
+        A module-wide alias map reported the raw arming below as a HELPER site, because the
+        same local name was bound to the helper in another function. Nothing is inferred
+        from a binding now, so a call through a bound name is not classified at all.
+        """
+        source = (
+            f"def raw(store, die):\n"
+            f"    arm = {HIDING_CALLS[0]}\n"
+            f"    arm(store, 'x', die)\n"
+            f"def helper(store):\n"
+            f"    arm = {HELPER}\n"
+            f"    with arm(store):\n"
+            f"        pass\n"
+        )
+        sites, leftover = self.read(source)
+        self.assertEqual(
+            [site for site in sites if site[2] == "helper"], [],
+            "a call through a bound name was reported as a helper site, which is how a raw"
+            " reflective arming walks past the rule that a raw arming must argue for itself",
+        )
+        self.assertIn("binds " + HIDING_CALLS[0] + " elsewhere", self.kinds(leftover))
+        self.assertIn("names the helper uncalled", self.kinds(leftover))
+
+    def test_a_helper_named_attribute_is_not_assumed_to_be_the_helper(self):
+        sites, leftover = self.read(f"def t(obj):\n    obj.{HELPER}()\n")
+        self.assertEqual([site for site in sites if site[2] == "helper"], [])
+        self.assertIn("calls a helper-named attribute", self.kinds(leftover))
+
+    def test_a_module_defining_the_helper_says_so_rather_than_trusting_the_name(self):
+        _sites, leftover = self.read(
+            f"def {HELPER}(store, *, writing=None):\n    pass\n"
+        )
+        self.assertIn("defines the helper", self.kinds(leftover))
+
+    def test_a_docstring_naming_the_hook_is_not_a_hiding_place(self):
+        """A discarded value cannot name an attribute, and the helper's own docstring
+        mentions the hook. Excluding docstrings has to be principled or it is a loophole."""
+        _sites, leftover = self.read(f'def t():\n    """arms store.{HOOK}"""\n')
+        self.assertEqual(leftover, [])
+        _sites, named = self.read(f'def t():\n    name = "{HOOK}"\n')
+        self.assertIn("names the hook in a string", self.kinds(named))
 
 
 if __name__ == "__main__":
