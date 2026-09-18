@@ -33,6 +33,14 @@ SEMVER = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 TEXT_FIELDS = ("name", "version", "description", "license", "repository", "skills")
 INTERFACE_FIELDS = ("displayName", "shortDescription", "longDescription", "developerName",
                     "category", "capabilities", "defaultPrompt")
+# The bundled ingestion validator rejects keys it does not know, so a manifest with a
+# stray key can pass every other rule here and still be refused when it is published.
+MANIFEST_KEYS = {"name", "version", "description", "author", "homepage", "repository",
+                 "license", "keywords", "skills", "hooks", "mcpServers", "apps", "interface"}
+INTERFACE_KEYS = set(INTERFACE_FIELDS) | {"websiteURL", "privacyPolicyURL", "termsOfServiceURL",
+                                          "brandColor", "composerIcon", "logo", "logoDark",
+                                          "screenshots"}
+AUTHOR_KEYS = {"name", "email", "url"}
 # A personal home path names a real account; documentation placeholders such as
 # <worktree-root> carry characters these patterns deliberately exclude.
 HOME_PATHS = (re.compile(r"(?<![A-Za-z0-9._-])/home/[A-Za-z0-9._-]+/"),
@@ -165,6 +173,12 @@ def manifest_errors(manifest, plugin_root_name, label):
     author = manifest.get("author")
     if not isinstance(author, dict) or not isinstance(author.get("name"), str) or not author["name"]:
         errors.append(label + " manifest: author.name is required")
+    elif set(author) - AUTHOR_KEYS:
+        errors.append(label + " manifest: author carries unsupported keys "
+                      + repr(sorted(set(author) - AUTHOR_KEYS)))
+    for unsupported in sorted(set(manifest) - MANIFEST_KEYS):
+        errors.append(label + " manifest: " + repr(unsupported)
+                      + " is not a supported manifest key")
     if plugin_root_name is not None and manifest.get("name") != plugin_root_name:
         errors.append(label + " manifest: name " + repr(manifest.get("name"))
                       + " must match the plugin directory " + repr(plugin_root_name))
@@ -179,6 +193,17 @@ def manifest_errors(manifest, plugin_root_name, label):
     if not isinstance(interface, dict):
         errors.append(label + " manifest: interface must be an object")
     else:
+        for unsupported in sorted(set(interface) - INTERFACE_KEYS):
+            errors.append(label + " manifest: interface." + unsupported
+                          + " is not a supported interface key")
+        for optional in sorted(set(interface) & (INTERFACE_KEYS - set(INTERFACE_FIELDS))):
+            value = interface[optional]
+            valid = (all(isinstance(item, str) and item for item in value) and value
+                     if optional == "screenshots" and isinstance(value, list)
+                     else isinstance(value, str) and value)
+            if not valid:
+                errors.append(label + " manifest: interface." + optional
+                              + " is present but not a usable value")
         for field in INTERFACE_FIELDS:
             value = interface.get(field)
             if field in ("capabilities", "defaultPrompt"):
@@ -275,11 +300,14 @@ def skills(payload, manifest, label):
     except ValueError as exc:
         return [label + ": " + str(exc)], {}
     errors, found = [], {}
+    prefix_parts = PurePosixPath(prefix).parts
     for name in payload:
         parts = PurePosixPath(name).parts
-        if len(parts) < 3 or parts[0] != prefix:
+        # The declared path may be nested, so every component of it has to match.
+        if len(parts) < len(prefix_parts) + 2 or parts[:len(prefix_parts)] != prefix_parts:
             continue
-        found.setdefault(parts[1], set()).add(PurePosixPath(*parts[2:]).as_posix())
+        found.setdefault(parts[len(prefix_parts)], set()).add(
+            PurePosixPath(*parts[len(prefix_parts) + 1:]).as_posix())
     if not found:
         errors.append(label + ": the declared skills path ships no skill")
     for skill, files in sorted(found.items()):

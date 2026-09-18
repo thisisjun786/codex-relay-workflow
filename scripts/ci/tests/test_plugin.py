@@ -129,6 +129,31 @@ class ManifestTests(unittest.TestCase):
                 errors = plugin.manifest_errors(manifest(**{field: "./x.json"}), "crw", "t")
                 self.assertTrue(any(field in e for e in errors), errors)
 
+    def test_unsupported_keys_are_refused(self):
+        # The bundled ingestion validator rejects keys it does not know, so a manifest
+        # that passes here but carries a stray key would be refused when published.
+        errors = plugin.manifest_errors(manifest(unsupported="x"), "crw", "t")
+        self.assertTrue(any("not a supported manifest key" in e for e in errors), errors)
+        nested = manifest()
+        nested["interface"]["unsupported"] = "x"
+        errors = plugin.manifest_errors(nested, "crw", "t")
+        self.assertTrue(any("not a supported interface key" in e for e in errors), errors)
+        author = manifest(author={"name": "a", "unsupported": "x"})
+        errors = plugin.manifest_errors(author, "crw", "t")
+        self.assertTrue(any("unsupported keys" in e for e in errors), errors)
+
+    def test_optional_interface_values_are_checked_when_present(self):
+        good = manifest()
+        good["interface"]["websiteURL"] = "https://example.invalid"
+        good["interface"]["screenshots"] = ["./assets/one.png"]
+        self.assertEqual(plugin.manifest_errors(good, "crw", "t"), [])
+        for field, value in (("websiteURL", 5), ("screenshots", []), ("screenshots", [""])):
+            with self.subTest(field=field, value=value):
+                broken = manifest()
+                broken["interface"][field] = value
+                errors = plugin.manifest_errors(broken, "crw", "t")
+                self.assertTrue(any("not a usable value" in e for e in errors), errors)
+
     def test_declared_path_may_not_leave_the_plugin_root(self):
         for bad in ("../../skills/", "/abs/skills/", "skills/"):
             with self.subTest(bad=bad):
@@ -224,6 +249,16 @@ class HygieneTests(unittest.TestCase):
 class SkillSetTests(unittest.TestCase):
     def test_declared_directory_is_the_skill_set(self):
         errors, found = plugin.skills(payload(GOOD), manifest(), "t")
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(found), ["crw-run"])
+
+    def test_a_nested_declared_path_is_read_the_same_way(self):
+        # declared_skills_path accepts a nested path, so the skill set must follow it.
+        files = {".codex-plugin/plugin.json": json.dumps(manifest(skills="./skills/current/")),
+                 "skills/current/crw-run/SKILL.md": SKILL,
+                 "skills/current/crw-run/agents/openai.yaml": "interface:\n",
+                 "LICENSE": "MIT"}
+        errors, found = plugin.skills(payload(files), manifest(skills="./skills/current/"), "t")
         self.assertEqual(errors, [])
         self.assertEqual(sorted(found), ["crw-run"])
 
