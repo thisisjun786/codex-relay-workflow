@@ -1025,24 +1025,41 @@ def reading_boundaries(record, relay):
             child = next((p for p in boundary.get("participants") or []
                           if p.get("role") == "child"), {})
             current, why = registration_identity(record, boundary, receipt)
+            parent = next((p for p in boundary.get("participants") or []
+                           if p.get("role") == "parent"), {})
+
+            def workspace(side, declared):
+                """Compare one endpoint's workspace, or say the receipt does not carry it.
+
+                An absent cwd is not a disagreement, and a relative one is not a place: resolve()
+                would read it against whichever directory this process runs in, so an empty string
+                or a dot agreed with the declared workspace whenever the checker ran there.
+                """
+                found = field(receipt, side, "cwd")
+                if found is MISSING or found is None:
+                    return MISSING
+                if declared is None:
+                    return True
+                return (str(found).startswith("/")
+                        and resolve(str(found)) == resolve(declared))
+
+            workspaces = [workspace("child", child.get("cwd")),
+                          workspace("parent", parent.get("cwd"))]
             ok = (same(scope, boundary.get("scopeRef"))
                   and current
                   and same(field(receipt, "child", "taskId"), child.get("taskId"))
                   and same(field(receipt, "parent", "taskId"),
                            next((p.get("taskId") for p in boundary.get("participants") or []
                                  if p.get("role") == "parent"), None))
-                  and (child.get("cwd") is None
-                       or resolve(str(field(receipt, "child", "cwd"))) == resolve(child.get("cwd"))))
-            parent = next((p for p in boundary.get("participants") or []
-                           if p.get("role") == "parent"), {})
-            # Both workspaces, because the relay reads the recipient's own for lifecycle discovery,
-            # and a parent registered against another workspace has delivery withheld there.
-            ok = ok and (parent.get("cwd") is None
-                         or resolve(str(field(receipt, "parent", "cwd")))
-                         == resolve(parent.get("cwd")))
-            cells.append(graded("registration:" + str(name), scope, ok, provenance=CAPTURED,
+                  # Both workspaces, because the relay reads the recipient's own for lifecycle
+                  # discovery and a parent registered against another one has delivery withheld.
+                  and all(answer is True for answer in workspaces))
+            # The cell is answerable only where every field its predicate reads is there.
+            answered = MISSING if (scope is MISSING or MISSING in workspaces) else scope
+            cells.append(graded("registration:" + str(name), answered, ok, provenance=CAPTURED,
                                 measured_at=found["capturedAt"],
-                                unreadable="this registration receipt carries no authorised scope",
+                                unreadable="this registration receipt does not carry both the"
+                                           " authorised scope and each endpoint's workspace",
                                 evidence=("the registration names scope " + str(shown(scope))
                                           + ", issue " + str(shown(field(receipt, "issueKey")))
                                           + ", status " + str(shown(field(receipt, "status")))

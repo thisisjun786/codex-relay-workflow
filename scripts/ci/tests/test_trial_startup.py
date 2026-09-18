@@ -1824,5 +1824,30 @@ class SeventhHostedRound(TrialCase):
         self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"], NOT_VERIFIED)
 
 
+class EighthHostedRound(TrialCase):
+    """A workspace the receipt does not carry, and one that is not a place."""
+
+    def test_a_receipt_without_a_workspace_is_unknown_rather_than_wrong(self):
+        for side in ("parent", "child"):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.captures["register-A.json"][side].pop("cwd")
+            world.flush()
+            document = world.preflight()
+            cell = cells_of(document, "boundaries")["registration:A"]
+            self.assertEqual(cell["value"], UNKNOWN, side)
+            self.assertIn("workspace", cell["evidence"])
+
+    def test_a_workspace_that_is_not_absolute_is_not_a_place(self):
+        for value in ("", ".", "repo-A"):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.captures["register-A.json"]["child"]["cwd"] = value
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"],
+                             NOT_VERIFIED, repr(value) + " was read as a workspace")
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
