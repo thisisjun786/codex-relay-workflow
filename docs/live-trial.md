@@ -95,7 +95,10 @@ all.
 
 **Preflight last, immediately before the dispatch.** The record declares the window this dispatch opens, and
 it has to be ahead: a record whose window has already opened is a trial already running, and
-starting from it again dispatches a second time into one measured interval. The window is read again at the end of the run, because the
+starting from it again dispatches a second time into one measured interval. The window is also the one this dispatch opens rather than any window ahead: a record whose window
+opens hours later is refused, because the completion and any intervention would happen before the
+declared interval and a later ledger would report a window it never measured. It is read again at
+the end of the run, because the
 readings take real time and a window a few seconds ahead can open while they are being taken. The
 ledger still grades that same record afterwards, which is what it is for, and it refuses a line
 dated after the moment it is being graded: the ledger is appended as things happen. All six readings are taken by one run at one

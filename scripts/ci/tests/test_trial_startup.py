@@ -2308,5 +2308,28 @@ class EighteenthHostedRound(TrialCase):
         self.assertIn("dated after the time it is being graded", raised.exception.reason)
 
 
+class NineteenthHostedRound(TrialCase):
+    """A window that is ahead, but not the one this dispatch opens."""
+
+    def test_a_window_opening_hours_later_is_not_this_dispatchs(self):
+        self.world.record["window"] = {"opensAt": startup.stamp(time.time() + 86400),
+                                       "closesAt": startup.stamp(time.time() + 90000)}
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("too long after this preflight", refused.reason)
+        self.assertEqual(refused.detail["allowanceSeconds"], startup.WINDOW_ALLOWANCE)
+
+    def test_a_window_inside_the_allowance_is_accepted(self):
+        self.world.start_supervisor()
+        self.world.record["window"] = {
+            "opensAt": startup.stamp(time.time() + startup.WINDOW_ALLOWANCE - 30),
+            "closesAt": startup.stamp(time.time() + 3600)}
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertTrue(document["windowStillAhead"]["passed"])
+        self.assertTrue(document["readyToStart"])
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

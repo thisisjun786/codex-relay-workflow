@@ -64,6 +64,11 @@ RECORD_VERSION = 1
 # take away from it.
 CAPTURE_AGE_CEILING = 900
 ADVANCE_CEILING = 30
+# How far ahead the window this dispatch opens may be. The preflight runs immediately before that
+# dispatch, so a window opening hours later is not the one this run precedes: the completion and
+# any intervention would happen before the declared interval and a later ledger would report an
+# uninterrupted window it never measured.
+WINDOW_ALLOWANCE = 300
 
 RELAY_COMPONENT = "codex-session-relay"
 POINTER_NAME = "current"
@@ -526,6 +531,10 @@ def load_start(path, *, environment=None, mode="preflight"):
     if opens.timestamp() < time.time():
         raise Refused("this record's trial window has already opened, so it is not a record to"
                       " start from", opensAt=window.get("opensAt"), now=stamp())
+    if opens.timestamp() > time.time() + WINDOW_ALLOWANCE:
+        raise Refused("this record's trial window opens too long after this preflight to be the"
+                      " dispatch it precedes", opensAt=window.get("opensAt"), now=stamp(),
+                      allowanceSeconds=WINDOW_ALLOWANCE)
     number(field(record, "supervisor", "minimumAliveSeconds"), "supervisor.minimumAliveSeconds",
            minimum=0)
 
@@ -1702,7 +1711,10 @@ def preflight(record, *, sleeper=time.sleep):
     # time, so it is read again here. A run that publishes readiness after the window has opened
     # sends the dispatch into an interval already being measured.
     opens = moment(field(record, "window", "opensAt"), "window.opensAt")
-    window_ahead = {"passed": opens.timestamp() > time.time(), "opensAt": shown(field(record, "window", "opensAt")),
+    window_ahead = {"passed": (time.time() < opens.timestamp()
+                               <= time.time() + WINDOW_ALLOWANCE),
+                    "opensAt": shown(field(record, "window", "opensAt")),
+                    "allowanceSeconds": WINDOW_ALLOWANCE,
                     "readAt": stamp(),
                     "detail": "the dispatch this preflight precedes is what opens the window"}
     document = {
