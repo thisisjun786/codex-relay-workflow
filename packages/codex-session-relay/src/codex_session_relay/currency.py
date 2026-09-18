@@ -14,6 +14,7 @@ arrival would quietly become a root.
 """
 
 from .errors import ReceiptRefused, RefusalReason
+from .identity import revision_request_event_id
 
 SOLE = "sole_revision"
 CHAIN = "declared_chain"
@@ -70,6 +71,41 @@ def _ambiguous(evidence, nodes, detail):
     }
 
 
+def _requested_predecessors(db, relationship_id, generation):
+    """Only the result whose ruling opened this correction is an external root.
+
+    The verdict, revision request and generation are committed together by AckService.
+    A manually opened generation, or an unrelated historical digest, grants no edge.
+    Historical roots cannot become a current head and their own older lineage is not
+    imported into this generation's graph.
+    """
+    rows = db.execute(
+        "SELECT p.event_id, p.revision_hash, v.verdict_turn_id, r.event_id AS request_id,"
+        " g.dispatch_request_id"
+        " FROM generations g"
+        " JOIN verdicts v ON v.next_generation = g.execution_generation"
+        " JOIN events p ON p.event_id = v.event_id AND p.relationship_id = g.relationship_id"
+        " JOIN events r ON r.relationship_id = g.relationship_id"
+        " AND r.execution_generation = g.execution_generation"
+        " WHERE g.relationship_id = ? AND g.execution_generation = ?"
+        " AND g.reason = 'needs_changes_revision' AND v.verdict = 'needs_changes'"
+        " AND p.execution_generation = g.execution_generation - 1"
+        " AND p.outcome = ? AND p.stage = 'final' AND p.suppressed_reason IS NULL"
+        " AND r.outcome = 'revision_request' AND r.producer = 'relay'"
+        " AND r.stage = 'final' AND r.suppressed_reason IS NULL",
+        (relationship_id, generation, REVIEWABLE),
+    ).fetchall()
+    anchors = {}
+    for row in rows:
+        request_id = revision_request_event_id(
+            relationship_id, row["event_id"], row["verdict_turn_id"],
+        )
+        if (row["request_id"] == request_id
+                and row["dispatch_request_id"] == f"revision-{request_id}"):
+            anchors.setdefault(row["revision_hash"], []).append(row["event_id"])
+    return anchors
+
+
 def head_revision(db, relationship_id, generation) -> dict:
     """The one revision this generation currently stands on, or why there is not one."""
     rows = db.execute(
@@ -98,6 +134,7 @@ def head_revision(db, relationship_id, generation) -> dict:
     by_hash = {}
     for node in nodes.values():
         by_hash.setdefault(node["revisionHash"], []).append(node["eventId"])
+    anchors = _requested_predecessors(db, relationship_id, generation)
 
     edges = {}
     unresolved = []
@@ -105,11 +142,10 @@ def head_revision(db, relationship_id, generation) -> dict:
         declared = node["supersedesHash"]
         if not declared:
             continue
-        targets = by_hash.get(declared) or []
+        targets = by_hash.get(declared, []) + anchors.get(declared, [])
         if len(targets) != 1:
-            # Either we have never seen the named revision in this generation, or the digest
-            # names more than one event and therefore is not a unique link. Both are
-            # unresolved edges, and neither is an absence of one.
+            # A predecessor must identify one local revision or the exact result requested
+            # for correction. Unknown or non-unique digests remain unresolved edges.
             unresolved.append({"eventId": node["eventId"], "supersedesHash": declared})
             continue
         edges[node["eventId"]] = targets[0]
@@ -117,7 +153,8 @@ def head_revision(db, relationship_id, generation) -> dict:
     if unresolved:
         return _ambiguous(
             UNKNOWN_PREDECESSOR, nodes,
-            "a declared predecessor is not a unique known revision of this generation: "
+            "a declared predecessor is neither a unique revision of this generation "
+            "nor its requested correction predecessor: "
             + ", ".join(f"{u['eventId']} -> {u['supersedesHash']}" for u in unresolved),
         )
 
@@ -155,7 +192,7 @@ def head_revision(db, relationship_id, generation) -> dict:
     while current in edges:
         current = edges[current]
         covered.append(current)
-    if len(covered) != len(nodes):
+    if set(covered).intersection(nodes) != set(nodes):
         return _ambiguous(
             DISCONNECTED, nodes,
             "the declared chain from the tip does not reach every revision in this generation",
@@ -164,7 +201,7 @@ def head_revision(db, relationship_id, generation) -> dict:
     return {
         "eventId": tip,
         "revisionHash": nodes[tip]["revisionHash"],
-        "evidence": SOLE if len(nodes) == 1 else CHAIN,
+        "evidence": SOLE if len(nodes) == 1 and not edges else CHAIN,
         "competitors": [],
         "detail": "",
     }
