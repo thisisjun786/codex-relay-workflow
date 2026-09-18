@@ -496,6 +496,47 @@ async def test_a_mutation_caught_in_someone_elses_oversized_frame_is_unknown(
     assert fake.count("turn/start") == started + 1
 
 
+async def test_a_page_that_never_arrives_is_a_gap_in_the_answer_not_a_failed_read(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """A disconnect is not a size, so nothing narrower is tried; the thread still comes back."""
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    fake.drop_after = "thread/turns/list"
+    read = await bridge.read_thread(created["threadId"], limit=2)
+    assert read["turnsPage"] is None
+    assert read["observation"]["turnsPageStatus"] == "not_observed"
+    assert read["thread"]["id"] == created["threadId"]
+    # One attempt only: there is nothing to narrow towards and no reason to spend more timeouts.
+    assert len(read["observation"]["pageAttempts"]) == 1
+    attempt = read["observation"]["pageAttempts"][0]
+    assert "frameBytes" not in attempt
+    assert attempt["error"].startswith("TransportError:")
+    assert attempt["attribution"] == "unestablished"
+
+
+async def test_item_detail_that_never_arrives_does_not_fail_a_read_that_did(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """The detail read is the optional part; a disconnect there is a gap, never a verdict."""
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    fake.drop_after = "thread/items/list"
+    read = await bridge.read_thread(created["threadId"], limit=1)
+    turn = read["turnsPage"]["data"][0]
+    assert turn["itemsDetailStatus"] == "not_observed"
+    assert turn["itemsDetail"] is None
+    assert turn["itemsDetailNote"]["attempts"][0]["error"].startswith("TransportError:")
+    assert "none of this is a fact about the thread" in turn["itemsDetailNote"]["note"]
+    # The page and the turn's own message still arrived, and nothing raised.
+    assert turn["items"][0]["text"] == "first"
+    assert read["observation"]["turnsPageStatus"] == "summary"
+    assert read["observation"]["detailTurnsRequested"] == 1
+    assert read["observation"]["detailTurnsObserved"] == 0
+
+
 async def test_low_text_limit_preserves_page_cursors_and_protocol_fields(
     bridge, fake_server, tmp_path
 ):

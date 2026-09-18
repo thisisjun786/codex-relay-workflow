@@ -8,7 +8,7 @@ from pathlib import Path
 from .effects import recording
 from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
 from .ledger import RETRYABLE_STATUSES, Ledger
-from .rpc import AppServer, ResponseTooLarge, RpcError
+from .rpc import AppServer, ResponseTooLarge, RpcError, TransportError
 from .settings import SettingsContract, annotation
 from .worktrees import Worktree, WorktreeError
 
@@ -86,6 +86,22 @@ def refusal(refused, **requested):
         "note": "A response frame past this client's limit closed the connection while this "
         "request was pending. A frame is refused before its id is read, so it is not established "
         "that it was this request's response.",
+    }
+
+
+def undelivered(error, **requested):
+    """A request whose answer never came back, with no size to report and no cause to name.
+
+    Distinct from an oversized frame on purpose. There the answer existed and was too big, so
+    asking for less is a sensible next move. Here nothing is known about why, so nothing narrower
+    is tried and the gap is simply reported.
+    """
+    return {
+        "requested": requested,
+        "error": f"{type(error).__name__}: {error}",
+        "attribution": "unestablished",
+        "note": "The connection did not deliver this request's response. What had already been "
+        "established is returned, and what this request would have added was not observed.",
     }
 
 
@@ -1161,6 +1177,12 @@ class Bridge:
                 return await self.rpc.call("thread/turns/list", params), status, attempts
             except ResponseTooLarge as refused:
                 attempts.append(refusal(refused, itemsView=view, limit=size))
+            except TransportError as error:
+                # Not a size, so there is nothing to narrow towards and no reason to spend three
+                # more timeouts finding that out. The metadata read already succeeded, so a page
+                # that did not arrive is a gap in this answer rather than a failed read.
+                attempts.append(undelivered(error, itemsView=view, limit=size))
+                break
         return None, "not_observed", attempts
 
     async def _read_items(self, thread_id: str, turn: dict, position: int):
@@ -1185,6 +1207,18 @@ class Bridge:
             except ResponseTooLarge as refused:
                 attempts.append(refusal(refused, method="thread/items/list", limit=size))
                 continue
+            except TransportError as error:
+                # The detail read is the optional part of this answer. Letting a disconnect or a
+                # timeout here fail a read whose page already arrived would turn a gap into a
+                # verdict, which is the thing this whole path exists to stop.
+                turn["itemsDetail"] = None
+                turn["itemsDetailStatus"] = "not_observed"
+                turn["itemsDetailNote"] = {
+                    "attempts": [*attempts, undelivered(error, limit=size)],
+                    "note": "This turn's items were not delivered. Its summary items are what "
+                    "can be seen of it here, and none of this is a fact about the thread.",
+                }
+                return
             except RpcError as error:
                 code = error.error.get("code")
                 turn["itemsDetail"] = None
