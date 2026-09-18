@@ -27,8 +27,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
-                         ownership, pointer, reading, scope, staging, swapgate)
+from crw_runtime import (check, codexconfig, completion, definition, firing, hooks, hostrecord,
+                         ownership, pointer, reading, residue, scope, staging, swapgate)
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
@@ -3419,7 +3419,12 @@ class DeclaredSetReferenceTests(unittest.TestCase):
         modules = {"check": check, "codexconfig": codexconfig, "completion": completion,
                    "definition": definition, "hooks": hooks, "hostrecord": hostrecord,
                    "ownership": ownership, "pointer": pointer, "reading": reading,
-                   "scope": scope, "staging": staging, "swapgate": swapgate}
+                   "scope": scope, "staging": staging, "swapgate": swapgate,
+                   # The glob above pulls every module into the literal-comparison scans, but
+                   # this oracle is a hand-kept map, so a module added to the package was
+                   # scanned for one class of defect and left out of the one that compares the
+                   # source reader against what the module actually holds.
+                   "firing": firing, "residue": residue}
         trees = _runtime_trees()
         declared_by_module = _declared_by_module(trees)
         computed = set()
@@ -8805,3 +8810,182 @@ class LockSiblingTests(unittest.TestCase):
             self.assertEqual(emitted[-1]["hookFile"], str(home / "hooks.json"))
             self.assertEqual(emitted[-1]["lockedPath"], str(configuration))
             self.assertIn(str(configuration), emitted[-1]["refused"])
+
+
+# =========================================================================================
+# CRW-100 - diagnosis answers the residue a failed install left
+#
+# residualPaths lived only on a failed install's own JSON result, so an operator who wanted the
+# cleanup warning after a failed update had to have kept that run's stdout. The procedure said
+# exactly that. These cases are the reading it was missing, and they are taken against a real
+# failure rather than a directory a fixture placed: the update actually runs, actually breaks
+# at a build step, and is actually prevented from removing what it created.
+# =========================================================================================
+
+
+def _diagnose_args(host, **overrides):
+    args = argparse.Namespace(
+        dest=str(host.destination), record=str(host.record_path),
+        codex_home=str(host.codex_home), state=str(host.state), socket=None, issue=None,
+        bridge_command=None, relay_command=None, bridge_arg=None, observed_tool=None,
+        trial=False, temporary=False, assignment_lookup=False, turn_status=None)
+    for name, value in overrides.items():
+        setattr(args, name, value)
+    return args
+
+
+def _diagnose(host, **overrides):
+    import runtime_install
+
+    emitted = []
+    with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+        runtime_install.cmd_diagnose(_diagnose_args(host, **overrides))
+    return emitted[-1]
+
+
+def _failed_update_leaving_its_candidate(host):
+    """An update that fails AND cannot remove what it built, which is the state that leaves a
+    residual path. Returns the failing run's own result."""
+    import runtime_install
+
+    def refusing(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "no space left on device")
+
+    with mock.patch.object(runtime_install.shutil, "rmtree", side_effect=refusing):
+        _code, payload = UpdateRecoveryTests()._run(host, breaking="install packages")
+    return payload
+
+
+class DiagnosisReportsResidue(unittest.TestCase):
+    def test_diagnose_names_the_residue_a_failed_install_left_behind(self):
+        """The defect end to end: the failing run named the path and the diagnosis that comes
+        after it did not, so the warning existed only in stdout nobody kept."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            failure = _failed_update_leaving_its_candidate(host)
+            found = _diagnose(host)
+
+        self.assertEqual(failure["residualPaths"], [str(host.candidate)],
+                         "the fixture did not leave the residue these cases are about")
+        # Read with a default, so a command that does not answer this question at all fails on
+        # the assertion rather than on a missing key.
+        self.assertIn(str(host.candidate), found.get("residualPaths", []),
+                      "the failed run named this path and the diagnosis after it did not")
+
+    def test_the_residue_is_what_the_installer_itself_would_reclaim(self):
+        """Not a second opinion. The decision reported is staging's own, so what diagnosis
+        calls clearable and what the next install would take are one set."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            _failed_update_leaving_its_candidate(host)
+            found = _diagnose(host)
+        entries = {entry["path"]: entry for entry in found.get("residue", {}).get("entries", [])}
+        candidate = entries.get(str(host.candidate), {})
+        self.assertEqual(candidate.get("decision"), staging.RECLAIM)
+        self.assertTrue(candidate.get("residual"))
+        self.assertIn(candidate.get("decision"), staging.REMOVES)
+
+    def test_a_dangling_pointer_the_record_claims_is_residue_and_a_foreign_one_is_not(self):
+        """A link's shape is not its ownership. pointer.remove refuses a link this command did
+        not place, and a cleanup list naming one would send an operator to remove another
+        tool's."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            claimed = _diagnose(host)
+            claimed_pointer = str(host.pointer_path)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            # A link at the destination that this host's record does not record as its own,
+            # which is the state a foreign or hand-made pointer is actually in. The path is
+            # still read -- it is where a pointer would be -- and it is still not ours.
+            record.pop("pointer", None)
+            hostrecord.save(host.record_path, record)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            foreign = _diagnose(host)
+
+        self.assertEqual(claimed.get("residue", {}).get("pointer", {}).get("finding"),
+                         residue.DANGLING_POINTER)
+        self.assertIn(claimed_pointer, claimed.get("residualPaths", []))
+        self.assertEqual(foreign["residue"]["pointer"]["finding"], residue.FOREIGN_POINTER)
+        self.assertNotIn(foreign["residue"]["pointer"]["path"], foreign["residualPaths"],
+                         "a link the record does not claim is reported, never listed for"
+                         " removal")
+
+
+class ResidueNeverNamesLiveWork(unittest.TestCase):
+    """Support for the cases above, not evidence of the CRW-100 defect. Each is a direction the
+    answer must never fail in, and each is inherited from staging.decide rather than decided
+    again here."""
+
+    def _survey(self, host, **overrides):
+        return _diagnose(host, **overrides)["residue"]
+
+    def test_the_installation_in_use_is_never_residue(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            found = self._survey(host)
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertFalse(entries[str(host.previous)]["residual"])
+        self.assertEqual(found["residualPaths"], [])
+
+    def test_a_staging_the_record_selects_is_reported_and_never_cleared(self):
+        """staging.decide calls this RESUME precisely because the runtime is built and may be
+        in use. A dead lock says no installer holds it; it does not say nothing uses it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-100")
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["selected"] = {c["component"]: str(host.candidate / "site" / c["module"])
+                                  for c in host.data["components"]}
+            hostrecord.save(host.record_path, record)
+            found = self._survey(host)
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertEqual(entries[str(host.candidate)]["decision"], staging.RESUME)
+        self.assertFalse(entries[str(host.candidate)]["residual"])
+        self.assertNotIn(str(host.candidate), found["residualPaths"])
+
+    def test_a_staging_somebody_still_holds_is_reported_and_never_cleared(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-100")
+            held = staging.Held(host.candidate).take()
+            try:
+                found = self._survey(host)
+            finally:
+                held.__exit__()
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertEqual(entries[str(host.candidate)]["decision"], staging.OCCUPIED)
+        self.assertNotIn(str(host.candidate), found["residualPaths"])
+
+    def test_the_owned_pointer_is_never_scanned_as_an_environment_under_it(self):
+        """is_dir() follows a link, so scanning it would read the claim of the environment it
+        names as though it were the link's own."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            found = self._survey(host)
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertEqual(entries[str(host.pointer_path)]["decision"], residue.NOT_SCANNED)
+
+    def test_a_caller_that_made_no_ownership_reading_gets_no_cleanup_list(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            _failed_update_leaving_its_candidate(host)
+            found = residue.survey(host.destination, pointer_path=host.pointer_path)
+        self.assertFalse(found["ownershipRead"])
+        self.assertEqual(found["residualPaths"], [],
+                         "no residue found and nobody looked are different answers")
+        self.assertTrue(any(entry["decision"] == residue.NOT_SCANNED
+                            for entry in found["entries"]))
+
+    def test_a_destination_that_could_not_be_listed_is_not_an_empty_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            found = residue.survey(Path(temporary) / "nothing-here",
+                                   protection=lambda environment: (False, False))
+        self.assertFalse(found["read"])
+        self.assertEqual(found["entries"], [])
+        self.assertTrue(found["unreadable"])

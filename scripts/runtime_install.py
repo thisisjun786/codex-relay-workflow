@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
-                         ownership, pointer, reading, scope, staging, swapgate)
+                         ownership, pointer, reading, residue, scope, staging, swapgate)
 from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1043,6 +1043,30 @@ def cmd_diagnose(args):
     if not owned_pointer and destination:
         owned_pointer = str(pointer.pointer_path(destination))
     pointer_read = pointer_state(owned_pointer, record, data) if owned_pointer else None
+    # What a run left behind on this destination. Asked here because `residualPaths` used to
+    # live only on a failed install's own result, so an operator who wanted the cleanup warning
+    # after a failed update had to have kept that run's stdout; the procedure said so, and this
+    # is the reading it was missing. The destination comes from --dest, or from the directory
+    # the recorded pointer sits in when no --dest was given, because that is the destination
+    # this host actually reaches a runtime through.
+    residue_root = (Path(destination) if destination
+                    else Path(owned_pointer).parent if owned_pointer else None)
+
+    def ownership_of(environment):
+        """The caller's ownership reading, which residue never takes for itself.
+
+        protected_environment is deliberately conservative -- it answers protected when either
+        the record or the pointer names the environment AND when either of those readings
+        failed -- and 'selected' is True only when the record was read and names it. Both are
+        passed through unchanged, because the decision they feed is the installer's own.
+        """
+        protected, detail = protected_environment(record, environment, residue_root, data)
+        return protected, detail["recordSelectsIt"]
+
+    residual = residue.survey(
+        residue_root, pointer_path=owned_pointer,
+        recorded_pointer=((record or {}).get("pointer") or {}).get("path"),
+        protection=None if residue_root is None else ownership_of)
     try:
         classes = {
             c["component"]: classify_component(
@@ -1175,6 +1199,12 @@ def cmd_diagnose(args):
         "skillLinks": links,
         "components": classes,
         "mcpRegistration": registration,
+        # The same key the install failure result uses, and deliberately not the same set: that
+        # one is what THAT RUN left, read from the run itself, and this is what is on the
+        # destination now. Neither is a superset of the other, and an empty answer here never
+        # means a failed run left nothing behind.
+        "residualPaths": residual["residualPaths"],
+        "residue": residual,
         "scope": summary,
         "assignment": assignment,
         "scopeReadings": readings,

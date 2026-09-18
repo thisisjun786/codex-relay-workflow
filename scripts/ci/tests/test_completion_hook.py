@@ -29,7 +29,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from crw_runtime import completion, hooks, reading
+from crw_runtime import completion, firing, hooks, reading
 
 import runtime_install
 
@@ -97,6 +97,65 @@ def journalled(directory):
     root = Path(directory) / "journal"
     return [json.loads(entry.read_text(encoding="utf-8"))
             for day in sorted(root.glob("*")) for entry in sorted(day.glob("*.json"))]
+
+
+def register(directory, **overrides):
+    """Install this adapter's registration the way cmd_hook does, so a case works against a
+    registration this repository actually writes rather than one the case invented."""
+    args = argparse.Namespace(
+        codex_home=str(directory), event=None, hook_command=None, adapter="completion",
+        dest=None, relay_command=str(Path(directory) / "codex-session-relay"),
+        marker_root=str(Path(directory) / "marker"), db_path=None,
+        journal_root=str(Path(directory) / "journal"), python=sys.executable,
+        mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-100", apply=True)
+    for name, value in overrides.items():
+        setattr(args, name, value)
+    emitted = []
+    with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+        code = runtime_install.cmd_hook(args)
+    return code, emitted[0]
+
+
+def amend_settings(directory, **overrides):
+    path = completion.configuration_path(Path(directory))
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document.update(overrides)
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def break_the_target(directory):
+    """Make the registered adapter name a file that is not there, keeping the file NAME, so the
+    registration is still recognised as this adapter's and only its target is gone."""
+    path = Path(directory) / "hooks.json"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        str(ENTRY_POINT), str(Path(directory) / completion.ENTRY_POINT_NAME)), encoding="utf-8")
+
+
+def second_registration(directory, journal):
+    """A second registration of this adapter naming its own settings file and its own journal.
+
+    Both registrations run on every Stop, which is the host this command used to answer by
+    reading neither of them. Returns the two settings paths.
+    """
+    first = completion.configuration_path(Path(directory))
+    second = Path(directory) / "other-settings.json"
+    document = json.loads(first.read_text(encoding="utf-8"))
+    document["journalRoot"] = str(Path(directory) / journal)
+    second.write_text(json.dumps(document), encoding="utf-8")
+    path = Path(directory) / "hooks.json"
+    hooks_file = json.loads(path.read_text(encoding="utf-8"))
+    entry = dict(hooks_file["hooks"][completion.EVENT][0]["hooks"][0])
+    entry["command"] = entry["command"].replace(str(first), str(second))
+    hooks_file["hooks"][completion.EVENT][0]["hooks"].append(entry)
+    path.write_text(json.dumps(hooks_file), encoding="utf-8")
+    return first, second
+
+
+def why_no_record(directory):
+    """The cause cell, read with a default so a command that does not answer this question at
+    all fails on the assertion rather than on a missing key."""
+    return completion.status(codex_home=directory, environ={}).get("firingRecordAbsence", {})
 
 
 class TheCallToTheGuard(unittest.TestCase):
@@ -1796,6 +1855,160 @@ class OwnershipStaysSeparate(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, source)
                 self.assertNotIn(forbidden, entry)
+
+
+class TheCauseOfAnAbsence(unittest.TestCase):
+    """CRW-100: an absence of firing evidence answers WHY, and says so when it cannot.
+
+    Three hosts used to produce the same report -- a hook that was never registered, one that
+    is registered and has not run, and one that has run and recorded into a journal this
+    command was not reading. The operator procedure closed that honestly by writing that the
+    tool does not distinguish them, and that sentence is what these cases remove.
+    """
+
+    def _host(self, temporary):
+        fake_relay(temporary, stdout=json.dumps(RELEASED))
+        return Path(temporary)
+
+    def test_three_hosts_that_look_alike_answer_three_different_causes(self):
+        answers = {}
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary)
+            answers["never registered"] = why_no_record(temporary).get("value")
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            answers["registered, nothing recorded"] = why_no_record(temporary).get("value")
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            # Actually fired, into the journal the SECOND registration names. The first
+            # registration's journal stays empty, which is the reading an operator would have
+            # taken and reported as "this hook has never run".
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={},
+                           settings=str(second))
+            answers["recorded elsewhere"] = why_no_record(temporary).get("value")
+
+        self.assertEqual(len(set(answers.values())), 3,
+                         "three hosts with three different repairs answered " + repr(answers))
+        self.assertEqual(answers["never registered"], firing.NOT_REGISTERED)
+        self.assertEqual(answers["registered, nothing recorded"], firing.NOTHING_RECORDED)
+        self.assertEqual(answers["recorded elsewhere"], firing.RECORDED_ON_ANOTHER_PATH)
+
+    def test_which_of_the_two_journals_holds_the_record_does_not_change_the_answer(self):
+        """No reference path, so no sort order to depend on. The reading that reports this is
+        symmetric over the journals the registrations name, and a cause that changed when the
+        record moved between them would be an artefact of which path sorted first."""
+        seen = {}
+        for label in ("first", "second"):
+            with tempfile.TemporaryDirectory() as temporary:
+                self._host(temporary)
+                register(temporary)
+                paths = dict(zip(("first", "second"),
+                                 second_registration(temporary, "journal-two")))
+                completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary,
+                               environ={}, settings=str(paths[label]))
+                seen[label] = why_no_record(temporary).get("value")
+        self.assertEqual(seen["first"], seen["second"], seen)
+        self.assertEqual(seen["first"], firing.RECORDED_ON_ANOTHER_PATH)
+
+    def test_a_policy_that_records_only_faults_names_both_candidates_rather_than_choosing(self):
+        """The ambiguity this command genuinely has, expressed as an answer.
+
+        Under faults_only an empty journal is what a hook that fired and never faulted leaves
+        behind, and it is also what a hook that never fired leaves behind. Choosing either
+        would be a guess, so the cell reports that the cause is unsettled and carries both.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            amend_settings(temporary, journalPolicy=completion.FAULTS_ONLY)
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE)
+        self.assertEqual(
+            sorted(entry["cause"] for entry in cell.get("candidates") or []),
+            sorted((firing.NOTHING_RECORDED, firing.POLICY_RECORDS_ONLY_FAULTS)),
+            "an unsettled cause that does not carry what is still standing has resolved the"
+            " ambiguity by omission")
+
+    def test_an_adapter_the_host_cannot_start_is_its_own_cause(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            break_the_target(temporary)
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.ADAPTER_CANNOT_RUN,
+                         "an empty journal under a program the host cannot start is that"
+                         " program's absence, not a second cause beside it")
+
+    def test_two_repairs_are_reported_as_two_and_never_as_the_first_one_alone(self):
+        """Whether the host can start the adapter is not downstream of the settings. A run that
+        stopped at the first cause it found reported the deleted settings and said nothing
+        about the deleted adapter beside them, and only one of those was going to be fixed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            break_the_target(temporary)
+            completion.configuration_path(Path(temporary)).unlink()
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES)
+        self.assertEqual(
+            sorted(entry["cause"] for entry in cell.get("candidates") or []),
+            sorted((firing.ADAPTER_CANNOT_RUN, firing.SETTINGS_ABSENT)))
+
+    def test_a_journal_switched_off_by_policy_is_not_an_empty_one(self):
+        """journal() returns without writing on no_journal whatever root is configured, so a
+        host that keeps no journal by configuration must not read as one whose journal happens
+        to be empty: the first says nothing at all about firing."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            amend_settings(temporary, journalPolicy=completion.NO_JOURNAL)
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.JOURNALLING_OFF)
+
+
+class TheCausePartitionItself(unittest.TestCase):
+    """Support for the cases above, not evidence of the defect. These check that the partition
+    is well formed; none of them would have failed on the behaviour CRW-100 reports."""
+
+    def test_every_rule_and_requirement_names_a_declared_cause(self):
+        self.assertTrue(set(firing.CAUSE_RULES) <= set(firing.CAUSES))
+        self.assertEqual(set(firing.CAUSE_RULES), set(firing.CAUSE_REQUIRES),
+                         "a cause with a rule and no requirements entry, or the reverse")
+        self.assertEqual(set(firing.CAUSE_ORDER), set(firing.CAUSE_RULES),
+                         "a cause that is decided and never reported, or the reverse")
+        for cause, required in firing.CAUSE_REQUIRES.items():
+            with self.subTest(cause=cause):
+                self.assertTrue(set(required) <= set(firing.CAUSE_RULES),
+                                "a requirement naming a cause nothing decides could never be"
+                                " ruled out, so the cause it guards would never be evaluated")
+
+    def test_a_requirement_is_never_its_own_cause_or_downstream_of_it(self):
+        order = list(firing.CAUSE_ORDER)
+        for cause, required in firing.CAUSE_REQUIRES.items():
+            for name in required:
+                with self.subTest(cause=cause, requires=name):
+                    self.assertLess(order.index(name), order.index(cause),
+                                    "a cause required to be ruled out after the one it guards"
+                                    " is decided is a requirement nothing can satisfy")
+
+    def test_the_cell_is_answered_whichever_branch_of_the_settings_fork_ran(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            register(temporary)
+            second_registration(temporary, "journal-two")
+            ambiguous = completion.status(codex_home=temporary, environ={})
+        with tempfile.TemporaryDirectory() as temporary:
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            register(temporary)
+            settled = completion.status(codex_home=temporary, environ={})
+        for found in (ambiguous, settled):
+            self.assertIn("firingRecordAbsence", found)
+            self.assertIn(found["firingRecordAbsence"]["value"], firing.CAUSES)
+            self.assertTrue(found["firingRecordAbsence"]["evidence"])
 
 
 if __name__ == "__main__":

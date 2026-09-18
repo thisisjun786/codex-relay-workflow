@@ -38,7 +38,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import hooks, hostrecord, pointer, reading
+from . import firing, hooks, hostrecord, pointer, reading
 
 # The event whose contract this adapter implements. Stop is the host's response-turn boundary,
 # and it is the only event whose output schema carries a blocking decision at all.
@@ -1332,6 +1332,61 @@ def _journal_cell(config):
                  journalRoot=str(directory), journalPolicy=policy, days=days)
 
 
+def journals_named(paths):
+    """Each settings file the registrations name, and what the journal under it holds.
+
+    This exists because "no record" had several causes and the command answered none of them.
+    Every registration in the hook file runs, so when they name different settings files they
+    record into different journals; reading one of those and reporting an absence says nothing
+    about the others, and reading none of them -- which is what happened -- makes a hook that
+    fired into one journal indistinguishable from a hook that never fired.
+
+    It writes nothing and opens only files a registration already named.
+
+    Each entry answers its own records question with one of three values, never with a
+    stand-in. Settings that are absent, or that this hook's own reader rejects, keep no journal
+    AT ALL: run() reads them before it looks at the payload, so every invocation releases
+    without writing anywhere. That is an established "nothing is kept here". A settings file
+    this process could not reach is different and stays unestablished, because a permission
+    failure here says nothing about what the hook can open inside a session.
+    """
+    found = []
+    for named in paths:
+        path = _settled(named)
+        config, refused, detail, read_back = read_configuration(path)
+        entry = {"settings": str(path), "settingsState": read_back.state,
+                 "usable": config is not None, "refusedAs": refused, "detail": detail,
+                 "journalRoot": None, "journalPolicy": None, "faultsOnly": False,
+                 "records": None, "recordsAnswer": firing.UNESTABLISHED, "journal": None}
+        if config is None:
+            entry["recordsAnswer"] = (firing.UNESTABLISHED
+                                      if read_back.state == reading.ACCESS_ERROR
+                                      else firing.NO_RECORDS_KEPT)
+            found.append(entry)
+            continue
+        cell = _journal_cell(config)
+        value = cell["value"]
+        entry["journal"] = cell
+        entry["journalRoot"] = cell.get("journalRoot")
+        entry["journalPolicy"] = cell.get("journalPolicy")
+        entry["faultsOnly"] = cell.get("journalPolicy") == FAULTS_ONLY
+        # The POLICY is what decides whether a record is ever written, and journal() returns
+        # without writing on no_journal whatever root is configured. Keying this on the cell's
+        # NO_JOURNAL value alone read a host that keeps no journal by configuration as one
+        # whose journal happens to be empty, which is the substitution this whole answer set
+        # exists to remove.
+        if value == NO_JOURNAL or entry["journalPolicy"] == NO_JOURNAL:
+            entry["recordsAnswer"] = firing.NO_RECORDS_KEPT
+        elif value == reading.ABSENT:
+            # The journal directory is established absent, so it holds nothing. That is a
+            # count this command read, not one nobody could take.
+            entry["records"], entry["recordsAnswer"] = 0, firing.COUNTED
+        elif value.isdigit():
+            entry["records"], entry["recordsAnswer"] = int(value), firing.COUNTED
+        found.append(entry)
+    return found
+
+
 def status(codex_home=None, environ=None, event=EVENT):
     """Registration and firing, answered as separate cells that are never merged.
 
@@ -1365,6 +1420,15 @@ def status(codex_home=None, environ=None, event=EVENT):
     # the one its neighbour names. Counted as a separate answer for that reason: "one path and
     # one silence" is two different files just as surely as two paths are.
     silent = len(ours or []) - len(carried)
+    # Every ABSOLUTE settings file a registration names, read, each with what its journal
+    # holds. Reading one file is the right answer when one registration names one file; when
+    # several name several, every one of them runs, and this command used to answer by reading
+    # none of them. A hook that had fired into one journal and a hook that had never fired at
+    # all then produced identical cells, which is the distinction the operator procedure had to
+    # write down as missing. Each is read, and none is elected, because electing one would make
+    # the answer depend on which path happened to sort first.
+    named_journals = journals_named(
+        sorted({str(_settled(named)) for named in carried if named not in relative}))
     if len(distinct) + (1 if silent else 0) > 1:
         # Every registration runs, so naming one of them would describe one hook while
         # reporting the others' state as if it were that one's.
@@ -1434,7 +1498,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # settings that deliberately configure no journal are different answers. Reporting the
         # first as an empty journal would say this hook has recorded nothing, when what
         # happened is that nobody could tell where it would record.
-        firing = _cell(NOT_READ, "no usable configuration names a journal to read")
+        journal_cell = _cell(NOT_READ, "no usable configuration names a journal to read")
     else:
         settings = _cell(found.state, "settings read", configuration=str(path),
                          configurationSource=source, mode=config.get("mode"),
@@ -1448,7 +1512,23 @@ def status(codex_home=None, environ=None, event=EVENT):
                   else _cell(NOT_READ, "the configured runtime could not be asked: "
                                        + relay["evidence"]))
         marker = presence(config["markerRoot"], "the configured marker root", directory=True)
-        firing = _journal_cell(config)
+        journal_cell = _journal_cell(config)
+
+    # Attached to the settings cell rather than replacing it: the cell above still answers
+    # about the one file this command settled on, and this says what every registration named.
+    settings["namedSettings"] = named_journals
+    # Why there is no record, decided over the cells above and over no reading of its own.
+    # 'ours' is None only when the hook file itself could not be read, which is why whether a
+    # registration exists is passed as the readability of that file and not as a count of zero.
+    absence = firing.decide({
+        "registrationReadable": ours is not None,
+        "adapterRegistrations": len(ours or []),
+        "relativeSettings": bool(relative),
+        "silentRegistrations": silent,
+        "namedJournals": named_journals,
+        "targetValue": target["value"],
+        "interpreterValue": interpreter["value"],
+    })
 
     return {
         "command": "hook-status",
@@ -1463,7 +1543,11 @@ def status(codex_home=None, environ=None, event=EVENT):
         "relayExecutable": relay,
         "guardEvaluateOffered": offers,
         "markerRoot": marker,
-        "firingJournal": firing,
+        "firingJournal": journal_cell,
+        "firingRecordAbsence": _cell(
+            absence["value"], absence["evidence"], candidates=absence["candidates"],
+            ruledOut=absence["ruledOut"], notEvaluated=absence["notEvaluated"],
+            note=absence["note"]),
         "budget": _budget_cell(config, ours),
         "guardRecords": _cell(NOT_READ, "the guard's own per-observation records live in the"
                                         " marker and belong to the relay, not to this command"),
