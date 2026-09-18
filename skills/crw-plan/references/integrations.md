@@ -363,6 +363,15 @@ Recover the existing task first. A replacement is routine only when task creatio
 
 ### Default independent execution
 
+Write instructions sent to child tasks in English, including initial assignments,
+review corrections, active-turn steer messages, resumes, and restoration blocks.
+Translate the actionable instructions without changing their scope or acceptance
+criteria; preserve exact identifiers, URLs, paths, code, and necessary source quotes.
+Keep task titles under the existing Korean title convention, and keep user-facing
+reports and Linear records in Korean unless explicitly requested otherwise. This
+language rule applies to future messages; it does not require resending old prompts
+or waking existing tasks merely to change their language.
+
 Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs `anthropic/claude-opus-5` at `xhigh` reasoning effort with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
 
 This default binds only `crw-run`'s independent children. The coordinator task, other products' global configuration, and CXC internal helper role routing keep their own settings.
