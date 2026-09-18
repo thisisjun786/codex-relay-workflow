@@ -1197,6 +1197,33 @@ def _is_canonical(node, alias):
     )
 
 
+def _binds_name(node, name):
+    """Does this node bind NAME, whatever syntax it uses to do it.
+
+    Enumerated as a class rather than one construct at a time. Review found shadowing
+    through a def, a class, a parameter, an import, an assignment, and then a match-case
+    capture, each needing its own patch; the last one is the argument for listing the
+    binding forms the language has instead of the ones somebody thought of. A Name in Store
+    or Del context already covers assignment, augmented assignment, walrus, for targets,
+    with-as, except-as and comprehension targets, which is most of them.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, ast.Name):
+        return node.id == name and isinstance(node.ctx, (ast.Store, ast.Del))
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    if isinstance(node, ast.ExceptHandler):
+        return node.name == name
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return node.name == name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    return False
+
+
 def _predicate_of(call):
     """The writing predicate a helper call passes, or that it cannot be read."""
     writing = None
@@ -1250,12 +1277,6 @@ def _injection_sites_in(tree, module):
     # earlier draft only looked for the canonical import and stopped, so a second import of
     # the name from somewhere else left every later call classified as the real helper.
     shadowed = any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        and node.name == HELPER
-        for node in ast.walk(tree)
-    ) or any(
-        isinstance(node, ast.arg) and node.arg == HELPER for node in ast.walk(tree)
-    ) or any(
         # Per ALIAS, not per statement. The name an import BINDS is what matters, and
         # exempting a whole statement let "from .support import WorkerKilled as
         # killed_before_commit" ride along beside the canonical one.
@@ -1263,11 +1284,9 @@ def _injection_sites_in(tree, module):
         for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
         for alias in node.names
     ) or any(
-        isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
-        and any(isinstance(leaf, ast.Name) and leaf.id == HELPER
-                for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
-                for leaf in _flatten(target))
+        _binds_name(node, HELPER)
         for node in ast.walk(tree)
+        if not isinstance(node, (ast.Import, ast.ImportFrom))
     )
 
     for node in ast.walk(tree):
@@ -1657,6 +1676,15 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
             ("the canonical import, but local to another function",
              f"def setup():\n    from .support import {HELPER}\n"
              + f"def t(store):\n    {HELPER}(store)\n"),
+            ("a match-case capture of the name",
+             self.IMPORT + "def t(store, event):\n    match event:\n"
+             + f"        case {{'killer': {HELPER}}}:\n            {HELPER}(store)\n"),
+            ("a for-loop target",
+             self.IMPORT + f"def t(store, items):\n    for {HELPER} in items:\n"
+             + f"        {HELPER}(store)\n"),
+            ("a with-as target",
+             self.IMPORT + f"def t(store, ctx):\n    with ctx as {HELPER}:\n"
+             + f"        {HELPER}(store)\n"),
             ("parameter shadow",
              self.IMPORT + f"def t(store, {HELPER}):\n    {HELPER}(store)\n"),
             ("class shadow",
