@@ -167,6 +167,20 @@ def stamp(when=None):
     return at.isoformat().replace("+00:00", "Z")
 
 
+def finite(value):
+    """Whether this number is finite, for a JSON number of any size.
+
+    Python keeps an integer literal at arbitrary precision and math.isfinite converts to float,
+    which raises on one too large to represent. An integer is finite whatever its size.
+    """
+    if isinstance(value, int):
+        return True
+    try:
+        return math.isfinite(value)
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
 def number(value, what, *, minimum, maximum=None):
     """A real, finite number in range, or a refusal.
 
@@ -177,7 +191,7 @@ def number(value, what, *, minimum, maximum=None):
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise Refused(what + " must be a number", value=shown(value))
-    if not math.isfinite(value):
+    if not finite(value):
         raise Refused(what + " must be a finite number", value=str(value))
     if value < minimum or (maximum is not None and value > maximum):
         raise Refused(what + " is out of range", value=value, minimum=minimum, maximum=maximum)
@@ -933,7 +947,7 @@ def reading_process(record, relay, sleeper=time.sleep):
         # A bool is an int here, and False to True is not progress anybody made.
         advanced = (isinstance(before, (int, float)) and isinstance(after, (int, float))
                     and not isinstance(before, bool) and not isinstance(after, bool)
-                    and math.isfinite(before) and math.isfinite(after)
+                    and finite(before) and finite(after)
                     and after > before)
         cells.append(cell("witnessAdvance", VERIFIED if (named and advanced) else NOT_VERIFIED,
                           evidence=("the witness names pid " + str(first_witness.get("pid"))
@@ -1052,8 +1066,13 @@ def reading_capability(record, relay):
             payload = probe["payload"] or {}
             usable = field(payload, "usable")
             settings = field(payload, "settings")
+            # The workspace the record already states for this participant, compared without being
+            # declared twice: a settings record naming another cwd is the one delivery would use.
+            wanted = dict(expect)
+            if participant.get("cwd") is not None:
+                wanted["cwd"] = participant.get("cwd")
             differs = [] if settings is MISSING or settings is None else [
-                key for key, value in sorted(expect.items())
+                key for key, value in sorted(wanted.items())
                 if not same_value(field(settings, key), value)
             ]
             # settings-show always reports missing, so an absent one is a payload this predicate

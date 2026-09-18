@@ -73,7 +73,11 @@ payload = entry.get("payload", {})
 if subcommand == "settings-show" and isinstance(payload, dict) and "--task" in argv:
     # The real command answers about the task it was asked about, so a stub that always answered
     # about one task would hide a checker that never compared the identity.
-    payload = dict(payload, task=argv[argv.index("--task") + 1])
+    asked = argv[argv.index("--task") + 1]
+    payload = dict(payload, task=asked)
+    workspaces = payloads.get("taskCwd") or {}
+    if asked in workspaces and isinstance(payload.get("settings"), dict):
+        payload["settings"] = dict(payload["settings"], cwd=workspaces[asked])
 if entry.get("stdout") is not None:
     sys.stdout.write(entry["stdout"])
 else:
@@ -196,6 +200,10 @@ class World:
 
     def _payloads(self):
         return {
+            # Each participant's own workspace, because the store records one per task and the
+            # checker compares the one the record states for that participant.
+            "taskCwd": {self.PARENT_A: str(self.repos["A"]), self.CHILD_A: str(self.repos["A"]),
+                        self.PARENT_B: str(self.repos["B"]), self.CHILD_B: str(self.repos["B"])},
             "doctor": {"payload": {
                 "sameStore": "proven",
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
@@ -2551,6 +2559,36 @@ class TwentyFifthHostedRound(TrialCase):
         self.assertNotIn('"pid": 0', text)
         self.assertNotIn('"device": 0', text)
         self.assertNotIn('"inode": 0', text)
+
+
+class TwentySixthHostedRound(TrialCase):
+    """A counter too large for a float, and the workspace the store recorded."""
+
+    def test_a_counter_too_large_for_a_float_does_not_crash_the_run(self):
+        pid = self.world.start_supervisor()
+        self.world.supervisor.terminate()
+        self.world.supervisor.wait(timeout=5)
+        witness = self.world.trial / "supervisor.jsonl"
+        huge = 10 ** 400
+
+        def write(lines):
+            witness.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+        write([{"pid": pid, "progress": huge}])
+        document = self.world.preflight_with(
+            lambda seconds: write([{"pid": pid, "progress": huge},
+                                   {"pid": pid, "progress": huge + 1}]))
+        # An integer is finite whatever its size, so this is progress rather than a crash.
+        self.assertEqual(cells_of(document, "processPersistence")["witnessAdvance"]["value"],
+                         VERIFIED)
+
+    def test_a_settings_record_naming_another_workspace_fails(self):
+        self.world.payloads["taskCwd"][World.PARENT_A] = str(self.world.repos["B"])
+        self.world.flush()
+        document = self.world.preflight()
+        cell = cells_of(document, "capability")["recordedSettings:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("cwd", cell["evidence"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover
