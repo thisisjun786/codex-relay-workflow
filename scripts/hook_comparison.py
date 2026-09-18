@@ -129,6 +129,16 @@ ARM_CELLS = ("installExit", "installResult", "installSettings", "registration",
              "foreignRegistration")
 FIRING_CELLS = tuple(cell for cell, _s, _p, _q in CELLS if cell not in ARM_CELLS)
 
+# Every answer that means there is nothing there, in the vocabulary of the source that gives it.
+# An absent registration and an unpublished observation are both absences and neither is the other:
+# the first is a payload that does not exist, the second is the marker root saying it looked. A
+# place that declares an absence declares which of these it expects, and a check compares the two.
+# None is here because the journal says "nothing was published" by carrying a null in the field
+# rather than by leaving it out, and that is the guard's own way of saying it looked and there was
+# nothing. Including it makes the rule stricter rather than looser: every cell that answers null
+# must then be a place something declared an absence to be normal.
+ABSENCE_ANSWERS = (reading.ABSENT, NOT_PUBLISHED, NOT_RESERVED, None)
+
 # A managed scenario is one whose workspace a marker names. Only there can the guard select an
 # assignment, so only there is a published observation something to require.
 MANAGED = "managed"
@@ -169,22 +179,34 @@ SCENARIOS = (
              {"observation": "declared_ready_receipted", "guardDecision": "release",
               "guardState": "declared_ready_receipted", "printedBlock": PRINTED_NOTHING,
               "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
-              "observationFile": RESOLVED}),
+              "observationFile": RESOLVED},
+             absent={"heldFile": "a turn that declared itself releases on its own declaration,"
+                                 " and a reservation here would be the defect this scenario"
+                                 " watches for"}),
     scenario("declared_in_progress", MANAGED,
              {"observation": "declared_in_progress", "guardDecision": "release",
               "guardState": "declared_in_progress", "printedBlock": PRINTED_NOTHING,
               "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
-              "observationFile": RESOLVED}),
+              "observationFile": RESOLVED},
+             absent={"heldFile": "a turn that declared itself releases on its own declaration,"
+                                 " and a reservation here would be the defect this scenario"
+                                 " watches for"}),
     scenario("declared_blocked_needs_input", MANAGED,
              {"observation": "declared_blocked_needs_input", "guardDecision": "release",
               "guardState": "declared_blocked_needs_input", "printedBlock": PRINTED_NOTHING,
               "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
-              "observationFile": RESOLVED}),
+              "observationFile": RESOLVED},
+             absent={"heldFile": "a turn that declared itself releases on its own declaration,"
+                                 " and a reservation here would be the defect this scenario"
+                                 " watches for"}),
     scenario("declared_interrupted", MANAGED,
              {"observation": "declared_interrupted", "guardDecision": "release",
               "guardState": "declared_interrupted", "printedBlock": PRINTED_NOTHING,
               "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
-              "observationFile": RESOLVED}),
+              "observationFile": RESOLVED},
+             absent={"heldFile": "a turn that declared itself releases on its own declaration,"
+                                 " and a reservation here would be the defect this scenario"
+                                 " watches for"}),
     scenario("unmanaged", UNMANAGED,
              {"observation": "unmanaged", "guardDecision": "release",
               "guardState": "unmanaged", "printedBlock": PRINTED_NOTHING,
@@ -1003,9 +1025,15 @@ def absence_places():
     places = {}
     for declared in SCENARIOS:
         for cell in FIRING_CELLS:
-            places[(OFF, declared["name"], cell)] = NO_REGISTRATION
+            places[(OFF, declared["name"], cell)] = {"because": NO_REGISTRATION,
+                                                     "answer": reading.ABSENT}
         for cell, why in declared["absent"].items():
-            places[(ON, declared["name"], cell)] = why
+            wanted = declared["expected"][cell]
+            # recordedAs declares its absence through the predicate that reads a null, so the
+            # answer recorded here is the null the journal actually carries.
+            places[(ON, declared["name"], cell)] = {
+                "because": why, "answer": None if wanted == NOT_PUBLISHED and cell == "recordedAs"
+                else wanted}
     return places
 
 
@@ -1070,8 +1098,8 @@ def document(scenarios, root):
         "arms": scenarios["_arms"],
         "scenarios": dict((declared["name"], scenarios[declared["name"]])
                           for declared in SCENARIOS),
-        "absenceIsNormalAt": [{"arm": arm, "scenario": name, "cell": cell, "because": why}
-                              for (arm, name, cell), why in sorted(places.items())],
+        "absenceIsNormalAt": [dict(place, arm=arm, scenario=name, cell=cell)
+                              for (arm, name, cell), place in sorted(places.items())],
         "measures": measures(scenarios),
         "supplemental": supplemental(scenarios),
         "standIns": STAND_INS,
