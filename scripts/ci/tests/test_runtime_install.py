@@ -8438,3 +8438,39 @@ class LockSiblingTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIsNone(emitted[0].get("internalError"))
         self.assertEqual(emitted[0]["outcome"], runtime_install.BUSY)
+
+    def test_a_busy_settings_lock_still_names_the_hook_file_it_was_installing(self):
+        """The completion adapter takes TWO locks, on two different files.
+
+        The file being installed into and the file whose lock could not be taken are two facts.
+        Reporting the second as `hookFile` named the settings file as the hook being installed,
+        which is this change's own subject arriving one more time in the change itself: a field
+        filled by a value other than the reading its own question produced.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            configuration = Path(completion.configuration_path(home))
+            configuration.parent.mkdir(parents=True, exist_ok=True)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python="python3",
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-87",
+                apply=True)
+            emitted = []
+            held = hostrecord.Locked(configuration, timeout=0.2)
+            held.__enter__()
+            try:
+                with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                    code = runtime_install.cmd_hook(args)
+            finally:
+                held.__exit__()
+            self.assertEqual(code, runtime_install.EXIT_REFUSED)
+            self.assertEqual(emitted[-1]["outcome"], runtime_install.BUSY)
+            self.assertIsNone(emitted[-1].get("internalError"))
+            self.assertEqual(emitted[-1]["hookFile"], str(home / "hooks.json"))
+            self.assertEqual(emitted[-1]["lockedPath"], str(configuration))
+            self.assertIn(str(configuration), emitted[-1]["refused"])

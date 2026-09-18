@@ -2098,7 +2098,7 @@ def _trial(args, relay_executable, relay_interpreter=None):
 
 # ------------------------------------------------------------------------- hook
 
-def _hook_busy(adapter, path, error, *, settings):
+def _hook_busy(adapter, path, error, *, settings, locked):
     """Another run holds the hook file. Nothing about this hook was established.
 
     The answer install, register-mcp and release_candidate already give for the same event.
@@ -2109,10 +2109,17 @@ def _hook_busy(adapter, path, error, *, settings):
     Whether the settings were written is carried rather than decided: they are written before
     the hook, so a lock taken between the two leaves them on disk and saying otherwise would be
     a second false claim on top of the first.
+
+    The file this command was installing into and the file whose lock it could not take are two
+    facts, and two of the writes here take DIFFERENT locks. Reporting the locked resource as
+    hookFile named the settings file as the hook being installed, which is this change's own
+    subject one more time: a field filled by a value other than the reading its own question
+    produced. Review found it, which is the point of review.
     """
-    emit({"command": "hook", "adapter": adapter, "hookFile": str(path), "outcome": BUSY,
+    emit({"command": "hook", "adapter": adapter, "hookFile": str(path),
+          "lockedPath": str(locked), "outcome": BUSY,
           "settings": settings, "result": None, "applied": False, "wrote": False,
-          "refused": "another run holds " + str(path) + ": " + str(error),
+          "refused": "another run holds " + str(locked) + ": " + str(error),
           "note": ("nothing about this hook was established and no hook was appended. What"
                    " happened to the settings is reported above and is not changed by this"
                    " refusal.")})
@@ -2186,7 +2193,7 @@ def cmd_hook(args):
             settings = completion.write_configuration(
                 configuration, wanted, apply=args.apply)
         except TimeoutError as error:
-            return _hook_busy(adapter, configuration, error, settings=None)
+            return _hook_busy(adapter, path, error, settings=None, locked=configuration)
         if settings["outcome"] not in completion.CONFIG_SETTLED:
             emit({"command": "hook", "adapter": adapter, "settings": settings,
                   "hookFile": str(path), "result": None,
@@ -2201,7 +2208,7 @@ def cmd_hook(args):
     try:
         result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
     except TimeoutError as error:
-        return _hook_busy(adapter, path, error, settings=settings)
+        return _hook_busy(adapter, path, error, settings=settings, locked=path)
     landed = None
     if adapter == COMPLETION and args.apply:
         # Read back after the append, because the duplicate check above and the append itself
