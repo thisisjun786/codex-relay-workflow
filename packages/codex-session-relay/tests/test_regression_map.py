@@ -413,10 +413,16 @@ SUMMARY_SITES = (
     ("test_intent.py", "test_a_resolution_clears_a_contest_only_by_naming_the_bound_identity",
      "identity_contested", False, "self.assertFalse(intent.identity_contested(self.facts()))",
      "the after half; only the resolution naming the bound identity may produce it"),
+    ("test_intent.py", "test_coverage_needs_the_digest_to_match_the_content", "covered", False,
+     "self.assertFalse(intent.covered(competing, intent._resolutions(self.facts())), 'a"
+     " resolution carrying the wrong digest covered the fact anyway')",
+     "the quantity the name is about, and it was missing until this inventory looked: review"
+     " measured that forcing covered() to answer False for every input left the case green, so"
+     " identity_contested alone never established which refusal produced it"),
     ("test_intent.py", "test_coverage_needs_the_digest_to_match_the_content", "identity_contested",
      True, "self.assertTrue(intent.identity_contested(self.facts()))",
-     "used as the observable for a digest mismatch, and covered() is asserted directly beside"
-     " it, which is the quantity the name is about"),
+     "the consequence, paired with the coverage assertion above it; on its own it is true for a"
+     " missing resolution and for one naming somebody else as well"),
     ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within", True,
      "self.assertTrue(is_within('/a/b', '/a/b'))",
      "the disjunction is the contract, and this case names its first branch, a path equal to"
@@ -493,8 +499,11 @@ SUMMARY_SITES = (
      " and the process outcome asserted beside it is what carries the name"),
     ("test_service.py", "test_a_stale_record_does_not_block_a_fresh_start", "lock_is_held", False,
      "self.assertFalse(service.lock_is_held())",
-     "as above: the stale record is written by the fixture and the fresh start asserted beside"
-     " it is the claim"),
+     "PROXY, and review measured it: the case starts nothing, so the three assertions in it are"
+     " the preconditions a start reads rather than a start that succeeded. Replacing"
+     " RelayService.start with a raise leaves it green. What it does establish is that a"
+     " terminated holder leaves no ownership and no lock; that a start then succeeds is"
+     " established in LaunchReporting below it, and this name reaches further than this body"),
     ("test_service.py", "test_a_worker_that_exits_is_replaced_on_the_same_store", "lock_is_held",
      False,
      "self.assertFalse(service.lock_is_held(), 'the supervisor released on the way out')",
