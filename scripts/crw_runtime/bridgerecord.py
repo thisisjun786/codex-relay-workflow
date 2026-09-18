@@ -42,6 +42,16 @@ APPLIED_UNVERIFIED = "record_applied_unverified"
 # The outcomes that mean the record now says what this run asked it to, or would with --apply.
 SETTLED = (UNCHANGED, CREATED, WOULD_CREATE)
 
+# The lock both owners take around the ownership decision and the write that follows it.
+# Its own target, because the two owners write different files: the user path locks the Codex
+# configuration and the plugin path locks this record, so neither of those serializes the
+# decision they share. Without this, two runs both read an empty host and both write.
+OWNERSHIP_LOCK = "crw-mcp-ownership"
+
+
+def ownership_lock_path(codex_home=None, environ=None):
+    return record_path(codex_home, environ).with_name(OWNERSHIP_LOCK)
+
 
 def record_path(codex_home=None, environ=None):
     environ = os.environ if environ is None else environ

@@ -195,6 +195,20 @@ class OwnershipTest(unittest.TestCase):
             self.assertFalse(self.home.settings.exists(), output)
             self.assertFalse(self.home.hook_file.exists(), output)
 
+    def test_a_guard_budget_the_launcher_cannot_outlast_is_refused(self):
+        status, emitted, output = self.home.hook(
+            "--owner", "plugin", "--guard-timeout",
+            str(completion.LAUNCHER_CEILING_SECONDS), "--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertFalse(self.home.settings.exists(),
+                         "a refused run writes nothing: " + output)
+
+    def test_the_same_budget_is_still_accepted_for_the_user_owner(self):
+        """The ceiling belongs to the packaged launcher, which the user owner does not run."""
+        status, emitted, output = self.home.hook(
+            "--guard-timeout", str(completion.LAUNCHER_CEILING_SECONDS), "--apply")
+        self.assertEqual(status, 0, output)
+
 
 # ---------------------------------------------------------------- the bridge MCP record
 
@@ -270,6 +284,23 @@ class BridgeRecordTest(unittest.TestCase):
     def test_a_plan_writes_nothing(self):
         status, emitted, output = self.register("--owner", "plugin")
         self.assertEqual(status, 0, output)
+        self.assertFalse(self.record.exists(), output)
+
+    def test_a_record_that_could_not_be_read_refuses_both_owners(self):
+        """Not only the malformed one. Every way of not reading it leaves ownership unknown."""
+        self.record.write_text("{ not json", encoding="utf-8")
+        for extra in ((), ("--owner", "plugin")):
+            status, emitted, output = self.register(*extra)
+            self.assertNotEqual(status, 0, output)
+            self.assertIn("not established", emitted["detail"], output)
+            self.assertFalse((self.home.codex_home / "config.toml").exists(), output)
+
+    def test_the_plugin_owner_registers_only_the_declared_name(self):
+        """A custom name would check one entry and start another."""
+        status, emitted, output = self.register("--owner", "plugin", "--name", "alias",
+                                                "--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("alias", emitted["detail"], output)
         self.assertFalse(self.record.exists(), output)
 
 
@@ -357,6 +388,24 @@ class StopLauncherTest(unittest.TestCase):
         done = self.fire()
         self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
 
+    def test_the_launcher_ceiling_and_the_installer_agree(self):
+        """The launcher cannot import the module that refuses budgets reaching its ceiling."""
+        source = self.LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("MAX_SECONDS = " + str(completion.LAUNCHER_CEILING_SECONDS), source)
+
+    def test_a_guard_budget_reaching_that_ceiling_is_not_installable_for_the_plugin(self):
+        document = completion.configuration(
+            relay="/opt/relay/bin/codex-session-relay", codex_home="/tmp/codex",
+            owner=completion.OWNER_PLUGIN, adapter_interpreter=sys.executable,
+            adapter_entry_point=str(self.adapter),
+            timeout=completion.LAUNCHER_CEILING_SECONDS)
+        self.assertTrue(any("packaged launcher" in complaint
+                            for complaint in completion.complaints(document)))
+
+    def test_the_shipped_default_budget_leaves_the_launcher_margin(self):
+        self.assertLess(completion.DEFAULT_TIMEOUT_SECONDS,
+                        completion.LAUNCHER_CEILING_SECONDS)
+
 
 class BridgeLauncherTest(unittest.TestCase):
     """The opposite failure direction: a server that cannot start says why."""
@@ -382,7 +431,38 @@ class BridgeLauncherTest(unittest.TestCase):
     def test_an_absent_record_names_the_command_that_writes_it(self):
         done = self.start()
         self.assertEqual(done.returncode, 2)
-        self.assertIn("register-mcp --owner plugin", done.stderr)
+        # Both owners, because the right command depends on who owns the server and naming
+        # only one sends half of the hosts at the wrong repair.
+        self.assertIn("register-mcp --apply", done.stderr)
+        self.assertIn("--owner plugin", done.stderr)
+
+    def test_the_user_owner_records_itself_so_the_launcher_can_stand_down(self):
+        """A host that registered the bridge here and later installs the package."""
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        home = Home(stack)
+        bridge = home.destination / "current" / "bin" / "codex-thread-bridge"
+        bridge.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        bridge.chmod(0o755)
+        status, emitted, output = run("register-mcp", "--codex-home", str(home.codex_home),
+                                      "--bridge-command", str(bridge), "--apply")
+        record = home.codex_home / bridgerecord.RECORD_NAME
+        if not TOML_READER:
+            # A user registration reads the configuration back, and that reader arrived in
+            # 3.11. On the floor this repository supports the command refuses and writes
+            # nothing, which is the behaviour to assert here rather than a record it never made.
+            self.assertNotEqual(status, 0, output)
+            self.assertFalse(record.exists(), output)
+            return
+        self.assertEqual(status, 0, output)
+        self.assertTrue(record.exists(), output)
+        self.assertEqual(json.loads(record.read_text())["owner"], bridgerecord.OWNER_USER)
+        done = subprocess.run([sys.executable, str(self.LAUNCHER)], capture_output=True,
+                              text=True, input="",
+                              env={"PATH": os.environ["PATH"],
+                                   "CODEX_HOME": str(home.codex_home)})
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("registers it", done.stderr)
 
     def test_a_user_owned_record_refuses_to_start_a_second_bridge(self):
         self.record(owner="user")

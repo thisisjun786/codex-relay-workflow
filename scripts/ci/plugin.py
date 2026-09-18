@@ -357,7 +357,14 @@ def interface_errors(skill_path, payload, label):
             if not separator or key in interface:
                 return [label + " " + skill_path + "/agents/openai.yaml: malformed interface"
                         " metadata"]
-            interface[key] = yaml_scalar(value)
+            try:
+                interface[key] = yaml_scalar(value)
+            except ValueError as exc:
+                # Reported with the other findings rather than raised. A quoting mistake here
+                # would otherwise abort the whole package check, and the run would end with one
+                # traceback instead of the list of everything that is wrong.
+                return [label + " " + skill_path + "/agents/openai.yaml: " + key + " is not a"
+                        " readable scalar (" + str(exc) + ")"]
     missing = {"display_name", "short_description", "default_prompt"} - set(interface)
     if missing:
         return [label + " " + skill_path + "/agents/openai.yaml: missing interface "

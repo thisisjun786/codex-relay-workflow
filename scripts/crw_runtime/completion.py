@@ -97,6 +97,13 @@ JOURNAL_POLICIES = (EVERY_INVOCATION, FAULTS_ONLY, NO_JOURNAL)
 DEFAULT_TIMEOUT_SECONDS = 5
 REGISTERED_TIMEOUT_SECONDS = 10
 
+# The ceiling the packaged launcher puts on its own subprocess deadline. It sits between the
+# host and the adapter, so its deadline has to be longer than the adapter's guard budget:
+# a launcher that expires first kills the adapter mid-call and discards the very record that
+# would have explained the timeout, and then releases the turn saying nothing. Mirrored in
+# plugins/crw/wiring/crw_stop_hook.py, which cannot import this module.
+LAUNCHER_CEILING_SECONDS = 9
+
 # The largest budget any of these checks will entertain. Compared against rather than converted,
 # because an arbitrary-precision integer cannot always become a float: math.isfinite raises
 # OverflowError on one, and a guard against a bad value must never itself be the failure.
@@ -428,6 +435,15 @@ def complaints(document):
                 found.append(field + " is required when owner is " + OWNER_PLUGIN
                              + ": a registration declared by the plugin package cannot resolve"
                                " this repository's adapter, so the install records it here")
+        budget = document.get("timeoutSeconds")
+        if isinstance(budget, (int, float)) and not isinstance(budget, bool) \
+                and budget >= LAUNCHER_CEILING_SECONDS:
+            # The packaged launcher sits between the host and the adapter and caps its own
+            # deadline here, so a guard budget at or above that ceiling lets the launcher kill
+            # the adapter first and release the turn without the record that explains it.
+            found.append("timeoutSeconds must be under " + str(LAUNCHER_CEILING_SECONDS)
+                         + " when owner is " + OWNER_PLUGIN + ", because the packaged launcher"
+                         " caps its own deadline there and has to outlast the adapter it runs")
     budget = document.get("timeoutSeconds")
     if budget is not None and not usable_seconds(budget):
         found.append("timeoutSeconds must be a positive number of seconds, at most "
@@ -1565,6 +1581,17 @@ def status(codex_home=None, environ=None, event=EVENT):
         "command": "hook-status",
         "codexHome": str(home),
         "event": event,
+        # Read before the registration cell, because the registration cell only ever looks in
+        # the hook file. A plugin-owned hook is registered in the package's manifest, so that
+        # cell says nothing is registered and is right about the file and wrong about the host.
+        # This names the owner the settings recorded, so the two readings stay distinguishable.
+        "registrationOwner": (
+            _cell(owner_of(config), "the owner recorded in these settings",
+                  registeredWhere=("the plugin package's manifest, which this command does not"
+                                   " read" if owner_of(config) == OWNER_PLUGIN
+                                   else str(home / "hooks.json")))
+            if config else
+            _cell(NOT_READ, "the settings were not read, so the owner was not established")),
         "registration": registration,
         "registeredCommandTarget": target,
         "registeredInterpreter": interpreter,

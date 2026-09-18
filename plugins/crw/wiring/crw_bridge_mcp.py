@@ -60,9 +60,11 @@ def main():
     try:
         document = json.loads(record.read_bytes().decode("utf-8"))
     except FileNotFoundError:
-        fail("no record at " + str(record) + " (resolved from " + how + "). Run"
-             " runtime_install.py register-mcp --owner plugin --apply against this Codex home"
-             " to write it; this package never installs a runtime itself.")
+        fail("no record at " + str(record) + " (resolved from " + how + "). Which command"
+             " writes it depends on who owns this server. If this host registers the bridge"
+             " in its Codex configuration, run runtime_install.py register-mcp --apply and"
+             " this launcher will stand down for that registration. If the package is to own"
+             " it, add --owner plugin. Either way this package never installs a runtime.")
     except (OSError, UnicodeDecodeError, ValueError) as error:
         fail("the record at " + str(record) + " could not be read: " + str(error))
     if not isinstance(document, dict):

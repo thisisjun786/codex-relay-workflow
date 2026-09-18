@@ -3693,8 +3693,17 @@ def _mcp_ownership(record_path, owner, configuration, name):
     """
     if owner not in bridgerecord.OWNERS:
         return "owner must be one of " + ", ".join(bridgerecord.OWNERS) + ", found " + repr(owner)
+    if owner == bridgerecord.OWNER_PLUGIN and name != MCP_NAME:
+        # The package declares one server name. Checking a different one would inspect an entry
+        # that is not the server that will start, and record a name the launcher never reads.
+        return ("the " + bridgerecord.OWNER_PLUGIN + " owner registers the server the package"
+                " declares, which is " + repr(MCP_NAME) + ", not " + repr(name)
+                + "; --name belongs to a " + bridgerecord.OWNER_USER + "-owned registration")
     found, outcome, detail = bridgerecord.read(record_path)
-    if outcome == bridgerecord.MALFORMED:
+    if found is None and outcome != bridgerecord.ABSENT:
+        # Every way of not reading it, not only the malformed one. read() reports an undecodable
+        # file, a dangling link, a directory and a permission failure as their own states, and
+        # treating those like absence lets the other owner install on an unanswered question.
         return ("the record at " + str(record_path) + " could not be acted on (" + str(detail)
                 + "), so who owns this server was not established")
     if owner == bridgerecord.OWNER_USER:
@@ -3722,6 +3731,28 @@ def _mcp_ownership(record_path, owner, configuration, name):
 
 
 def cmd_register_mcp(args):
+    """Decide the owner and register, with both halves under one lock.
+
+    The two owners write different files, so their own write locks do not serialize the
+    decision they share: without this, two concurrent runs both read a host with neither
+    artifact present and both write, and the host then starts two bridges. The decision and
+    the write it authorizes happen inside this one lock, and the configuration is read again
+    inside it so the decision is made about the state that will be written.
+    """
+    codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    lock = bridgerecord.ownership_lock_path(codex_home)
+    try:
+        with hostrecord.Locked(lock):
+            return _register_mcp_owned(args, codex_home)
+    except hostrecord.Busy as error:
+        emit({"command": "register-mcp", "owner": getattr(args, "owner", None),
+              "outcome": BUSY, "detail": str(error), "applied": False, "wrote": False,
+              "otherTablesPreserved": True,
+              "note": "nothing was written: another run holds the ownership lock"})
+        return EXIT_REFUSED
+
+
+def _register_mcp_owned(args, codex_home):
     """Register the bridge through the supported Codex configuration path.
 
     Append-only and idempotent: an identical registration writes nothing, an absent one is
@@ -3733,7 +3764,6 @@ def cmd_register_mcp(args):
     reporting are not. That line matters: a ValueError from a render is a defect in this
     command and must keep raising, while a configuration that cannot be decoded is a refusal.
     """
-    codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     path, before = read_config(codex_home)
     if not before.usable:
         return refused("register-mcp", before, path=str(path), applied=False, wrote=False,
@@ -3856,8 +3886,28 @@ def cmd_register_mcp(args):
             unreadable = view.unreadable or None
     except reading.Refused as stop:
         servers, unreadable = None, [stop.reading.detail]
+    # The user owner records itself too. Without this, a host that registered the bridge here
+    # and later installs the plugin gives the packaged launcher no record to read: it would
+    # report an absent record on every session and tell the operator to write a plugin-owned
+    # one, which is the opposite of what that host should do. With it, the launcher reads the
+    # owner and stands down for the registration this command just made.
+    #
+    # Failing to write it never fails the registration, which has already landed; it is
+    # reported as its own result.
+    record = None
+    if owner == bridgerecord.OWNER_USER and outcome not in REGISTER_REFUSALS:
+        try:
+            record = bridgerecord.write(record_path, bridgerecord.document(
+                command=args.bridge_command, arguments=args.bridge_arg or [], name=args.name,
+                issue=getattr(args, "issue", None), owner=bridgerecord.OWNER_USER),
+                apply=args.apply)
+        except (ValueError, hostrecord.Busy) as error:
+            record = {"record": str(record_path), "outcome": bridgerecord.MALFORMED,
+                      "applied": False, "wrote": False, "detail": str(error)}
     emit({
         "command": "register-mcp",
+        "owner": owner,
+        "record": record,
         "path": str(path),
         "outcome": outcome,
         "detail": detail,

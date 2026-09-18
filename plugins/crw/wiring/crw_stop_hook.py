@@ -39,6 +39,11 @@ PLUGIN_OWNER = "plugin"
 # in the middle of recording why it could not answer.
 MARGIN_SECONDS = 2
 MAX_SECONDS = 9
+# MAX_SECONDS is the ceiling this launcher puts on its own deadline, and it is the same number
+# scripts/crw_runtime/completion.py calls LAUNCHER_CEILING_SECONDS. That module refuses to
+# install plugin-owned settings whose guard budget reaches it, so this deadline always outlasts
+# the adapter it runs. If one of the two moves, the other has to move with it; a test asserts
+# they still agree, because this file cannot import that module.
 
 
 def settings_path():
