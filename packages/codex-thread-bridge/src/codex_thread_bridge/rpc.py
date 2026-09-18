@@ -9,6 +9,7 @@ from typing import Any
 from websockets.asyncio.client import unix_connect
 
 from . import __version__
+from .effects import mark_sent
 
 
 class RpcError(Exception):
@@ -106,6 +107,11 @@ class AppServer:
         future = asyncio.get_running_loop().create_future()
         self._pending[ident] = future
         try:
+            # Recorded before the write and not after it: a failure inside send does not prove
+            # the frame never reached the server, and this is the only place that knows one was
+            # about to go out for this method. A request that never gets this far — no socket, no
+            # connection — leaves no mark, which is what lets a caller try it again.
+            mark_sent(method)
             await ws.send(json.dumps({"id": ident, "method": method, "params": params}))
             message = await asyncio.wait_for(future, self.timeout)
         except (OSError, TimeoutError) as error:
