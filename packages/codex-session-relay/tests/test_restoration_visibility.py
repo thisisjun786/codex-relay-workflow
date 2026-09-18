@@ -404,6 +404,46 @@ class RestorationDelivery(DeliveryTestCase):
             "record forbids",
         )
 
+    def test_the_carrier_is_matched_the_way_the_findings_are_normalised(self):
+        """A finding the verdict accepts must be nameable as the carrier.
+
+        The command splits --finding on '=' and stores whatever precedes it, so
+        ' c2=needs_changes:context' is recorded with the id ' c2'. normalise_findings then
+        trims it to 'c2' and the verdict accepts it. A carrier match against the raw value
+        answers no to a finding the same verdict says yes to, and refuses the selection for a
+        reason the refusal does not contain - which in this feature would surface later as a
+        block reported not_carried with a cause that is not the real one.
+        """
+        _relationship, event_id = self._acknowledged()
+        payload = cli.cmd_verdict(
+            SimpleNamespace(ack=self.ack),
+            SimpleNamespace(
+                event=event_id, verdict="needs_changes", verdict_turn="v-pad",
+                criterion=None, finding=[" c2 =needs_changes:resume context"],
+                criteria=None, restoration="c2", reason=None,
+                expect_criteria_digest=None,
+            ),
+        )
+        reported = payload.get("_restoration") or {"outcome": "nothing was recorded"}
+        self.assertEqual(reported.get("outcome"), "carried")
+        self.assertEqual(reported.get("criterion"), "c2")
+
+    def test_a_padded_restoration_argument_names_the_same_finding(self):
+        """The mismatch mirrors: normalising one operand is half a rule."""
+        _relationship, event_id = self._acknowledged()
+        payload = cli.cmd_verdict(
+            SimpleNamespace(ack=self.ack),
+            SimpleNamespace(
+                event=event_id, verdict="needs_changes", verdict_turn="v-pad-arg",
+                criterion=None, finding=["c2=needs_changes:resume context"],
+                criteria=None, restoration="  c2  ", reason=None,
+                expect_criteria_digest=None,
+            ),
+        )
+        reported = payload.get("_restoration") or {"outcome": "nothing was recorded"}
+        self.assertEqual(reported.get("outcome"), "carried")
+        self.assertEqual(reported.get("criterion"), "c2")
+
     # ------------------------------------------------- an unlocatable declaration
 
     def test_each_attempt_records_what_its_own_bytes_carried(self):

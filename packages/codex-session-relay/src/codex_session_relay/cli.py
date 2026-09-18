@@ -17,7 +17,7 @@ from .ack import AckService
 from .admission import AnchorOrExplicit, admit_explicitly
 from .assignment import AssignmentView
 from .clock import SystemClock
-from .criteria import CriteriaService
+from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
@@ -638,13 +638,18 @@ def cmd_verdict(services, args) -> dict:
         # Declared against a finding, because a finding is the only thing the correction
         # actually carries. Naming one that is not there is refused rather than ignored: a
         # flag that silently attaches to nothing is the same silence this whole path removes.
+        # Compared through criteria.finding_id on BOTH sides, so this surface and the
+        # normalisation that follows it agree about which findings exist. Comparing the raw
+        # argument rejected ' c2' as naming no finding while the verdict went on to accept it
+        # as 'c2', and a rule that normalises one operand is half a rule.
+        wanted = finding_id(args.restoration)
         marked = [
             item for item in criteria + findings
             # Shape-checked here because --criteria accepts arbitrary JSON and this runs
             # before normalise_findings can refuse it. Calling .get on a null entry raised an
             # AttributeError out of a command whose contract is a named refusal and an exit
             # code, so a malformed array answered with a traceback.
-            if isinstance(item, dict) and item.get("id") == args.restoration
+            if isinstance(item, dict) and finding_id(item.get("id")) == wanted
         ]
         if not marked and all(isinstance(item, dict) for item in criteria + findings):
             # Only when every entry was well formed. Otherwise the array itself is the

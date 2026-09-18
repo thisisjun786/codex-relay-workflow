@@ -27,6 +27,19 @@ COVERED = "covered"
 LEGACY_UNREGISTERED = "legacy_unregistered"
 
 
+def finding_id(value) -> str:
+    """The canonical form of a criterion id: converted and trimmed, in one place.
+
+    Named because more than one surface has to answer "is this the finding called c2", and
+    they have to answer it the same way. The command surface selects the restoration carrier
+    before this module has normalised anything, so a comparison against the raw argument
+    rejected ` c2` as no finding while the verdict went on to accept it as `c2` - a selection
+    refused for a reason the refusal did not contain. Two copies of a rule about which
+    findings exist is the same failure this package is closing one layer in.
+    """
+    return str(value or "").strip()
+
+
 def set_digest(entries) -> str:
     """sha256 over a canonical JSON serialisation, not over joined text.
 
@@ -65,7 +78,7 @@ def normalise_findings(criteria=None, findings=None) -> list:
                 raise AckRefused(
                     RefusalReason.DISPOSITION_CONFLICT, "each finding is an object"
                 )
-            identifier = str(item.get("id") or "").strip()
+            identifier = finding_id(item.get("id"))
             if not identifier:
                 raise AckRefused(
                     RefusalReason.DISPOSITION_CONFLICT, "each finding names a criterion id"
@@ -137,7 +150,7 @@ class CriteriaService:
     def register(self, relationship_id, entries, *, source_ref=None) -> dict:
         normalised, seen = [], set()
         for entry in entries:
-            identifier = str(entry.get("id") or "").strip()
+            identifier = finding_id(entry.get("id"))
             title = str(entry.get("title") or "").strip()
             if not identifier or not title:
                 raise AckRefused(
