@@ -285,6 +285,11 @@ GUARD_HELP_MARKER = "--marker-root"
 # workspace, so no single file answers for it and the one this process would resolve is not it.
 REGISTRATION_RELATIVE_TARGET = "registration_names_a_relative_adapter"
 
+# The cache key for a configuration that names no journal root at all. A sentinel rather than a
+# normalised empty string, because that normalises to "/" -- a directory a configuration may
+# legitimately name, which would then share this one's snapshot.
+NO_ROOT = "<no journal root>"
+
 # A spelling this command cannot judge from here: relative, with a separator, so it names one
 # program from the hook's workspace and another from wherever a diagnosis happens to run.
 WORKSPACE_DEPENDENT = "workspace_dependent_spelling"
@@ -1159,7 +1164,8 @@ def resource_key(path):
         avoid.
 
     A trailing separator is left alone for the same reason: it requires a directory, so
-    /tmp/hook.py/ and /tmp/hook.py are not interchangeable to lstat.
+    /tmp/hook.py/ and /tmp/hook.py are not interchangeable to lstat. A trailing '.' is the same
+    demand written differently and is kept for the same reason.
 
     So a spelling carrying '..' keys only to itself, and resolve() is not used at all: it walks
     symlinks, which would make the key depend on what a link points at and fail on a loop. What
@@ -1170,7 +1176,7 @@ def resource_key(path):
     parts = expanded.split(os.sep)
     if os.pardir in parts:
         return expanded
-    trailing = len(parts) > 1 and parts[-1] == ""
+    trailing = len(parts) > 1 and parts[-1] in ("", os.curdir)
     kept = [part for index, part in enumerate(parts)
             if part != os.curdir and (part != "" or index == 0)]
     key = os.sep.join(kept) or os.sep
@@ -1441,7 +1447,11 @@ def journals_named(registrations, already_read=None):
                                       else firing.NO_RECORDS_KEPT)
             found.append(entry)
             continue
-        root = resource_key(config.get("journalRoot") or "")
+        # A missing root is not a path and must not be normalised into one: resource_key("")
+        # answers "/", which is a real directory a configuration may legitimately name, and the
+        # two would then share a snapshot. NO_ROOT is a sentinel no path can equal.
+        configured = config.get("journalRoot")
+        root = resource_key(configured) if configured else NO_ROOT
         if root in scanned:
             # The policy is this registration's own; the listing is the directory's, and the
             # directory is the same one.

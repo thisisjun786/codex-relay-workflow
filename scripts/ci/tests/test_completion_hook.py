@@ -2357,6 +2357,12 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         self.assertNotEqual(keys("/tmp/hook.py/"), keys("/tmp/hook.py"),
                             "a trailing separator requires a directory, so the two are not"
                             " interchangeable to lstat")
+        self.assertNotEqual(keys("/tmp/hook.py/."), keys("/tmp/hook.py"),
+                            "a trailing '.' is the same demand for a directory written"
+                            " differently")
+        self.assertNotEqual(completion.NO_ROOT, keys(""),
+                            "a configuration naming no journal root must not key as a path;"
+                            " the empty string normalises to one a configuration may name")
 
 
 class TheCausePartitionItself(unittest.TestCase):
