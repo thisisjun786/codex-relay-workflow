@@ -110,7 +110,18 @@ class ATickInterruptedInsideItsOwnTransaction(DeliveryTestCase):
 
 
 class TheStoreUnderContention(GuardTestCase):
-    """The hook reads while the daemon writes. Real elapsed time, deliberately."""
+    """The hook reads while somebody else writes. Real elapsed time, deliberately.
+
+    Two cases, and only the first is contention the daemon can produce. Production configures
+    write-ahead logging and writes with BEGIN IMMEDIATE, so the ordinary-writer case below IS
+    the hook-versus-daemon situation the completion hook created, and its measured answer is
+    that the reader is not blocked at all. The exclusive case sets a locking mode nothing else
+    in this repository sets - it is the only user of it - and exists because it is the only way
+    to reach the bounded-timeout path. What that one establishes is what the guard does when a
+    read genuinely cannot complete: bounded, unreadable rather than missing, released rather
+    than held, and recorded. It does not establish that the relay can put its own store into
+    that state, and the map says so.
+    """
 
     def ready(self):
         relationship = self.managed()

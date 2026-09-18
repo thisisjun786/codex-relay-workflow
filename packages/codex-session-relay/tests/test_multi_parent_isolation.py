@@ -27,7 +27,7 @@ import unittest
 from codex_session_relay import identity
 from codex_session_relay.ack import AckService
 from codex_session_relay.delivery import DeliveryService
-from codex_session_relay.errors import RelayError
+from codex_session_relay.errors import RefusalReason, RelayError
 from codex_session_relay.models import Endpoint
 from codex_session_relay.receipts import ReceiptIntake
 from codex_session_relay.reconcile import Reconciler
@@ -284,11 +284,17 @@ class TwoParentsOnOneStore(TwoParents):
 
         alpha_claim = self.sync.claim(jobs["a"], owner="worker-1", now=self.clock.now())
         self.sync.claim(jobs["b"], owner="worker-1", now=self.clock.now())
-        with self.assertRaises(RelayError):
+        # The reason matters, because complete() can refuse for three different things and only
+        # one of them is the fence. The target ref passed here is B's own, so a target mismatch
+        # would be a different answer, and an empty readback would be a third; asserting merely
+        # that something was raised would pass on either of those and prove nothing about
+        # whether one project's claim can act on another project's job.
+        with self.assertRaises(RelayError) as caught:
             self.sync.complete(
                 jobs["b"], claim_token=alpha_claim["claimToken"], target_ref=BETA_DOC,
                 readback="", now=self.clock.now(),
             )
+        self.assertEqual(caught.exception.reason, RefusalReason.SYNC_NOT_CLAIMABLE)
         self.assertNotEqual(
             self.sync.get(jobs["b"])["state"], "confirmed",
             "one project's claim confirmed another project's write",

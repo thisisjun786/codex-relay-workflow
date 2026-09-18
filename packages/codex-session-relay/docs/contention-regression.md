@@ -124,6 +124,31 @@ that run and is not the baseline: it has no `codex_thread_bridge` on the path, a
 this filesystem does not honour the unreadable directory one of the scope tests depends
 on, so it reports failures that belong to the runner.
 
+## Two things every test here was swept for
+
+Three review rounds found the same shape three times: an assertion that passes in the
+situation its own name describes, and prose claiming more than the assertion establishes.
+Fixing the instances a fourth time would miss the point, so all five modules were checked
+against two rules derived from source rather than from memory.
+
+**An assertion must go red when the condition it is named for is violated.** The pattern
+that hid this was comparing against a bound the quantity cannot exceed - a per-parent send
+count against the per-parent event total - and the pattern that fixes it is counting what
+was actually examined and refusing a walk that examined nothing. Every test in
+`test_regression_map.py` that reads this file now asserts how many rows or citations it
+read, and the guards were checked by breaking the file three ways: removing the table fails
+three of the four tests, a renamed class fails one, and a wrong clock label fails one.
+
+**A test that depends on a configuration production cannot reach must say so.** This
+repository configures write-ahead logging and writes with `BEGIN IMMEDIATE`; nothing in
+it sets any other locking mode. The exclusive-lock case in `test_failure_recovery.py` is
+the only user of `PRAGMA locking_mode=EXCLUSIVE` anywhere here, so it does not reproduce
+hook-versus-daemon contention and no longer claims to. It exists because it is the only way
+to reach the bounded-timeout path at all, and what it establishes is the guard's behaviour
+when a read cannot complete. The ordinary-writer case beside it is the real contention, and
+its measured answer is that the reader is not blocked - which is why criterion 3's evidence
+is that pair together rather than the timeout alone.
+
 ## Findings owned elsewhere, reported rather than fixed
 
 - `guard.SQLITE_TIMEOUT` documents the lock wait the readiness check may spend, and
@@ -135,6 +160,14 @@ on, so it reports failures that belong to the runner.
   the constant would change nothing. `test_failure_recovery.py` pins both halves.
   Wiring or removing it would also move `intent.dispatch_generation_state`, so it is
   reported rather than fixed here.
+- `intent.register_relationship` reads the dispatch generation state and then publishes
+  `relationship.json` as two operations with nothing held between them. An advance
+  committing in that window returns success over a generation the store has already moved
+  past, leaving the marker naming a stale one. Found by
+  `test_registration_contention.py`, which therefore asserts what actually holds - the
+  disagreement stays readable, so the next evaluation sees it - rather than asserting the
+  absence of a race the source does not prevent. Closing the window needs the check and the
+  publication under one hold, which is a source change this issue does not own.
 - The workflow-restore section is the only non-essential block in the revision direction
   of `report.render_revision`, so a tight budget removes it first. CRW-94 owns that
   behaviour; nothing here changes it.

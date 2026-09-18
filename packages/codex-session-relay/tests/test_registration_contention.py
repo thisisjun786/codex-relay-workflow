@@ -154,6 +154,8 @@ class RegistrationRacesTheGenerationItNames(GuardTestCase):
         directory = marker.assignment_dir(self.markers, self.workspace, self.assignment)
         facts, _unreadable = marker.read_assignment(directory)
         published = isinstance(facts.get("relationship"), dict)
+        state, readable = intent.dispatch_generation_state(str(self.store.path), rid, DISPATCH)
+        self.assertTrue(readable, "the store became unreadable, which is a third answer entirely")
 
         if "register" in errors:
             self.assertEqual(errors["register"].reason, RefusalReason.STALE_GENERATION)
@@ -162,8 +164,29 @@ class RegistrationRacesTheGenerationItNames(GuardTestCase):
                 "the registration was refused as stale and published a relationship anyway, so"
                 " the marker now claims a registration the store contradicts",
             )
-        else:
-            self.assertTrue(published, f"registration returned {results.get('register')!r}")
+            return
+
+        self.assertTrue(published, f"registration returned {results.get('register')!r}")
+        # Publication is NOT evidence that the dispatch was current when it landed, and this
+        # test does not pretend otherwise. register_relationship reads the generation state and
+        # then publishes as two operations with nothing held between them, so an advance
+        # committing in that window returns success over a generation the store has already
+        # moved past. Asserting the absence of that race would be asserting a property the
+        # source does not have; it is recorded in docs/contention-regression.md instead.
+        #
+        # What must hold either way is that the disagreement stays VISIBLE. The reader answers
+        # stale or current and never absent, so the next evaluation reads the contradiction out
+        # of the store rather than taking the marker's word, and the published fact is left
+        # intact rather than rewritten behind it.
+        self.assertIn(
+            state, (intent.DISPATCH_CURRENT, intent.DISPATCH_STALE),
+            f"a published registration left the dispatch reading {state!r}, so nothing"
+            " downstream can tell whether it is this assignment's generation",
+        )
+        self.assertEqual(
+            facts["relationship"]["relationshipId"], rid,
+            "the published relationship names something other than the one registered",
+        )
 
     def test_a_marker_registered_before_an_advance_reads_as_stale_rather_than_absent(self):
         """Stale and absent are different repairs, and only one of them is a lost dispatch."""

@@ -123,6 +123,7 @@ class TheMapCitesOnlyEvidenceThatExists(unittest.TestCase):
         )
 
     def test_every_module_the_map_names_exists(self):
+        checked = 0
         for number, reused, new, _clock in self.rows:
             for cell in (reused, new):
                 if cell.lower().startswith("none"):
@@ -132,6 +133,11 @@ class TheMapCitesOnlyEvidenceThatExists(unittest.TestCase):
                         (TESTS / name).exists(),
                         f"criterion {number} names {name}, which is not in this suite",
                     )
+                    checked += 1
+        # A loop over nothing asserts nothing. Every test in this module that walks the table
+        # counts what it walked, because the failure mode being guarded against is the parser
+        # silently matching no rows and the suite reporting that as agreement.
+        self.assertGreater(checked, 12, f"only {checked} modules were checked")
 
 
 class TheMapNamesEveryTestThatSpendsRealTime(unittest.TestCase):
@@ -157,12 +163,14 @@ class TheMapNamesEveryTestThatSpendsRealTime(unittest.TestCase):
         inherits the label rather than claiming the half it likes.
         """
         real_time = set(REAL_TIME_MODULES)
+        checked = 0
         for number, reused, new, clock in criterion_rows():
             named = set()
             for cell in (reused, new):
                 if not cell.lower().startswith("none"):
                     named.update(MODULE.findall(cell))
             waiting = named & real_time
+            checked += 1
             if waiting:
                 self.assertNotEqual(
                     clock, "injected",
@@ -175,6 +183,7 @@ class TheMapNamesEveryTestThatSpendsRealTime(unittest.TestCase):
                     f"criterion {number} is recorded as {clock!r} but names no module that"
                     f" spends real time: {sorted(named)}",
                 )
+        self.assertGreater(checked, 6, f"only {checked} criterion rows were read")
 
 
 if __name__ == "__main__":
