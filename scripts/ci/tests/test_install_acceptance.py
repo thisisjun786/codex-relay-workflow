@@ -44,6 +44,7 @@ fixture accepts, and names the one this module must not hand.
 """
 
 import ast
+import builtins
 import copy
 import hashlib
 import inspect
@@ -148,12 +149,17 @@ PRODUCER_MODULES = {
     "test_install_acceptance": sys.modules[__name__],
 }
 
-# The places left in this module that reach a conclusion by reading source text rather than by
-# asking the thing itself, each with the reason it cannot ask. Declared so the set is visible,
-# and DERIVED from this file by a check, so a new one arrives as a failure instead of as another
-# review round. Everything else that once lived here now asks: the producers are resolved as
-# attributes, the fixture stand-ins are observed while the fixture is applying them, and the
-# declared paths are walked in payloads the sources really produced.
+# The places in this module that reach a conclusion by reading source text rather than by asking
+# the thing itself, each with the reason it cannot ask. Everything else that once lived here now
+# asks: the producers are resolved as attributes, the fixture stand-ins are observed while the
+# fixture is applying them, and the declared paths are walked in payloads the sources really
+# produced.
+#
+# The check below does not recognise a shape. source_text_reached derives every way this file can
+# reach the text of a source file -- a binding that is a .py path, __file__, a called name that
+# hands source back, a string naming a .py file -- accounts for every occurrence of one, and
+# fails on an occurrence that is in neither this map nor TOUCHES_SOURCE_WITHOUT_CONCLUDING. What
+# it still cannot reach is in SOURCE_OUT_OF_REACH, with a control for each form.
 TEXT_EVIDENCE = {
     "test_no_cell_is_filled_without_going_through_the_declared_reading":
         "a style rule about this module's own code has no object to ask: the thing it forbids"
@@ -161,16 +167,102 @@ TEXT_EVIDENCE = {
         " says so; the property it approximates is proved by the mutation cases instead.",
     "test_every_text_reading_place_is_declared":
         "the derivation that polices the others has to read this file to find them.",
+    "source_text_reached":
+        "it IS that derivation: to find the places that conclude from source text it has to"
+        " parse this file, and no object can be asked where a spelling appears in a file.",
+    "refusals_reached":
+        "the same, for refusals: where a refusal is named is a fact about the text, and the"
+        " objects can only say what the refusals are, not where they are written.",
+    "test_the_reach_of_each_derivation_is_the_declared_one":
+        "it runs the derivations, and running the source-text one means reading this file.",
+    "test_no_two_places_this_module_declares_can_share_a_name":
+        "whether two places share a name is a property of the text: the module object has"
+        " already discarded the second by the time it could be asked.",
     "test_every_place_that_settles_for_a_refusal_is_declared":
-        "the answers an assertion requires are in the assertions, so the inventory of places"
-        " that settle for a refusal is derived from this file the same way -- and it is derived"
-        " by the answer required rather than by the shape of the call, because a shape sweep is"
-        " what missed two of them.",
+        "the places that name a refusal are in the text, so this inventory is derived from this"
+        " file the same way -- and it is derived by accounting for every occurrence rather than"
+        " by recognising the shape of the call, because a shape sweep is what missed two of them.",
     "test_no_call_site_hands_the_fixture_an_injection_this_module_refuses":
         "the subject IS this file's own calls: which switch a call hands the fixture is a"
         " property of the call site, and every call site is here. Observing them instead would"
         " mean running every scenario inside one case, and one run can only speak for itself."
         " The behavioural half is the agreement case, which reads what a run was actually told.",
+}
+
+# Places that reach a source file without concluding anything from its text. The negative rule
+# over-collects on purpose: it is cheaper to write down why a place is not one than to discover,
+# four times running, that a form nobody enumerated was never looked at.
+TOUCHES_SOURCE_WITHOUT_CONCLUDING = {
+    "diagnose_for":
+        "it runs RUNTIME as a program and reads what the program answered. The text of that"
+        " file is never opened here, and what the run answers is the thing being asked.",
+    "linked_skills":
+        "it names install.py to run it, not to read it.",
+    "importable_runtime":
+        "it names __init__.py to decide where a package is, which is a question about the"
+        " filesystem rather than about what the file says.",
+    "source_spellings":
+        "it names the .py suffix to decide which bindings are source files. Which files exist"
+        " is a question for the filesystem, and it asks the filesystem.",
+    "_source_spelled":
+        "the matcher: it names the suffix in order to look for it, which is the question"
+        " rather than an answer taken from a file.",
+    "asked_over":
+        "it names the file it writes for a check to read. What it reads back is what the"
+        " CHECK said, which is a behaviour rather than a text.",
+}
+
+# Module-level statements that name a source file, keyed by what the statement binds rather than
+# by a line, because a line moves whenever anything above it does.
+SOURCE_AT_MODULE_LEVEL = {
+    "ROOT": "it locates the checkout from this file's path and never opens it",
+    "sys.path.insert": "it puts this file's own directory on the import path",
+    "RUNTIME": "it names the runtime script so a later call can run it",
+    "HERE": "it is the handle itself, which is what the derivation looks for",
+}
+
+# Called names whose signature this derivation could not read, so it cannot say whether they hand
+# source text back. Reported rather than assumed harmless. Which of them an interpreter can read
+# differs by version -- set is readable from 3.11 and not on the 3.10 floor -- so this is the
+# UNION, and each entry says where it is unreadable so a name that becomes readable everywhere
+# fails its own declaration instead of sitting here forever.
+EVERY_INTERPRETER = "every supported interpreter"
+THE_FLOOR = "the 3.10 floor"
+SOURCE_UNDECIDED_CALLS = {
+    "getattr": (EVERY_INTERPRETER, "a builtin whose signature is not introspectable"),
+    "vars": (EVERY_INTERPRETER, "the same"),
+    "str": (EVERY_INTERPRETER, "a builtin type; calling it constructs a string"),
+    "dict": (EVERY_INTERPRETER, "a builtin type; calling it constructs a mapping"),
+    "type": (EVERY_INTERPRETER, "a builtin type; calling it asks an object what it is"),
+    "KeyError": (EVERY_INTERPRETER, "a builtin exception being raised"),
+    "set": (THE_FLOOR, "a builtin type whose signature 3.11 made readable and 3.10 did not"),
+    "frozenset": (THE_FLOOR, "the same, and the pair of them is why this record is a union"),
+}
+
+# What this derivation still cannot see, as data rather than as a sentence. Each form is planted
+# by a control that requires the derivation NOT to see it, so the list cannot rot in either
+# direction: widening the derivation to cover one makes its control fail.
+SOURCE_OUT_OF_REACH = {
+    "a handle reached by its name as a string":
+        ("getattr(module, \"HERE\")",
+         "the name is a string, so there is no Name for the sweep to account. This case is not"
+         " hypothetical: the regression cases below reach HERE exactly this way."),
+    "a source path assembled at run time":
+        ("open(Path(directory) / chosen)",
+         "nothing in the expression names a .py file or a handle, so which file it opens is a"
+         " fact about the run rather than about the text."),
+    "a helper in another module that hands source text back":
+        ("base.source_of(thing)",
+         "the derivation follows helpers defined HERE to their callers; a name defined"
+         " elsewhere would have to be resolved and read, which is a different question."),
+}
+
+# The same floor for source text: these have to keep being derived, ast.parse above all, because
+# it is the one form the check this replaces spelled out by hand and it now arrives only by being
+# asked for its own signature.
+SOURCE_REACH_INCLUDES = {
+    "handle": ("HERE", "RUNTIME", "__file__"),
+    "hands source": ("ast.parse",),
 }
 
 # Rows whose reading is a check.field cell and therefore answers in check.VALUES. The others
@@ -579,8 +671,15 @@ REFUSAL_ANSWERS = ("not_verified", "unknown", "not_applicable", reading.UNREADAB
 # The places that require a refusal, and what makes the refusal the right answer there. None of
 # them is an acceptance row accepting its own failure: every one of the seven is separately
 # required to read its success answer. A new place that settles for a refusal has to say which
-# of these it is, and a check derives the set from this file -- for the spellings that
-# derivation can see, which is narrower than the class this set names.
+# of these it is.
+#
+# The check derives the set from this file, and it does it by accounting rather than by
+# recognising. refusal_spellings asks the objects for every way a refusal can be written -- the
+# answers themselves, an attribute an imported module binds to one, a global here bound to one,
+# a collection containing one -- and every occurrence of any of them has to land in this map or
+# in NAMES_A_REFUSAL_WITHOUT_SETTLING. An assertNotEqual against a refusal is accounted like any
+# other occurrence; which side of the question it settles is a judgement the reason below carries
+# rather than something the derivation decides for itself.
 ACCEPTS_A_REFUSAL = {
     "test_a_daemon_that_could_not_be_read_is_neither_running_nor_stopped":
         "the refusal IS the question: a daemon that could not be read is a third answer, and"
@@ -608,6 +707,64 @@ ACCEPTS_A_REFUSAL = {
     "test_without_a_reader_the_row_reports_itself_unread_rather_than_preserved":
         "the property is that an unread row says so instead of reading as preserved.",
 }
+
+# Places that name a refusal without settling for one. The negative rule over-collects, and this
+# is where the over-collection is paid for: a producer of a refusal is not a place accepting one.
+NAMES_A_REFUSAL_WITHOUT_SETTLING = {
+    "_unreadable":
+        "it MAKES the refusal. A cell whose reading could not be taken is what this returns,"
+        " and returning it is the opposite of settling for one somebody else returned.",
+    "read":
+        "the accessor, which passes a producer's refusal through unchanged rather than"
+        " accepting it as an answer to the question the row asked.",
+    "_model_permission_delta":
+        "the producer of this module's own reading: with no configuration reader it answers"
+        " unreadable, and changed is its verdict about a posture that moved.",
+    "refusal_spellings":
+        "it derives the spellings from REFUSAL_ANSWERS. Naming the set is how it asks the"
+        " question, not an answer it accepted.",
+    "test_a_place_that_settles_for_a_refusal_in_a_form_the_old_sweep_missed_is_still_caught":
+        "it plants a refusal in a synthetic file for the check to find; what this case reads"
+        " is whether the check failed, not what the planted place asserted.",
+}
+
+# Module-level statements naming a refusal, keyed by what the statement binds.
+REFUSAL_AT_MODULE_LEVEL = {
+    "CHANGED": "the constant itself, which is one of the answers",
+    "REFUSAL_ANSWERS": "the declaration of the answers the derivation starts from",
+    "REFUSAL_REACH_INCLUDES":
+        "it names the spellings that have to keep being derived. Three of those names are"
+        " themselves answers, because a vocabulary that spells a constant the way it reads is"
+        " the ordinary case rather than a coincidence.",
+}
+
+# What this derivation cannot see, as data. Each form is planted by a control that requires the
+# derivation NOT to see it, so widening the derivation to cover one makes its control fail.
+REFUSAL_OUT_OF_REACH = {
+    "a refusal compared as data, never spelled":
+        ("self.assertEqual(rows[cell][\"value\"], baseline[cell][\"value\"])",
+         "both sides are read at run time and neither names an answer. Attributing this would"
+         " mean attributing read() to every acceptance row, and an inventory that names every"
+         " row has stopped distinguishing anything."),
+    "a refusal reached by its name as a string":
+        ("getattr(completion, \"NOT_READ\")",
+         "the name is a string, so there is no attribute for the sweep to account."),
+    "a refusal a helper in another module asserts":
+        ("base.expect_unreadable(row)",
+         "no spelling appears in this file at all. A helper defined HERE is accounted, and its"
+         " callers with it when it hands the refusal back rather than a container holding one."),
+}
+
+# The spellings this module actually relies on. Not the reach -- the reach is derived and may go
+# further, which is not a failure. This is the floor: a kind that quietly stopped resolving, an
+# import that moved or a constant that was renamed, loses one of these and fails. Occurrence
+# counts alone would not catch it, because a spelling nobody writes has no occurrence to lose.
+REFUSAL_REACH_INCLUDES = {
+    "module attribute": ("UNREADABLE", "ABSENT", "ACCESS_ERROR", "NOT_READ", "NO_JOURNAL"),
+    "own global": ("CHANGED",),
+    "collection": ("REFUSAL_ANSWERS", "VALUES"),
+}
+
 # Which path each reading actually travels: the thing this run installed or registered, or a
 # stand-in this suite supplied. Reaching a success answer and reaching it down the path the row
 # names are two questions, and the second is the one a source-level shortcut passes silently.
@@ -1156,6 +1313,394 @@ def observe_all(root):
     }, host
 
 
+# ---------------------------------------------------------------------------
+# What the two derived lists below can actually see, derived rather than remembered.
+#
+# Both checks used to recognise FORMS: one shape of ast.parse call, and three spellings of a
+# refusal inside a call whose name begins with assert. A form nobody had thought of was a silent
+# pass, and one of the three spellings was a hardcoded set of constant names -- the enumerated
+# literal standing in for a derivation that this repository's evidence rule refuses. Four times
+# now a derivation in this project has reached less far than the sentence describing it, and each
+# time the argument for the sentence was that the set was derived. A derivation is only as
+# complete as its predicate.
+#
+# So the rule here is the negative one. Derive every spelling of the declared thing by asking the
+# objects, account for EVERY occurrence of one, and fail on an occurrence nobody wrote down. A
+# form nobody anticipated is still an occurrence, so it arrives as a failure rather than as
+# another review round. What the derivation still cannot reach is not argued away in a sentence:
+# it is returned as data, declared, and each declared form carries a control that plants it and
+# requires the derivation not to see it, so the list cannot rot in either direction.
+
+MODULE_LEVEL = "<module>"
+
+
+def _dotted(node):
+    """The name an expression spells, or None when it is not a plain dotted name."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return base + "." + node.attr if base else None
+    return None
+
+
+def _places(tree):
+    """Which function each node sits in, and which class, with MODULE_LEVEL for neither.
+
+    The OUTERMOST function, not the innermost. A nested helper is part of the function that
+    defines it, two of them can share a name, and the declarations this feeds are keyed by the
+    names a reader can find -- module-level functions and test methods.
+    """
+    found = {}
+
+    def walk(node, function, klass):
+        for child in ast.iter_child_nodes(node):
+            inner, owner = function, klass
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and function is None:
+                inner = child.name
+            elif isinstance(child, ast.ClassDef):
+                owner = child.name
+            found[id(child)] = (inner or MODULE_LEVEL, owner)
+            walk(child, inner, owner)
+
+    walk(tree, None, None)
+    return found
+
+
+def _module_statements(tree):
+    """Each top-level statement, named by what it binds or by the call it performs.
+
+    A module-level occurrence has no function to be attributed to, and a line number is a key
+    that moves whenever anything above it moves. What does not move is what the statement is
+    for, so the statement answers with the names it binds.
+    """
+    named = {}
+    for statement in tree.body:
+        bound = []
+        if isinstance(statement, ast.Assign):
+            for target in statement.targets:
+                bound += [n.id for n in ast.walk(target) if isinstance(n, ast.Name)]
+        elif isinstance(statement, ast.AnnAssign):
+            bound += [n.id for n in ast.walk(statement.target) if isinstance(n, ast.Name)]
+        elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+            bound = [_dotted(statement.value.func) or "a call"]
+        name = ", ".join(bound) if bound else type(statement).__name__
+        for node in ast.walk(statement):
+            named.setdefault(id(node), name)
+    return named
+
+
+def _reachable(expression, spelled, klass, bound):
+    """Whether the thing is reachable in this expression without entering a container.
+
+    The distinction decides what a helper hands on. A helper returning the thing itself -- or a
+    conditional, a boolean expression or a name bound to it -- hands it to its caller, and the
+    caller is then a place nothing would otherwise account for. A helper returning a dict that
+    happens to carry one does not: read() answers with a row whose value may be a refusal, and
+    attributing that to every caller would attribute read() to every acceptance row, which would
+    leave the inventory unable to distinguish anything.
+
+    So this descends only where the expression's own value comes from: the branches of a
+    conditional and the operands of a boolean. It does not descend into a comparison or into a
+    call's arguments, because mentioning the thing while answering a different question -- as
+    value.suffix == ".py" does -- is not handing it back.
+    """
+    if spelled(expression, klass) is not None:
+        return True
+    if isinstance(expression, ast.Name) and expression.id in bound:
+        return True
+    if isinstance(expression, ast.IfExp):
+        return (_reachable(expression.body, spelled, klass, bound)
+                or _reachable(expression.orelse, spelled, klass, bound))
+    if isinstance(expression, ast.BoolOp):
+        return any(_reachable(value, spelled, klass, bound) for value in expression.values)
+    return False
+
+
+def _held_by_class(tree, spelled):
+    """Attribute names a class binds the thing to, so the rest of that class can read one.
+
+    A setUp binding self.unread to a refusal and a test asserting self.unread are one place
+    spread over two methods, and the method that settles is the one with no spelling in it. The
+    binding is derived rather than declared, so that shape arrives accounted.
+    """
+    places, held = _places(tree), {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        function, klass = places.get(id(node), (MODULE_LEVEL, None))
+        if klass is None or not _reachable(node.value, spelled, klass, set()):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Attribute) and _dotted(target.value) == "self":
+                held.setdefault(klass, set()).add(target.attr)
+            elif isinstance(target, ast.Name) and function == MODULE_LEVEL:
+                held.setdefault(klass, set()).add(target.id)
+    return held
+
+
+def _hands_on(tree, spelled):
+    """Functions that hand the thing to their callers, and the callers that take it.
+
+    One hop is not enough: a helper calling a helper hands it on again, and stopping at the
+    first hop would leave the second silent at one remove. So the callers are taken to a
+    fixpoint, and each is reported at the line of the call that reached it.
+    """
+    places = _places(tree)
+    bound = {}
+    mine = {node.name for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            function, klass = places.get(id(node), (MODULE_LEVEL, None))
+            if _reachable(node.value, spelled, klass, bound.get(function, set())):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        bound.setdefault(function, set()).add(target.id)
+
+    carriers = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Return) or node.value is None:
+            continue
+        function, klass = places.get(id(node), (MODULE_LEVEL, None))
+        if function != MODULE_LEVEL and _reachable(node.value, spelled, klass,
+                                                   bound.get(function, set())):
+            carriers.add(function)
+
+    calls = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in mine:
+            function, _klass = places.get(id(node), (MODULE_LEVEL, None))
+            calls.setdefault(function, []).append((node.func.id, node.lineno))
+
+    handed, growing = set(carriers), True
+    while growing:
+        growing = False
+        for function, made in calls.items():
+            if function == MODULE_LEVEL or function in handed:
+                continue
+            if any(name in handed for name, _line in made):
+                handed.add(function)
+                growing = True
+
+    taken = []
+    for function, made in calls.items():
+        if function == MODULE_LEVEL or function in carriers or function not in handed:
+            continue
+        for name, line in made:
+            if name in handed:
+                taken.append((False, function, line, "through " + name))
+    return carriers, taken
+
+
+def _occurrences(tree, spelled):
+    """Every place a spelling appears, one entry per occurrence.
+
+    Per occurrence rather than per distinct spelling, because deleting one of two identical
+    occurrences is a change this has to see rather than a narrowing it can sleep through.
+    """
+    places, statements = _places(tree), _module_statements(tree)
+    found = []
+    for node in ast.walk(tree):
+        function, klass = places.get(id(node), (MODULE_LEVEL, None))
+        spelling = spelled(node, klass)
+        if spelling is None:
+            continue
+        at_module = function == MODULE_LEVEL
+        where = statements.get(id(node), "a statement") if at_module else function
+        found.append((at_module, where, node.lineno, spelling))
+    _carriers, taken = _hands_on(tree, spelled)
+    return sorted(found + taken)
+
+
+def refusal_spellings():
+    """Every way a refusal can be spelled here, asked of the objects rather than listed.
+
+    The answers are REFUSAL_ANSWERS. Each spelling of one is then derived: an attribute an
+    imported module binds to one, a global of this module bound to one, and a collection --
+    here or on an imported module -- that contains one. Nothing in the result is written down,
+    so a constant added to REFUSAL_ANSWERS widens what the check sees without a second edit,
+    which is exactly what the hardcoded set of constant names it replaces could not do.
+    """
+    answers = frozenset(REFUSAL_ANSWERS)
+
+    def is_answer(value):
+        return isinstance(value, str) and value in answers
+
+    def collects(value):
+        if isinstance(value, (tuple, list, set, frozenset)):
+            return any(is_answer(item) for item in value)
+        if isinstance(value, dict):
+            return any(is_answer(item) for item in value.values())
+        return False
+
+    attributes, mine, held = set(), set(), set()
+    for name, value in list(vars(sys.modules[__name__]).items()):
+        if isinstance(value, types.ModuleType):
+            for attribute, inner in list(vars(value).items()):
+                if attribute.startswith("_"):
+                    continue
+                if is_answer(inner):
+                    attributes.add(attribute)
+                elif collects(inner):
+                    held.add(attribute)
+        elif is_answer(value):
+            mine.add(name)
+        elif collects(value):
+            held.add(name)
+    return {"answer": answers, "module attribute": frozenset(attributes),
+            "own global": frozenset(mine), "collection": frozenset(held)}
+
+
+def source_spellings(tree):
+    """Every way the text of a source file can be reached here, and what could not be read.
+
+    Three derivations and no list. A binding of this module whose value is a path to a .py file
+    that exists, or a collection of them, is a handle, and so is the __file__ every module
+    carries. A name in call position is ASKED whether it hands source back: its own name says
+    source, or the first parameter of the callable it resolves to is named "source" -- which is
+    where ast.parse comes from, so the one form the old check spelled out by hand is now derived
+    from ast.parse's own signature. A string ending in .py names a source file.
+
+    A called name whose signature cannot be read is not assumed to be harmless. It comes back as
+    undecided and has to be written down, because a name nobody could read reported as a name
+    that does not read source is a plausible default standing in for an answer nobody got.
+    """
+    namespace = vars(sys.modules[__name__])
+
+    def is_source_file(value):
+        return isinstance(value, Path) and value.suffix == ".py" and value.exists()
+
+    handles = {"__file__"}
+    for name, value in list(namespace.items()):
+        if is_source_file(value):
+            handles.add(name)
+        elif isinstance(value, (tuple, list, set, frozenset)) and value and all(
+                is_source_file(item) for item in value):
+            handles.add(name)
+
+    hands_source, undecided, called = {}, {}, set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        spelling = _dotted(node.func)
+        if spelling is None:
+            continue
+        head, _, attribute = spelling.rpartition(".")
+        if head:
+            owner = namespace.get(head)
+            if not isinstance(owner, types.ModuleType):
+                continue
+            value = getattr(owner, attribute, None)
+        else:
+            value = namespace.get(attribute, getattr(builtins, attribute, None))
+            if isinstance(value, types.FunctionType) and value.__module__ == __name__:
+                continue
+        if not callable(value):
+            continue
+        called.add(spelling)
+        if "source" in attribute.lower():
+            hands_source[spelling] = "its own name says it hands source"
+            continue
+        try:
+            first = list(inspect.signature(value).parameters)[:1]
+        except (ValueError, TypeError):
+            undecided[spelling] = "its signature cannot be read here"
+            continue
+        if first == ["source"]:
+            hands_source[spelling] = "its first parameter is named source"
+    return frozenset(handles), hands_source, undecided, frozenset(called)
+
+
+def _refusal_spelled(spellings, held):
+    """The matcher: which node is a refusal, spelled any of the derived ways."""
+    answers = spellings["answer"]
+    attributes = spellings["module attribute"] | spellings["collection"]
+    names = spellings["own global"] | spellings["collection"]
+
+    def spelled(node, klass):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return repr(node.value) if node.value in answers else None
+        if isinstance(node, ast.Attribute):
+            if _dotted(node.value) == "self" and node.attr in held.get(klass, ()):
+                return "self." + node.attr
+            return "." + node.attr if node.attr in attributes else None
+        if isinstance(node, ast.Name) and node.id in names:
+            return node.id
+        return None
+
+    return spelled
+
+
+def _source_spelled(handles, hands_source, held):
+    """The matcher: which node reaches the text of a source file, spelled any of the derived ways."""
+    def spelled(node, klass):
+        if isinstance(node, ast.Name):
+            return node.id if node.id in handles else None
+        if isinstance(node, ast.Attribute):
+            if _dotted(node.value) == "self" and node.attr in held.get(klass, ()):
+                return "self." + node.attr
+            return "." + node.attr if node.attr == "__file__" else None
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return repr(node.value) if node.value.endswith(".py") else None
+        if isinstance(node, ast.Call):
+            spelling = _dotted(node.func)
+            return spelling if spelling in hands_source else None
+        return None
+
+    return spelled
+
+
+def planted_source(declared, spelling, planted, lines):
+    """A synthetic module: one stub per declared place, and one place spelled the planted way.
+
+    Generated FROM the declared map rather than written out, so it stays a balanced control while
+    the map moves. Each stub carries a spelling the check recognises, so the only thing separating
+    the planted place from the declared ones is the form it is written in.
+    """
+    text = []
+    for name in sorted(declared):
+        text += ["def " + name + "(self):", "    " + spelling, ""]
+    if planted is not None:
+        text += ["def " + planted + "(self):"] + ["    " + line for line in lines] + [""]
+    return "\n".join(text)
+
+
+def asked_over(check, source):
+    """Run one of the checks over a source of our own, and report what it refused to accept.
+
+    The check reads HERE, so HERE is what is moved. Reaching the handle by its name as a string
+    is the one form the derivation cannot see, which SOURCE_OUT_OF_REACH says, and this is the
+    case that proves the sentence is about something real.
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        written = Path(temporary) / "planted.py"
+        written.write_text(source, encoding="utf-8")
+        with mock.patch.object(sys.modules[__name__], "HERE", written):
+            try:
+                check()
+            except AssertionError as refused:
+                return str(refused)
+    return None
+
+
+def refusals_reached(source):
+    """Every occurrence of a refusal in this source, and the spellings the derivation used."""
+    tree = ast.parse(source)
+    spellings = refusal_spellings()
+    held = _held_by_class(tree, _refusal_spelled(spellings, {}))
+    return _occurrences(tree, _refusal_spelled(spellings, held)), spellings
+
+
+def source_text_reached(source):
+    """Every occurrence of a reach into source text, the spellings, the unread names and the calls."""
+    tree = ast.parse(source)
+    handles, hands_source, undecided, called = source_spellings(tree)
+    held = _held_by_class(tree, _source_spelled(handles, hands_source, {}))
+    return (_occurrences(tree, _source_spelled(handles, hands_source, held)),
+            {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
+
+
 class SevenReadingsTests(unittest.TestCase):
     """Seven questions, seven readings, and no answer standing in for another.
 
@@ -1212,40 +1757,79 @@ class SevenReadingsTests(unittest.TestCase):
 
 
     def test_every_text_reading_place_is_declared(self):
-        """The inventory, derived rather than remembered.
+        """The inventory, derived by accounting rather than by recognising a shape.
 
-        Three times now a check in this module concluded something about behaviour by reading
-        source text, and each time the repair was the instance. The instances share a shape: a
-        claim about what code does, settled by how the code is spelled -- and where the file
-        being read is the file making the claim, the check can be satisfied by its own
-        declaration. AGENTS.md states the rule for this repository: a text-matching test is not
-        proof of behaviour.
+        Three times a check in this module concluded something about behaviour by reading source
+        text, and each time the repair was the instance. The instances share a shape: a claim
+        about what code does, settled by how the code is spelled -- and where the file being read
+        is the file making the claim, the check can be satisfied by its own declaration.
+        AGENTS.md states the rule for this repository: a text-matching test is not proof of
+        behaviour.
 
-        So the places are derived from this file instead of listed by hand. What the derivation
-        sees is a call to ast.parse inside a function: a place that reaches its conclusion from
-        source text another way -- read_text compared directly, a phrase searched for -- is
-        invisible to it and would have to be declared by hand. This covers the shape that has
-        arrived three times, not the whole class it names.
+        What this check used to see was one form, a call to ast.parse inside a function, and it
+        said so. Anything else -- read_text compared directly, a phrase searched for, a name
+        imported from ast, a helper handing the text on -- was simply not looked at, so the
+        sentence above it reached further than the check did. It now derives instead: every
+        binding of this module that is a path to a .py file that exists, the __file__ every
+        module carries, every called name that hands source back (asked of the callable, which
+        is where ast.parse comes from, so the one form that used to be spelled out by hand is
+        now read off ast.parse's own signature), and every string naming a .py file. Then it
+        accounts for EVERY occurrence of one. A place that reaches source text some way nobody
+        anticipated is still an occurrence of a handle, so it arrives here as a failure.
+
+        This claims exactly that much. A name this derivation could not read is in
+        SOURCE_UNDECIDED_CALLS rather than assumed harmless, and the forms it cannot reach at all
+        are in SOURCE_OUT_OF_REACH, each with a control that plants it and requires the
+        derivation not to see it.
         """
-        tree = ast.parse(HERE.read_text(encoding="utf-8"))
-        reading_text = set()
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for inner in ast.walk(node):
-                if (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)
-                        and inner.func.attr == "parse"
-                        and isinstance(inner.func.value, ast.Name)
-                        and inner.func.value.id == "ast"):
-                    reading_text.add(node.name)
+        found, reach, undecided, called = source_text_reached(
+            HERE.read_text(encoding="utf-8"))
 
-        self.assertEqual(reading_text, set(TEXT_EVIDENCE),
-            "a place that settles a question by reading source text is undeclared, or a"
-            " declaration outlived the place it described: " + json.dumps(sorted(reading_text)))
-        for place, why in TEXT_EVIDENCE.items():
+        unaccounted = [row for row in found
+                       if (row[1] not in SOURCE_AT_MODULE_LEVEL if row[0]
+                           else row[1] not in TEXT_EVIDENCE
+                           and row[1] not in TOUCHES_SOURCE_WITHOUT_CONCLUDING)]
+        self.assertEqual(unaccounted, [],
+                         "a place reaches the text of a source file and nobody wrote down what"
+                         " it is doing there. Say whether it concludes from the text or only"
+                         " names the file, or teach the derivation the form: "
+                         + json.dumps(unaccounted))
+
+        reached = {row[1] for row in found}
+        stale = sorted((set(TEXT_EVIDENCE) | set(TOUCHES_SOURCE_WITHOUT_CONCLUDING)
+                        | set(SOURCE_AT_MODULE_LEVEL)) - reached)
+        self.assertEqual(stale, [],
+                         "a declaration outlived the place it described: " + json.dumps(stale))
+
+        arrived = sorted(set(undecided) - set(SOURCE_UNDECIDED_CALLS))
+        self.assertEqual(arrived, [],
+                         "a called name this derivation cannot read is not written down, so"
+                         " whether it hands source back is nobody's answer: "
+                         + json.dumps(arrived))
+        for name, (where, why) in sorted(SOURCE_UNDECIDED_CALLS.items()):
+            with self.subTest(name):
+                self.assertTrue(why.strip(), name + " is undecided without a reason")
+                self.assertIn(name, called,
+                              name + " is written down as unreadable and nothing here calls it")
+                if where == EVERY_INTERPRETER:
+                    self.assertIn(name, undecided,
+                                  name + " is declared unreadable on every supported"
+                                  " interpreter and this one read it, so the declaration is"
+                                  " now wrong and the entry has to say so")
+
+        for place, why in sorted(TEXT_EVIDENCE.items()):
             with self.subTest(place):
                 self.assertTrue(why.strip(),
                                 place + " is declared without the reason it cannot ask")
+        for place, why in sorted(TOUCHES_SOURCE_WITHOUT_CONCLUDING.items()):
+            with self.subTest(place):
+                self.assertTrue(why.strip(),
+                                place + " touches a source file without saying why that is not"
+                                " a conclusion drawn from its text")
+        self.assertTrue(reach["handle"] and reach["hands source"],
+                        "a derivation kind came back empty, so the sweep stopped matching")
+
+
     def test_every_declared_path_is_one_its_source_actually_writes(self):
         """A rename fails here, and it is the payload that says so rather than the file text.
 
@@ -1462,45 +2046,188 @@ class SevenReadingsTests(unittest.TestCase):
 
 
     def test_every_place_that_settles_for_a_refusal_is_declared(self):
-        """The inventory of accepted answers, derived from what the assertions require.
+        """The inventory of accepted answers, derived by accounting for every occurrence.
 
-        What the derivation sees is a refusal spelled as a literal, or as one of this module's
-        named constants, inside an assert call. It does not decide which answer an assertion
-        REQUIRES: a refusal reached through an alias reads as absent, and an assertNotEqual
-        against one reads as present although it requires the opposite. So this catches the
-        spellings that have arrived, and a place can still settle for a refusal without
-        entering the inventory.
+        What this used to see was a refusal spelled as a literal, or as one of five constant
+        names written into the check itself, inside a call whose name began with assert. Three
+        forms, enumerated by hand -- and the enumerated half is the part that cannot grow: a
+        constant added to REFUSAL_ANSWERS was invisible until somebody remembered to add its
+        name here too, and a refusal bound to a name before the assertion, or required through
+        assertIn against the answers themselves, was never looked at at all.
 
-        The point is not that refusals are forbidden -- this repository is built on absence
-        being a real answer. It is that a place settling for one has to say why the refusal is
-        the right answer to the question it asks, so that no acceptance row quietly accepts its
-        own failure.
+        So nothing is enumerated now. refusal_spellings asks the objects: the answers are
+        REFUSAL_ANSWERS, and every way one can be written is derived from them -- an attribute an
+        imported module binds to one, a global here bound to one, a collection here or on an
+        imported module that contains one, and an attribute a class binds one to for its own
+        methods to read. Then EVERY occurrence of any of those is accounted for: it belongs to a
+        place that settles for a refusal, or to one that names a refusal without settling, or the
+        module fails naming the place, the line and the spelling. A helper that hands a refusal
+        BACK rather than returning a container holding one carries its callers in with it.
+
+        The point is not that refusals are forbidden -- this repository is built on absence being
+        a real answer. It is that a place settling for one has to say why the refusal is the
+        right answer to the question it asks, so that no acceptance row quietly accepts its own
+        failure. What is still out of reach is in REFUSAL_OUT_OF_REACH with a control for each.
         """
-        refusals = set(REFUSAL_ANSWERS)
-        constants = {"UNREADABLE", "ABSENT", "ACCESS_ERROR", "NOT_READ", "NO_JOURNAL"}
-        settles = set()
-        for node in ast.walk(ast.parse(HERE.read_text(encoding="utf-8"))):
-            if not isinstance(node, ast.FunctionDef):
-                continue
-            for call in ast.walk(node):
-                if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-                        and call.func.attr.startswith("assert")):
-                    continue
-                for part in ast.walk(call):
-                    if isinstance(part, ast.Constant) and part.value in refusals:
-                        settles.add(node.name)
-                    if isinstance(part, ast.Attribute) and part.attr in constants:
-                        settles.add(node.name)
-                    if isinstance(part, ast.Name) and part.id == "CHANGED":
-                        settles.add(node.name)
+        found, spellings = refusals_reached(HERE.read_text(encoding="utf-8"))
 
-        self.assertEqual(settles, set(ACCEPTS_A_REFUSAL),
-                         "a place requires an answer that means the question was not settled,"
-                         " and does not say why that is the right answer there: "
-                         + json.dumps(sorted(settles ^ set(ACCEPTS_A_REFUSAL))))
-        for place, why in ACCEPTS_A_REFUSAL.items():
+        unaccounted = [row for row in found
+                       if (row[1] not in REFUSAL_AT_MODULE_LEVEL if row[0]
+                           else row[1] not in ACCEPTS_A_REFUSAL
+                           and row[1] not in NAMES_A_REFUSAL_WITHOUT_SETTLING)]
+        self.assertEqual(unaccounted, [],
+                         "a place names an answer that means the question was not settled, and"
+                         " nobody wrote down what it is doing there. Say why the refusal is the"
+                         " right answer here, or why this place only names one: "
+                         + json.dumps(unaccounted))
+
+        reached = {row[1] for row in found}
+        stale = sorted((set(ACCEPTS_A_REFUSAL) | set(NAMES_A_REFUSAL_WITHOUT_SETTLING)
+                        | set(REFUSAL_AT_MODULE_LEVEL)) - reached)
+        self.assertEqual(stale, [],
+                         "a declaration outlived the place it described: " + json.dumps(stale))
+
+        for place, why in sorted(ACCEPTS_A_REFUSAL.items()):
             with self.subTest(place):
                 self.assertTrue(why.strip(), place + " settles for a refusal without a reason")
+        for place, why in sorted(NAMES_A_REFUSAL_WITHOUT_SETTLING.items()):
+            with self.subTest(place):
+                self.assertTrue(why.strip(),
+                                place + " names a refusal without saying why that is not"
+                                " settling for one")
+        for kind, spelled in sorted(spellings.items()):
+            with self.subTest(kind):
+                self.assertTrue(spelled, kind + " came back empty, so the sweep stopped matching")
+
+
+    def test_a_text_reading_place_arriving_in_a_form_the_old_sweep_missed_is_still_caught(self):
+        """The regression: a place that concludes from source text some other way is red.
+
+        The forms are planted rather than argued about. Each is one the sweep this replaces could
+        not see -- it looked for a call to ast.parse and nothing else -- and each is measured by
+        running the check over a module written here and requiring it to refuse, naming the place,
+        the line and the spelling. The control is the same module without the plant: whatever the
+        check says about a synthetic module, it must not already be saying it about the planted
+        place, or the refusal would be evidence of nothing.
+        """
+        for planted, lines, spelling in (
+                ("a_place_that_reads_the_source_of_an_object",
+                 ['self.assertIn("a phrase", inspect.getsource(read))'], "inspect.getsource"),
+                ("a_place_that_compares_this_file_text_directly",
+                 ['self.assertIn("a phrase", HERE.read_text(encoding="utf-8"))'], "HERE")):
+            with self.subTest(planted):
+                check = self.test_every_text_reading_place_is_declared
+                control = asked_over(check, planted_source(TEXT_EVIDENCE, "ast.parse(text)",
+                                                           None, ()))
+                self.assertNotIn(planted, control or "",
+                                 "the synthetic module already complains about the planted place"
+                                 " before it is planted, so refusing it would prove nothing")
+                built = planted_source(TEXT_EVIDENCE, "ast.parse(text)", planted, lines)
+                at = built.splitlines().index("    " + lines[0]) + 1
+                said = asked_over(check, built)
+                self.assertIsNotNone(said,
+                                     planted + ": the check accepted a module in which a place"
+                                     " concludes from source text without being declared")
+                self.assertIn(planted, said, planted + ": refused, but not for this place")
+                self.assertIn(spelling, said, planted + ": refused without naming what it saw")
+                self.assertIn(str(at), said,
+                              planted + ": refused without naming the line it was on")
+
+    def test_a_place_that_settles_for_a_refusal_in_a_form_the_old_sweep_missed_is_still_caught(self):
+        """The regression: a place that requires a refusal some other way is red.
+
+        Two forms the sweep this replaces could not see. It looked inside calls whose name begins
+        with assert, for a literal, one of five constant names written into the check, or the
+        name CHANGED -- so a refusal required through the answers themselves, and a refusal bound
+        to a name before the assertion, both passed. Same measurement, same control.
+        """
+        spelling = "self.assertEqual(row, " + repr(sorted(REFUSAL_ANSWERS)[0]) + ")"
+        for planted, lines in (
+                ("a_place_that_requires_one_of_the_answers",
+                 ["self.assertIn(row, REFUSAL_ANSWERS)"]),
+                ("a_place_that_names_the_refusal_before_it_asserts",
+                 ["settled = reading.UNREADABLE", "self.assertEqual(row, settled)"])):
+            with self.subTest(planted):
+                check = self.test_every_place_that_settles_for_a_refusal_is_declared
+                control = asked_over(check, planted_source(ACCEPTS_A_REFUSAL, spelling, None, ()))
+                self.assertNotIn(planted, control or "",
+                                 "the synthetic module already complains about the planted place"
+                                 " before it is planted, so refusing it would prove nothing")
+                said = asked_over(check, planted_source(ACCEPTS_A_REFUSAL, spelling,
+                                                        planted, lines))
+                self.assertIsNotNone(said,
+                                     planted + ": the check accepted a module in which a place"
+                                     " settles for a refusal without being declared")
+                self.assertIn(planted, said, planted + ": refused, but not for this place")
+
+    def test_the_reach_of_each_derivation_is_the_declared_one(self):
+        """Support, not a regression: a derivation kind that stopped resolving reads as green.
+
+        Every kind is derived, so nothing here is the reach itself. What is written down is the
+        spellings this module actually relies on, and the check is that each is still derived.
+        A kind may reach further than this and that is not a failure; a kind that quietly stopped
+        resolving -- an import that moved, a constant that was renamed -- loses one of these and
+        fails, which the occurrence counts alone would not catch because a spelling nobody writes
+        has no occurrence to lose.
+        """
+        spellings = refusal_spellings()
+        for kind, wanted in sorted(REFUSAL_REACH_INCLUDES.items()):
+            with self.subTest(kind):
+                self.assertLessEqual(set(wanted), set(spellings[kind]),
+                                     kind + ": " + json.dumps(sorted(set(wanted)
+                                                                     - set(spellings[kind])))
+                                     + " is no longer derived")
+        _found, reach, _undecided, _called = source_text_reached(
+            HERE.read_text(encoding="utf-8"))
+        for kind, wanted in sorted(SOURCE_REACH_INCLUDES.items()):
+            with self.subTest(kind):
+                self.assertLessEqual(set(wanted), set(reach[kind]),
+                                     kind + ": " + json.dumps(sorted(set(wanted)
+                                                                     - set(reach[kind])))
+                                     + " is no longer derived")
+
+    def test_the_forms_outside_each_derivations_reach_are_the_declared_ones(self):
+        """Support: the list of what cannot be reached is checked in both directions.
+
+        A sentence saying a derivation cannot see something rots quietly. So each declared form is
+        planted and the derivation has to NOT see it. A form that gets covered later makes its own
+        control fail, which is the prompt to delete the entry rather than leave it claiming a
+        limitation that no longer exists.
+        """
+        for form, (sample, why) in sorted(SOURCE_OUT_OF_REACH.items()):
+            with self.subTest(form):
+                self.assertTrue(why.strip(), form + " is declared without a reason")
+                found, _reach, _undecided, _called = source_text_reached(
+                    planted_source((), "", "a_place_outside_the_reach", [sample]))
+                self.assertEqual([row for row in found if row[1] == "a_place_outside_the_reach"],
+                                 [], form + " is inside the reach now, so delete the entry")
+        for form, (sample, why) in sorted(REFUSAL_OUT_OF_REACH.items()):
+            with self.subTest(form):
+                self.assertTrue(why.strip(), form + " is declared without a reason")
+                found, _spellings = refusals_reached(
+                    planted_source((), "", "a_place_outside_the_reach", [sample]))
+                self.assertEqual([row for row in found if row[1] == "a_place_outside_the_reach"],
+                                 [], form + " is inside the reach now, so delete the entry")
+
+    def test_no_two_places_this_module_declares_can_share_a_name(self):
+        """Support: the declarations are keyed by name, so two places sharing one would merge.
+
+        Counted from the parsed file, which keeps both, rather than from _functions_here(), whose
+        set has already discarded the second by the time anyone could look. Only the names a
+        declaration can be keyed by are counted: a nested helper belongs to the function that
+        defines it, and two of those may share a name without anything merging.
+        """
+        tree = ast.parse(HERE.read_text(encoding="utf-8"))
+        named = [node.name for node in tree.body
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                named += [inner.name for inner in node.body
+                          if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        repeated = sorted({name for name in named if named.count(name) > 1})
+        self.assertEqual(repeated, [],
+                         "two places share a name, so one declaration now speaks for both: "
+                         + json.dumps(repeated))
 
     def test_every_reading_declares_the_path_it_travels(self):
         """Reaching a success answer and reaching it down the right path are two questions.
@@ -2208,6 +2935,25 @@ HANDED = {
     "setUp": NOTHING,
     "_functions_here": NOTHING,
 
+    # The derivations behind the two declared lists, and the synthetic modules that control them.
+    # None of these reaches the thing under test: they read this file's own text and this
+    # module's own objects.
+    "_dotted": NOTHING,
+    "_places": NOTHING,
+    "_module_statements": NOTHING,
+    "_reachable": NOTHING,
+    "_held_by_class": NOTHING,
+    "_hands_on": NOTHING,
+    "_occurrences": NOTHING,
+    "_refusal_spelled": NOTHING,
+    "_source_spelled": NOTHING,
+    "refusal_spellings": NOTHING,
+    "source_spellings": NOTHING,
+    "refusals_reached": NOTHING,
+    "source_text_reached": NOTHING,
+    "planted_source": NOTHING,
+    "asked_over": NOTHING,
+
     # The accessor, and readings taken after the fact. None of these reaches the thing under
     # test: they read a payload, a path or a file that already exists.
     "read": NOTHING,
@@ -2367,6 +3113,12 @@ HANDED = {
     "test_every_function_here_says_what_it_hands": NOTHING,
     "test_every_switch_the_fixture_accepts_is_classified": NOTHING,
     "test_no_call_site_hands_the_fixture_an_injection_this_module_refuses": NOTHING,
+    "test_a_text_reading_place_arriving_in_a_form_the_old_sweep_missed_is_still_caught": NOTHING,
+    "test_a_place_that_settles_for_a_refusal_in_a_form_the_old_sweep_missed_is_still_caught":
+        NOTHING,
+    "test_the_reach_of_each_derivation_is_the_declared_one": NOTHING,
+    "test_the_forms_outside_each_derivations_reach_are_the_declared_ones": NOTHING,
+    "test_no_two_places_this_module_declares_can_share_a_name": NOTHING,
 }
 
 
