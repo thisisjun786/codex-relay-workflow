@@ -7,12 +7,17 @@ another task may not have the same connectors.
 
 ## Child task titles
 
-Name each managed issue task as `ISSUE-ID · short task name`,
-for example `JUN-44 · 가격 조회 계약` or `JUN-41 · 기간 집계`.
+Name each managed issue task as `ISSUE-ID · descriptive task title`,
+for example `JUN-44 · 가격 조회 결과를 검증한다` or
+`JUN-41 · 기간별 사용량을 집계한다`.
 These are formatting examples, not issue assignments.
 
-Use only the real Linear identifier and a concise Korean description of the
-assigned result. Do not append workflow labels (including `CXC Loop`), repository,
+Use only the real Linear identifier and a Korean description that makes the
+assigned result clear. The title after ` · ` may be a natural sentence or phrase
+of up to 20 characters, including spaces and punctuation; the issue code and
+separator do not count. Do not abbreviate away the task's meaning just to make
+it shorter, or pad a clear title to reach 20 characters.
+Do not append workflow labels (including `CXC Loop`), repository,
 PR number, model, CI status, or merge status. Keep the execution mode in the
 packet's `Workflow` field and verify runtime behavior separately. A title or a
 chat link does not establish the task's native PR association; keep PR linkage
@@ -52,7 +57,7 @@ Parent: [one Linear project ID and verified coordinator task ID, or no project
 Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
   or existing PR URL; related issues are dependencies, not additional deliveries.
   For non-PR work, state the result and how it will be verified]
-Title: [issue ID · short task name, following Child task titles]
+Title: [issue ID · descriptive title of up to 20 characters, following Child task titles]
 Workflow: [effective workflow per Default independent execution]
 
 Context:
@@ -205,7 +210,7 @@ that file; link-only completion has no manifest and is not a valid ready receipt
 
 ```text
 Task: [one stable issue ID, bounded result, existing owner]
-Title: [issue ID · short task name, following Child task titles]
+Title: [issue ID · descriptive title of up to 20 characters, following Child task titles]
 Coordinator: [actual task/host IDs if delegated; project ID only if one exists]
 Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
