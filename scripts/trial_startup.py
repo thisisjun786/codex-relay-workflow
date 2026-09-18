@@ -39,6 +39,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -159,6 +160,23 @@ def stamp(when=None):
     at = datetime.datetime.fromtimestamp(when if when is not None else time.time(),
                                          datetime.timezone.utc)
     return at.isoformat().replace("+00:00", "Z")
+
+
+def number(value, what, *, minimum, maximum=None):
+    """A real, finite number in range, or a refusal.
+
+    NaN is the reason this exists rather than an inline comparison: every comparison with it is
+    false, so it passes a range check from both sides at once and then makes every staleness
+    comparison after it false as well. A bool is rejected for a duller reason: it is an int here
+    and a value nobody meant as a duration.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise Refused(what + " must be a number", value=shown(value))
+    if not math.isfinite(value):
+        raise Refused(what + " must be a finite number", value=str(value))
+    if value < minimum or (maximum is not None and value > maximum):
+        raise Refused(what + " is out of range", value=value, minimum=minimum, maximum=maximum)
+    return value
 
 
 def absolute(value, what):
@@ -339,14 +357,10 @@ def load_start(path, *, environment=None):
         raise Refused("the start record itself is outside the trial root", path=str(start),
                       trialRoot=str(trial_root))
 
-    age = record.get("captureMaxAgeSeconds")
-    if not isinstance(age, (int, float)) or age <= 0 or age > CAPTURE_AGE_CEILING:
-        raise Refused("captureMaxAgeSeconds must be positive and at most the ceiling",
-                      captureMaxAgeSeconds=age, ceiling=CAPTURE_AGE_CEILING)
-    advance = field(record, "supervisor", "witnessAdvanceSeconds")
-    if not isinstance(advance, (int, float)) or advance < 0 or advance > ADVANCE_CEILING:
-        raise Refused("supervisor.witnessAdvanceSeconds must be between zero and the ceiling",
-                      witnessAdvanceSeconds=advance, ceiling=ADVANCE_CEILING)
+    age = number(record.get("captureMaxAgeSeconds"), "captureMaxAgeSeconds",
+                 minimum=1, maximum=CAPTURE_AGE_CEILING)
+    number(field(record, "supervisor", "witnessAdvanceSeconds"),
+           "supervisor.witnessAdvanceSeconds", minimum=0, maximum=ADVANCE_CEILING)
 
     # Every fact a predicate later compares against, required here rather than where it is read.
     # A record that declares nothing and a payload that carries nothing agree with each other, and
@@ -368,9 +382,8 @@ def load_start(path, *, environment=None):
     if launched.timestamp() > time.time():
         raise Refused("the supervisor's launchedAt is in the future",
                       launchedAt=field(record, "supervisor", "launchedAt"))
-    minimum = field(record, "supervisor", "minimumAliveSeconds")
-    if not isinstance(minimum, (int, float)) or minimum < 0:
-        raise Refused("supervisor.minimumAliveSeconds must be a number", minimumAliveSeconds=shown(minimum))
+    number(field(record, "supervisor", "minimumAliveSeconds"), "supervisor.minimumAliveSeconds",
+           minimum=0)
 
     # Everything the trial writes for itself is confined to the trial root. The assignment file and
     # the dispatch message belong to the child's workspace and are elsewhere by nature, so the rule

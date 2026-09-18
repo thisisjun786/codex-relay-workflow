@@ -923,7 +923,8 @@ class Refusals(TrialCase):
         self.world.flush()
         refused = self.world.refusal()
         self.assertIsNotNone(refused)
-        self.assertIn("ceiling", refused.reason)
+        self.assertIn("out of range", refused.reason)
+        self.assertEqual(refused.detail["maximum"], 900)
 
     def test_a_capture_dated_in_the_future_is_refused(self):
         self.world.record["captures"]["parentLifecycle"][World.PARENT_A]["capturedAt"] = (
@@ -1225,6 +1226,39 @@ class ReproducedDefects(TrialCase):
         ])
         with self.assertRaises(startup.Refused):
             self.world.run_ledger()
+
+    def test_a_timing_field_that_is_not_a_finite_number_is_refused(self):
+        # NaN passes a range check from both sides at once, and every staleness comparison after
+        # it is false as well, so a day-old capture read as fresh.
+        for path, value in ((("captureMaxAgeSeconds",), float("nan")),
+                            (("captureMaxAgeSeconds",), float("inf")),
+                            (("captureMaxAgeSeconds",), True),
+                            (("supervisor", "witnessAdvanceSeconds"), float("nan")),
+                            (("supervisor", "minimumAliveSeconds"), float("nan"))):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            node = world.record
+            for key in path[:-1]:
+                node = node[key]
+            node[path[-1]] = value
+            # json.dumps writes NaN and Infinity, which json.loads reads back, so this reaches the
+            # module exactly as an operator's own file would.
+            (world.trial / "start.json").write_text(json.dumps(world.record), encoding="utf-8")
+            try:
+                startup.load_start(str(world.trial / "start.json"),
+                                   environment=world.environment())
+            except startup.Refused as refused:
+                self.assertIn("number", refused.reason)
+            else:                                                    # pragma: no cover
+                self.fail(".".join(path) + " accepted " + repr(value))
+
+    def test_a_stale_capture_is_still_stale_under_a_nan_bound(self):
+        self.world.record["captureMaxAgeSeconds"] = float("nan")
+        (self.world.trial / "start.json").write_text(json.dumps(self.world.record),
+                                                     encoding="utf-8")
+        code, payload, stderr = self.world.run_cli()
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("number", payload["refused"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover
