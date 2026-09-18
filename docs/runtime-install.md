@@ -1415,6 +1415,13 @@ is recorded. Four of the seven need an input the command cannot supply for itsel
 `diagnose` produces four answers and three admissions that it did not look.
 
 ```sh
+# One controller for the whole block, on 3.11 or newer. Five of the steps below read a Codex
+# configuration and they do not fail alike without a reader, so naming the interpreter once is
+# the difference between a block that can be copied and a block whose readings quietly degrade.
+# The runtimes this command installs are 3.11+ whatever starts it, so this is a choice about the
+# controller only. What an older one does to each step is recorded after the block.
+controller=<python3.11-or-later>
+
 # Before anything: the model and permission keys as they stand, because preservation is a
 # comparison and there is no cell that makes it for you.
 # A fresh Codex home legitimately has no config.toml at all -- the reader treats absence as an
@@ -1427,16 +1434,18 @@ else
     printf 'no configuration existed before this run\n' > <receipt>/config.before.absent
 fi
 
-python3 scripts/runtime_install.py install --dest <destination> --record <record> \
+"$controller" scripts/runtime_install.py install --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state> --apply > <receipt>/install.json
-# Keep the exit code with the result: it is the install's own, and a pipeline would hide it.
-echo "install exit=$?"; cat <receipt>/install.json
+# The exit code belongs IN the receipt rather than on the terminal: it is the install's own, a
+# pipeline would hide it, and a receipt that kept the result and lost the status cannot say
+# whether the install refused.
+printf 'install exit=%s\n' "$?" > <receipt>/install.exit; cat <receipt>/install.json
 
 # The skill links are a layer of their own: install builds the runtime, and the diagnosis reads
 # the links by running scripts/install.py --check separately. Skip this and the link row answers
 # that every crw-* skill is missing -- an accurate reading of a Codex home nobody linked, and
 # not a reading of the installation just made.
-python3 scripts/install.py --apply --dest <codex-home>/skills
+"$controller" scripts/install.py --apply --dest <codex-home>/skills
 
 # Registration is a separate operation from installing, and tool exposure compares the
 # registered command with the tools a session actually listed. Both halves or neither.
@@ -1445,10 +1454,10 @@ python3 scripts/install.py --apply --dest <codex-home>/skills
 # alike -- measured on the 3.10 floor: exit 1, outcome CONFLICT naming the interpreter, nothing
 # written. Run this on the floor and there is no registration for the exposure row to compare
 # against, and that row is unreadable rather than unverified.
-<python3.11-or-later> scripts/runtime_install.py register-mcp --codex-home <codex-home> \
+"$controller" scripts/runtime_install.py register-mcp --codex-home <codex-home> \
     --bridge-command <destination>/current/bin/<console-script> --apply
 
-python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
+"$controller" scripts/runtime_install.py diagnose --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state> --socket <socket> \
     --bridge-command <destination>/current/bin/<console-script> \
     --relay-command <destination>/current/bin/codex-session-relay \
@@ -1467,27 +1476,35 @@ python3 scripts/runtime_install.py diagnose --dest <destination> --record <recor
 # from the one this row asks.
 #
 # The record carries sessionId and turnId, so ask with them.
-python3 scripts/runtime_install.py hook --codex-home <codex-home> --adapter completion \
+"$controller" scripts/runtime_install.py hook --codex-home <codex-home> --adapter completion \
     --dest <destination> --apply
 #   ... then end a real turn, and only then:
-python3 scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.json
+"$controller" scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.json
 
 # hook-status names the journal it counted; the records in it name the turn they belong to.
-python3 - <receipt>/hook.json <session-id> <turn-id> <<'PY'
+"$controller" - <receipt>/hook.json <session-id> <turn-id> <<'PY'
 import json, re, sys
 from pathlib import Path
 status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
-cell = json.load(open(status))["firingJournal"]
-# hook-status names the journal from the hook's own settings, so the key is there as soon as
-# the hook is registered -- and it is NOT there on a Codex home where it never was. That is a
-# real state and it is not this turn's answer either way, so say so rather than failing on a
-# missing key and leaving the operator with a traceback where a reading belongs.
+payload = json.load(open(status))
+cell = payload["firingJournal"]
+# hook-status names the journal out of the hook's own settings, and omits the key whenever its
+# firing-journal reading could not name a usable journal at all. That is SEVERAL states and not
+# one: no registration, registrations naming different settings files, a relative spelling,
+# settings it could not read, or journaling not configured. So report the absence and carry the
+# registration and configuration cells that answer which -- choosing a cause here would be the
+# borrowed answer this procedure refuses, and failing on the missing key would leave a
+# traceback where a reading belongs.
 if "journalRoot" not in cell:
-    print(json.dumps({"firingJournal": cell.get("value"), "journalRoot": None,
+    print(json.dumps({"firingJournal": cell.get("value"),
+                      "firingJournalEvidence": cell.get("evidence"),
+                      "journalRoot": None,
                       "recordsForThisTurn": None,
-                      "detail": "no hook is registered in this Codex home, so there is no"
-                                " journal to attribute a turn to: unreadable, not zero"},
-                     indent=2))
+                      "registration": (payload.get("registration") or {}).get("value"),
+                      "configuration": (payload.get("configuration") or {}).get("value"),
+                      "detail": "no journal to attribute a turn to, so this row is unreadable"
+                                " for this run rather than zero; the registration and"
+                                " configuration cells say which state this is"}, indent=2))
     raise SystemExit(0)
 root = Path(cell["journalRoot"]).expanduser()
 # The same shapes hook-status counts, and one entry that cannot be decoded does not take the
@@ -1517,7 +1534,7 @@ PY
 # what the suite records on that interpreter: the reading was not made, and the row is
 # unreadable rather than preserved. Do not substitute a pattern match for it -- a value guessed
 # out of TOML is a value whose wrongness is invisible.
-<python3.11-or-later> -c 'import sys, tomllib
+"$controller" -c 'import sys, tomllib
 keys = ("model", "approval_policy", "sandbox_mode")
 for path in sys.argv[1:]:
     with open(path, "rb") as handle:
@@ -1530,13 +1547,13 @@ for path in sys.argv[1:]:
 # only place that field is written. diagnose reports the selection and the pointer as they now
 # stand and has no residualPaths to give, so an operator who looks for it there finds nothing
 # and concludes there was nothing to clear. That is why the install above is kept.
-python3 -c 'import json, sys
+"$controller" -c 'import json, sys
 result = json.load(open(sys.argv[1]))
 print(json.dumps({key: result.get(key) for key in
                   ("failedStep", "retriable", "residualPaths", "removedCandidate", "pointer")},
                  indent=2))' <receipt>/install.json
 
-python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
+"$controller" scripts/runtime_install.py diagnose --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state>
 ```
 
@@ -1551,19 +1568,21 @@ So a receipt from this block records the stages it actually performed, and it is
 for the composed run. The last command above is there for the host that arrives at it having
 had an update fail on its own, which is the only way that stage is reached here.
 
-A receipt also has to record which interpreter took it, and the block is narrower than it looks
-on the 3.10 floor. Five of its steps read a Codex configuration -- `install`, `register-mcp`,
-both `diagnose` invocations and the preservation reader -- and they do not all behave the same
-way without `tomllib`. Measured on 3.10 rather than inferred: `register-mcp` refuses outright,
+A receipt also has to record which interpreter took it, and the block names one controller for
+every step for exactly that reason: a page that recommends 3.11 in prose and then invokes bare
+`python3` is a page whose readings degrade for anyone who copies it. Five of its steps read a
+Codex configuration -- `install`, `register-mcp`, both `diagnose` invocations and the
+preservation reader -- and they do not fail alike without `tomllib`, so an operator who runs it
+on the 3.10 floor anyway gets a mixture rather than a refusal. Measured on 3.10 rather than
+inferred: `register-mcp` refuses outright,
 exit 1 with outcome `CONFLICT` naming the interpreter and nothing written, for an absent, an
 empty and a populated configuration alike. `install` and `diagnose` do not refuse; they run and
 report the configuration `UNREADABLE`, which means the install still promotes and the exposure
 row cannot reach `verified` -- it reads `not_verified` there for want of a reader, not for want
 of a registration. The preservation reader exits before reading anything.
 
-So two of the three steps that name a 3.11-or-later interpreter above do so because they refuse
-without one, and the other three degrade into readings that have to be recorded as unreadable.
-Choose a 3.11-or-later controller for the whole block. The runtimes this command installs are
+So on the floor two of the seven readings are unreadable and the rest still stand, and a receipt
+records them that way rather than carrying them forward. The runtimes this command installs are
 3.11 or newer whatever interpreter started it, so an old controller is never a reason to
 postpone the install; it is only a reason two of the seven cannot be taken.
 
