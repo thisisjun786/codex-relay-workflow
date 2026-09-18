@@ -321,6 +321,22 @@ def same(left, right):
     return str(left) == str(right)
 
 
+def same_value(left, right):
+    """Equality for a value that may be structured, where str() is not an answer.
+
+    A settings value can be an object, and comparing two of them as text makes agreement depend on
+    key order while letting a string holding a dict's repr equal the dict itself. Scalars keep the
+    textual comparison, because a payload legitimately answers 1 where a record wrote "1".
+    """
+    if left is MISSING or right is MISSING or left is None or right is None:
+        return False
+    if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
+        return type(left) is type(right) and left == right
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left is right
+    return str(left) == str(right)
+
+
 def digest_of(path):
     reader = hashlib.sha256()
     with open(str(path), "rb") as handle:
@@ -843,10 +859,17 @@ def reading_process(record, relay, sleeper=time.sleep):
     minimum = supervisor.get("minimumAliveSeconds")
     started = process_started_at(pid)
     if started is None:
-        cells.append(cell("uptime", UNKNOWN, provenance=READ,
-                          evidence=("when pid " + str(pid) + " itself started could not be read,"
-                                    " and the record's launchedAt belongs to whatever was launched"
-                                    " rather than to this process")))
+        # No /proc here, which is most hosts that are not Linux. The record's declaration is what
+        # is left, and the cell says which of the two it read rather than refusing every trial on
+        # such a host or passing one off as the other.
+        lived = time.time() - launched.timestamp()
+        cells.append(cell("uptime", VERIFIED if lived >= minimum else NOT_VERIFIED,
+                          provenance=CAPTURED, measured_at=stamp(),
+                          evidence=("this host does not report when a process started, so the"
+                                    " record's own launchedAt is what this reads: "
+                                    + str(int(lived)) + " seconds against a declared minimum of "
+                                    + str(minimum) + ". A restarted supervisor keeps that"
+                                    " declaration, and there is nothing here that would notice")))
     else:
         lived = time.time() - started
         declared = time.time() - launched.timestamp()
@@ -980,7 +1003,7 @@ def reading_capability(record, relay):
                 names = same(field(found["payload"], "taskId"), task)
                 disagreed = [] if actual is MISSING else [
                     key for key, value in sorted(expect.items())
-                    if not same(field(actual, key), value)
+                    if not same_value(field(actual, key), value)
                 ]
                 ok = (names and not disagreed and isinstance(findings, list) and not findings
                       and actual is not MISSING)
@@ -1002,7 +1025,7 @@ def reading_capability(record, relay):
             settings = field(payload, "settings")
             differs = [] if settings is MISSING or settings is None else [
                 key for key, value in sorted(expect.items())
-                if not same(field(settings, key), value)
+                if not same_value(field(settings, key), value)
             ]
             # settings-show always reports missing, so an absent one is a payload this predicate
             # cannot read as complete rather than an empty list it may assume.

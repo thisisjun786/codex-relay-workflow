@@ -2450,5 +2450,54 @@ class TwentySecondHostedRound(TrialCase):
         self.assertTrue(document["readyToStart"])
 
 
+class TwentyThirdHostedRound(TrialCase):
+    """A host without /proc, and a setting that is an object."""
+
+    def test_a_host_that_cannot_report_process_start_uses_the_declaration_and_says_so(self):
+        self.world.start_supervisor()
+        self.world.record["supervisor"]["minimumAliveSeconds"] = 60
+        self.world.flush()
+        record = startup.load_start(str(self.world.trial / "start.json"),
+                                    environment=self.world.environment())
+        record["_now"] = startup.datetime.datetime.now(startup.datetime.timezone.utc)
+        original = startup.process_started_at
+        startup.process_started_at = lambda pid: None
+        try:
+            document = startup.preflight(record, sleeper=lambda seconds: time.sleep(0.4))
+        finally:
+            startup.process_started_at = original
+        cell = cells_of(document, "processPersistence")["uptime"]
+        # The record declares two minutes, so it passes there, and the cell says which it read.
+        self.assertEqual(cell["value"], VERIFIED)
+        self.assertEqual(cell["provenance"], "captured")
+        self.assertIn("does not report when a process started", cell["evidence"])
+
+    def test_a_structured_setting_is_compared_structurally(self):
+        sandbox = {"type": "workspaceWrite", "networkAccess": False}
+        reordered = {"networkAccess": False, "type": "workspaceWrite"}
+        self.assertTrue(startup.same_value(sandbox, reordered))
+        self.assertFalse(startup.same_value(sandbox, str(sandbox)))
+        self.assertFalse(startup.same_value(sandbox, {"type": "workspaceWrite"}))
+        self.assertTrue(startup.same_value("1", 1))
+        self.assertFalse(startup.same_value(True, "True"))
+
+    def test_an_object_valued_expect_agrees_whatever_the_key_order(self):
+        sandbox = {"type": "workspaceWrite", "networkAccess": False}
+        for participant in self.world.record["boundaries"][0]["participants"]:
+            participant["expect"]["sandbox"] = dict(sandbox)
+        for task in (World.PARENT_A, World.CHILD_A):
+            self.world.captures["receipt-" + task + ".json"]["settings"]["actual"]["sandbox"] = {
+                "networkAccess": False, "type": "workspaceWrite"}
+        self.world.payloads["settings-show"]["payload"]["settings"]["sandbox"] = {
+            "networkAccess": False, "type": "workspaceWrite"}
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(
+            cells_of(document, "capability")["recordedSettings:" + World.PARENT_A]["value"],
+            VERIFIED)
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"], VERIFIED)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
