@@ -580,6 +580,61 @@ class ReadingTests(unittest.TestCase):
         self.assertEqual(printed(""), "printed_nothing")
         self.assertEqual(printed("not json at all"), "printed_something_else")
 
+    def test_a_reading_that_failed_never_passes_as_a_value(self):
+        """The other half of making absence expressible: nowhere may consume it as a value.
+
+        The sentinel is a non-empty string, so it slips past exactly the tests that look like they
+        exclude it - truthiness, uniqueness, and a predicate asking only whether something is
+        there. recordedAs is the case that matters: the row asks whether a path was named, and an
+        unreadable journal satisfied that question without naming one.
+        """
+        declared = None
+        for one in harness.SCENARIOS:
+            if one["name"] == "receipt_missing":
+                declared = one
+        values = {"processExit": 0, "adapterOutcome": "guard_answered",
+                  "observation": "receipt_missing", "guardDecision": "block",
+                  "guardState": "receipt_missing", "printedBlock": "printed_a_block",
+                  "heldFile": "reserved", "recordedAs": harness.reading.UNREADABLE,
+                  "observationFile": "resolved", "firedCommand": "python3 x",
+                  "journalElapsedMs": 5, "processWallMs": 9}
+        cells = dict((cell, {"cell": cell, "value": value, "readable": True})
+                     for cell, value in values.items())
+        arm = type("Arm", (object,), {"name": "on"})()
+        verdict = harness.judge(arm, declared, cells, declared["expected"])
+        self.assertFalse(verdict["passed"],
+                         "an unreadable journal satisfied the question whether a path was named")
+        self.assertIn("recordedAs", [one["cell"] for one in verdict["disagreed"]])
+        self.assertTrue(verdict.get("unmeasured"),
+                        "a managed scenario whose publication could not be read is not measured")
+
+    def test_stdout_is_judged_by_the_adapter_own_validator(self):
+        """The rule for what the host accepts comes from the code that decides it.
+
+        A second copy of that rule here agrees with the original only until one of them changes,
+        and it already had: the copy accepted a block that never asked for a continuation, which
+        the host reports as a failed run.
+        """
+        def printed(payload):
+            return harness.stdout_payload(
+                {"stdout": json.dumps(payload), "exitCode": 0, "wallMs": 1})["printed"]
+
+        self.assertEqual(printed({"decision": "block", "reason": "because", "continue": True}),
+                         "printed_a_block")
+        self.assertEqual(printed({"decision": "block", "reason": "because", "continue": False}),
+                         "printed_something_else")
+        self.assertEqual(printed({"decision": "block", "reason": "because"}),
+                         "printed_something_else")
+        self.assertEqual(printed({"decision": "block", "continue": True}),
+                         "printed_something_else")
+        # And the rule really is the adapter's: what it refuses, this refuses.
+        for payload in ({"decision": "block", "reason": "because", "continue": False},
+                        {"decision": "block", "continue": True}):
+            self.assertTrue(
+                completion.verdict_complaints({"decision": payload.get("decision"),
+                                               "hook_output": payload}),
+                "the adapter accepts output this check expects it to refuse")
+
     def test_a_payload_from_another_source_cannot_fill_this_cell(self):
         every = self.payloads()
         every["journal"] = dict(every["journal"], source="stdout")

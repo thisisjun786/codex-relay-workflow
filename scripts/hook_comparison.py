@@ -148,6 +148,11 @@ FIRING_CELLS = tuple(cell for cell, _s, _p, _q in CELLS if cell not in ARM_CELLS
 # must then be a place something declared an absence to be normal.
 ABSENCE_ANSWERS = (reading.ABSENT, NOT_PUBLISHED, NOT_RESERVED, None)
 
+# The answers that are a reading which did not happen rather than something a reading found. They
+# are non-empty strings, so truthiness, uniqueness and "is anything there" all let them through,
+# and every place that consumes a cell has to exclude them before asking its own question.
+NOT_A_VALUE = (reading.UNREADABLE, reading.ACCESS_ERROR)
+
 # A managed scenario is one whose workspace a marker names. Only there can the guard select an
 # assignment, so only there is a published observation something to require.
 MANAGED = "managed"
@@ -791,11 +796,17 @@ def stdout_payload(fired):
         answer = json.loads(raw)
     except ValueError:
         return {"source": STDOUT, "printed": PRINTED_OTHER, "raw": raw[:400]}
-    reason = answer.get("reason")
-    delivered = (answer.get("decision") == "block" and isinstance(reason, str)
-                 and bool(reason.strip()))
-    printed = PRINTED_A_BLOCK if delivered else PRINTED_OTHER
-    return {"source": STDOUT, "printed": printed, "raw": raw[:400]}
+    # Asked of the adapter's own validator rather than decided here. completion.verdict_complaints
+    # is what refuses output the host reports as a failed run, and a second copy of that rule in
+    # this file would agree with it only until one of them changed. It already had: the copy here
+    # accepted a block that never asked for a continuation, which the host discards.
+    complaints = completion.verdict_complaints(
+        {"decision": answer.get("decision"), "hook_output": answer})
+    printed = PRINTED_A_BLOCK if not complaints else PRINTED_OTHER
+    payload = {"source": STDOUT, "printed": printed, "raw": raw[:400]}
+    if complaints:
+        payload["hostWouldRefuse"] = complaints
+    return payload
 
 
 def marker_payload(arm, built, fired, recorded_as):
@@ -905,13 +916,21 @@ def judge(arm, declared, cells, expected):
                        " it does not mean no omission was present"}
     for cell, wanted in expected.items():
         found = cells[cell]["value"]
+        if found in NOT_A_VALUE and wanted not in NOT_A_VALUE:
+            # Before any predicate sees it. recordedAs expects "a path was named", and the
+            # sentinel is a non-empty string, so a reading that failed would have satisfied the
+            # one question the row asks there.
+            disagreed.append({"cell": cell, "wanted": wanted, "found": found,
+                              "because": "a reading that could not be taken is not a value"})
+            continue
         predicate = PREDICATES.get((cell, wanted))
         agreed = predicate(found) if predicate else found == wanted
         if not agreed:
             disagreed.append({"cell": cell, "wanted": wanted, "found": found})
+    published = cells["recordedAs"]["value"]
     unmeasured = (declared["kind"] == MANAGED
                   and expected.get("recordedAs", PUBLISHED) == PUBLISHED
-                  and not cells["recordedAs"]["value"])
+                  and (published in NOT_A_VALUE or not published))
     verdict = {"passed": not disagreed and not unmeasured, "disagreed": disagreed}
     if unmeasured:
         verdict["unmeasured"] = True

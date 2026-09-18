@@ -157,6 +157,14 @@ something it can reach.
 | Duplicate execution | not performed | it is that no verification or correction runs twice for one event id across a hold, a daemon restart and a recovery. Nothing verifies or corrects here and no daemon runs |
 | Added latency | measured against the budget, for the hook process only | the distribution of `processWallMs` is reported as minimum, median, 95th percentile and maximum against the 2 s median and 5 s 95th percentile bounds. The contract's budget is per Stop as the host sees it, so meeting it here is necessary and not sufficient |
 
+Where this harness classifies what a host would see, the rule comes from the code that decides it
+rather than from a copy here. Whether printed output is a block the host acts on is asked of the
+adapter's own validator, because a second copy of that rule agrees with the original only until
+one of them changes, and it already had: the copy accepted a block that never asked for a
+continuation, which the host reports as a failed run. A reading that could not be taken is also
+never consumed as a value, at any site: the sentinel is a non-empty string and slips past exactly
+the tests that look like they exclude it.
+
 Every judgment that carries a verdict can also say that a reading under it could not be taken,
 and none of them is met while it is saying so. A criterion that dropped an unreadable reading and
 concluded from what was left would report a bound as kept on evidence nobody has, which is the
