@@ -496,6 +496,42 @@ async def test_a_known_validation_failure_keeps_its_request_id(bridge, fake_serv
     assert repeat["replayed"] and repeat["status"] == "failed"
     assert not fake_server[0].threads
 
+
+async def test_a_prompt_whose_frame_never_went_out_is_not_left_unknown(
+    bridge, fake_server, repository
+):
+    """The dispatching checkpoint guesses pessimistically so a crash cannot hide the prompt.
+
+    Once the operation ends the guess is checkable, and here it is wrong: the connection failed
+    before turn/start was written, so the prompt was not sent rather than possibly delivered.
+    """
+    from codex_thread_bridge.rpc import TransportError
+
+    original = bridge.rpc.call
+
+    async def unreachable(method, params):
+        if method == "turn/start":
+            raise TransportError("App Server is not connected")
+        return await original(method, params)
+
+    bridge.rpc.call = unreachable
+    receipt = await bridge.create_worktree_thread(**repository, prompt="WITHHOLD")
+    assert receipt["status"] == "outcome_unknown"
+    assert "thread/start" in receipt["attemptedEffects"]
+    assert "turn/start" not in receipt["attemptedEffects"]
+    assert receipt["initialPrompt"] == {"state": "not_sent"}
+
+
+async def test_a_prompt_the_host_refused_is_recorded_as_refused(bridge, fake_server, repository):
+    """The host answered, so the one thing the receipt must not say is that nobody knows."""
+    fake, _ = fake_server
+    fake.reject["turn/start"] = {"code": -32602, "message": "turn rejected"}
+    receipt = await bridge.create_worktree_thread(**repository, prompt="WITHHOLD")
+    assert receipt["status"] == "failed"
+    assert receipt["attemptedEffects"][-1] == "turn/start"
+    assert receipt["initialPrompt"] == {"state": "rejected"}
+    assert receipt["recoveryRequired"]
+
 async def test_replay_survives_removed_checkout_and_source_paths(
     bridge, fake_server, repository, tmp_path
 ):

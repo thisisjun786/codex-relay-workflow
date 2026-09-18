@@ -12,7 +12,7 @@
       "packageLocation": "packages/codex-thread-bridge/src/codex_thread_bridge",
       "subdirectoryTree": "f94e72ed6ee85b6a702dc78359d350df29cb152b",
       "packageTree": "013bb26813f00ab70cba78ac9c2be2ed2f2fd2d9",
-      "sourceDigest": "8375dfecfac136184ef43b57c434429b5629fdbde94c56213202615ae8a5fe0b",
+      "sourceDigest": "14740f52eae15c7e1f058d1f4c34f8bdadfc225aa2e0ced44f2b9258248921c1",
       "version": "0.1.0",
       "requiresPython": ">=3.11",
       "licencePath": "packages/codex-thread-bridge/LICENSE",

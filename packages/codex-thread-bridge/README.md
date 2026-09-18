@@ -289,10 +289,13 @@ Three limits come with this and are reported rather than worked around.
   began nothing — a preliminary read the host refused, a checkout the Git
   contract rejected — still replays that refusal rather than asking again. Only
   the absence of an answer refunds the ID.
-- `create_worktree_thread` records `initialPrompt: outcome_unknown` just before
-  it dispatches the first turn, so a connection lost between that record and the
-  frame leaves that one field more pessimistic than the receipt as a whole.
-  `attemptedEffects` settles it: `turn/start` is either in that list or it is not.
+- A state written before it could be known is corrected once it can be.
+  `create_worktree_thread` records `initialPrompt: outcome_unknown` before
+  dispatching the first turn, so that a process killed mid-dispatch cannot leave a
+  receipt claiming the prompt was withheld. When the operation ends, that guess is
+  replaced by what actually happened: `not_sent` when `turn/start` never reached
+  the socket, `rejected` when the host refused it, and `outcome_unknown` only when
+  the frame went out and the answer did not come back.
 
 A re-armed request keeps its history. `attempt` counts the tries and
 `priorAttempts` retains the last five, each with the status and error that ended

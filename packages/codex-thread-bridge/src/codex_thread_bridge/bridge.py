@@ -242,7 +242,8 @@ class Bridge:
         }
 
     async def _mutate(
-        self, request_id, method, params, action, *, validate_fresh, legacy_params=None
+        self, request_id, method, params, action, *, validate_fresh, legacy_params=None,
+        reconcile=None,
     ):
         async with self._mutation_lock:
             retained = self.ledger.lookup(request_id, method, params, legacy_params=legacy_params)
@@ -264,6 +265,20 @@ class Bridge:
             if not fresh:
                 return {**receipt, "replayed": True}
             with recording() as effects:
+
+                def settled():
+                    """Finish the receipt once its status and its evidence both exist.
+
+                    An action may have to write a state before it can be known, because a crash
+                    there would otherwise hide it. Only the action knows which field that was, so
+                    correcting it belongs to the action rather than here; this passes it the
+                    finished receipt and stays generic.
+                    """
+                    receipt["attemptedEffects"] = list(effects.attempted)
+                    if reconcile is not None:
+                        reconcile(receipt)
+                    return receipt
+
                 try:
                     await action(receipt)
                     receipt["status"] = "accepted"
@@ -272,14 +287,14 @@ class Bridge:
                 except WorktreeError as error:
                     receipt.update(status="failed", error=str(error))
                 except asyncio.CancelledError:
-                    self.ledger.save({**receipt, **interrupted(effects)})
+                    receipt.update(**interrupted(effects))
+                    self.ledger.save(settled())
                     raise
                 except Exception as error:
                     receipt.update(
                         **interrupted(effects), error=f"{type(error).__name__}: {error}"
                     )
-                receipt["attemptedEffects"] = list(effects.attempted)
-                return self.ledger.save(receipt)
+                return self.ledger.save(settled())
 
     async def create_thread(
         self,
@@ -639,8 +654,31 @@ class Bridge:
                 )
             checkpoint("complete", recoveryRequired=False)
 
+        def reconcile(receipt):
+            """Correct the prompt's state once the evidence says more than the guess did.
+
+            The dispatching checkpoint writes outcome_unknown before the frame goes out, so that
+            a process killed mid-dispatch cannot leave a receipt claiming the prompt was withheld.
+            Once the operation ends, three different things can be true, and only one of them is
+            the one that was written down in advance: the frame was never begun, the host
+            answered and refused it, or it went out and the answer was lost.
+            """
+            if prompt is None or (receipt.get("initialPrompt") or {}).get("state") != (
+                "outcome_unknown"
+            ):
+                return
+            if "turn/start" not in receipt["attemptedEffects"]:
+                receipt["initialPrompt"] = {"state": "not_sent"}
+            elif receipt["status"] == "failed":
+                receipt["initialPrompt"] = {"state": "rejected"}
+
         receipt = await self._mutate(
-            request_id, "create_worktree_thread", params, action, validate_fresh=validate_fresh
+            request_id,
+            "create_worktree_thread",
+            params,
+            action,
+            validate_fresh=validate_fresh,
+            reconcile=reconcile,
         )
         # Same diagnostic as the other two paths. It matters most here: this path checks its
         # settings at creation, then names the thread and re-inspects the checkout before
