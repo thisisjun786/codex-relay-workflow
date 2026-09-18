@@ -1051,7 +1051,9 @@ FAULT_SITES = (
      "attempts alone would not identify the claim - delivery's _settle and reconcile write"
      " that table too, and _settle writes deliveries beside it - so the case asserts"
      " attempt_messages was in the same transaction, which has exactly one writer and it is"
-     " inside _claim, with an empty send list as the independent check"),
+     " inside _claim, with an empty send list as the independent check. The reserved capacity"
+     " is in that subset too, so the empty-table checks cannot pass for a reservation that was"
+     " never written"),
     ("test_store.py", "test_a_failed_registration_is_not_a_registration", "helper",
      "relationships",
      "register() runs three transactions and this name held only because the relationship"

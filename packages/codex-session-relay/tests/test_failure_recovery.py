@@ -136,6 +136,11 @@ class ATickInterruptedInsideItsOwnTransaction(DeliveryTestCase):
         subset below an identification; the empty send list beside it is the independent
         check that no settle ran.
 
+        The reservation is in that subset for a different reason, and review found it: the
+        empty-table loop below would pass for recipient_rate whether the reservation rolled
+        back or was never written at all. Requiring it in the interrupted transaction is what
+        stops that check being satisfied by a _count_send that moved out of the claim.
+
         Not another TransactionRecovery or VerdictAtomicity. Those interrupt a body mid-write
         and count rows. This one has to REACH _deliver, leave the tick's earlier commits
         alone, and then recover across a process boundary.
@@ -148,9 +153,10 @@ class ATickInterruptedInsideItsOwnTransaction(DeliveryTestCase):
                 self.daemon().tick(now=self.clock.now())
 
         self.assertLessEqual(
-            {"deliveries", "attempts", "attempt_messages"}, set(kill.killed),
-            "the interrupted transaction did not hold the claim, the attempt row and the"
-            f" rendered bytes together, so this is not _claim's transaction: {kill.killed}",
+            {"deliveries", "attempts", "attempt_messages", "recipient_rate"}, set(kill.killed),
+            "the interrupted transaction did not hold the claim, the attempt row, the rendered"
+            " bytes and the reserved capacity together, so this is not _claim's transaction and"
+            f" the empty-table checks below would pass without proving anything: {kill.killed}",
         )
         for table in ("attempts", "attempt_messages", "recipient_rate"):
             self.assertEqual(
