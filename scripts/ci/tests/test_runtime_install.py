@@ -8995,6 +8995,9 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
     """Review on PR #52 head ef4d952, raised by both reviewers for the target and by one for
     the destination boundary."""
 
+    def _survey(self, host, **overrides):
+        return _diagnose(host, **overrides)["residue"]
+
     def test_a_target_that_could_not_be_read_is_not_an_absent_one(self):
         """Path.exists() answers False for a filesystem failure exactly as it does for a file
         that is not there, so a target behind a symlink loop, an unreadable directory or a
@@ -9012,6 +9015,44 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         self.assertFalse(found.get("residual"),
                          "a target nobody could look at is not a target established absent")
         self.assertEqual(found.get("finding"), residue.UNREADABLE_POINTER_TARGET)
+
+    def test_a_child_that_could_not_be_inspected_is_not_reported_as_a_plain_file(self):
+        """scandir can succeed while a child's own metadata lookup fails. is_dir() reports that
+        as False, which is indistinguishable from a regular file, so an incomplete scan was
+        presented as a complete one with an empty cleanup list."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            real_lstat = residue.os.lstat
+            target = str(host.previous)
+
+            def refusing(path, *args, **kwargs):
+                if str(path) == target:
+                    raise OSError(errno.EIO, "input/output error")
+                return real_lstat(path, *args, **kwargs)
+
+            with mock.patch.object(residue.os, "lstat", side_effect=refusing):
+                found = self._survey(host)
+        entries = {entry["path"]: entry for entry in found["entries"]}
+        self.assertEqual(entries[target]["decision"], residue.NOT_SCANNED)
+        self.assertTrue(any(target in note for note in found["unreadable"]),
+                        "a child nobody could inspect left no trace in the unreadable list")
+
+    def test_a_relative_destination_still_owns_its_own_pointer(self):
+        """Installs record an absolute pointer path. A --dest spelled relatively kept that
+        spelling, so the boundary check compared an absolute parent with a relative root and
+        disowned a dangling pointer sitting in the very destination being surveyed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            here = os.getcwd()
+            try:
+                os.chdir(str(host.destination.parent))
+                found = _diagnose(host, dest=host.destination.name)
+            finally:
+                os.chdir(here)
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER)
+        self.assertIn(str(host.pointer_path), found["residualPaths"],
+                      "the pointer under this very destination was disowned over a spelling")
 
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer

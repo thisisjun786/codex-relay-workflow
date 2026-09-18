@@ -28,6 +28,7 @@ an empty answer here never means a failed run left nothing behind.
 """
 
 import os
+import stat
 from pathlib import Path
 
 from . import pointer, staging
@@ -42,10 +43,36 @@ NOT_SCANNED = "not_scanned"
 POINTER_FINDINGS = (DANGLING_POINTER, FOREIGN_POINTER, UNREADABLE_POINTER_TARGET,
                     POINTER_OUTSIDE_DESTINATION, NOT_SCANNED)
 
+# What a listed child is. None is a fourth answer and it is the one that matters: scandir can
+# succeed while a child's own metadata lookup fails, and Path.is_dir() reports that failure as
+# "not a directory", which reads exactly like a regular file.
+DIRECTORY = "directory"
+LINK = "link"
+OTHER = "other"
+KINDS = (DIRECTORY, LINK, OTHER)
+
+
+def _kind_of(path):
+    """(kind, detail), or (None, why) when the child could not be read at all."""
+    try:
+        found = os.lstat(str(path))
+    except OSError as error:
+        return None, ("this entry could not be inspected: " + type(error).__name__ + ": "
+                      + str(error))
+    if stat.S_ISLNK(found.st_mode):
+        return LINK, "a symbolic link"
+    if stat.S_ISDIR(found.st_mode):
+        return DIRECTORY, "a directory"
+    return OTHER, "not a directory"
+
 NOTE = ("residue is exactly what the installer's own decision would reclaim (staging.REMOVES),"
         " so what is reported here as clearable and what a later install would take are the"
         " same set rather than two opinions. A failed install's residualPaths is a different"
-        " reading: it is what THAT RUN left, and this is what is on the destination now.")
+        " reading: it is what THAT RUN left, and this is what is on the destination now."
+        " It is also not a snapshot: the claim, the lock, the contents, the host record and"
+        " the pointer are read at different moments, so a host changing underneath this"
+        " command is described in pieces. Every decision is conservative in the same"
+        " direction, so that costs a path being kept rather than a live one being named.")
 
 
 def _entry(path, **fields):
@@ -105,7 +132,16 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
                                             reason="this is the owned pointer, not an"
                                                    " environment under this destination"))
             continue
-        if entry.is_symlink():
+        kind, kind_detail = _kind_of(entry)
+        if kind is None:
+            # scandir succeeded and this child's own metadata did not. is_dir() answers False
+            # for that exactly as it does for a regular file, so the survey used to record
+            # "not a directory" and leave read=True with nothing unreadable -- an incomplete
+            # scan presented as a complete one.
+            answer["entries"].append(_entry(entry, decision=NOT_SCANNED, reason=kind_detail))
+            answer["unreadable"].append(str(entry) + ": " + kind_detail)
+            continue
+        if kind == LINK:
             # Never followed. is_dir() answers about the target, so a link to an environment
             # would be scanned as though the link itself were that environment, and the claim
             # read under it would be the target's.
@@ -113,9 +149,9 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
                                             reason="a symbolic link is not an environment this"
                                                    " command built, and it is not followed"))
             continue
-        if not entry.is_dir():
+        if kind != DIRECTORY:
             answer["entries"].append(_entry(entry, decision=NOT_SCANNED,
-                                            reason="not a directory"))
+                                            reason=kind_detail))
             continue
         claim = staging.read_claim(entry)
         liveness, liveness_detail = staging.owner_liveness(entry)

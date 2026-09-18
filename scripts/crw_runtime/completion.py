@@ -1339,14 +1339,19 @@ def _journal_cell(config):
                  journalRoot=str(directory), journalPolicy=policy, days=days)
 
 
-def journals_named(paths):
-    """Each settings file the registrations name, and what the journal under it holds.
+def journals_named(registrations):
+    """Each REGISTRATION's own settings file, and what the journal under it holds.
 
     This exists because "no record" had several causes and the command answered none of them.
     Every registration in the hook file runs, so when they name different settings files they
     record into different journals; reading one of those and reporting an absence says nothing
     about the others, and reading none of them -- which is what happened -- makes a hook that
     fired into one journal indistinguishable from a hook that never fired.
+
+    Keyed by the registration and not by the path, because the journal and the program that
+    writes into it are one registration's pair. Reduced to a bare set of paths, a journal
+    could not be attributed to the command that fills it: an unstartable registration's empty
+    journal then read as evidence that its startable neighbour had recorded somewhere else.
 
     It writes nothing and opens only files a registration already named.
 
@@ -1358,10 +1363,16 @@ def journals_named(paths):
     failure here says nothing about what the hook can open inside a session.
     """
     found = []
-    for named in paths:
-        path = _settled(named)
+    for registration in registrations:
+        if not registration.get("settings"):
+            # A relative spelling or no settings at all. There is no file here to open, and
+            # record_path_unidentified is the cause that owns that state.
+            continue
+        path = _settled(registration["settings"])
         config, refused, detail, read_back = read_configuration(path)
-        entry = {"settings": str(path), "settingsState": read_back.state,
+        entry = {"registration": registration.get("registration"),
+                 "startable": registration.get("startable"),
+                 "settings": str(path), "settingsState": read_back.state,
                  "usable": config is not None, "refusedAs": refused, "detail": detail,
                  "journalRoot": None, "journalPolicy": None, "faultsOnly": False,
                  "records": None, "recordsAnswer": firing.UNESTABLISHED, "journal": None}
@@ -1427,15 +1438,6 @@ def status(codex_home=None, environ=None, event=EVENT):
     # the one its neighbour names. Counted as a separate answer for that reason: "one path and
     # one silence" is two different files just as surely as two paths are.
     silent = len(ours or []) - len(carried)
-    # Every ABSOLUTE settings file a registration names, read, each with what its journal
-    # holds. Reading one file is the right answer when one registration names one file; when
-    # several name several, every one of them runs, and this command used to answer by reading
-    # none of them. A hook that had fired into one journal and a hook that had never fired at
-    # all then produced identical cells, which is the distinction the operator procedure had to
-    # write down as missing. Each is read, and none is elected, because electing one would make
-    # the answer depend on which path happened to sort first.
-    named_journals = journals_named(
-        sorted({str(_settled(named)) for named in carried if named not in relative}))
     if len(distinct) + (1 if silent else 0) > 1:
         # Every registration runs, so naming one of them would describe one hook while
         # reporting the others' state as if it were that one's.
@@ -1521,9 +1523,6 @@ def status(codex_home=None, environ=None, event=EVENT):
         marker = presence(config["markerRoot"], "the configured marker root", directory=True)
         journal_cell = _journal_cell(config)
 
-    # Attached to the settings cell rather than replacing it: the cell above still answers
-    # about the one file this command settled on, and this says what every registration named.
-    settings["namedSettings"] = named_journals
     # Startability PER REGISTRATION, paired by the registration's own identity. The two cells
     # above report the worst probe they took, which answers "is anything broken" and was read
     # as "is everything broken": one missing target among several registrations then claimed
@@ -1540,6 +1539,25 @@ def status(codex_home=None, environ=None, event=EVENT):
          "interpreter": interpreter_probes.get(entry["identity"], NOT_READ)}
         for entry in (ours or [])
     ]
+    # Every registration's OWN settings file and journal, read, and carried with whether that
+    # registration can be started at all. Reading one file is the right answer when one
+    # registration names one file; when several name several, every one of them runs, and this
+    # command used to answer by reading none of them. A hook that had fired into one journal
+    # and a hook that had never fired at all then produced identical cells, which is the
+    # distinction the operator procedure had to write down as missing. None is elected, because
+    # electing one would make the answer depend on which path happened to sort first.
+    startable = {probe["registration"]: {probe["adapter"], probe["interpreter"]}
+                 == {reading.PRESENT} for probe in start_probes}
+    named_journals = journals_named([
+        {"registration": entry["identity"],
+         "startable": startable.get(entry["identity"], False),
+         "settings": (entry["settings"]
+                      if entry.get("settings") and entry["settings"] not in relative else None)}
+         for entry in (ours or [])
+    ])
+    # Attached to the settings cell rather than replacing it: the cell above still answers
+    # about the one file this command settled on, and this says what every registration named.
+    settings["namedSettings"] = named_journals
     # Why there is no record, decided over the cells above and over no reading of its own.
     # 'ours' is None only when the hook file itself could not be read, which is why whether a
     # registration exists is passed as the readability of that file and not as a count of zero.

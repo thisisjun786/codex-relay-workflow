@@ -152,18 +152,6 @@ def _startable(probe):
     return _halves(probe) == {reading.PRESENT}
 
 
-def _nothing_can_start(observed):
-    """Whether NO registration names a startable program. The empty-journal causes ask this
-    for themselves rather than taking it off a requirement, because 'one of two registrations
-    is broken' must not suppress what the other one's journal says."""
-    probes = list(observed.get("startProbes") or [])
-    return bool(probes) and not any(_startable(probe) for probe in probes)
-
-
-UNSTARTABLE = ("no registration names a program the host can start, so an empty journal is that"
-               " program's absence rather than a fact about journalling")
-
-
 def _settings_absent(observed):
     """ANY registration whose settings are gone, not every one of them.
 
@@ -200,21 +188,30 @@ def _settings_unusable(observed):
     if not entries:
         return NOT_RULED_OUT, "no settings file was named to be read"
     unusable = [entry["settings"] for entry in entries
-                if entry.get("settingsState") != reading.ABSENT and not entry.get("usable")]
+                if entry.get("settingsState") not in (reading.ABSENT, reading.ACCESS_ERROR)
+                and not entry.get("usable")]
     if unusable:
         return ESTABLISHED, ("these settings files are ones this hook's own reader rejects ("
                              + ", ".join(unusable) + "), so every invocation of those"
                              " registrations releases without recording")
     if any(entry.get("settingsState") == reading.ACCESS_ERROR for entry in entries):
-        return NOT_RULED_OUT, "a settings file could not be reached from here"
+        # No bytes were read, so nothing establishes that the hook's own reader rejects it.
+        # Calling that unusable would recommend repairing a file this process merely could not
+        # open, on a host where the session opens it perfectly well.
+        return NOT_RULED_OUT, ("a settings file could not be reached from here, so whether its"
+                               " contents are usable was never established")
     return RULED_OUT, "every settings file the registrations name reads back usable"
 
 
 def _record_answers(observed):
-    # Only registrations whose settings ARE usable. A registration with no settings, or with
-    # settings this reader rejects, has its own cause above; folding it in here would let a
-    # broken peer answer a question about a working one's journal.
-    entries = [entry for entry in (observed.get("namedJournals") or []) if entry.get("usable")]
+    # Only registrations whose settings ARE usable AND that the host can start. A registration
+    # with no settings, or with settings this reader rejects, has its own cause above; one the
+    # host cannot start has adapter_cannot_run. Folding either in here let a broken peer answer
+    # a question about a working one's journal -- and in the worst shape of it, an unstartable
+    # registration's necessarily empty journal made its startable neighbour's records look like
+    # a recording on another path.
+    entries = [entry for entry in (observed.get("namedJournals") or [])
+               if entry.get("usable") and entry.get("startable")]
     holding = [entry for entry in entries
                if entry.get("recordsAnswer") == COUNTED and (entry.get("records") or 0) > 0]
     empty = [entry for entry in entries
@@ -230,7 +227,7 @@ def _named(entries):
 
 def _records_found(observed):
     holding, empty, _off, unread = _record_answers(observed)
-    if holding and not empty and not unread:
+    if holding and not empty and not _off and not unread:
         return ESTABLISHED, ("every journal these registrations name holds records this hook"
                              " wrote, so there is no absence to explain: " + _named(holding))
     if unread and not holding:
@@ -258,16 +255,16 @@ def _recorded_on_another_path(observed):
 
 
 def _journalling_off(observed):
-    if _nothing_can_start(observed):
-        return NOT_EVALUATED, UNSTARTABLE
     _holding, empty, off, unread = _record_answers(observed)
-    if off and not empty and not unread and not _holding:
-        return ESTABLISHED, ("the settings these registrations name keep no journal, so this"
-                             " hook records nothing about its own invocations by"
-                             " configuration; the absence says nothing about firing")
-    if off and unread:
-        return NOT_RULED_OUT, "some named settings keep no journal and another could not be read"
-    return RULED_OUT, "a journal is configured"
+    # ANY such registration, for the same reason a missing settings file is: a peer that keeps
+    # a journal is not evidence that this one does. Requiring every registration to be off hid
+    # a registration configured never to record behind a neighbour that records normally, and
+    # that registration can never produce firing evidence at all.
+    if off:
+        return ESTABLISHED, ("these registrations keep no journal, so they record nothing about"
+                             " their own invocations by configuration and their absence says"
+                             " nothing about firing: " + _named(off))
+    return RULED_OUT, "every registration that can start keeps a journal"
 
 
 def _policy_records_only_faults(observed):
@@ -278,8 +275,6 @@ def _policy_records_only_faults(observed):
     that never fired looks like. One observation, two explanations, and no reading here
     separates them. Reporting either as established would be choosing.
     """
-    if _nothing_can_start(observed):
-        return NOT_EVALUATED, UNSTARTABLE
     _holding, empty, _off, _unread = _record_answers(observed)
     faults = [entry for entry in empty if entry.get("faultsOnly")]
     if faults:
@@ -297,8 +292,6 @@ def _nothing_recorded(observed):
     and every record failed to be written" are one observation here. This value claims only the
     first half of that sentence, and the cell's note says the rest.
     """
-    if _nothing_can_start(observed):
-        return NOT_EVALUATED, UNSTARTABLE
     holding, empty, _off, unread = _record_answers(observed)
     if holding:
         return RULED_OUT, "a named journal holds records this hook wrote"
@@ -325,10 +318,9 @@ CAUSE_RULES = {
     SETTINGS_UNUSABLE: (("namedJournals",), _settings_unusable),
     RECORDS_FOUND: (("namedJournals",), _records_found),
     RECORDED_ON_ANOTHER_PATH: (("namedJournals",), _recorded_on_another_path),
-    JOURNALLING_OFF: (("namedJournals", "startProbes"), _journalling_off),
-    POLICY_RECORDS_ONLY_FAULTS: (("namedJournals", "startProbes"),
-                                 _policy_records_only_faults),
-    NOTHING_RECORDED: (("namedJournals", "startProbes"), _nothing_recorded),
+    JOURNALLING_OFF: (("namedJournals",), _journalling_off),
+    POLICY_RECORDS_ONLY_FAULTS: (("namedJournals",), _policy_records_only_faults),
+    NOTHING_RECORDED: (("namedJournals",), _nothing_recorded),
 }
 
 # What has to be RULED OUT before a cause's question means anything. Declared rather than
@@ -349,11 +341,12 @@ CAUSE_REQUIRES = {
     # another registration's journal says: the journal rules read only the entries whose
     # settings are usable, and a mixed host answers both causes rather than the louder one.
     #
-    # Nor do the empty-journal causes require ADAPTER_CANNOT_RUN to be ruled out any more. That
+    # Nor do the empty-journal causes require ADAPTER_CANNOT_RUN to be ruled out. That
     # requirement was right for the host where nothing can start and wrong for the host where
     # one of two registrations cannot: it suppressed a working registration's reading. The
-    # three rules ask _nothing_can_start for themselves, which is the condition that actually
-    # makes an empty journal the program's absence.
+    # journal readings carry their own registration's startability instead, so an unstartable
+    # registration is simply not in the set those rules read -- which is both narrower and
+    # exactly right, because its journal is empty BECAUSE it cannot start.
     RECORDS_FOUND: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
     RECORDED_ON_ANOTHER_PATH: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
     JOURNALLING_OFF: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),

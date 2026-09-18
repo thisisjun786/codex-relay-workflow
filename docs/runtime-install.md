@@ -1773,12 +1773,20 @@ beside it, and each declares which of them answers it.
 | `not_registered` | the hook file was read and registers this adapter for nothing | that the file is the one the host loads |
 | `record_path_unidentified` | a registration spells its settings relatively, or names none, so no file reachable from here answers for it | that the hook has or has not recorded |
 | `adapter_cannot_run` | the registered adapter or its interpreter is not there, so the host cannot start it | that it was ever startable |
-| `settings_absent` / `settings_unusable` | every settings file the registrations name is absent, or is one this hook's own reader rejects, so every invocation releases without recording | which repair the file needs |
-| `journalling_off` | the settings keep no journal, so the absence says nothing about firing | anything about firing |
+| `settings_absent` / `settings_unusable` | **one or more** registrations name a settings file that is absent, or that this hook's own reader rejects, so every invocation of *those* registrations releases without recording | which repair the file needs, or anything about a peer registration whose settings are fine |
+| `journalling_off` | one or more registrations keep no journal, so those record nothing about their own invocations by configuration | anything about firing, for those registrations |
 | `recorded_on_another_path` | one journal these registrations name holds records while another was read and holds none | which registration the host ran |
-| `nothing_recorded` | every journal they name was read and holds no record this hook wrote | that the hook never ran |
+| `nothing_recorded` | every journal belonging to a registration that can start and has usable settings was read and holds no record | that the hook never ran |
 | `several_causes` | more than one cause is established and each needs its own repair | that repairing one of them is enough |
 | `cause_unreadable` | the cause was not settled; `candidates` carries every one still standing | which of them it is |
+
+Every cause above is decided **per registration**, because every registration in the hook file
+runs and reads its own settings. One registration with a missing settings file beside one that
+is fine answers `several_causes`, not the healthier of the two — a peer that works is not
+evidence about a peer that does not. The one place that goes the other way is deliberate: a
+registration the host cannot start is left out of the journal questions entirely, because its
+journal is empty *because* it cannot start, and reading it as a fact about journalling would
+invent a second cause for one repair.
 
 Two limits remain, and they are the reason the last two values exist. Under
 `journalPolicy: faults_only` the guard records only an invocation that faulted, so an empty

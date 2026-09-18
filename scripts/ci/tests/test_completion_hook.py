@@ -152,6 +152,9 @@ def second_registration(directory, journal):
     return first, second
 
 
+real_read_json = reading.read_json
+
+
 def why_no_record(directory):
     """The cause cell, read with a default so a command that does not answer this question at
     all fails on the assertion rather than on a missing key."""
@@ -2043,6 +2046,70 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             break_the_target(temporary)
             cell = why_no_record(temporary)
         self.assertEqual(cell.get("value"), firing.ADAPTER_CANNOT_RUN)
+
+
+    def test_an_unreachable_settings_file_is_never_reported_as_a_rejected_one(self):
+        """No bytes were read, so nothing establishes that this hook's reader rejects it.
+        Reporting it as unusable sends the operator to repair a file that the session opens
+        perfectly well and that only this process could not reach."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            with mock.patch.object(completion.reading, "read_json", side_effect=(
+                    lambda path, what, **kw: completion.reading.Reading(
+                        state=completion.reading.ACCESS_ERROR, source=path,
+                        detail="PermissionError: [Errno 13] Permission denied")
+                    if str(path) == str(second) else real_read_json(path, what, **kw))):
+                cell = why_no_record(temporary)
+        established = [entry["cause"] for entry in cell.get("candidates") or []
+                       if entry["standing"] == firing.ESTABLISHED]
+        self.assertNotIn(firing.SETTINGS_UNUSABLE, established,
+                         "a file nobody could open was ESTABLISHED as one the reader rejected,"
+                         " which recommends a repair no reading supports")
+        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE,
+                         "nothing was settled about that file, so the cause is not settled")
+
+    def test_a_registration_that_keeps_no_journal_is_reported_beside_a_peer_that_does(self):
+        """A registration configured never to record can never produce firing evidence, and a
+        neighbour that records normally is not evidence that it can."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["journalPolicy"] = completion.NO_JOURNAL
+            second.write_text(json.dumps(document), encoding="utf-8")
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={},
+                           settings=str(completion.configuration_path(Path(temporary))))
+            cell = why_no_record(temporary)
+        self.assertIn(firing.JOURNALLING_OFF,
+                      [entry["cause"] for entry in cell.get("candidates") or []],
+                      "one registration records and the other is configured never to, and only"
+                      " the first was reported")
+
+    def test_an_unstartable_peer_does_not_make_a_working_one_look_like_another_path(self):
+        """The reverse mixed case. If A can start and holds records while B cannot start and
+        its journal is therefore empty, B's emptiness is wholly explained by B, and reading it
+        as 'recorded on another path' invents a second story about A."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            first, _second = second_registration(temporary, "journal-two")
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={},
+                           settings=str(first))
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entries = document["hooks"][completion.EVENT][0]["hooks"]
+            entries[1]["command"] = entries[1]["command"].replace(
+                str(ENTRY_POINT), str(Path(temporary) / completion.ENTRY_POINT_NAME))
+            path.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        causes = [entry["cause"] for entry in cell.get("candidates") or []]
+        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH, causes,
+                         "an unstartable registration's necessarily empty journal was read as"
+                         " its neighbour recording somewhere else")
+        self.assertIn(firing.ADAPTER_CANNOT_RUN, causes)
 
 
 class TheCausePartitionItself(unittest.TestCase):

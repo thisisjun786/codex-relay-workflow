@@ -1052,7 +1052,11 @@ def cmd_diagnose(args):
     # is the reading it was missing. The destination comes from --dest, or from the directory
     # the recorded pointer sits in when no --dest was given, because that is the destination
     # this host actually reaches a runtime through.
-    residue_root = (Path(destination) if destination
+    # Settled to the absolute form an install records, because the boundary check below
+    # compares this with a pointer parent. A --dest spelled relatively kept that spelling here
+    # while the record holds an absolute path, so an owned dangling pointer under the very
+    # destination being surveyed compared unequal and was reported as another installation's.
+    residue_root = (Path(destination).expanduser().absolute() if destination
                     else Path(owned_pointer).parent if owned_pointer else None)
 
     def ownership_of(environment):
