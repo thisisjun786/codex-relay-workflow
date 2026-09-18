@@ -1486,25 +1486,20 @@ printf 'install exit=%s\n' "$?" > <receipt>/install.exit; cat <receipt>/install.
 import json, re, sys
 from pathlib import Path
 status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
-payload = json.load(open(status))
-cell = payload["firingJournal"]
-# hook-status names the journal out of the hook's own settings, and omits the key whenever its
-# firing-journal reading could not name a usable journal at all. That is SEVERAL states and not
-# one: no registration, registrations naming different settings files, a relative spelling,
-# settings it could not read, or journaling not configured. So report the absence and carry the
-# registration and configuration cells that answer which -- choosing a cause here would be the
-# borrowed answer this procedure refuses, and failing on the missing key would leave a
-# traceback where a reading belongs.
+cell = json.load(open(status))["firingJournal"]
+# hook-status omits journalRoot whenever its firing-journal reading could not name a usable
+# journal, and that is several states rather than one. This reading does not distinguish them,
+# and nothing here guesses which: it reports the absence, with the cell's own evidence, and
+# stops. The paragraph after this block says what is not distinguished. Failing on the missing
+# key instead would leave a traceback where a reading belongs.
 if "journalRoot" not in cell:
     print(json.dumps({"firingJournal": cell.get("value"),
                       "firingJournalEvidence": cell.get("evidence"),
                       "journalRoot": None,
                       "recordsForThisTurn": None,
-                      "registration": (payload.get("registration") or {}).get("value"),
-                      "configuration": (payload.get("configuration") or {}).get("value"),
                       "detail": "no journal to attribute a turn to, so this row is unreadable"
-                                " for this run rather than zero; the registration and"
-                                " configuration cells say which state this is"}, indent=2))
+                                " for this run rather than zero. Why there is none is not"
+                                " distinguished by this reading"}, indent=2))
     raise SystemExit(0)
 root = Path(cell["journalRoot"]).expanduser()
 # The same shapes hook-status counts, and one entry that cannot be decoded does not take the
@@ -1576,10 +1571,13 @@ preservation reader -- and they do not fail alike without `tomllib`, so an opera
 on the 3.10 floor anyway gets a mixture rather than a refusal. Measured on 3.10 rather than
 inferred: `register-mcp` refuses outright,
 exit 1 with outcome `CONFLICT` naming the interpreter and nothing written, for an absent, an
-empty and a populated configuration alike. `install` and `diagnose` do not refuse; they run and
-report the configuration `UNREADABLE`, which means the install still promotes and the exposure
-row cannot reach `verified` -- it reads `not_verified` there for want of a reader, not for want
-of a registration. The preservation reader exits before reading anything.
+empty and a populated configuration alike, against a temporary Codex home. `diagnose` does not
+refuse: run the same way it reports the configuration `UNREADABLE` and the exposure row reads
+`not_verified` -- for want of a reader, not for want of a registration. `install` does not
+refuse either, and that one is measured against a temporary destination with the build steps
+simulated, which is the acceptance suite's arrangement and not a host: it promotes there on
+3.10. Nobody has run this block against a real host from this repository, and it does not claim
+otherwise. The preservation reader exits before reading anything.
 
 So on the floor two of the seven readings are unreadable and the rest still stand, and a receipt
 records them that way rather than carrying them forward. The runtimes this command installs are
@@ -1594,6 +1592,19 @@ install result kept above; `firingJournal` and `journalRoot` from `hook-status`;
 `skillLinks`, the `checks.results` cells, `scope.socketConnect`, `definitionVersion` and
 `repositoryCommit` from `diagnose`; `sessionId` and `turnId` from the journal records
 themselves, which is why the snippet reads the records rather than the count.
+
+One of those readings does not distinguish what it is telling you, and the honest thing is to
+say so rather than to guess in the snippet. `hook-status` omits `journalRoot` whenever its
+firing-journal reading could not name a usable journal, and that covers at least five different
+states: no hook registered for the event, registrations naming different settings files, a
+settings path spelled relatively, settings the command could not read, and journaling not
+configured. **The absence of `journalRoot` does not say which of those it is**, and neither does
+anything else this block runs. So the snippet reports the absence with the cell's own evidence
+and stops there rather than choosing a cause. The `registration` and `configuration` cells of
+the same payload are where an operator looks next, and they narrow it without settling it: an
+ambiguous registration and a relative spelling are both states in which a hook IS registered
+and its settings still did not resolve. Telling those apart needs the command to report the
+cause, which is a change to the command and not to this page.
 
 Name the relay too. Left out, the entry point is discovered on `PATH`, which finds whichever
 relay this host already has rather than the runtime just installed under the destination -- and
