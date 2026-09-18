@@ -1184,6 +1184,19 @@ def _pairs(target, value):
     return [(target, value)]
 
 
+def _binds_the_helper_name(alias):
+    """Does this import alias bind the helper's NAME, whatever it reads to get there."""
+    return (alias.asname or alias.name.split(".")[-1]) == HELPER
+
+
+def _is_canonical(node, alias):
+    """The one import that makes a bare call the real helper: from .support import it."""
+    return (
+        isinstance(node, ast.ImportFrom) and node.level == 1 and node.module == "support"
+        and alias.name == HELPER and not alias.asname
+    )
+
+
 def _predicate_of(call):
     """The writing predicate a helper call passes, or that it cannot be read."""
     writing = None
@@ -1225,10 +1238,13 @@ def _injection_sites_in(tree, module):
     # only the helper when this module did "from .support import killed_before_commit"; a
     # parameter, a class, a local def or an import from anywhere else is a different object
     # that happens to share a name, and guessing which is how this reader answered wrongly.
+    # Module body only. An import inside a function binds a local name there and says
+    # nothing about a bare call somewhere else, and treating it as provenance let such a
+    # call be recorded as the helper.
     imported = any(
-        isinstance(node, ast.ImportFrom) and node.level == 1 and node.module == "support"
-        and any(alias.name == HELPER and not alias.asname for alias in node.names)
-        for node in ast.walk(tree)
+        _is_canonical(node, alias)
+        for node in tree.body if isinstance(node, ast.ImportFrom)
+        for alias in node.names
     )
     # A competing binding of the same name defeats the import, wherever the import sits. An
     # earlier draft only looked for the canonical import and stopped, so a second import of
@@ -1240,14 +1256,12 @@ def _injection_sites_in(tree, module):
     ) or any(
         isinstance(node, ast.arg) and node.arg == HELPER for node in ast.walk(tree)
     ) or any(
-        isinstance(node, (ast.Import, ast.ImportFrom))
-        # The name this import BINDS, not the name it reads. An alias import of something
-        # else under the helper's name is the competing binding that actually runs.
-        and any((alias.asname or alias.name.split(".")[-1]) == HELPER
-                for alias in node.names)
-        and not (isinstance(node, ast.ImportFrom) and node.level == 1
-                 and node.module == "support")
-        for node in ast.walk(tree)
+        # Per ALIAS, not per statement. The name an import BINDS is what matters, and
+        # exempting a whole statement let "from .support import WorkerKilled as
+        # killed_before_commit" ride along beside the canonical one.
+        _binds_the_helper_name(alias) and not _is_canonical(node, alias)
+        for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
     ) or any(
         isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
         and any(isinstance(leaf, ast.Name) and leaf.id == HELPER
@@ -1636,6 +1650,12 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
              self.IMPORT + f"{HELPER} = None\ndef t(store):\n    {HELPER}(store)\n"),
             ("something else imported under the helper's name",
              self.IMPORT + f"from other import replacement as {HELPER}\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("something else from support under the helper's name",
+             self.IMPORT + f"from .support import WorkerKilled as {HELPER}\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("the canonical import, but local to another function",
+             f"def setup():\n    from .support import {HELPER}\n"
              + f"def t(store):\n    {HELPER}(store)\n"),
             ("parameter shadow",
              self.IMPORT + f"def t(store, {HELPER}):\n    {HELPER}(store)\n"),
