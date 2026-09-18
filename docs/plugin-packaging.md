@@ -85,6 +85,22 @@ Whether a client resolves a `$`-prefixed invocation token for a plugin skill, an
 whether the per-skill `agents/openai.yaml` interface metadata is read under a
 plugin installation, were not measured for this change.
 
+## Adding a skill
+
+Create the directory under `plugins/crw/skills/` with its `SKILL.md` and
+`agents/openai.yaml`. The manifest lists no skills: the package ships whatever the
+declared path holds at the release revision, and `scripts/ci/plugin.py` derives the
+namespaced names from that revision, so a skill developed in parallel is included
+once its commit is part of that revision. The installer test pins the current seven
+names as a positive control, so a new skill belongs in that list too. Keep relative
+links between skills pointing at siblings under the same parent; the cache preserves
+that layout.
+
+Bump `version` in the manifest when the change should reach installations, and
+install the plugin again: a cached version changes only on installation, and a task
+already running keeps the package its session started with.
+
+
 ## Update and roll back
 
 The cache keeps one version per plugin, and installing a new version replaces the
