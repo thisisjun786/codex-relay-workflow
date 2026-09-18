@@ -436,6 +436,24 @@ def hook_settings(directory, **overrides):
     return document
 
 
+def answering_relay(directory):
+    """A relay whose doctor reports a socket it reached, so the connection cell can move.
+
+    The connection question is the one with no input of its own on the command line: it is
+    answered by what the relay says. Without a relay that answers, the cell sits at the same
+    value in every direction, and a cell that never moves cannot catch a neighbour copying
+    into it -- which is how one reading ends up standing in for another without any case
+    noticing.
+    """
+    path = Path(directory) / "answering-relay"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'actorReachability': {'socketConnect': 'ok'}}))\n",
+        encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
+    return path
+
 def standin_relay(directory, answer):
     """A relay that answers the guard, so the hook has something real to call."""
     path = Path(directory) / "codex-session-relay"
@@ -1053,10 +1071,19 @@ class SevenReadingsTests(unittest.TestCase):
             exposed = diagnose_for(root, host, "--bridge-command", registered,
                                    "--observed-tool", "get_capabilities")
             tried = diagnose_for(root, host, "--trial")
+            reached = diagnose_for(root, host, "--relay-command",
+                                   str(answering_relay(root)))
 
         # The exact transition, not merely a different value: not_applicable becoming verified,
         # or a verdict falling to unknown, would satisfy "it moved" while meaning the opposite.
-        directions = [("deliveryAcceptance", tried, "not_applicable", "not_verified")]
+        #
+        # Three of the four move, so each of them is checked against neighbours that are moving
+        # in some other direction. A cell that never moves anywhere cannot catch a neighbour
+        # copying into it, which is the remaining way one reading stands in for another.
+        directions = [
+            ("deliveryAcceptance", tried, "not_applicable", "not_verified"),
+            ("appServerConnection", reached, "unknown", "verified"),
+        ]
         if HAS_READER:
             directions.append(("mcpToolExposure", exposed, "not_verified", "verified"))
         else:
