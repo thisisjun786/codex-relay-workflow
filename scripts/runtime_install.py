@@ -3301,6 +3301,7 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
 
     owned = None
     residual_claim = None
+    settle_claim = None
     if settled and record_path is not None:
         try:
             if wanted is None:
@@ -3335,8 +3336,33 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
             # 'verified' is about the restoration as a whole, and this one did not finish.
             verified = False
             residual_claim = str(pointer_path)
+            # What is outstanding is not ONE state, so it does not get one sentence. Three
+            # different things end here: a record still claiming a placement for a link that
+            # was taken away, a record carrying this run's stamp for a link that is back, and a
+            # record another run has since moved on. Telling an operator to settle the first
+            # when it is the third sends them after somebody else's entry. The sentence is
+            # written HERE because this is where the readings that decide which one it is were
+            # made; composed by the caller it could only ever name one of them.
+            if owned == OWNERSHIP_MOVED_ON:
+                settle_claim = (
+                    "check which pointer this host is meant to use: the entry this run wrote at "
+                    + str(pointer_path) + " has been replaced by another run's, so there is"
+                    " nothing here for this run to put back and nothing of its own to settle")
+            elif restored_to == "absent":
+                settle_claim = (
+                    "settle the host record's pointer ownership for " + str(pointer_path)
+                    + ": the link this run placed was taken away and the record still says this"
+                      " command placed one there, so the next update would read a link that"
+                      " appears at that path as its own")
+            else:
+                settle_claim = (
+                    "settle the host record's pointer ownership for " + str(pointer_path)
+                    + ": the link there was put back to " + str(restored_to or "what was found")
+                    + " and the record still carries this run's stamp on an entry it did not"
+                      " introduce, so the record and the link disagree about who placed it")
     return {"restoredTo": restored_to, "verified": verified, "residualPointer": residual,
-            "residualOwnership": residual_claim, "ownership": owned, "detail": detail}
+            "residualOwnership": residual_claim, "settleOwnership": settle_claim,
+            "ownership": owned, "detail": detail}
 
 
 def _restore_selection(record_path, definition_version, previous, installs):
@@ -3475,10 +3501,11 @@ def _install_failed(record_path, definition_version, performed, environment, own
     # with this would be a cell carrying a reading its own question did not produce, which is
     # the shape the rest of this change exists to remove.
     unsettled = (pointer_restored or {}).get("residualOwnership")
-    settle = None if not unsettled else (
-        "settle the host record's pointer ownership for " + str(unsettled) + ": the link this"
-        " run placed was taken away and the record still says this command placed one there,"
-        " so the next update would read a link that appears at that path as its own")
+    # The sentence comes from the restoration that produced it rather than being composed here.
+    # Three different states set that residual and only the reader that made the readings knows
+    # which one this is; a sentence written here could name only one of them, and naming the
+    # wrong one sends an operator after another run's record entry.
+    settle = (pointer_restored or {}).get("settleOwnership")
     emit({
         "command": "install", "applied": False, "steps": performed,
         "environment": str(environment),

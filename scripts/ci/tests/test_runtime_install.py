@@ -8261,6 +8261,57 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                          "and it is not a residual PATH: nothing is on disk, so the list a"
                          " reader deletes from stays about directories")
 
+    def test_the_outstanding_claim_says_which_state_it_is(self):
+        """SUPPORT. Three different states leave an outstanding ownership claim, and one
+        sentence for all three is worse than none: it would tell an operator the link was taken
+        away when it is back, or send them to settle an entry another run now owns. Driven
+        through _restore_pointer directly, because the moved-on case needs a record something
+        else changed underneath this run."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            record_path = root / "record.json"
+            environment = root / "env-new"
+            environment.mkdir()
+            previous = root / "env-old"
+            previous.mkdir()
+            here = root / "current"
+            mine = {"path": str(here), "recordedAt": "t0", "recordedBy": "this run"}
+
+            # Moved on: this run's entry has been replaced by another run's, so the compare
+            # finds nothing of its own to put back.
+            hostrecord.save(record_path, hostrecord.empty(1))
+            hostrecord.update(record_path, 1, pointer={"path": str(root / "elsewhere"),
+                                                       "recordedAt": "t9",
+                                                       "recordedBy": "another run"})
+            pointer.place(here, environment)
+            moved_on = runtime_install._restore_pointer(
+                here, {"state": pointer.NO_POINTER}, environment, record_path, 1, mine)
+
+            # A link put back, and the record write refusing.
+            pointer.place(here, environment)
+            hostrecord.save(record_path, hostrecord.empty(1))
+            hostrecord.update(record_path, 1, pointer=dict(mine))
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=OSError("the record could not be written")):
+                link_back = runtime_install._restore_pointer(
+                    here, {"state": pointer.LINK, "target": str(previous)}, environment,
+                    record_path, 1, mine)
+
+        self.assertEqual(moved_on["ownership"], runtime_install_module.OWNERSHIP_MOVED_ON)
+        self.assertIn("check which pointer this host is meant to use",
+                      moved_on["settleOwnership"])
+        self.assertNotIn("taken away", moved_on["settleOwnership"],
+                         "an entry another run owns is not one this run took a link away from")
+
+        self.assertEqual(link_back["ownership"], runtime_install_module.OWNERSHIP_UNREADABLE)
+        self.assertEqual(link_back["restoredTo"], str(previous))
+        self.assertIn("put back to", link_back["settleOwnership"])
+        self.assertNotIn("taken away", link_back["settleOwnership"],
+                         "the link is there; saying it was taken away would send an operator"
+                         " looking for something that did not happen")
+
     def test_the_resume_path_refuses_a_stranger_link_after_a_withdrawal_too(self):
         """The withdrawal has to mean the same thing to both readers of the record.
 

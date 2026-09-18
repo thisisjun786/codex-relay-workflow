@@ -1709,10 +1709,19 @@ for path in sys.argv[1:]:
 # only place that field is written. diagnose reports the selection and the pointer as they now
 # stand and has no residualPaths to give, so an operator who looks for it there finds nothing
 # and concludes there was nothing to clear. That is why the install above is kept.
+#
+# residualOwnership and recoveryRequires are read from the same result and for the same reason.
+# A rollback can put the LINK back and fail to put the RECORD back, and what that leaves is a
+# claim rather than a path: nothing is on disk to delete, so residualPaths is empty and correct
+# while the record still says something about that path. recoveryRequires carries the sentence
+# for the state this actually was -- a claim for a link that was taken away, a stamp on an entry
+# the run did not introduce, or an entry another run has since moved on -- because those need
+# different things done about them.
 "$controller" -c 'import json, sys
 result = json.load(open(sys.argv[1]))
 print(json.dumps({key: result.get(key) for key in
-                  ("failedStep", "retriable", "residualPaths", "removedCandidate", "pointer")},
+                  ("failedStep", "retriable", "residualPaths", "residualOwnership",
+                   "recoveryRequires", "removedCandidate", "pointer")},
                  indent=2))' <receipt>/install.json
 
 # Kept the same way, and under its own name: this is the recovery read-back, a different
