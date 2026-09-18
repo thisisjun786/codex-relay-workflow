@@ -102,6 +102,15 @@ class ManifestTests(unittest.TestCase):
                          "interface.capabilities", "interface.defaultPrompt"):
             self.assertTrue(any(expected in e for e in errors), (expected, errors))
 
+    def test_whitespace_only_values_are_treated_as_absent(self):
+        blank = manifest(description="   ", author={"name": " "}, keywords=[" "])
+        blank["interface"]["displayName"] = "  "
+        blank["interface"]["capabilities"] = ["  "]
+        errors = plugin.manifest_errors(blank, "crw", "t")
+        for expected in ("description", "author.name", "keywords", "interface.displayName",
+                         "interface.capabilities"):
+            self.assertTrue(any(expected in e for e in errors), (expected, errors))
+
     def test_prerelease_identifiers_follow_the_specification(self):
         for good in ("1.0.0", "0.1.0-alpha.1", "1.2.3+build.5", "1.0.0-rc.1+exp.sha.5114f85"):
             with self.subTest(good=good):
@@ -171,7 +180,8 @@ class ManifestTests(unittest.TestCase):
                 self.assertTrue(any(expected in e for e in errors), (field, errors))
 
     def test_urls_are_parsed_rather_than_prefix_matched(self):
-        for value in ("https://", "https:///missing-host", "http://example.invalid", "example.invalid"):
+        for value in ("https://", "https:///missing-host", "http://example.invalid",
+                      "example.invalid", "https://@", "https://[", "https://:443"):
             with self.subTest(value=value):
                 broken = manifest()
                 broken["interface"]["websiteURL"] = value

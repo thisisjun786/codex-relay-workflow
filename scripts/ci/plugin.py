@@ -163,12 +163,22 @@ def declared_skills_path(manifest):
     return relative.as_posix()
 
 
+def nonempty(value):
+    """Ingestion treats a whitespace-only value as absent, so this check does too."""
+    return isinstance(value, str) and bool(value.strip())
+
+
 def https_url(value):
     """An ingestible URL carries the https scheme and a host, not just the prefix."""
     if not isinstance(value, str):
         return False
-    parsed = urlsplit(value)
-    return parsed.scheme == "https" and bool(parsed.netloc)
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+    except ValueError:
+        # A malformed authority is a rejected value, not a crash.
+        return False
+    return parsed.scheme == "https" and bool(host)
 
 
 def interface_option_errors(interface, payload, label):
@@ -201,23 +211,23 @@ def manifest_errors(manifest, plugin_root_name, label, payload=None):
     """plugin_root_name is None for an installed tree, whose directory is the version."""
     errors = []
     for field in TEXT_FIELDS:
-        if not isinstance(manifest.get(field), str) or not manifest.get(field):
+        if not nonempty(manifest.get(field)):
             errors.append(label + " manifest: " + field + " must be a nonempty string")
     if not isinstance(manifest.get("keywords"), list) or not manifest.get("keywords"):
         errors.append(label + " manifest: keywords must be a nonempty list")
-    elif not all(isinstance(word, str) and word for word in manifest["keywords"]):
+    elif not all(nonempty(word) for word in manifest["keywords"]):
         errors.append(label + " manifest: keywords must be nonempty strings")
     if manifest.get("license") != LICENSE_ID:
         errors.append(label + " manifest: license " + repr(manifest.get("license"))
                       + " must be " + repr(LICENSE_ID) + ", the license this repository ships")
     author = manifest.get("author")
-    if not isinstance(author, dict) or not isinstance(author.get("name"), str) or not author["name"]:
+    if not isinstance(author, dict) or not nonempty(author.get("name")):
         errors.append(label + " manifest: author.name is required")
     elif set(author) - AUTHOR_KEYS:
         errors.append(label + " manifest: author carries unsupported keys "
                       + repr(sorted(set(author) - AUTHOR_KEYS)))
     if isinstance(author, dict):
-        if "email" in author and (not isinstance(author["email"], str) or not author["email"]):
+        if "email" in author and not nonempty(author["email"]):
             errors.append(label + " manifest: author.email must be a nonempty string")
         if "url" in author and not https_url(author["url"]):
             errors.append(label + " manifest: author.url must be an https URL with a host")
@@ -243,9 +253,9 @@ def manifest_errors(manifest, plugin_root_name, label, payload=None):
                           + " is not a supported interface key")
         for optional in sorted(set(interface) & (INTERFACE_KEYS - set(INTERFACE_FIELDS))):
             value = interface[optional]
-            valid = (all(isinstance(item, str) and item for item in value) and value
+            valid = (all(nonempty(item) for item in value) and value
                      if optional == "screenshots" and isinstance(value, list)
-                     else isinstance(value, str) and value)
+                     else nonempty(value))
             if not valid:
                 errors.append(label + " manifest: interface." + optional
                               + " is present but not a usable value")
@@ -254,9 +264,9 @@ def manifest_errors(manifest, plugin_root_name, label, payload=None):
             value = interface.get(field)
             if field in ("capabilities", "defaultPrompt"):
                 valid = (isinstance(value, list) and value
-                         and all(isinstance(item, str) and item for item in value))
+                         and all(nonempty(item) for item in value))
             else:
-                valid = isinstance(value, str) and value
+                valid = nonempty(value)
             if not valid:
                 errors.append(label + " manifest: interface." + field
                               + " must be a nonempty string" + (" list" if field in

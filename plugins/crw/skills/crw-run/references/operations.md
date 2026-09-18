@@ -649,7 +649,7 @@ updates a trusted hook; re-trust is a separate, visible act.
 An installation records the identity, the trusted hash, the hook file path with its SHA-256, and
 the issue that installed it, then reads the registration back. Installed, enabled, and observed to
 have fired are three separate claims and the check reports them separately. The surface is the user
-hook file, since this repository ships skills only and does not package a plugin manifest; a
+hook file, since the plugin this repository packages declares skills only and no hook file; a
 plugin-owned hook file is the alternative and is `proposed` rather than chosen. What the hook
 decides is owned by the managed-marking contract and is deliberately not defined here.
 
