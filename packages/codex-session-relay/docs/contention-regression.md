@@ -131,25 +131,37 @@ situation its own name describes, and prose claiming more than the assertion est
 Fixing the instances a fourth time would miss the point, so all five modules were checked
 against two rules derived from source rather than from memory.
 
-**An assertion must go red when the condition it is named for is violated.** The pattern
-that hid this was comparing against a bound the quantity cannot exceed - a per-parent send
-count against the per-parent event total - and the pattern that fixes it is counting what
-was actually examined and refusing a walk that examined nothing. Every test in
-`test_regression_map.py` that reads this file now asserts how many rows or citations it
-read, and the guards were checked by breaking the file three ways: removing the table fails
-three of the four tests, a renamed class fails one, and a wrong clock label fails one.
+**An assertion must go red when the condition it is named for is violated, and the
+predicate for checking that is written here so the next reader knows what was examined.**
+A first pass read assertion SHAPE - which comparisons could not fail, which loops could
+examine nothing - and that was too narrow: it caught three vacuous spots and missed a
+fourth, because the quantity under comparison was computed somewhere else. The predicate
+this file now stands on is stronger: *does the quantity an assertion measures mean the same
+thing as the condition written above it, following into the helper that computes that
+quantity*. Anywhere a helper narrows a state set, an id set or a count and the assertion
+only sees the result, the two can disagree silently.
 
-**How far that sweep actually reached, which is less far than the paragraph above sounds.**
-It read assertion shape: which comparisons could not fail, and which loops could examine
-nothing. It did not read what each test helper counted, and a fifth review round found a
-case in exactly that gap - `TheDeclaredLoad.drain` measures the backlog as
-`state = 'queued'` alone, while `delivery.CLAIMABLE` is
-`(queued, deferred_busy, withheld_pre_send)`, so an event withheld before sending would
-leave the count at zero and the load would read as drained with that event still owed.
-Measured on this branch, all events reach `dispatched` and nothing is currently hidden,
-so this is a latent unsoundness rather than a passing falsehood. It is recorded here
-unfixed and the review thread is left open, because the coordinator reserved the decision on
-it. A sweep that missed one belongs in this file as plainly as the three it caught.
+Re-derived under that predicate, five helpers across the five modules narrow something -
+by SQL filter, by comprehension filter, or by path glob. Four of them fail safe, and the
+reason is worth stating because it is what makes them acceptable rather than lucky: if
+`hold_files` or `observations` stopped matching the paths the source writes, they
+would return nothing and their exact-count assertions would fail; if `classes_in`
+parsed nothing, the citation assertion would fail; and the multi-parent `drain`
+measures arrival as `DISPATCHED` directly, which is the condition its callers name.
+
+The fifth did not. `TheDeclaredLoad.drain` counted the backlog as
+`state = 'queued'` while `delivery.CLAIMABLE` is
+`(queued, deferred_busy, withheld_pre_send)`, so an event withheld before sending left
+the measurement and the load read as drained with work still owed. Measured directly:
+staging one withheld event gives a queued-only count of 71 against a claimable count of 72,
+so that event was invisible to the old predicate. It now counts every claimable state, and
+the drain test separately asserts that every loaded event id reached `DISPATCHED` -
+named apart from the backlog because a count reaching zero is a statement about what is
+still claimable, and arrival is a different statement.
+
+What this predicate still does not cover: whether a test asserts something another test
+already asserts, and whether the condition a test names is the condition worth naming. Both
+are reading judgements. The reuse column records the first; nothing here records the second.
 
 **A test that depends on a configuration production cannot reach must say so.** This
 repository configures write-ahead logging and writes with `BEGIN IMMEDIATE`; nothing in

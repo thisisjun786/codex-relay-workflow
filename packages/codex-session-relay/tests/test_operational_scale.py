@@ -379,7 +379,16 @@ class TheDeclaredLoad(DaemonTestCase):
         return ids
 
     def drain(self, *, limit):
-        """Tick until nothing is queued, recording what each tick sent and what was left."""
+        """Tick until nothing is still owed, recording what each tick sent and what was left.
+
+        The backlog counts every CLAIMABLE state rather than queued alone. delivery.CLAIMABLE is
+        (queued, deferred_busy, withheld_pre_send), and an attempt that was deferred or withheld
+        before sending is still owed, so counting only queued let such an event drop out of the
+        measurement entirely and reported the load as drained with work outstanding. The count
+        this helper computes is what every assertion below compares against, so it has to mean
+        the same thing those assertions' names claim.
+        """
+        placeholders = ",".join("?" for _ in CLAIMABLE)
         history = []
         seen = 0
         for _ in range(limit):
@@ -388,14 +397,16 @@ class TheDeclaredLoad(DaemonTestCase):
             sent = [thread for _r, thread, _m, _o in self.adapter.sends[seen:]]
             seen = len(self.adapter.sends)
             backlog = self.store.one(
-                "SELECT COUNT(*) AS c FROM deliveries WHERE state = 'queued'")["c"]
+                f"SELECT COUNT(*) AS c FROM deliveries WHERE state IN ({placeholders})",
+                tuple(CLAIMABLE),
+            )["c"]
             history.append((sent, backlog))
             if backlog == 0:
                 break
         return history
-
     def test_the_declared_load_drains_within_a_ceiling_derived_from_the_policy(self):
-        self.load()
+        ids = self.load()
+        every = [event for events in ids.values() for event in events]
         policy = self.delivery.policy
         # Derived, never written down: the fewest ticks the per-tick send ceiling allows, with
         # room for the rotation to reach every parent rather than the fullest one.
@@ -408,6 +419,18 @@ class TheDeclaredLoad(DaemonTestCase):
             history[-1][1], 0,
             f"{TOTAL_EVENTS} events over {PARENTS} parents did not drain in {len(history)}"
             f" ticks; {history[-1][1]} left",
+        )
+        # Named separately from the backlog count, because a count reaching zero is a statement
+        # about what is still claimable and this is a statement about what actually arrived.
+        # An event that left the claimable states some other way would satisfy the first.
+        outstanding = {
+            event: self.delivery.get(event)["state"]
+            for event in every
+            if self.delivery.get(event)["state"] != DISPATCHED
+        }
+        self.assertEqual(
+            outstanding, {}, f"the load read as drained with {len(outstanding)} events not"
+            f" dispatched: {outstanding}",
         )
         self.assertLessEqual(
             len(history), ceiling,
