@@ -325,6 +325,17 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
         assert waited.structuredContent["turn"]["items"][0]["text"] == "FOLLOWUP"
         history = await session.call_tool("read_thread", {"thread_id": receipt["threadId"]})
         assert len(history.structuredContent["turnsPage"]["data"]) == 2
+        # The completeness marker has to survive the MCP surface, because that is the only place
+        # a caller reading only "items" would ever find out that it is holding the summary view.
+        observed = history.structuredContent["observation"]
+        assert observed["turnsPageStatus"] == "summary"
+        assert observed["itemsView"] == "summary"
+        assert observed["detailTurnsRequested"] == 1
+        assert observed["detailTurnsObserved"] == 1
+        assert "bounded observation" in observed["note"]
+        newest, older = history.structuredContent["turnsPage"]["data"]
+        assert newest["itemsDetailStatus"] == "complete"
+        assert older["itemsDetailStatus"] == "not_requested"
         goal = await session.call_tool("get_goal", {"thread_id": receipt["threadId"]})
         assert goal.structuredContent["goal"] is None
 

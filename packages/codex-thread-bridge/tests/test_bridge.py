@@ -250,7 +250,7 @@ async def test_reads_and_waits_do_not_resume_or_use_other_completed_turn(
     assert result["timedOut"] and result["turn"] is None
     await bridge.list_threads()
     assert all(
-        name in {"thread/read", "thread/turns/list", "thread/list"}
+        name in {"thread/read", "thread/turns/list", "thread/items/list", "thread/list"}
         for name, _ in fake.calls[count:]
     )
 
@@ -264,6 +264,327 @@ async def test_history_pagination(bridge, tmp_path):
     )
     assert page1["turnsPage"]["data"][0]["id"] == "turn-2"
     assert page2["turnsPage"]["data"][0]["id"] == "turn-1"
+
+
+async def test_a_read_never_asks_for_the_full_item_view(bridge, fake_server, tmp_path):
+    """The regression itself: itemsView "full" is the request that produced a 754 MB frame.
+
+    Reducing the turn limit was tried on the day and did not help, because one turn's full view
+    was 82 MB by itself. So the view is what has to stop being asked for, not the count.
+    """
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    count = len(fake.calls)
+    read = await bridge.read_thread(created["threadId"])
+    assert all(
+        params.get("itemsView") != "full"
+        for name, params in fake.calls
+        if name == "thread/turns/list"
+    )
+    # Every metadata read states it, so the bound is requested rather than inherited from a host
+    # default that could change under us.
+    assert all(
+        params["includeTurns"] is False for name, params in fake.calls if name == "thread/read"
+    )
+    assert [name for name, _ in fake.calls[count:]] == [
+        "thread/read",
+        "thread/turns/list",
+        "thread/items/list",
+    ]
+    assert read["observation"] == {
+        "turnsPageStatus": "summary",
+        "itemsView": "summary",
+        "detailTurnsRequested": 1,
+        "detailTurnsObserved": 1,
+        "note": read["observation"]["note"],
+    }
+    assert "bounded observation" in read["observation"]["note"]
+    assert "requested and read for the newest 1 turn" in read["observation"]["note"]
+
+
+async def test_only_the_newest_turn_has_its_items_read(small_frame_bridge, tmp_path):
+    """A turn nobody asked about says so, rather than looking like a turn with nothing in it."""
+    bridge = small_frame_bridge
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    await send(bridge, "send", created["threadId"], "second")
+    read = await bridge.read_thread(created["threadId"], limit=2)
+    newest, older = read["turnsPage"]["data"]
+    assert newest["itemsDetailStatus"] == "complete"
+    assert newest["itemsDetail"][0]["text"] == "second"
+    assert older["itemsDetailStatus"] == "not_requested"
+    assert older["itemsDetail"] is None
+    assert "not_requested" in read["observation"]["note"]
+
+
+async def test_a_page_too_large_is_narrowed_and_then_dropped_to_ids(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """Every rung of the page ladder, and the thread coming back from all of them."""
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    await send(bridge, "send", created["threadId"], "second")
+    thread_id = created["threadId"]
+
+    fake.oversize = lambda method, params: (
+        100 * 1024
+        if method == "thread/turns/list" and params.get("limit", 0) > 1
+        else None
+    )
+    narrowed = await bridge.read_thread(thread_id, limit=2)
+    assert narrowed["observation"]["turnsPageStatus"] == "summary_narrowed"
+    assert narrowed["observation"]["itemsView"] == "summary"
+    assert len(narrowed["turnsPage"]["data"]) == 1
+    attempt = narrowed["observation"]["pageAttempts"][0]
+    assert attempt["requested"] == {"itemsView": "summary", "limit": 2}
+    assert attempt["attribution"] == "unestablished"
+    assert attempt["frameBytes"] > attempt["limit"]
+    assert "not established" in attempt["note"]
+
+    fake.oversize = lambda method, params: (
+        100 * 1024
+        if method == "thread/turns/list" and params.get("itemsView") == "summary"
+        else None
+    )
+    ids = await bridge.read_thread(thread_id, limit=2)
+    assert ids["observation"]["turnsPageStatus"] == "not_loaded"
+    assert ids["observation"]["itemsView"] == "notLoaded"
+    assert [turn["id"] for turn in ids["turnsPage"]["data"]] == ["turn-2", "turn-1"]
+    assert all(turn["items"] == [] for turn in ids["turnsPage"]["data"])
+    # The note must not claim the whole response has no content: item detail is read for the
+    # newest turn even on this rung, and it arrived here.
+    assert "every turn's items field is empty" in ids["observation"]["note"]
+    assert ids["observation"]["detailTurnsObserved"] == 1
+    assert ids["turnsPage"]["data"][0]["itemsDetailStatus"] == "complete"
+    assert ids["turnsPage"]["data"][0]["itemsDetail"][0]["text"] == "second"
+
+    fake.oversize = lambda method, params: (
+        100 * 1024 if method == "thread/turns/list" else None
+    )
+    nothing = await bridge.read_thread(thread_id, limit=2)
+    assert nothing["turnsPage"] is None
+    assert nothing["observation"]["turnsPageStatus"] == "not_observed"
+    assert nothing["observation"]["itemsView"] is None
+    assert nothing["observation"]["detailTurnsRequested"] == 0
+    assert nothing["observation"]["detailTurnsObserved"] == 0
+    assert len(nothing["observation"]["pageAttempts"]) == 3
+    # The thread itself is still established, which is the whole point of reading it first.
+    assert nothing["thread"]["id"] == thread_id
+
+
+async def test_an_item_page_that_will_not_arrive_is_asked_again_smaller(
+    small_frame_bridge, fake_server, tmp_path
+):
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    fake.oversize = lambda method, params: (
+        100 * 1024
+        if method == "thread/items/list" and params.get("limit", 0) > 1
+        else None
+    )
+    turn = (await bridge.read_thread(created["threadId"], limit=1))["turnsPage"]["data"][0]
+    assert turn["itemsDetailStatus"] == "narrowed"
+    assert turn["itemsDetailNote"]["requestedLimit"] == 10
+    assert turn["itemsDetailNote"]["observedLimit"] == 1
+    assert turn["itemsDetailNote"]["attempts"][0]["attribution"] == "unestablished"
+    assert len(turn["itemsDetail"]) == 1
+
+
+async def test_items_that_will_not_arrive_at_all_are_reported_not_claimed(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """There is no query narrower than one item, and the answer says so instead of gesturing."""
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    fake.oversize = lambda method, params: (
+        100 * 1024 if method == "thread/items/list" else None
+    )
+    read = await bridge.read_thread(created["threadId"], limit=1)
+    turn = read["turnsPage"]["data"][0]
+    assert turn["itemsDetailStatus"] == "not_observed"
+    assert turn["itemsDetail"] is None
+    assert len(turn["itemsDetailNote"]["attempts"]) == 2
+    assert "no query narrower than one item" in turn["itemsDetailNote"]["note"]
+    assert "limit on observation, not a fact about the thread" in turn["itemsDetailNote"]["note"]
+    # The read still answered, and the turn's own message is still readable.
+    assert turn["items"][0]["text"] == "first"
+    assert read["observation"]["turnsPageStatus"] == "summary"
+    # Asking is not seeing: the count must not report detail this turn says it never got.
+    assert read["observation"]["detailTurnsRequested"] == 1
+    assert read["observation"]["detailTurnsObserved"] == 0
+    assert "arrived for 0 of them" in read["observation"]["note"]
+    assert "requested and read" not in read["observation"]["note"]
+
+
+async def test_a_turn_with_more_items_than_one_page_says_so(
+    small_frame_bridge, fake_server, tmp_path, monkeypatch
+):
+    import codex_thread_bridge.bridge as module
+
+    monkeypatch.setattr(module, "ITEM_PAGE", 3)
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    newest = fake.threads[created["threadId"]]["turns"][-1]
+    newest["items"] = [
+        {"type": "commandExecution", "command": "ls", "aggregatedOutput": f"line {n}"}
+        for n in range(7)
+    ]
+    turn = (await bridge.read_thread(created["threadId"], limit=1))["turnsPage"]["data"][0]
+    assert turn["itemsDetailStatus"] == "partial"
+    assert len(turn["itemsDetail"]) == 3
+    assert turn["itemsDetailNote"]["more"] is True
+    assert turn["itemsDetailNote"]["observed"] == 3
+    # The END of the turn, in the order it happened. An ascending page would have returned
+    # "line 0", "line 1", "line 2" and left the turn's latest activity unreachable, because
+    # this tool returns no item cursor to page forward with.
+    assert [item["aggregatedOutput"] for item in turn["itemsDetail"]] == [
+        "line 4",
+        "line 5",
+        "line 6",
+    ]
+    assert next(p for name, p in fake.calls if name == "thread/items/list")["sortDirection"] == (
+        "desc"
+    )
+    assert "most recent items of the turn" in turn["itemsDetailNote"]["note"]
+    # A turn of pure tool output has no summary items at all, which is honest rather than empty.
+    assert turn["items"] == []
+
+
+async def test_tool_output_inside_item_detail_is_truncated_and_marked(
+    small_frame_bridge, fake_server, tmp_path
+):
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    newest = fake.threads[created["threadId"]]["turns"][-1]
+    newest["items"] = [
+        {"type": "commandExecution", "command": "ls", "aggregatedOutput": "y" * 5000}
+    ]
+    read = await bridge.read_thread(created["threadId"], limit=1, max_text_chars=100)
+    output = read["turnsPage"]["data"][0]["itemsDetail"][0]["aggregatedOutput"]
+    assert output.startswith("y" * 100)
+    assert "truncated; original length 5000" in output
+
+
+async def test_a_host_that_cannot_read_items_still_answers_the_read(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """-32601 is a fact about this host, and a refusal is repeated rather than reinterpreted."""
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    fake.reject["thread/items/list"] = {"code": -32601, "message": "thread/items/list"}
+    unavailable = await bridge.read_thread(created["threadId"], limit=1)
+    missing = unavailable["turnsPage"]["data"][0]
+    assert missing["itemsDetailStatus"] == "method_unavailable"
+    assert missing["itemsDetailNote"]["code"] == -32601
+    assert missing["items"][0]["text"] == "first"
+    # A host that cannot answer is still not detail this read obtained.
+    assert unavailable["observation"]["detailTurnsRequested"] == 1
+    assert unavailable["observation"]["detailTurnsObserved"] == 0
+    assert "requested and read" not in unavailable["observation"]["note"]
+
+    fake.reject["thread/items/list"] = {"code": -32000, "message": "nope"}
+    refused = (await bridge.read_thread(created["threadId"], limit=1))["turnsPage"]["data"][0]
+    assert refused["itemsDetailStatus"] == "refused"
+    assert refused["itemsDetailNote"]["code"] == -32000
+    assert refused["itemsDetailNote"]["message"] == "nope"
+
+
+async def test_a_mutation_caught_in_someone_elses_oversized_frame_is_unknown(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """The frame that takes the connection down need not belong to the request that suffers."""
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    started = fake.count("turn/start")
+    fake.oversize_before = {"turn/start": [100 * 1024]}
+    receipt = await send(bridge, "send", created["threadId"], "second")
+    assert receipt["status"] == "outcome_unknown"
+    assert receipt["retrySafe"] is False
+    assert receipt["attemptedEffects"]
+    assert receipt["error"].startswith("ResponseTooLarge:")
+    assert "cannot be attributed to a request" in receipt["error"]
+    assert fake.count("turn/start") == started + 1
+
+
+async def test_a_page_that_never_arrives_is_a_gap_in_the_answer_not_a_failed_read(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """A disconnect is not a size, so nothing narrower is tried; the thread still comes back."""
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    fake.drop_after = "thread/turns/list"
+    read = await bridge.read_thread(created["threadId"], limit=2)
+    assert read["turnsPage"] is None
+    assert read["observation"]["turnsPageStatus"] == "not_observed"
+    assert read["thread"]["id"] == created["threadId"]
+    # One attempt only: there is nothing to narrow towards and no reason to spend more timeouts.
+    assert len(read["observation"]["pageAttempts"]) == 1
+    attempt = read["observation"]["pageAttempts"][0]
+    assert "frameBytes" not in attempt
+    assert attempt["error"].startswith("TransportError:")
+    assert attempt["attribution"] == "unestablished"
+
+
+async def test_item_detail_that_never_arrives_does_not_fail_a_read_that_did(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """The detail read is the optional part; a disconnect there is a gap, never a verdict."""
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    fake.drop_after = "thread/items/list"
+    read = await bridge.read_thread(created["threadId"], limit=1)
+    turn = read["turnsPage"]["data"][0]
+    assert turn["itemsDetailStatus"] == "not_observed"
+    assert turn["itemsDetail"] is None
+    assert turn["itemsDetailNote"]["attempts"][0]["error"].startswith("TransportError:")
+    assert "none of this is a fact about the thread" in turn["itemsDetailNote"]["note"]
+    # The page and the turn's own message still arrived, and nothing raised.
+    assert turn["items"][0]["text"] == "first"
+    assert read["observation"]["turnsPageStatus"] == "summary"
+    assert read["observation"]["detailTurnsRequested"] == 1
+    assert read["observation"]["detailTurnsObserved"] == 0
+
+
+async def test_a_frame_belonging_to_nobody_can_drive_the_ladder_down(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """The fallback fires on frames this connection cannot attribute to the request in flight.
+
+    Here the oversized frames are notifications, which carry no request id at all, so nothing
+    about the summary pages was ever too large — they simply never arrived. That is why the
+    notLoaded note says what was received rather than what would fit: the response would otherwise
+    assert a size in one field while recording attribution "unestablished" in the next.
+    """
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    await send(bridge, "send", created["threadId"], "second")
+    # Two rungs of the ladder lose their connection to somebody else's frame; the third is let
+    # through, which a single flat padding value could never express.
+    fake.oversize_before = {"thread/turns/list": [100 * 1024, 100 * 1024]}
+    read = await bridge.read_thread(created["threadId"], limit=2)
+    assert read["observation"]["turnsPageStatus"] == "not_loaded"
+    assert read["observation"]["itemsView"] == "notLoaded"
+    assert [turn["id"] for turn in read["turnsPage"]["data"]] == ["turn-2", "turn-1"]
+    assert all(turn["items"] == [] for turn in read["turnsPage"]["data"])
+    note = read["observation"]["note"]
+    assert "no page carrying items was received" in note
+    assert "would fit" not in note
+    assert "does not say those pages were too large" in note
+    for attempt in read["observation"]["pageAttempts"]:
+        assert attempt["attribution"] == "unestablished"
+    # And the newest turn's items still arrive on this rung, which is the other half of why the
+    # note must not claim the response has no content.
+    assert read["turnsPage"]["data"][0]["itemsDetailStatus"] == "complete"
+    assert read["observation"]["detailTurnsObserved"] == 1
 
 
 async def test_low_text_limit_preserves_page_cursors_and_protocol_fields(
@@ -301,25 +622,160 @@ async def test_list_preserves_long_cursor(bridge, fake_server, tmp_path):
 
 
 async def test_cancellation_keeps_unknown_receipt_and_prevents_retry(bridge, fake_server, tmp_path):
+    """Cancelled with the frame already on the wire, which is the case a resend would duplicate.
+
+    This test used to replace rpc.call outright, so thread/start never reached the socket and the
+    cancellation it measured was one where nothing had been attempted at all. Reading that as an
+    unknown outcome is the conflation this contract now separates, so the simulation moves to the
+    server: it applies the mutation and then stops before answering. The claim under test is
+    unchanged.
+    """
     fake, _ = fake_server
-    started = asyncio.Event()
-    original = bridge.rpc.call
-
-    async def slow(method, params):
-        if method == "thread/start":
-            started.set()
-            await asyncio.Event().wait()
-        return await original(method, params)
-
-    bridge.rpc.call = slow
+    fake.pause_after = "thread/start"
     task = asyncio.create_task(create(bridge, "cancel", str(tmp_path)))
-    await started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert bridge.ledger.get("cancel")["status"] == "outcome_unknown"
-    repeat = await create(bridge, "cancel", str(tmp_path))
-    assert repeat["replayed"] and fake.count("thread/start") == 0
+    try:
+        await asyncio.wait_for(fake.paused.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        receipt = bridge.ledger.get("cancel")
+        assert receipt["status"] == "outcome_unknown" and not receipt["retrySafe"]
+        assert receipt["attemptedEffects"] == ["thread/start"]
+        repeat = await create(bridge, "cancel", str(tmp_path))
+        assert repeat["replayed"] and fake.count("thread/start") == 1
+    finally:
+        fake.release.set()
+
+
+async def test_cancelling_before_anything_was_sent_leaves_the_id_usable(
+    bridge, fake_server, tmp_path
+):
+    """The same cancellation one call earlier, where the turn has not been asked for yet."""
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.pause_after = "thread/read"
+    task = asyncio.create_task(send(bridge, "cancel-early", created["threadId"], "instruction"))
+    try:
+        await asyncio.wait_for(fake.paused.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        # This fake serves one request at a time per connection, so the retry below would wait
+        # behind the paused handler until it is released.
+        fake.pause_after = None
+        fake.release.set()
+    receipt = bridge.ledger.get("cancel-early")
+    assert receipt["status"] == "not_attempted" and receipt["retrySafe"]
+    assert receipt["attemptedEffects"] == []
+    retried = await send(bridge, "cancel-early", created["threadId"], "instruction")
+    assert retried["status"] == "accepted" and not retried.get("replayed")
+    assert retried["attempt"] == 2 and fake.count("turn/start") == 2
+
+
+async def test_a_lost_read_before_a_message_leaves_the_request_id_usable(
+    bridge, fake_server, tmp_path
+):
+    """The defect this contract change exists for, on the tool that ran into it.
+
+    thread/read is the question send_message_to_thread asks before it decides whether a turn can
+    be started at all. Losing its answer was recorded as outcome_unknown, which told every later
+    reader that the message might already have been delivered and spent the request id for good
+    on a socket that had merely gone away.
+    """
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.drop_after = "thread/read"
+    lost = await send(bridge, "message", created["threadId"], "instruction")
+    assert lost["status"] == "not_attempted" and lost["retrySafe"]
+    assert lost["attemptedEffects"] == [] and fake.count("turn/start") == 1
+
+    fake.drop_after = None
+    retried = await send(bridge, "message", created["threadId"], "instruction")
+    assert not retried.get("replayed") and retried["status"] == "accepted"
+    assert retried["attempt"] == 2 and fake.count("turn/start") == 2
+    assert bridge.ledger.get("message")["priorAttempts"][0]["status"] == "not_attempted"
+
+
+async def test_a_lost_project_read_never_created_a_thread(bridge, fake_server, tmp_path):
+    fake, _ = fake_server
+    launch = {"prompt": "hello", "app_server_project_id": "project-1"}
+    fake.drop_after = "project/read"
+    lost = await create(bridge, "project", str(tmp_path), **launch)
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert not fake.threads
+
+    fake.drop_after = None
+    retried = await create(bridge, "project", str(tmp_path), **launch)
+    assert retried["status"] == "accepted" and fake.count("thread/start") == 1
+
+
+async def test_a_lost_handshake_is_not_an_unknown_creation(bridge, fake_server, tmp_path):
+    """The handshake goes out before the mutation does, and losing it settles nothing about one."""
+    fake, _ = fake_server
+    fake.drop_after = "initialize"
+    lost = await create(bridge, "handshake", str(tmp_path), prompt="hello")
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert not fake.threads
+
+    fake.drop_after = None
+    retried = await create(bridge, "handshake", str(tmp_path), prompt="hello")
+    assert retried["status"] == "accepted" and fake.count("thread/start") == 1
+
+
+async def test_a_request_that_never_reached_a_socket_can_be_retried(fake_server, tmp_path):
+    """Here the failure is the connection itself rather than a lost answer, and it lands the same.
+
+    The verdict follows what went out, not which exception came back, so an unreachable socket and
+    a dropped preliminary read agree: nothing was begun, and the id is still good.
+    """
+    from codex_thread_bridge.bridge import Bridge
+    from codex_thread_bridge.rpc import AppServer
+
+    fake, socket = fake_server
+    ledger = Ledger(tmp_path / "state" / "operations.sqlite3")
+    absent = AppServer(tmp_path / "absent.sock", timeout=1)
+    live = AppServer(socket, timeout=1)
+    try:
+        offline = await create(Bridge(absent, ledger), "offline", str(tmp_path), prompt="hello")
+        assert offline["status"] == "not_attempted" and offline["attemptedEffects"] == []
+        assert not fake.threads
+        online = await create(Bridge(live, ledger), "offline", str(tmp_path), prompt="hello")
+        assert online["status"] == "accepted" and fake.count("thread/start") == 1
+    finally:
+        await absent.close()
+        await live.close()
+        ledger.close()
+
+
+async def test_a_lost_resume_response_is_unknown_and_never_resent(bridge, fake_server, tmp_path):
+    """thread/resume carries cwd, model, sandbox and config, so it is not treated as a question."""
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.drop_after = "thread/resume"
+    lost = await send(bridge, "resume-lost", created["threadId"], "instruction")
+    assert lost["status"] == "outcome_unknown" and not lost["retrySafe"]
+    assert lost["attemptedEffects"] == ["thread/resume"]
+
+    fake.drop_after = None
+    replay = await send(bridge, "resume-lost", created["threadId"], "instruction")
+    assert replay["replayed"] and replay["status"] == "outcome_unknown"
+    assert fake.count("thread/resume") == 1 and fake.count("turn/start") == 1
+
+
+async def test_a_lost_message_turn_response_is_unknown_and_never_resent(
+    bridge, fake_server, tmp_path
+):
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.drop_after = "turn/start"
+    lost = await send(bridge, "turn-lost", created["threadId"], "instruction")
+    assert lost["status"] == "outcome_unknown"
+    assert lost["attemptedEffects"] == ["thread/resume", "turn/start"]
+
+    fake.drop_after = None
+    replay = await send(bridge, "turn-lost", created["threadId"], "instruction")
+    assert replay["replayed"] and fake.count("turn/start") == 2
 
 
 def test_ledger_survives_restarts_and_is_private(tmp_path):
@@ -707,6 +1163,36 @@ async def test_a_lost_pause_response_is_unknown_and_never_sent_again(bridge, fak
     fake.drop_after = None
     replay = await bridge.pause_goal("lost-pause", created["threadId"])
     assert replay["replayed"] and fake.count("thread/goal/set") == 1
+
+
+async def test_a_lost_read_before_a_steer_is_not_an_unknown_steer(bridge, fake_server, tmp_path):
+    """A steer withheld because the thread could not be read is a steer that was never sent."""
+    fake, _ = fake_server
+    thread_id = await running(bridge, fake, tmp_path)
+    fake.drop_after = "thread/read"
+    lost = await bridge.steer_thread("steer", thread_id, "turn-1", "one instruction")
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert fake.count("turn/steer") == 0
+
+    fake.drop_after = None
+    retried = await bridge.steer_thread("steer", thread_id, "turn-1", "one instruction")
+    assert retried["status"] == "accepted" and retried["delivery"] == "accepted_not_applied"
+    assert fake.count("turn/steer") == 1
+
+
+async def test_a_lost_goal_read_never_paused_anything(bridge, fake_server, tmp_path):
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.goal = {"objective": "o", "status": "active", "tokenBudget": None}
+    fake.drop_after = "thread/goal/get"
+    lost = await bridge.pause_goal("pause", created["threadId"])
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert fake.count("thread/goal/set") == 0 and fake.goal["status"] == "active"
+
+    fake.drop_after = None
+    retried = await bridge.pause_goal("pause", created["threadId"])
+    assert retried["status"] == "accepted" and fake.goal["status"] == "paused"
+    assert retried["pause"] == "goal_paused_turn_may_still_be_running"
 
 
 def test_a_version_is_identified_by_token_not_by_substring():
