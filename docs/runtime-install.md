@@ -1278,6 +1278,408 @@ daemon is not observable from a Stop and is never inferred from one; `hook-statu
 separately or says it did not look. Long retries and whole verification loops belong to the daemon
 and to the coordinating task, not to a hook with a five-second budget.
 
+## The composed acceptance run
+
+Installing, updating and hooking each have their own cases above. What none of them states is
+the sequence a host actually lives through, on one destination, with the state that has to
+survive it put there before the first install and read again after the last refusal. A suite of
+separately passing cases is not that sequence, and the difference is where a host loses a
+runtime. `scripts/ci/tests/test_install_acceptance.py` is that sequence.
+
+It reuses the update fixture rather than restating it: the same host, the same injected seams,
+the same snapshot of everything a failed update promised not to change. What it adds is that the
+installation recovered at the end is one the run itself promoted, not a directory a fixture
+placed on disk. An installer that had lost the ability to install would leave the update cases
+green; it fails here at stage one.
+
+| Stage | What runs | What must be true afterwards |
+| --- | --- | --- |
+| A new install | `install --apply` onto a destination holding nothing | An environment was built, the record selects it, `current` reaches it, the claim is `COMPLETE` |
+| The same run again | the identical command | `alreadyInstalled`, staging `SETTLED`, the claim and the configuration byte-identical, no orphan directory |
+| An update that fails | a source arrives, so the candidate is a different directory, and one of the eight seams refuses | exit 1, the seam names itself, and the refusal names the arriving environment |
+| The install it replaced | nothing further | selection, pointer target, configuration bytes, store bytes, store inode and store rows all as stage two left them, and a further install still answers `alreadyInstalled` |
+
+The last column is the reason the stage list is not the test. Every one of those equalities also
+holds for a run that did nothing at all, so the sequence separately requires what a no-op cannot
+produce: an environment in the destination, a selection naming it, and a seam that reported the
+boundary it stopped at against the environment it was building.
+
+### Seven questions, seven readings
+
+The criterion asks for seven judgements and forbids one standing in for another. They are not
+one payload: two are commands and one is a comparison the acceptance module performs. `READINGS`
+declares the cell, the source that answers it and the path the answer is read from, and a single
+`read()` is the only way a cell is filled. A reading that could not be made reads `UNREADABLE` --
+never `False`, and never the value of the cell beside it.
+
+| Judgement | Answered by | Read from | Never established by it |
+| --- | --- | --- | --- |
+| Skill link | `diagnose` | `skillLinks`, from `scripts/install.py --check` | that a linked skill is loaded or trusted by a host |
+| Runtime import | `diagnose` | `checks.results.imported` | that an imported module is the one a pointer reaches |
+| MCP tool exposure | `diagnose` | `checks.results.mcpExposed` | that a registered server was started, or that a session listed its tools |
+| App Server connection | `diagnose` | `checks.results.connected` | that a socket that accepted a connection will accept delivery |
+| Real hook callback | `hook-status` | `firingJournal` | that a registered hook is an enabled one, or that a firing was judged correctly |
+| Model and permission preservation | the acceptance module | the model and permission keys, read before and again after | that anything else in the configuration survived |
+| Delivery acceptance | `diagnose` | `checks.results.deliveryAccepted` | that an accepted delivery was acted on |
+
+Reaching an answer, reaching it down the path the row names, and reaching it on the host the
+rest of the run describes are three questions, and the last two are the ones a shortcut passes
+silently. All seven readings are taken against one host: the Codex home this run installed
+into, the destination it built in, and the state directory it was pointed at. A row answered
+from a second Codex home made for it would compose readings about two machines and look
+exactly like a composition. In the suite the link, import,
+registration, hook and preservation rows travel the thing the run installed: the links it
+created, the packages inside the candidate, the registration `register-mcp` wrote, the command
+line in the hook file executed as a program with a Stop payload on its stdin, and the
+configuration the install acted over. The connection and delivery rows travel a relay this
+suite wrote, because no App Server runs there -- which is why those two are the rows the table
+above says a host reading needs the live half for.
+
+The hook row is worth naming twice. Calling the adapter helper directly would answer exactly as
+the registered command does, while leaving the entry point, the settings argument the install
+chose and the stdin contract entirely untested. The registration is half of what this page
+documents, so the row reads it out of the hook file and runs it -- out of the hook file in the
+Codex home the rest of the run used, because a registration read from anywhere else is a
+registration on another machine.
+
+The vocabularies are deliberately not merged. The result rows answer in `check.VALUES`, the hook
+row answers in the completion module's own words, and the listing row answers with a listing. A
+cell rewritten into a neighbour's vocabulary is the same borrowed answer with better manners.
+
+Two of the seven are established by construction rather than by trusting a number. The hook row
+counts records, and a count taken from a directory somebody populated says nothing, so the case
+establishes it by the transition instead: the journal is established absent, the Stop hook is
+actually run, and the journal then names exactly one invocation. And no verdict cell anywhere
+reads model or permission state on both sides of an install, so the acceptance module performs
+that comparison itself. `checks.settingsPreserved` is not that reading -- it answers whether a
+command that writes nothing left `config.toml` alone, which is true of a diagnosis whatever the
+model keys say -- and neither is `settings_usable`, which answers whether a value a caller
+supplied is admissible to the relay. Filling the preservation cell from either would be the
+borrowed answer the whole arrangement refuses, so the missing cell is recorded as missing.
+
+A version that moved and a source that moved are likewise two findings and not one. Only
+`definition.verify` reports the first, and it refuses the install rather than filling a cell; a
+reader wanting a version disagreement reads the refusal, not a classification.
+
+### What the run exercised, and what it stood in for
+
+Every path is temporary, and fifteen names are stand-ins inherited from the update fixture: the
+two build steps, the relay, the measurement, the component classification, the definition load
+and verification, the interpreter version, the pointer steps and the store readings. The
+acceptance module declares them in a record it derives by running the fixture and watching which
+attributes are replaced, rather than by reading how the fixture is written, so a stand-in added
+there fails this suite until the record acknowledges it. A provenance record a later change can
+silently outgrow is worse than none.
+
+A stand-in is only half of what a record has to say. A reading can reach its success answer, down
+the path it declared, on the host it declared, and still answer about something the scenario never
+built -- so the module also declares, function by function, whether what that function hands the
+command is the value the scenario built or a stand-in, and a stand-in names what the scenario has
+instead and what a row reading through it therefore does not prove. That inventory is derived by
+asking the module for its functions, so a helper added there arrives unclassified. What it does
+not reach is a value written inline inside a function body: the granularity is the function, and
+the imported fixture's own replacements are covered by the separate record above.
+
+The store is where that mattered. Every install in this suite used to tell the run its store was
+absent and its tables unknown while the fixture had built a populated one at the same path, and
+nothing failed, because a run told there is no store settles that cell as established absence and
+moves on. A regression that detected a store and then lost it stayed green underneath. The
+readings the run takes about the store now describe the store the fixture built, one case reads
+them back out of the run's own result and compares them with it, and no call site may hand that
+switch again.
+
+Rows this repository has exercised are `fixture`: a temporary destination whose build steps and
+relay are simulated. No committed row can say `host`, and a check enforces that. The diagnosis
+runs with `HOME`, `XDG_STATE_HOME`, `CODEX_HOME` and `PATH` pointed inside the temporary
+directory and with `--relay-command` naming a path in it, because redirecting `--state` alone is
+not isolation: the survey runs discovery of its own, the filesystem side reads the real home, and
+an installed entry point on `PATH` would be resolved and run. The case then requires every path
+the diagnosis reported to be inside that directory.
+
+Paths are only half of it. Resolving where a component lives imports it, and the bridge's smoke
+script starts a server, both under whatever interpreter the record names -- so a fallback to the
+interpreter running the suite would reach whatever this machine has installed, which a check may
+read about and must not run. Clearing `PYTHONPATH` and the user site does not reach a system
+site directory, and checking the resolved location afterwards is too late, because by then the
+import has happened. The runtime is therefore supplied rather than discovered: a `-S -E`
+interpreter inside the destination, named by the record for every component and reached through
+the entry points on a `PATH` of the suite's own. The assertion is on the interpreter, which is
+settled before any probe runs; a component asked through this machine's interpreter fails the
+case whatever it happened to find.
+
+### Running the combination against a real host
+
+A real combination is an operator action, not a check. It needs a destination, a Codex home, a
+host record and a state directory that are yours to change, and it establishes nothing until it
+is recorded. Four of the seven need an input the command cannot supply for itself, so a bare
+`diagnose` produces four answers and three admissions that it did not look.
+
+```sh
+# Substitute every <...> below before running any of it. They are placeholders, not literals:
+# an unsubstituted one is a shell redirection rather than a value, which is as true of the
+# controller assignment below as of the flags further down. Nothing here runs as it stands.
+
+# The receipt directory has to exist before the first write, or the baseline redirect and the
+# install redirect below both fail -- and the second of those stops the install from running at
+# all rather than merely losing a file.
+mkdir -p <receipt>
+
+# One controller for the whole block, on 3.11 or newer. Five of the steps below read a Codex
+# configuration and they do not fail alike without a reader, so naming the interpreter once is
+# the difference between a block that can be copied and a block whose readings quietly degrade.
+# The runtimes this command installs are 3.11+ whatever starts it, so this is a choice about the
+# controller only. What an older one does to each step is recorded after the block.
+controller=<python3.11-or-later>
+
+# Before anything: the model and permission keys as they stand, because preservation is a
+# comparison and there is no cell that makes it for you.
+# A fresh Codex home legitimately has no config.toml at all -- the reader treats absence as an
+# empty configuration -- so record the absence rather than failing on it. And keep the two
+# apart: a baseline that was ABSENT makes the later comparison one between two absences, which
+# establishes that nothing was added and nothing about a posture anybody had set.
+if [ -f <codex-home>/config.toml ]; then
+    cp <codex-home>/config.toml <receipt>/config.before.toml
+else
+    printf 'no configuration existed before this run\n' > <receipt>/config.before.absent
+fi
+
+"$controller" scripts/runtime_install.py install --dest <destination> --record <record> \
+    --codex-home <codex-home> --state <state> --apply > <receipt>/install.json
+# The exit code belongs IN the receipt rather than on the terminal: it is the install's own, a
+# pipeline would hide it, and a receipt that kept the result and lost the status cannot say
+# whether the install refused.
+printf 'install exit=%s\n' "$?" > <receipt>/install.exit; cat <receipt>/install.json
+
+# The skill links are a layer of their own: install builds the runtime, and the diagnosis reads
+# the links by running scripts/install.py --check separately. Skip this and the link row answers
+# that every crw-* skill is missing -- an accurate reading of a Codex home nobody linked, and
+# not a reading of the installation just made.
+"$controller" scripts/install.py --apply --dest <codex-home>/skills
+
+# Registration is a separate operation from installing, and tool exposure compares the
+# registered command with the tools a session actually listed. Both halves or neither.
+# Name a 3.11 or later interpreter here too. Registration reads back the content it proposes to
+# write, so it refuses without tomllib for an absent, an empty and a populated configuration
+# alike -- measured on the 3.10 floor: exit 1, outcome CONFLICT naming the interpreter, nothing
+# written. Run this on the floor and there is no registration for the exposure row to compare
+# against, and that row is unreadable rather than unverified.
+"$controller" scripts/runtime_install.py register-mcp --codex-home <codex-home> \
+    --bridge-command <destination>/current/bin/<console-script> --apply
+
+# This payload carries five of the seven rows, plus repositoryCommit and definitionVersion --
+# the revision a reader needs to reproduce any of it. Printed to a terminal it is gone, and the
+# receipt then cannot substantiate the readings this procedure says it recorded, so it goes to
+# the receipt with its exit status like the install did.
+"$controller" scripts/runtime_install.py diagnose --dest <destination> --record <record> \
+    --codex-home <codex-home> --state <state> --socket <socket> \
+    --bridge-command <destination>/current/bin/<console-script> \
+    --relay-command <destination>/current/bin/codex-session-relay \
+    --observed-tool get_capabilities \
+    --trial --issue <issue> \
+    --parent-task <parent-task> --child-task <child-task> --recipient <recipient> \
+    --artifact-root <artifact-root> --artifact <artifact> \
+    --turn-thread <turn-thread> --turn-id <turn-id> --dispatch-turn-id <dispatch-turn-id> \
+    --recipient-settings <settings-or-@path> > <receipt>/diagnose.json
+printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.exit; cat <receipt>/diagnose.json
+
+# The hook has to have fired FOR THIS TURN, and no count can say that. hook-status reports what
+# this hook has recorded about itself cumulatively, so an old nonzero count reads as evidence
+# for a callback that never happened -- and comparing before with after does not repair it,
+# because any other session stopping inside the measurement window moves the same number. A
+# count that went up answers "did this hook fire at all lately", which is a different question
+# from the one this row asks.
+#
+# The record carries sessionId and turnId, so ask with them.
+"$controller" scripts/runtime_install.py hook --codex-home <codex-home> --adapter completion \
+    --dest <destination> --apply
+#   ... then end a real turn, and only then:
+"$controller" scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.json
+
+# hook-status names the journal it counted; the records in it name the turn they belong to.
+"$controller" - <receipt>/hook.json <session-id> <turn-id> <<'PY'
+import json, re, sys
+from pathlib import Path
+status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
+cell = json.load(open(status))["firingJournal"]
+# hook-status omits journalRoot whenever its firing-journal reading could not name a usable
+# journal, and that is several states rather than one. This reading does not distinguish them,
+# and nothing here guesses which: it reports the absence, with the cell's own evidence, and
+# stops. The paragraph after this block says what is not distinguished. Failing on the missing
+# key instead would leave a traceback where a reading belongs.
+if "journalRoot" not in cell:
+    print(json.dumps({"firingJournal": cell.get("value"),
+                      "firingJournalEvidence": cell.get("evidence"),
+                      "journalRoot": None,
+                      "recordsForThisTurn": None,
+                      "detail": "no journal to attribute a turn to, so this row is unreadable"
+                                " for this run rather than zero. Why there is none is not"
+                                " distinguished by this reading"}, indent=2))
+    raise SystemExit(0)
+root = Path(cell["journalRoot"]).expanduser()
+# The same shapes hook-status counts, and one entry that cannot be decoded does not take the
+# reading with it: the hook creates a record before it finishes writing it, so a file being
+# written while you look is neither a match nor a failure of your turn.
+day, name = re.compile(r"^[0-9]{8}$"), re.compile(r"^[0-9a-f]{32}\.json$")
+records, unreadable = [], 0
+for directory in sorted(p for p in root.glob("*") if p.is_dir() and day.match(p.name)):
+    for entry in sorted(e for e in directory.glob("*.json") if name.match(e.name)):
+        try:
+            records.append(json.loads(entry.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            unreadable += 1
+mine = [r for r in records if r.get("sessionId") == session and r.get("turnId") == turn]
+print(json.dumps({"recordsRead": len(records), "recordsUnreadable": unreadable,
+                  "recordsForThisTurn": len(mine), "record": mine[:1]}, indent=2))
+PY
+
+# Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
+# registration above deliberately appended a table, so a whole-file diff reports a change that
+# is this procedure's own doing and would report it whether or not anything was preserved.
+# Run this only if there was a baseline to compare against. If <receipt>/config.before.absent
+# is what the step above wrote, there were no model or permission keys to preserve and the row
+# is recorded as that absence -- not as a preservation.
+# Name a 3.11 or later interpreter, because the reader arrives there. On a host whose python3
+# is the 3.10 floor this command exits before it reads anything, and the receipt then records
+# what the suite records on that interpreter: the reading was not made, and the row is
+# unreadable rather than preserved. Do not substitute a pattern match for it -- a value guessed
+# out of TOML is a value whose wrongness is invisible.
+"$controller" -c 'import sys, tomllib
+keys = ("model", "approval_policy", "sandbox_mode")
+for path in sys.argv[1:]:
+    with open(path, "rb") as handle:
+        document = tomllib.load(handle)
+    print(path, {key: document.get(key) for key in keys})' \
+    <receipt>/config.before.toml <codex-home>/config.toml
+
+# If an update has failed here, it has already restored what it found. Read that back rather
+# than assuming it -- and read residualPaths out of the FAILED RUN'S OWN result, which is the
+# only place that field is written. diagnose reports the selection and the pointer as they now
+# stand and has no residualPaths to give, so an operator who looks for it there finds nothing
+# and concludes there was nothing to clear. That is why the install above is kept.
+"$controller" -c 'import json, sys
+result = json.load(open(sys.argv[1]))
+print(json.dumps({key: result.get(key) for key in
+                  ("failedStep", "retriable", "residualPaths", "removedCandidate", "pointer")},
+                 indent=2))' <receipt>/install.json
+
+# Kept the same way, and under its own name: this is the recovery read-back, a different
+# reading from the one above, and a receipt holding only one of them cannot say which.
+"$controller" scripts/runtime_install.py diagnose --dest <destination> --record <record> \
+    --codex-home <codex-home> --state <state> > <receipt>/diagnose.after-failure.json
+printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.after-failure.exit
+cat <receipt>/diagnose.after-failure.json
+```
+
+What this block is, and what it is not. It installs, registers, takes the seven readings and
+reads the result back. It does not re-run the install, it does not present an arriving source,
+and it does not fail an update -- and this page will not tell an operator to break a runtime
+their host is using in order to watch it come back. Those three stages are exercised against a
+temporary destination by `scripts/ci/tests/test_install_acceptance.py`, at every one of the
+eight seams an update crosses.
+
+So a receipt from this block records the stages it actually performed, and it is not a receipt
+for the composed run. The last command above is there for the host that arrives at it having
+had an update fail on its own, which is the only way that stage is reached here.
+
+A receipt also has to record which interpreter took it, and the block names one controller for
+every step for exactly that reason: a page that recommends 3.11 in prose and then invokes bare
+`python3` is a page whose readings degrade for anyone who copies it. Five of its steps read a
+Codex configuration -- `install`, `register-mcp`, both `diagnose` invocations and the
+preservation reader -- and they do not fail alike without `tomllib`, so an operator who runs it
+on the 3.10 floor anyway gets a mixture rather than a refusal. Measured on 3.10 rather than
+inferred: `register-mcp` refuses outright,
+exit 1 with outcome `CONFLICT` naming the interpreter and nothing written, for an absent, an
+empty and a populated configuration alike, against a temporary Codex home. `diagnose` does not
+refuse: run the same way it reports the configuration `UNREADABLE` and the exposure row reads
+`not_verified` -- for want of a reader, not for want of a registration. `install` does not
+refuse either, and that one is measured against a temporary destination with the build steps
+simulated, which is the acceptance suite's arrangement and not a host: it promotes there on
+3.10. Nobody has run this block against a real host from this repository, and it does not claim
+otherwise. The preservation reader exits before reading anything.
+
+So on the floor two of the seven readings are unreadable and the rest still stand, and a receipt
+records them that way rather than carrying them forward. The runtimes this command installs are
+3.11 or newer whatever interpreter started it, so an old controller is never a reason to
+postpone the install; it is only a reason two of the seven cannot be taken.
+
+Every field this section tells you to read is one the command it names actually emits, which is
+worth stating because it was not always true: the closing `diagnose` used to be where an
+operator was sent for `residualPaths`, and only an install failure result carries that field.
+`failedStep`, `retriable`, `residualPaths`, `removedCandidate` and `pointer` come from the
+install result kept above; `firingJournal` and `journalRoot` from `hook-status`;
+`skillLinks`, the `checks.results` cells, `scope.socketConnect`, `definitionVersion` and
+`repositoryCommit` from `diagnose`; `sessionId` and `turnId` from the journal records
+themselves, which is why the snippet reads the records rather than the count.
+
+One of those readings does not distinguish what it is telling you, and the honest thing is to
+say so rather than to guess in the snippet. `hook-status` omits `journalRoot` whenever its
+firing-journal reading could not name a usable journal, and that covers at least five different
+states: no hook registered for the event, registrations naming different settings files, a
+settings path spelled relatively, settings the command could not read, and journaling not
+configured. **The absence of `journalRoot` does not say which of those it is**, and neither does
+anything else this block runs. So the snippet reports the absence with the cell's own evidence
+and stops there rather than choosing a cause. The `registration` and `configuration` cells of
+the same payload are where an operator looks next, and they narrow it without settling it: an
+ambiguous registration and a relative spelling are both states in which a hook IS registered
+and its settings still did not resolve. Telling those apart needs the command to report the
+cause, which is a change to the command and not to this page.
+
+Name the relay too. Left out, the entry point is discovered on `PATH`, which finds whichever
+relay this host already has rather than the runtime just installed under the destination -- and
+with none on `PATH` the trial refuses before it runs. Every flag after `--trial` is required and
+a blank one is refused before anything is written; the set is declared once in the source as
+`TRIAL_REQUIRED_INPUTS`, together with `--recipient-settings`, which is additionally asked of the
+relay's own settings reader.
+
+The absences are answers, and they are different answers. Omitting `--trial` leaves delivery
+`not_applicable`: nothing was attempted. Asking for a trial whose inputs are missing or blank
+gives `not_verified` naming the input that was not supplied: something was attempted and did not
+establish itself. Without `--observed-tool` the exposure answer is that no tool names were
+observed, and before a Stop has reached the hook the callback row is an absence. What none of
+them is, is a failure of the thing they were asked about, and recording them as though the
+questions had been put is the one way this procedure can lie.
+
+`recordsForThisTurn` is the reading. One record naming the session and the turn that was ended
+is a callback this procedure can attribute; zero is not a smaller number of callbacks, it is a
+turn that did not reach the hook, and the row is unreadable for this run whatever the totals
+say. Do not record a total instead -- it is the answer to a question nobody asked here, and it
+is the one piece of this procedure another session can move.
+
+Read `recordsUnreadable` before concluding. Zero matches beside a nonzero unreadable count is
+not an answer either: a record the hook had created but not finished writing is neither your
+turn nor evidence against it, and the honest move is to look again rather than to write down a
+callback that did not happen or rule out one that did.
+
+### What this block cannot produce on its own
+
+Three of the seven are readings of something live, and the command supplies none of it. The
+fixture answers them with stand-ins it builds; an operator has the real thing or has nothing,
+and an absence recorded as a result is the one way a receipt from here misleads.
+
+| Reading | What has to be there already | How you know it was |
+| --- | --- | --- |
+| App Server connection | an App Server accepting connections at `<socket>` | `scope.socketConnect` reads `ok`; anything else leaves `connected` `not_verified` or `unknown`, which is an answer about the socket and not about the install |
+| MCP tool exposure | a session that actually listed the bridge tools, whose names go in `--observed-tool` | without the flag the row says no tool names were observed; with it, the evidence names the tools compared against the registered command |
+| Delivery acceptance | a relay that can carry the eight steps through to a returned turn id, and a recipient whose settings its own predicate accepts | `deliveryAccepted` reads `verified` only with that turn id in the evidence; every refusal names the step or the input that stopped it |
+
+None of those is a precondition to arrange around. They are the questions, so if the live half
+is absent the honest receipt records the absence for that row and says the rest. What it must
+not do is carry a row forward as though the question had been put.
+
+Stopping is not on that list, because nothing here starts anything. The installer never starts or
+stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well
+it went; whoever operates the service starts and stops it. A refused update naming a residual
+pointer is telling you to look at that link rather than telling you it is fine: the restoration
+happened on disk but could not be read back, and the command declines to claim what it could not
+confirm.
+
+A real run records the exact revision it ran at, the interpreter and host it ran on, the
+destination kind, and the answer to each of the seven with the command that produced it and the
+time it was produced. `repositoryCommit` and `definitionVersion` are in the payload for that
+reason. Those receipts are host facts: they belong in the private record outside this repository,
+not in a commit, and `measuredPoints` in the committed definition stays empty until a measured
+point is made. This page is the procedure and the shape. It is not a record that anybody ran it.
+
 ## What none of this establishes
 
 Running the entry point against a temporary destination proves what it did there. It is not
