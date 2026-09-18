@@ -254,6 +254,12 @@ SOURCE_OUT_OF_REACH = {
         ("open(Path(directory) / chosen)",
          "nothing in the expression names a .py file or a handle, so which file it opens is a"
          " fact about the run rather than about the text."),
+    "a callable reached through anything other than a name":
+        ("readers[key](read)",
+         "the derivation follows names: a handle, a called name, a name bound to one. A callable"
+         " taken out of a container, off an instance or out of a registry is chosen at run time,"
+         " and which one it is is not a fact about this text. This is the end of the flow the"
+         " reader follows, and it is written down here rather than left to be discovered."),
     "a helper in another module that hands source text back":
         ("base.source_of(thing)",
          "the derivation follows helpers defined HERE to their callers; a name defined"
@@ -749,6 +755,10 @@ REFUSAL_OUT_OF_REACH = {
          "both sides are read at run time and neither names an answer. Attributing this would"
          " mean attributing read() to every acceptance row, and an inventory that names every"
          " row has stopped distinguishing anything."),
+    "a refusal reached through a callable this text does not name":
+        ("self.assertEqual(row, handlers[key]())",
+         "the same end of the same flow: the derivation follows names, and a helper taken out of"
+         " a container or a registry is chosen while the suite runs."),
     "a refusal reached by its name as a string":
         ("getattr(completion, \"NOT_READ\")",
          "the name is a string, so there is no attribute for the sweep to account."),
@@ -1484,17 +1494,25 @@ def _hands_on(tree, spelled):
             chain.pop()
         return named if named in defined else None
 
+    # A name bound to a function, and cleared when it is bound to anything else. Without the
+    # clearing an alias would outlive what it named -- alias = carrier followed by
+    # alias = lambda: "ok" would still answer for the carrier -- and the call after it would be
+    # reported as reaching something it cannot reach.
     aliases = {}
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
+        if not isinstance(node, ast.Assign):
             continue
         function, _klass = places.get(id(node), (MODULE_LEVEL, None))
-        target = outwards(function, node.value.id)
-        if target is None:
-            continue
+        target = (outwards(function, node.value.id)
+                  if isinstance(node.value, ast.Name) else None)
         for named in node.targets:
-            if isinstance(named, ast.Name):
-                aliases.setdefault(function, {})[named.id] = target
+            if not isinstance(named, ast.Name):
+                continue
+            known = aliases.setdefault(function, {})
+            if target is None:
+                known.pop(named.id, None)
+            else:
+                known[named.id] = target
 
     def called(node, function):
         if isinstance(node.func, ast.Name):
@@ -1527,15 +1545,36 @@ def _hands_on(tree, spelled):
                 return spelled(expression, inner)
             return hands
 
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
-                continue
+        # In source order, and a later assignment replaces an earlier one ONLY when the two sit
+        # in the same statement list. Two arms of an if are alternatives, not a sequence: reading
+        # them as one would let whichever was written second decide for both, and a function that
+        # returns the refusal down one arm would stop counting because the other arm came later.
+        # This reader does not follow flow; it refuses to pretend that it does.
+        under = {}
+        for parent in ast.walk(tree):
+            for field, value in ast.iter_fields(parent):
+                if isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, ast.stmt):
+                            under[id(item)] = (id(parent), field)
+
+        settled = {}
+        for node in sorted((n for n in ast.walk(tree)
+                            if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None),
+                           key=lambda n: (n.lineno, n.col_offset)):
             function, klass = places.get(id(node), (MODULE_LEVEL, None))
             held = bound.setdefault(function, set())
             takes = _reachable(node.value, reaching(function, klass), klass, held)
+            where = under.get(id(node))
             for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-                if isinstance(named, ast.Name):
-                    held.add(named.id) if takes else held.discard(named.id)
+                if not isinstance(named, ast.Name):
+                    continue
+                if takes:
+                    held.add(named.id)
+                    settled[(function, named.id)] = where
+                elif settled.get((function, named.id)) == where:
+                    held.discard(named.id)
+                    settled.pop((function, named.id), None)
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Return) or node.value is None:
@@ -1635,6 +1674,8 @@ def source_spellings(tree):
     where ast.parse comes from, so the one form the old check spelled out by hand is now derived
     from ast.parse's own signature. A string ending in .py names a source file.
 
+    A name bound to one of those callables answers for it as well, to a fixpoint.
+
     A called name whose signature cannot be read is not assumed to be harmless. It comes back as
     undecided and has to be written down, because a name nobody could read reported as a name
     that does not read source is a plausible default standing in for an answer nobody got.
@@ -1652,6 +1693,30 @@ def source_spellings(tree):
                 is_source_file(item) for item in value):
             handles.add(name)
 
+    def asked(spelling):
+        """Does this name hand source back? A reason, an unreadable signature, or neither."""
+        head, _, attribute = spelling.rpartition(".")
+        if head:
+            owner = namespace.get(head)
+            if not isinstance(owner, types.ModuleType):
+                return None, None, False
+            value = getattr(owner, attribute, None)
+        else:
+            value = namespace.get(attribute, getattr(builtins, attribute, None))
+            if isinstance(value, types.FunctionType) and value.__module__ == __name__:
+                return None, None, False
+        if not callable(value):
+            return None, None, False
+        if "source" in attribute.lower():
+            return "its own name says it hands source", None, True
+        try:
+            first = list(inspect.signature(value).parameters)[:1]
+        except (ValueError, TypeError):
+            return None, "its signature cannot be read here", True
+        if first == ["source"]:
+            return "its first parameter is named source", None, True
+        return None, None, True
+
     hands_source, undecided, called = {}, {}, set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -1659,29 +1724,40 @@ def source_spellings(tree):
         spelling = _dotted(node.func)
         if spelling is None:
             continue
-        head, _, attribute = spelling.rpartition(".")
-        if head:
-            owner = namespace.get(head)
-            if not isinstance(owner, types.ModuleType):
-                continue
-            value = getattr(owner, attribute, None)
-        else:
-            value = namespace.get(attribute, getattr(builtins, attribute, None))
-            if isinstance(value, types.FunctionType) and value.__module__ == __name__:
-                continue
-        if not callable(value):
+        why, unread, resolved = asked(spelling)
+        if not resolved:
             continue
         called.add(spelling)
-        if "source" in attribute.lower():
-            hands_source[spelling] = "its own name says it hands source"
-            continue
-        try:
-            first = list(inspect.signature(value).parameters)[:1]
-        except (ValueError, TypeError):
-            undecided[spelling] = "its signature cannot be read here"
-            continue
-        if first == ["source"]:
-            hands_source[spelling] = "its first parameter is named source"
+        if why:
+            hands_source[spelling] = why
+        elif unread:
+            undecided[spelling] = unread
+
+    # And a name bound to one of those answers for it, because reader = inspect.getsource is an
+    # ordinary line and the call after it reaches exactly as far. Taken to a fixpoint so an alias
+    # of an alias is followed too.
+    growing = True
+    while growing:
+        growing = False
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                continue
+            named = _dotted(node.value)
+            if named is None:
+                continue
+            if named not in hands_source:
+                # The name may hand source back without ever being called here: reader =
+                # inspect.getsource puts it behind a local name and the call names only that.
+                why, _unread, _resolved = asked(named)
+                if not why:
+                    continue
+                hands_source[named] = why
+                growing = True
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                bound = _dotted(target)
+                if bound and bound not in hands_source:
+                    hands_source[bound] = "it is bound to " + named + ", which does"
+                    growing = True
     return frozenset(handles), hands_source, undecided, frozenset(called)
 
 
