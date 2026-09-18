@@ -80,7 +80,9 @@ When an oversized frame closes the connection anyway, it narrows and asks again,
 what it ended up with rather than raising.
 
 Every response carries an `observation` block naming the view its turns actually carry
-(`summary`, `notLoaded`, or none at all) and how many turns had their items read. Each turn
+(`summary`, `notLoaded`, or none at all), how many turns item detail was requested for, and how
+many of those it actually arrived for — asking is not seeing, and the two are counted separately
+so a host that refuses the item read cannot be reported as one that answered it. Each turn
 carries an `itemsDetailStatus`: `not_requested`, `complete`, `partial`, `narrowed`,
 `not_observed`, `method_unavailable`, or `refused`. None of these fails the read and none is a
 claim about the thread — a page this bridge could not receive never means a task finished,

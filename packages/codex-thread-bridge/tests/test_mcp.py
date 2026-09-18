@@ -330,7 +330,8 @@ async def test_real_mcp_stdio_discovery_create_read_and_dedup(fake_server, tmp_p
         observed = history.structuredContent["observation"]
         assert observed["turnsPageStatus"] == "summary"
         assert observed["itemsView"] == "summary"
-        assert observed["detailTurns"] == 1
+        assert observed["detailTurnsRequested"] == 1
+        assert observed["detailTurnsObserved"] == 1
         assert "bounded observation" in observed["note"]
         newest, older = history.structuredContent["turnsPage"]["data"]
         assert newest["itemsDetailStatus"] == "complete"

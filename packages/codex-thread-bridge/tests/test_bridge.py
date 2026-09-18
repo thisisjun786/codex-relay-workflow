@@ -294,10 +294,12 @@ async def test_a_read_never_asks_for_the_full_item_view(bridge, fake_server, tmp
     assert read["observation"] == {
         "turnsPageStatus": "summary",
         "itemsView": "summary",
-        "detailTurns": 1,
+        "detailTurnsRequested": 1,
+        "detailTurnsObserved": 1,
         "note": read["observation"]["note"],
     }
     assert "bounded observation" in read["observation"]["note"]
+    assert "requested and read for the newest 1 turn" in read["observation"]["note"]
 
 
 async def test_only_the_newest_turn_has_its_items_read(small_frame_bridge, tmp_path):
@@ -358,7 +360,8 @@ async def test_a_page_too_large_is_narrowed_and_then_dropped_to_ids(
     assert nothing["turnsPage"] is None
     assert nothing["observation"]["turnsPageStatus"] == "not_observed"
     assert nothing["observation"]["itemsView"] is None
-    assert nothing["observation"]["detailTurns"] == 0
+    assert nothing["observation"]["detailTurnsRequested"] == 0
+    assert nothing["observation"]["detailTurnsObserved"] == 0
     assert len(nothing["observation"]["pageAttempts"]) == 3
     # The thread itself is still established, which is the whole point of reading it first.
     assert nothing["thread"]["id"] == thread_id
@@ -403,6 +406,11 @@ async def test_items_that_will_not_arrive_at_all_are_reported_not_claimed(
     # The read still answered, and the turn's own message is still readable.
     assert turn["items"][0]["text"] == "first"
     assert read["observation"]["turnsPageStatus"] == "summary"
+    # Asking is not seeing: the count must not report detail this turn says it never got.
+    assert read["observation"]["detailTurnsRequested"] == 1
+    assert read["observation"]["detailTurnsObserved"] == 0
+    assert "arrived for 0 of them" in read["observation"]["note"]
+    assert "requested and read" not in read["observation"]["note"]
 
 
 async def test_a_turn_with_more_items_than_one_page_says_so(
@@ -453,10 +461,15 @@ async def test_a_host_that_cannot_read_items_still_answers_the_read(
     fake, _ = fake_server
     created = await create(bridge, "create", str(tmp_path), prompt="first")
     fake.reject["thread/items/list"] = {"code": -32601, "message": "thread/items/list"}
-    missing = (await bridge.read_thread(created["threadId"], limit=1))["turnsPage"]["data"][0]
+    unavailable = await bridge.read_thread(created["threadId"], limit=1)
+    missing = unavailable["turnsPage"]["data"][0]
     assert missing["itemsDetailStatus"] == "method_unavailable"
     assert missing["itemsDetailNote"]["code"] == -32601
     assert missing["items"][0]["text"] == "first"
+    # A host that cannot answer is still not detail this read obtained.
+    assert unavailable["observation"]["detailTurnsRequested"] == 1
+    assert unavailable["observation"]["detailTurnsObserved"] == 0
+    assert "requested and read" not in unavailable["observation"]["note"]
 
     fake.reject["thread/items/list"] = {"code": -32000, "message": "nope"}
     refused = (await bridge.read_thread(created["threadId"], limit=1))["turnsPage"]["data"][0]

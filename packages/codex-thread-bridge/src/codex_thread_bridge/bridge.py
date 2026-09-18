@@ -63,6 +63,11 @@ PAGE_ITEMS_VIEW = {
     "not_observed": None,
 }
 
+# The detail statuses that mean items actually arrived. Asking is not seeing, and a count that
+# does not separate the two would claim an observation on behalf of a turn whose own status says
+# it never happened.
+OBSERVED_DETAIL = frozenset({"complete", "partial", "narrowed"})
+
 
 def refusal(refused, **requested):
     """Everything an oversized frame permits us to say, and nothing it does not.
@@ -84,7 +89,7 @@ def refusal(refused, **requested):
     }
 
 
-def page_note(status: str, detail_turns: int):
+def page_note(status: str, requested: int, observed: int):
     """One sentence saying what this view of a thread is, and what it is not."""
     seen = {
         "not_observed": "No page of turns could be received at all, so only the thread's own "
@@ -96,15 +101,19 @@ def page_note(status: str, detail_turns: int):
         "Turn items are the host's summary view: each turn's user and agent messages, not its "
         "tool calls or their output.",
     )
-    if detail_turns == 1:
-        detail = (
-            " Item detail was read for the newest turn only, so every other turn on this page is "
-            "marked not_requested, which is not a statement that it has no items."
-        )
-    elif detail_turns:
-        detail = f" Item detail was read for the newest {detail_turns} turns only."
-    else:
+    if not requested:
         detail = " No item detail was read."
+    else:
+        turns = "turn" if requested == 1 else "turns"
+        detail = (
+            f" Item detail was requested and read for the newest {requested} {turns}."
+            if observed == requested
+            else f" Item detail was requested for the newest {requested} {turns} and arrived for "
+            f"{observed} of them; each turn's itemsDetailStatus says which."
+        ) + (
+            " Every other turn on this page is marked not_requested, which is not a statement "
+            "that it has no items."
+        )
     return (
         seen + detail + " This is a bounded observation of a thread rather than its whole "
         "history, and it says nothing about whether that thread finished, stalled, or has to be "
@@ -1109,12 +1118,18 @@ class Bridge:
         for position, turn in enumerate(turns):
             if isinstance(turn, dict):
                 await self._read_items(thread_id, turn, position)
-        detail_turns = min(DETAIL_TURNS, len(turns))
+        requested = min(DETAIL_TURNS, len(turns))
+        # Counted from what each turn ended up saying about itself, not from what was asked for.
+        observed = sum(
+            isinstance(turn, dict) and turn.get("itemsDetailStatus") in OBSERVED_DETAIL
+            for turn in turns
+        )
         observation = {
             "turnsPageStatus": status,
             "itemsView": PAGE_ITEMS_VIEW[status],
-            "detailTurns": detail_turns,
-            "note": page_note(status, detail_turns),
+            "detailTurnsRequested": requested,
+            "detailTurnsObserved": observed,
+            "note": page_note(status, requested, observed),
         }
         if attempts:
             observation["pageAttempts"] = attempts
