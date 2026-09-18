@@ -15,15 +15,15 @@ compatibility.
 
 | Skill | Purpose |
 |---|---|
-| [crw-next](skills/crw-next/SKILL.md) | Choose one next action when starting or after finishing work, using readchk and nba |
-| [crw-define](skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
-| [crw-plan](skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
-| [crw-run](skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal |
-| [crw-loop](skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
-| [crw-check](skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
-| [crw-logic](skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
+| [crw-next](plugins/crw/skills/crw-next/SKILL.md) | Choose one next action when starting or after finishing work, using readchk and nba |
+| [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
+| [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-PR issues |
+| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal |
+| [crw-loop](plugins/crw/skills/crw-loop/SKILL.md) | Add a parent goal and automatic continuation to the same Run project execution |
+| [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery and return in-scope corrections to managed tasks |
+| [crw-logic](plugins/crw/skills/crw-logic/SKILL.md) | Find consequential contradictions using Paperthin checks and minimal counterexamples |
 
-The shared [integration guide](skills/crw-plan/references/integrations.md) owns Linear document authority and CXC/Paperthin routing. Keep the skills together because their references link to one another.
+The shared [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) owns Linear document authority and CXC/Paperthin routing. Keep the skills together because their references link to one another.
 
 | Package | Purpose |
 |---|---|
@@ -55,6 +55,19 @@ python3 scripts/install.py --apply
 python3 scripts/install.py --check
 ```
 
+Or install the same skills as a versioned plugin, which needs no checkout to stay
+in place:
+
+```sh
+codex plugin marketplace add thisisjun786/codex-relay-workflow --ref dev
+codex plugin add crw@crw
+```
+
+A plugin installation offers the skills as `crw:crw-run`, `crw:crw-plan`, and so on,
+while a linked installation offers them unprefixed. Both read the same source. See
+[plugin packaging](docs/plugin-packaging.md) for the package layout, updates, and
+what installing does not do.
+
 ### Before using the skills
 
 | Capability | What you need |
@@ -62,7 +75,7 @@ python3 scripts/install.py --check
 | Install or run repository checks | Python 3.10+; installation also requires directory symlinks |
 | Work on the packages | Python 3.11+ and [uv](https://docs.astral.sh/uv/) |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
-| Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](skills/crw-plan/references/integrations.md) |
+| Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
 | Receive automatic completion reports | An installed relay and verified host capability; installing these skills alone does not enable delivery |
 
@@ -72,11 +85,11 @@ them to your explicit instructions, repository policy, and available host tools.
 Private maintainer projects are not required for installation or contributions.
 There is no GitHub-only replacement for the Linear workflow in this version.
 
-The [operations contract](skills/crw-run/references/operations.md) records
+The [operations contract](plugins/crw/skills/crw-run/references/operations.md) records
 dependency and compatibility requirements. Automatic Codex hook activation and
 adopting Desktop's native worktree creation as the default remain unverified;
-see the [hook contract](skills/crw-run/references/hook-contract.md) and
-[relay guide](skills/crw-run/references/relay.md). Do not treat their proposed
+see the [hook contract](plugins/crw/skills/crw-run/references/hook-contract.md) and
+[relay guide](plugins/crw/skills/crw-run/references/relay.md). Do not treat their proposed
 contracts or passing offline fixtures as a supported turnkey runtime.
 
 ### Acquire external dependencies
@@ -107,7 +120,7 @@ Edits in this checkout are visible through the installed paths immediately. Alre
 ### Retired skill migration
 
 The former `linear-*` entrypoints use CRW names. `crw-focus` is now retired:
-Run and Loop perform [project binding](skills/crw-plan/references/integrations.md#project-parent-binding)
+Run and Loop perform [project binding](plugins/crw/skills/crw-plan/references/integrations.md#project-parent-binding)
 as shared setup. A request to connect or restore the parent without execution still
 does only that setup. Existing project/task IDs and coordination records remain valid.
 
@@ -141,19 +154,20 @@ means all current skill links point to this checkout and no known old names rema
 There are no old-name aliases or duplicate skill instruction folders. Refresh the
 client's skill catalog or start a fresh task, then invoke `$crw-run`, for example.
 An existing or compacted task may still carry `$linear-run` or an old path: use
-the mapping above and read `skills/crw-run/SKILL.md` from the updated checkout.
+the mapping above and read `plugins/crw/skills/crw-run/SKILL.md` from the updated checkout.
 The descriptions retain a former-name hint for discovery, but this does not make
 an old explicit invocation resolve in an already loaded catalog. The rename does
 not change task IDs, relay state, permissions, or running CXC workflows.
 
 ## Maintain
 
-Edit `skills/`, review the diff, and commit the change. Use a scoped branch from `dev` and target `dev` for ordinary pull requests; an explicit dependent pull request may target its prerequisite branch instead. `main` receives explicitly authorized release promotions from `dev`. Read [repository policy](POLICY.md), [contribution steps](CONTRIBUTING.md) and [CI operation](docs/CI.md). Remote pushes remain user-authorized. Do not copy project state into the skills.
+Edit `plugins/crw/skills/`, review the diff, and commit the change. Use a scoped branch from `dev` and target `dev` for ordinary pull requests; an explicit dependent pull request may target its prerequisite branch instead. `main` receives explicitly authorized release promotions from `dev`. Read [repository policy](POLICY.md), [contribution steps](CONTRIBUTING.md) and [CI operation](docs/CI.md). Remote pushes remain user-authorized. Do not copy project state into the skills.
 
 Repository checks need only Python 3.10+:
 
 ```sh
 python3 scripts/ci/validate.py
+python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
 python3 scripts/ci/contracts.py
 git diff --check
@@ -168,7 +182,7 @@ python3 scripts/ci/packages.py
 When the bundled Codex skill validator is available:
 
 ```sh
-for skill in skills/*; do
+for skill in plugins/crw/skills/*; do
   python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" "$skill" || exit 1
 done
 python3 scripts/install.py --check
@@ -206,7 +220,7 @@ the same owner. Children keep their own issue
 goals and CXC implementation workflow. Parent completion uses verified scoped deliveries,
 without requiring a parent-local diff or CXC implementation phases.
 
-Goal activation requires the [parent goal preflight](skills/crw-loop/references/parent-goal.md),
+Goal activation requires the [parent goal preflight](plugins/crw/skills/crw-loop/references/parent-goal.md),
 including compatible goal/Stop hooks and a supported observation/continuation path.
 A hook that forces every active goal into CXC phases blocks activation even in a fresh
 parent. This skill does not install a wake service or silently migrate existing goals.
@@ -220,7 +234,7 @@ reviews results, checks CI, and performs authorized integration. Internal
 subagents assist within those tasks and do not replace the independent child.
 
 Independent child tasks run under the shared
-[Default independent execution](skills/crw-plan/references/integrations.md#default-independent-execution)
+[Default independent execution](plugins/crw/skills/crw-plan/references/integrations.md#default-independent-execution)
 settings unless the request chooses otherwise. A child running CXC Loop owns its own
 goal and phases; an explicit non-Loop or no-goal assignment keeps the agreed workflow
 without one. The coordinator's launch job is small: apply those settings through the
@@ -242,9 +256,9 @@ new task is needed and the host requires it. Automatic skill selection, unsubmit
 UI text, quoted examples, and permission for an unrelated task do not supply that
 intent. The submitted project-run shorthand above does express that intent.
 Host restrictions and explicit current-task, read-only, or no-create limits still
-apply. See [Independent implementation tasks](skills/crw-run/SKILL.md#independent-implementation-tasks).
+apply. See [Independent implementation tasks](plugins/crw/skills/crw-run/SKILL.md#independent-implementation-tasks).
 
-Run and Loop use the shared [project binding procedure](skills/crw-plan/references/integrations.md#project-parent-binding)
+Run and Loop use the shared [project binding procedure](plugins/crw/skills/crw-plan/references/integrations.md#project-parent-binding)
 to record project/task IDs in Linear, set the task title and sidebar pin when
 supported, and restore context. Management titles use a concise project summary;
 the binding uses the stable project ID regardless of names or initiative membership.
@@ -263,7 +277,7 @@ into dependent issues. Non-PR research or design keeps a verified result instead
 Initiatives represent goals; product family is a project label, while an issue's
 repository label identifies its actual edit target. Project names need no product prefix,
 and views remain the user's choice. See the shared
-[Linear operating model](skills/crw-plan/references/integrations.md#linear-operating-model).
+[Linear operating model](plugins/crw/skills/crw-plan/references/integrations.md#linear-operating-model).
 
 `crw-next` distinguishes choosing a first step from choosing what follows a
 delivery. It uses `readchk` to resolve ambiguous intent and `nba` to pick one
@@ -281,8 +295,8 @@ confirms the landing. Release and deployment still require Jun. Skills, bridge a
 relay all deliver to this repository on base `dev` for ordinary pull requests, with dependent pull
 requests allowed to target their prerequisite branch, and promoting `dev` to `main` is a release that
 needs Jun.
-See [Default dev integration](skills/crw-plan/references/integrations.md#default-dev-integration)
-for destination, delivery, and release boundaries. [Merge readiness](skills/crw-run/references/merge-readiness.md)
+See [Default dev integration](plugins/crw/skills/crw-plan/references/integrations.md#default-dev-integration)
+for destination, delivery, and release boundaries. [Merge readiness](plugins/crw/skills/crw-run/references/merge-readiness.md)
 checks current CI, actual review coverage, and unresolved findings without requiring
 a particular reviewer or repository-management app. Full-project execution continues
 through the authorized batches; an explicit first-batch request remains bounded.
@@ -292,7 +306,7 @@ Managed issue tasks use `ISSUE-ID · descriptive task title`, such as
 `JUN-44 · 가격 조회 결과를 검증한다`. Use up to 20 characters for the title text,
 including spaces, without over-abbreviating; exclude the issue code and separator
 from that count. Keep workflow and PR metadata out of the title.
-The coordinator verifies the actual app title. See [Child task titles](skills/crw-run/references/task-packet.md#child-task-titles).
+The coordinator verifies the actual app title. See [Child task titles](plugins/crw/skills/crw-run/references/task-packet.md#child-task-titles).
 
 ## Contribute and report problems
 

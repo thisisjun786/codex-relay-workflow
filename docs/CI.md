@@ -8,6 +8,7 @@ the steps needed to activate GitHub enforcement.
 | Command | Purpose |
 | --- | --- |
 | `python3 scripts/ci/validate.py` | Skill metadata, local links and Python syntax |
+| `python3 scripts/ci/plugin.py` | Plugin package shape, payload hygiene and the release digest |
 | `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests |
 | `python3 scripts/ci/contracts.py` | Run the owning hook replay and operations shape check when present; reject incomplete script/contract pairs |
 | `python3 scripts/ci/packages.py` | Install, test, run and build the two packages under `packages/` from the root lock file |
@@ -31,6 +32,38 @@ job set to equal the jobs the workflow actually defines, both gates to wait for 
 of them, and no job to carry `continue-on-error`. Adding a job without requiring it,
 or requiring a job that does not exist, fails that test rather than producing a gate
 that silently covers less than it appears to.
+
+## Plugin package
+
+`scripts/ci/plugin.py` runs as a step of the `validate` job, so the gate job set is
+unchanged. It reads `.agents/plugins/marketplace.json` and the manifest under
+`plugins/crw/.codex-plugin/`, then rebuilds the release payload from a Git revision
+with `git ls-tree` and `git cat-file` rather than from the working tree. That
+revision is the oracle: comparing the working tree against itself would prove
+nothing.
+
+The check refuses what installs silently wrong. Installation copies the plugin root
+verbatim, so a symlink inside it is dropped and its files disappear, while an
+untracked or ignored file is published; both are rejected, along with anything
+outside `.codex-plugin/`, `skills/` and `LICENSE`, operational state and credential
+names, and a personal home path in any shipped instruction. It also requires each
+declared skill to carry `SKILL.md` and `agents/openai.yaml`, and the repository
+root link to point at the declared skills directory so the linked and packaged
+installations cannot drift apart.
+
+An empty directory is refused for the same reason: it carries no file for any other
+rule to inspect and still reaches the cache. Shipped files must sit inside the
+declared skills path, beside the files under `.codex-plugin/` and `LICENSE`; the
+manifest may carry only keys the ingestion validator knows; and optional interface
+fields are checked against its https, colour and asset shapes, so those
+ingestion-shape mismatches are rejected here too. The working tree is checked with
+the same rules as the revision, because a local marketplace installs it.
+
+`--json` prints the payload digest and the namespaced skill names derived from the
+revision, and `--payload <dir>` applies the same rules to an installed cache tree,
+so an installed package can be compared with the source it came from. Passing is
+evidence about this source. It does not establish that a plugin installed or that
+any skill loaded on a host; see [plugin packaging](plugin-packaging.md).
 
 ## Packages
 

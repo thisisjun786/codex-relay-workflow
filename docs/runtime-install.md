@@ -1,7 +1,7 @@
 # Runtime installation, update and diagnosis
 
 [POLICY.md](../POLICY.md) owns repository rules and
-[the operations contract](../skills/crw-run/references/operations.md) owns the operational ones.
+[the operations contract](../plugins/crw/skills/crw-run/references/operations.md) owns the operational ones.
 This page describes the runtime entry point that installs, updates and diagnoses the MCP bridge
 and the session relay, and it is written against that contract's clause numbers so a reader can
 check a claim against the rule it came from.
@@ -1208,7 +1208,7 @@ turn ending without the records a completion needs. It is the same install path 
 command derived from this checkout instead of typed, and it lands on `Stop` unless the caller
 names another event.
 
-The decision is not made in the hook. [The hook contract](../skills/crw-run/references/hook-contract.md)
+The decision is not made in the hook. [The hook contract](../plugins/crw/skills/crw-run/references/hook-contract.md)
 fixes the rules and the relay's `guard-evaluate` implements them, down to the exact Stop JSON to
 print. `scripts/completion_hook.py` is the piece between the host and that guard: it reads the
 delivered payload, asks the configured runtime, and prints only a block that runtime produced.
