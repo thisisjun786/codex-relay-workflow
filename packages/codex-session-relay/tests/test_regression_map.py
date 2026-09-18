@@ -1184,13 +1184,22 @@ def _pairs(target, value):
     return [(target, value)]
 
 
-def _binds_the_helper_name(alias):
-    """Does this import alias bind the helper's NAME, whatever it reads to get there."""
+def _binds_the_helper_name(node, alias):
+    """Does this import alias bind the helper's NAME, whatever it reads to get there.
+
+    The bound name differs by form, and reading the wrong end of it went both ways during
+    review. "from x import y as z" binds z. "from x import y" binds y. "import a.b.c" binds
+    a, not c, so a dotted import merely NAMED after the helper shadows nothing. And a star
+    import may or may not export the name; this reader cannot open the other module to find
+    out, so it assumes the binding it cannot rule out.
+    """
+    if alias.asname:
+        return alias.asname == HELPER
     if alias.name == "*":
-        # A star import may or may not export the name; this reader cannot open the other
-        # module to find out, so it assumes the binding it cannot rule out.
         return True
-    return (alias.asname or alias.name.split(".")[-1]) == HELPER
+    if isinstance(node, ast.Import):
+        return alias.name.split(".")[0] == HELPER
+    return alias.name == HELPER
 
 
 def _is_canonical(node, alias):
@@ -1284,7 +1293,7 @@ def _injection_sites_in(tree, module):
         # Per ALIAS, not per statement. The name an import BINDS is what matters, and
         # exempting a whole statement let "from .support import WorkerKilled as
         # killed_before_commit" ride along beside the canonical one.
-        _binds_the_helper_name(alias) and not _is_canonical(node, alias)
+        _binds_the_helper_name(node, alias) and not _is_canonical(node, alias)
         for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
         for alias in node.names
     ) or any(
@@ -1584,13 +1593,20 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
             )
 
     def test_a_direct_helper_call_carries_the_predicate_it_passes(self):
-        sites, _leftover = self.read(
-            self.IMPORT
-            + "def t(store):\n"
-            + f"    with {HELPER}(store, writing='attempts'):\n"
-            + "        pass\n"
-        )
-        self.assertEqual(sites, [("probe.py", "t", "helper", "attempts")])
+        for label, prefix in (
+            ("the canonical import alone", ""),
+            # import a.b.c binds a, so a dotted import merely NAMED after the helper takes
+            # nothing away. Reading its last component instead turned real helper calls
+            # into leftovers.
+            ("beside a dotted import that only looks like it", f"import foreign.{HELPER}\n"),
+        ):
+            sites, _leftover = self.read(
+                self.IMPORT + prefix
+                + "def t(store):\n"
+                + f"    with {HELPER}(store, writing='attempts'):\n"
+                + "        pass\n"
+            )
+            self.assertEqual(sites, [("probe.py", "t", "helper", "attempts")], label)
 
     def test_a_predicate_this_reader_cannot_see_says_so_rather_than_saying_none(self):
         """None means the case passes no predicate. That is a claim, and ** is not it."""
