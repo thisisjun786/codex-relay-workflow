@@ -11,6 +11,7 @@ strings they are stored and reported as, never as enum members the parent commit
 """
 
 import json
+from unittest import mock
 
 from codex_session_relay import cxc, report
 from codex_session_relay.errors import RelayError
@@ -277,6 +278,63 @@ class RestorationDelivery(DeliveryTestCase):
             self._projections(revision, kind="restoration_rendered")[-1]["outcome"], "carried"
         )
 
+    def test_a_report_that_cannot_be_composed_is_refused_rather_than_called_unmeasured(self):
+        """A composition failure recurs inside every delivery claim, so it is not unmeasured.
+
+        Committing the report would leave the correction queued behind a message nobody can
+        render: each attempt raises the same way and rolls its own claim back. The block is
+        stranded either way, which is the same silence arriving by a longer route.
+        """
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-nofit",
+            findings=_findings(4, carries=1),
+        )
+        revision = self._revision_of(relationship, event_id, "v-nofit")
+
+        # The budget is squeezed below what the message's REQUIRED parts occupy, which is the
+        # one way the composer refuses outright instead of shortening. Patched rather than
+        # stubbed, and patched on a name both this build and the parent commit have, so the
+        # parent fails this case by recording the report rather than by lacking a symbol.
+        with mock.patch.object(report, "BUDGET", 400):
+            with self.assertRaises(RelayError) as caught:
+                report.record(
+                    self.store, self.clock, event_id=revision,
+                    repository="thisisjun786/codex-relay-workflow",
+                    cxc_status=cxc.BLOCKED, cxc_reason="changes are required on this head",
+                    summary="a report that cannot be rendered into a message",
+                    next_action="answer every finding above",
+                )
+        self.assertEqual(caught.exception.reason.value, "restoration_undeliverable")
+        self.assertIsNone(
+            report.read(self.store, revision), "a refused report stores nothing",
+        )
+
+    def test_the_report_projection_names_the_attempt_it_measured(self):
+        """A projection is preflight, and which attempt it measures decides its own bytes.
+
+        The request id sits on a line of the message, so measuring a1 while the next send
+        renders a5 compares a different length. Deferred attempts are ordinary here.
+        """
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-attempt",
+            findings=_findings(4, carries=1),
+        )
+        revision = self._revision_of(relationship, event_id, "v-attempt")
+        self.store.db.execute(
+            "UPDATE deliveries SET attempt_count = 4 WHERE event_id = ?", (revision,)
+        )
+        report.record(
+            self.store, self.clock, event_id=revision,
+            repository="thisisjun786/codex-relay-workflow",
+            cxc_status=cxc.BLOCKED, cxc_reason="changes are required on this head",
+            summary="four findings, the first of which carries the restoration block",
+            next_action="answer every finding above",
+        )
+        entries = self._projections(revision, kind="restoration_rendered")
+        self.assertEqual([entry.get("attempt") for entry in entries], [5])
+
     # ------------------------------------------------- an unlocatable declaration
 
     def test_two_findings_cannot_both_declare_the_block(self):
@@ -299,5 +357,34 @@ class RestorationDelivery(DeliveryTestCase):
             self.ack.record_verdict(
                 event_id, verdict="needs_changes", verdict_turn_id="v-str",
                 findings=findings,
+            )
+        self.assertEqual(caught.exception.reason.value, "disposition_conflict")
+
+    def test_a_declaration_in_one_input_is_not_erased_by_the_other(self):
+        """criteria and findings are merged by id and the last entry wins.
+
+        That is right for a disposition and a note and wrong for the declaration: the entry
+        that was only meant to add the note would cancel it, and the correction would go out
+        reporting that it carried no block at all.
+        """
+        _relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-merge",
+            criteria=[{"id": "c01", "verdict": "needs_changes", "restoration": True}],
+            findings=[{"id": "c01", "verdict": "needs_changes", "note": "resume context"}],
+        )
+        projected = self._projection(event_id)
+        self.assertEqual(projected["outcome"], "carried")
+        self.assertEqual(projected["criterion"], "c01")
+
+    def test_declaring_and_disclaiming_the_same_block_is_refused(self):
+        """A caller that means to cancel it cannot be told from one that forgot."""
+        _relationship, event_id = self._acknowledged()
+        with self.assertRaises(RelayError) as caught:
+            self.ack.record_verdict(
+                event_id, verdict="needs_changes", verdict_turn_id="v-contra",
+                criteria=[{"id": "c01", "verdict": "needs_changes", "restoration": True}],
+                findings=[{"id": "c01", "verdict": "needs_changes", "note": "n",
+                           "restoration": False}],
             )
         self.assertEqual(caught.exception.reason.value, "disposition_conflict")

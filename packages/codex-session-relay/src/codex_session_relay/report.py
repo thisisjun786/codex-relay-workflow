@@ -214,7 +214,7 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     # the legacy renderer does not. A declared restoration block that survived the
     # verdict-time projection can still be squeezed out here, and here is the last moment at
     # which refusing costs nothing: no attempt has frozen any bytes and nothing has been sent.
-    projection = _project_restoration(event, row)
+    projection = _project_restoration(store, event, row)
     if projection is not None and projection["outcome"] in restoration.UNDELIVERABLE:
         raise ReceiptRefused(
             RefusalReason.RESTORATION_UNDELIVERABLE,
@@ -265,7 +265,20 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     return row
 
 
-def _project_restoration(event, row):
+def _next_attempt(store, event_id) -> int:
+    """The attempt number the next delivery would render under.
+
+    Measuring against attempt one while the next send is attempt ten compares a different
+    number of bytes: the request id sits on a line of the message and `a10` is longer than
+    `a1`. A report resting on the budget boundary would be measured as fitting and then not
+    fit. Retries are ordinary here - a busy or archived recipient defers before anything is
+    sent - so the first attempt and the next one are different often enough to matter.
+    """
+    row = store.one("SELECT attempt_count FROM deliveries WHERE event_id = ?", (event_id,))
+    return (row["attempt_count"] if row else 0) + 1
+
+
+def _project_restoration(store, event, row):
     """What becomes of a declared restoration block once this report shapes the message.
 
     Only a revision request carries one. It is the parent-to-child correction, and the block
@@ -280,25 +293,37 @@ def _project_restoration(event, row):
         return None
     receipt = json.loads(event["receipt"]) if event["receipt"] else {}
     findings = receipt.get("criteria") or []
-    if restoration.declared(findings) is None:
+    block = restoration.declared(findings)
+    if block is None:
         return restoration.not_carried(
             basis=restoration.COMPOSED_BASIS,
             detail="no finding declared a restoration block",
         )
+    attempt = _next_attempt(store, event["event_id"])
     try:
         composed = compose_revision(
             {"event_id": event["event_id"], "relationship_id": event["relationship_id"]},
-            receipt, derive_request_id(event["event_id"], 1), row, budget=BUDGET,
+            receipt, derive_request_id(event["event_id"], attempt), row, budget=BUDGET,
         )
     except (ValueError, KeyError, TypeError, DeliveryRefused, ReceiptRefused) as error:
-        # Unmeasured is the honest answer when the measurement itself could not run, and it
-        # is not a synonym for delivered. The caller records it as the fact it is rather than
-        # refusing a report on the strength of a measurement that never happened.
-        return restoration.unmeasured(
-            f"this report could not be composed for measurement: {error}",
-            basis=restoration.COMPOSED_BASIS,
-        )
+        # Every failure reachable here is deterministic and recurs at delivery, because
+        # rendering happens again inside the claim transaction. Calling it unmeasured would
+        # commit a report whose own delivery can never succeed: each attempt would raise the
+        # same way, roll the claim back, and leave the correction queued forever. The block
+        # would then be stranded by a message nobody can compose rather than by one that
+        # dropped it, which is the same silence arriving by a longer route. Unmeasured is for
+        # a fact that was never established, not for one established as failing.
+        raise ReceiptRefused(
+            RefusalReason.RESTORATION_UNDELIVERABLE,
+            f"this report cannot be composed into a revision message, so the restoration "
+            f"block on {block['id']!r} cannot travel and every delivery attempt would fail "
+            f"the same way inside its claim: {error}",
+        ) from error
     projected = restoration.project_survivors(findings, composed.survivors)
+    # Which attempt these bytes belong to. A projection is preflight: it describes the
+    # message the NEXT attempt would render, and the bytes an attempt actually froze are
+    # recorded per attempt and returned by show.
+    projected["attempt"] = attempt
     # The workflow-restore SECTION is a second carrier of resumption context and the composer
     # may drop it whole, since it is not marked essential. That is reported, never refused: it
     # is already named in the omission notice, every ordinary long report uses this path, and
