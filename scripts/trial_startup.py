@@ -512,6 +512,13 @@ def load_start(path, *, environment=None, mode="preflight"):
     if launched.timestamp() > time.time():
         raise Refused("the supervisor's launchedAt is in the future",
                       launchedAt=field(record, "supervisor", "launchedAt"))
+    # A preflight runs immediately before the dispatch that opens the window, so a record whose
+    # window has already closed is a finished trial's record being started from again.
+    closes = field(record, "window", "closesAt")
+    if (closes not in (MISSING, None)
+            and moment(closes, "window.closesAt").timestamp() < time.time()):
+        raise Refused("this record's trial window has already closed, so it is not a record to"
+                      " start from", closesAt=closes, now=stamp())
     number(field(record, "supervisor", "minimumAliveSeconds"), "supervisor.minimumAliveSeconds",
            minimum=0)
 
@@ -1608,7 +1615,9 @@ def same_file(left, right):
     try:
         return os.path.samefile(str(left), str(right))
     except OSError:
-        return resolve(left) == resolve(right)
+        # Two paths that cannot be statted are not thereby one file, and calling them one turned
+        # an unreadable capture into a duplicate reading.
+        return False
 
 
 def launcher_unchanged(record, relay=None):
@@ -1624,7 +1633,9 @@ def launcher_unchanged(record, relay=None):
     a witness at the process boundary, which is CRW-102's and is not claimed here.
     """
     anchor = record.get("_relay") or {}
-    seen = sorted(d for d in (relay.digests if relay is not None else set()) if d)
+    read = relay.digests if relay is not None else set()
+    seen = sorted(d for d in read if d)
+    unreadable = any(d is None for d in read)
     try:
         after = digest_of(anchor.get("launcher"))
     except (OSError, TypeError) as error:
@@ -1632,8 +1643,10 @@ def launcher_unchanged(record, relay=None):
                 "beforeEachProbe": seen,
                 "detail": type(error).__name__ + ": " + str(error)}
     return {"passed": (after == anchor.get("sha256")
-                       and all(d == anchor.get("sha256") for d in seen)),
+                       and all(d == anchor.get("sha256") for d in seen)
+                       and not unreadable),
             "before": anchor.get("sha256"), "after": after, "beforeEachProbe": seen,
+            "unreadableBeforeAProbe": unreadable,
             "detail": "the pointer moves on update by design, so this is read at both ends of the"
                       " run and before each spawn: it reports a move rather than preventing one,"
                       " and a replacement put back between two readings is CRW-102's witness"}

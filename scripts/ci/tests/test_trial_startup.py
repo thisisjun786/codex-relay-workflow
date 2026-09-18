@@ -327,7 +327,9 @@ class World:
             "boundaries": [boundary("A", self.ISSUE_A, self.PARENT_A, self.CHILD_A),
                            boundary("B", self.ISSUE_B, self.PARENT_B, self.CHILD_B)],
             "captures": captures, "captureMaxAgeSeconds": 600,
-            "window": {"opensAt": startup.stamp(now - 60), "closesAt": startup.stamp(now - 5)},
+            # A preflight runs before the window opens, so the default record declares one ahead.
+            # The ledger cases set their own, which is what a finished trial's record carries.
+            "window": {"opensAt": startup.stamp(now + 60), "closesAt": startup.stamp(now + 600)},
         }
 
     # ------------------------------------------------------------------ running
@@ -1088,6 +1090,7 @@ class PayloadContract(TrialCase):
                "window", "corroboration", "store", "actual", "findings", "error", "isError",
                "status", "threadId", "taskId", "stateDirectory", "socket", "launchedAt",
                "minimumAliveSeconds", "artifacts", "peerDoctor"}
+        own |= {"closesAt"}
         self.assertEqual(reads - declared - own, set(),
                          "a field is read without being declared in the payload contract")
 
@@ -2169,6 +2172,48 @@ class FifteenthHostedRound(TrialCase):
                 cell = cells_of(document, "storeIdentity")["peer:" + task]
                 self.assertEqual(cell["value"], NOT_VERIFIED, make + " for " + task)
                 self.assertIn("counted as", cell["evidence"])
+
+
+class SixteenthHostedRound(TrialCase):
+    """A record whose window has closed, an unreadable alias, and an unreadable pre-spawn read."""
+
+    def test_a_record_whose_window_has_closed_cannot_be_started_from(self):
+        now = time.time()
+        self.world.record["window"] = {"opensAt": startup.stamp(now - 600),
+                                       "closesAt": startup.stamp(now - 60)}
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("already closed", refused.reason)
+
+    def test_the_ledger_still_grades_that_same_record(self):
+        now = time.time()
+        opened, closed = now - 600, now - 60
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window"},
+        ])
+        document = self.world.run_ledger()
+        self.assertTrue(document["window"]["windowIsClean"])
+
+    def test_two_captures_that_cannot_be_statted_are_not_one_file(self):
+        gone = str(self.world.trial / "not-there.json")
+        self.assertFalse(startup.same_file(gone, str(self.world.trial / "also-not-there.json")))
+        self.assertTrue(startup.same_file(gone, gone))
+
+    def test_a_launcher_that_could_not_be_read_before_a_spawn_fails(self):
+        self.world.start_supervisor()
+        relay = startup.Relay(startup.load_start(str(self.world.trial / "start.json"),
+                                                 environment=self.world.environment()))
+        relay.digests.add(None)
+        record = startup.load_start(str(self.world.trial / "start.json"),
+                                    environment=self.world.environment())
+        answer = startup.launcher_unchanged(record, relay)
+        self.assertFalse(answer["passed"])
+        self.assertTrue(answer["unreadableBeforeAProbe"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover

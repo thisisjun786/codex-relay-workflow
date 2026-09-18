@@ -93,7 +93,9 @@ written after registration, from the returned relationship id, and the dispatch 
 same identity in its own text, so the child's first turn does not depend on reading that file at
 all.
 
-**Preflight last, immediately before the dispatch.** All six readings are taken by one run at one
+**Preflight last, immediately before the dispatch.** A record whose window has already closed is a
+finished trial's record, and starting from it is refused; the ledger still grades that same record,
+which is what it is for afterwards. All six readings are taken by one run at one
 moment, because that is the only moment at which all of them are simultaneously true. All three
 observed failures were checks made too early, or not made.
 
