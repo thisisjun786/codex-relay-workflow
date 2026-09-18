@@ -11,6 +11,7 @@ the import did not bring, and the repository commit, which cannot be recorded in
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -21,6 +22,42 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFINITION_PATH = Path(__file__).resolve().parent / "components.json"
 PROVENANCE_PATH = "packages/README.md"
 
+# The directory OPS-1.2 excludes from the walk. Named once so the pruning and the filter agree:
+# pruning it and then still filtering on it is deliberate, because a path can carry the name
+# without the walk having descended into a directory called that.
+EXCLUDED_DIRECTORY = "__pycache__"
+
+
+def files_under(root, skip=()):
+    """Every file under a directory, with a subtree that cannot be read RAISING.
+
+    rglob answers an unreadable subdirectory by leaving it out and raising nothing, so the
+    digest built from it was a well-formed value describing a different tree -- byte for byte
+    the value that tree really hashes to. The reading region around the caller saw a value, the
+    comparison saw a mismatch, and the component was reported a fork. An incomplete reading is
+    not a value (OPS-2.1), so the walk fails instead and the boundary reports UNREADABLE.
+
+    The file set is the one rglob produced: recursive, not descending through a symbolic link
+    to a directory, and counting a link to a file as the file it names.
+
+    'skip' names directories to PRUNE rather than open. A directory whose contents cannot
+    affect the answer must not be able to refuse it: a root-owned __pycache__ would otherwise
+    turn a perfectly readable package into an unreadable one at every boundary that asks for
+    its digest. Pruning is not omission -- nothing readable is dropped, and every subtree that
+    can affect the answer still raises.
+    """
+    found, pending = [], [Path(root)]
+    while pending:
+        with os.scandir(str(pending.pop())) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name in skip:
+                        continue
+                    pending.append(Path(entry.path))
+                elif entry.is_file():
+                    found.append(Path(entry.path))
+    return found
+
 
 def ops12_digest(root):
     """SHA-256 over a package directory, exactly as OPS-1.2 defines it.
@@ -29,11 +66,14 @@ def ops12_digest(root):
     and feed the hash the relative path, a zero byte, then the SHA-256 of the file's bytes.
     Defined so the standard library alone reproduces it for a source tree and for an
     installed copy of that tree.
+
+    A subtree that cannot be read raises out of here rather than being skipped, so this never
+    answers with the digest of a tree it could not see all of.
     """
     root = Path(root)
     files = []
-    for path in root.rglob("*"):
-        if not path.is_file() or "__pycache__" in path.relative_to(root).parts:
+    for path in files_under(root, skip=(EXCLUDED_DIRECTORY,)):
+        if EXCLUDED_DIRECTORY in path.relative_to(root).parts:
             continue
         files.append(path)
     digest = hashlib.sha256()
@@ -164,4 +204,3 @@ def verify(root=None, definition=None):
                 + ", so the definition and the retained provenance disagree"
             )
     return findings
-
