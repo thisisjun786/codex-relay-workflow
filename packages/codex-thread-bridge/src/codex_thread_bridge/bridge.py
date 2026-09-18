@@ -5,8 +5,9 @@ import copy
 import re
 from pathlib import Path
 
+from .effects import recording
 from .execution import EXCEPTION_ID_MAXIMUM, PRESENCE_ONLY
-from .ledger import Ledger
+from .ledger import RETRYABLE_STATUSES, Ledger
 from .rpc import AppServer, RpcError
 from .settings import SettingsContract, annotation
 from .worktrees import Worktree, WorktreeError
@@ -132,6 +133,23 @@ def clipped(value, limit: int, *, display_text: bool = False):
     return value
 
 
+def interrupted(effects):
+    """The receipt fields for an operation that did not reach its own conclusion.
+
+    outcome_unknown asks every later caller never to send this request again, and that demand is
+    only honest when something actually went out. An operation that began nothing has nothing to
+    reconcile and nothing to duplicate, so it says so plainly and leaves its request id able to
+    carry a real attempt later. Which of the two this is comes from what was recorded as begun,
+    never from where in the operation the failure happened.
+    """
+    attempted = list(effects.attempted)
+    return {
+        "status": "outcome_unknown" if attempted else "not_attempted",
+        "retrySafe": not attempted,
+        "attemptedEffects": attempted,
+    }
+
+
 class Bridge:
     def __init__(self, rpc: AppServer, ledger: Ledger, *, policy=None):
         self.rpc = rpc
@@ -224,34 +242,59 @@ class Bridge:
         }
 
     async def _mutate(
-        self, request_id, method, params, action, *, validate_fresh, legacy_params=None
+        self, request_id, method, params, action, *, validate_fresh, legacy_params=None,
+        reconcile=None,
     ):
         async with self._mutation_lock:
             retained = self.ledger.lookup(request_id, method, params, legacy_params=legacy_params)
-            if retained is not None:
+            # A retained receipt answers the request, with one exception: one recording that
+            # nothing was begun answers nothing about the host, so the same id may try again
+            # rather than being spent on a socket that was briefly gone. A known rejection is an
+            # answer and keeps its id; only the absence of one is refundable.
+            if retained is not None and retained.get("status") not in RETRYABLE_STATUSES:
                 return {**retained, "replayed": True}
             # Required rather than optional, so a mutation added later cannot quietly dispatch
             # without being authorized. It runs after the replay lookup and before any ledger row
-            # exists, which is what lets a refused request be corrected under the same id.
+            # exists, which is what lets a refused request be corrected under the same id. A
+            # retried request is authorized here again rather than inheriting the first attempt's
+            # decision, because the policy may have changed since.
             validate_fresh()
             fresh, receipt = self.ledger.begin(
                 request_id, method, params, legacy_params=legacy_params
             )
             if not fresh:
                 return {**receipt, "replayed": True}
-            try:
-                await action(receipt)
-                receipt["status"] = "accepted"
-            except RpcError as error:
-                receipt.update(status="failed", error=str(error), rpcError=error.error)
-            except WorktreeError as error:
-                receipt.update(status="failed", error=str(error))
-            except asyncio.CancelledError:
-                self.ledger.save({**receipt, "status": "outcome_unknown"})
-                raise
-            except Exception as error:
-                receipt.update(status="outcome_unknown", error=f"{type(error).__name__}: {error}")
-            return self.ledger.save(receipt)
+            with recording() as effects:
+
+                def settled():
+                    """Finish the receipt once its status and its evidence both exist.
+
+                    An action may have to write a state before it can be known, because a crash
+                    there would otherwise hide it. Only the action knows which field that was, so
+                    correcting it belongs to the action rather than here; this passes it the
+                    finished receipt and stays generic.
+                    """
+                    receipt["attemptedEffects"] = list(effects.attempted)
+                    if reconcile is not None:
+                        reconcile(receipt)
+                    return receipt
+
+                try:
+                    await action(receipt)
+                    receipt["status"] = "accepted"
+                except RpcError as error:
+                    receipt.update(status="failed", error=str(error), rpcError=error.error)
+                except WorktreeError as error:
+                    receipt.update(status="failed", error=str(error))
+                except asyncio.CancelledError:
+                    receipt.update(**interrupted(effects))
+                    self.ledger.save(settled())
+                    raise
+                except Exception as error:
+                    receipt.update(
+                        **interrupted(effects), error=f"{type(error).__name__}: {error}"
+                    )
+                return self.ledger.save(settled())
 
     async def create_thread(
         self,
@@ -482,10 +525,6 @@ class Bridge:
             checkpoint(
                 "validating",
                 executionPolicy=dict(execution.receipt),
-                recoveryRequired=True,
-                recovery="Inspect this receipt, the destination and Git worktree list, and "
-                "backend/Desktop tasks before manual recovery. Retain all artifacts; do not "
-                "retry with a new request ID. Unknown thread/turn outcomes need reconciliation.",
                 requestedCheckout=destination,
                 initialPrompt={"state": "not_sent" if prompt is not None else "not_requested"},
                 desktopProjectAssociation={
@@ -496,7 +535,18 @@ class Bridge:
             worktree = await Worktree.validate(source_repository, starting_revision, destination)
             if app_server_project_id is not None:
                 await self.rpc.call("project/read", {"projectId": app_server_project_id})
-            checkpoint("reserving_destination", worktree=worktree.receipt())
+            # The demand for recovery is recorded here rather than above, because everything
+            # above only asks questions: a crash there leaves nothing on disk or on the host to
+            # reconcile, and a receipt demanding recovery for it would send someone looking for
+            # artifacts that were never made. From this line on the destination can exist.
+            checkpoint(
+                "reserving_destination",
+                worktree=worktree.receipt(),
+                recoveryRequired=True,
+                recovery="Inspect this receipt, the destination and Git worktree list, and "
+                "backend/Desktop tasks before manual recovery. Retain all artifacts; do not "
+                "retry with a new request ID. Unknown thread/turn outcomes need reconciliation.",
+            )
             worktree.reserve()
             receipt["worktree"]["state"] = "reserved"
             checkpoint("creating_worktree")
@@ -604,8 +654,31 @@ class Bridge:
                 )
             checkpoint("complete", recoveryRequired=False)
 
+        def reconcile(receipt):
+            """Correct the prompt's state once the evidence says more than the guess did.
+
+            The dispatching checkpoint writes outcome_unknown before the frame goes out, so that
+            a process killed mid-dispatch cannot leave a receipt claiming the prompt was withheld.
+            Once the operation ends, three different things can be true, and only one of them is
+            the one that was written down in advance: the frame was never begun, the host
+            answered and refused it, or it went out and the answer was lost.
+            """
+            if prompt is None or (receipt.get("initialPrompt") or {}).get("state") != (
+                "outcome_unknown"
+            ):
+                return
+            if "turn/start" not in receipt["attemptedEffects"]:
+                receipt["initialPrompt"] = {"state": "not_sent"}
+            elif receipt["status"] == "failed":
+                receipt["initialPrompt"] = {"state": "rejected"}
+
         receipt = await self._mutate(
-            request_id, "create_worktree_thread", params, action, validate_fresh=validate_fresh
+            request_id,
+            "create_worktree_thread",
+            params,
+            action,
+            validate_fresh=validate_fresh,
+            reconcile=reconcile,
         )
         # Same diagnostic as the other two paths. It matters most here: this path checks its
         # settings at creation, then names the thread and re-inspects the checkout before

@@ -273,6 +273,8 @@ whatever was created. Why that marker is recorded at all is in
 - `accepted`: requested API steps returned; the task may still be running.
 - `failed`: inspect the actual rejection and any retained worktree/task/turn IDs.
 - `outcome_unknown` or `in_progress_or_unknown`: reconcile before another mutation.
+- `not_attempted`: nothing was sent and nothing was created, so there is nothing to reconcile.
+  Reuse the same ID to make the attempt; do not mint a new one.
 
 Use `get_operation`, backend reads/listing, and actual worktree state to identify
 what occurred. If a writer may still be active or the delivery outcome is unknown,
