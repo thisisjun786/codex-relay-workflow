@@ -198,6 +198,11 @@ def canonical(value, what):
             or (text.endswith("/") and text != "/") or "//" in text):
         raise Refused(what + " is not a normalised absolute path", value=text,
                       normalised=os.path.normpath(text))
+    if any(character.isspace() for character in text):
+        # The relay would accept it. This procedure cannot: the dispatch message names each
+        # identity as a word of its own, and a path holding whitespace is never one word.
+        raise Refused(what + " holds whitespace, which the dispatch message cannot name as a"
+                             " word", value=text)
     return path
 
 
@@ -1017,9 +1022,9 @@ def reading_store(record, relay):
                  == field(entry, "path")]
         if twins:
             # One file cannot be several participants' own reading: graded once per name it was
-            # listed under, it would report a shared store on the strength of a single peer.
+            # listed under, or copied, it would report a shared store on the strength of one peer.
             cells.append(cell("peer:" + name, NOT_VERIFIED, provenance=CAPTURED,
-                              evidence=("this capture is also listed for " + ", ".join(twins)
+                              evidence=("this capture is the same reading as " + ", ".join(twins)
                                         + ", so it is one participant's reading counted as"
                                           " several")))
             continue
@@ -1037,6 +1042,13 @@ def reading_store(record, relay):
                   and same(field(peer, "store", "device"), store.get("device"))
                   and same(field(peer, "store", "inode"), store.get("inode")))
         answered = MISSING if (peer_same is MISSING or asked is MISSING) else peer_same
+        # doctor does not name the participant that ran it, so two peers legitimately produce
+        # identical payloads and this is reported rather than graded. What it costs is stated in
+        # the stand-ins: the attribution of a capture to a participant is the operator's.
+        alike = [other for other in participants_of(record) if other != name
+                 and (lambda t: t is not None
+                      and json.dumps(t["payload"], sort_keys=True)
+                      == json.dumps(peer, sort_keys=True))(capture(record, "peerDoctor", other)[0])]
         cells.append(graded("peer:" + name, answered,
                             peer_same == "proven" and agrees and nonce_agrees,
                             provenance=CAPTURED, measured_at=found["capturedAt"],
@@ -1046,7 +1058,10 @@ def reading_store(record, relay):
                                       " store identity "
                                       + ("agrees with" if agrees else "disagrees with")
                                       + " the record, for challenge " + str(shown(asked))
-                                      + ". A verdict speaks only for the nonce it was given"),
+                                      + ". A verdict speaks only for the nonce it was given"
+                                      + (", and this payload is identical to " + ", ".join(alike)
+                                         + ", which doctor cannot tell apart because it does not"
+                                           " name the participant that ran it" if alike else "")),
                             detail=found["path"]))
     return cells
 
@@ -1665,6 +1680,10 @@ def preflight(record, *, sleeper=time.sleep):
                                  " supervisor's own claim; that witness is CRW-102's",
             "hostRecord": "a trusted inventory. The launcher agrees with the installed-runtime"
                           " record rather than being proven to be the relay",
+            "peerAttribution": "a doctor payload that names the participant that ran it. It does"
+                               " not, so a peer capture is the operator's attribution: what this"
+                               " establishes is that the peers are distinct readings, not that"
+                               " each was taken by the participant it is filed under",
         },
         "procedure": "docs/live-trial.md",
     }

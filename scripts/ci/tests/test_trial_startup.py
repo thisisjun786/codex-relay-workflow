@@ -2123,5 +2123,31 @@ class ThirteenthHostedRound(TrialCase):
         self.assertEqual(document["readyToStart"], not document["judgmentsThatFailed"])
 
 
+class FourteenthHostedRound(TrialCase):
+    """What a peer capture can and cannot establish, and a path the message could not name."""
+
+    def test_identical_peer_payloads_are_reported_rather_than_graded(self):
+        # doctor does not name the participant that ran it, so two peers legitimately produce the
+        # same bytes. The cell says so instead of failing a start for it.
+        document = self.world.preflight()
+        cell = cells_of(document, "storeIdentity")["peer:" + World.CHILD_A]
+        self.assertEqual(cell["value"], VERIFIED)
+        self.assertIn("identical to", cell["evidence"])
+        self.assertIn("does not\n" if False else "does not", cell["evidence"])
+
+    def test_the_attribution_of_a_peer_capture_is_recorded_as_a_stand_in(self):
+        document = self.world.preflight()
+        self.assertIn("peerAttribution", document["standIns"])
+        self.assertIn("operator's attribution", document["standIns"]["peerAttribution"])
+
+    def test_an_artifact_path_with_whitespace_is_refused(self):
+        spaced = str(self.world.repos["A"] / "output file.txt")
+        self.world.record["assignment"]["artifacts"] = [spaced]
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("whitespace", refused.reason)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

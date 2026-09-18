@@ -128,7 +128,9 @@ may hold any byte but a separator and a NUL, so no rule could tell a trailing br
 that belongs to the sentence from one that belongs to the path, and two attempts proved it: a
 substring test read `/repo/artifact.py.bak` as naming `/repo/artifact.py`, and stripping punctuation
 afterwards read `/repo/file!` as naming `/repo/file` while refusing a real artifact ending in a bracket.
-The requirement therefore sits on the message, where an operator can meet it exactly. The artifact roots come from the captured registration receipt, because
+The requirement therefore sits on the message, where an operator can meet it exactly, and an
+artifact path holding whitespace is refused: the relay would accept one, but no message can name it
+as a word. The artifact roots come from the captured registration receipt, because
 no read-only command returns them; what actually enforces them is the manifest `emit` builds, which
 is where it belongs.
 
@@ -277,6 +279,7 @@ could construct a store.
 | the captured lifecycle response | a lifecycle read this process made | that the host would answer the same way at the moment of dispatch. It carries its own time, and it goes stale |
 | the captured creation receipt | the host's own echo, read live | that a provider served the model. Only that the host recorded the request |
 | the supervisor's witness | a witness at the process boundary | that the pid inside it is the process that wrote it. That witness is CRW-102's, and this reading is that something naming the pid advanced the file |
+| a peer's captured doctor | a reading attributed to the participant that took it | which participant took it. `doctor` does not name the process that ran it, so two peers legitimately produce identical payloads and the report says when they did. Filing a capture under a participant is the operator's attribution |
 | the runtime host record | a trusted inventory of what is installed | the provenance of the launcher's bytes. It is a private file the same operator writes, so the launcher agrees with the installed-runtime record rather than being proven to be the relay |
 | the declared window bounds | times taken from the store | that the window is where the operator says it is, unless a corroborating store time was supplied. The report says which of the two it had |
 
