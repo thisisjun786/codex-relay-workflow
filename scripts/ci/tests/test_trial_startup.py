@@ -237,20 +237,22 @@ class World:
                 "threadId": task, "status": "idle", "goal": None}
         for name, issue in (("A", self.ISSUE_A), ("B", self.ISSUE_B)):
             child = self.CHILD_A if name == "A" else self.CHILD_B
+            parent = self.PARENT_A if name == "A" else self.PARENT_B
             self.captures["register-" + name + ".json"] = {
                 "relationshipId": self.RELATIONSHIP if name == "A" else "rel-0000000000000002",
                 "issueKey": issue, "status": "active", "executionGeneration": 1,
-                "parent": {"taskId": self.PARENT_A if name == "A" else self.PARENT_B,
-                           "cwd": str(self.repos[name])},
+                "parent": {"taskId": parent, "cwd": str(self.repos[name])},
                 "child": {"taskId": child, "cwd": str(self.repos[name])},
                 "authorizedScope": {"scopeRef": "scope-" + name,
                                     "artifactRoots": [str(self.repos[name])],
-                                    "allowedRecipients": []},
+                                    "allowedRecipients": [parent, child]},
             }
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
             self.captures["doctor-" + task + ".json"] = {
                 "sameStore": "proven",
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE},
+                "nonce": {"nonce": self.NONCE, "found": True, "readable": True,
+                          "device": self.DEVICE, "inode": self.INODE},
             }
 
     def _write_assignment_and_message(self):
@@ -624,7 +626,8 @@ class StoreIdentity(TrialCase):
     def test_a_peer_reporting_proven_about_another_store_fails(self):
         self.world.captures["doctor-" + World.CHILD_A + ".json"] = {
             "sameStore": "proven",
-            "store": {"storeId": "another-store", "device": 1, "inode": 2}}
+            "store": {"storeId": "another-store", "device": 1, "inode": 2},
+            "nonce": {"nonce": World.NONCE, "found": True, "readable": True}}
         self.world.flush()
         document = self.world.preflight()
         cell = cells_of(document, "storeIdentity")["peer:" + World.CHILD_A]
@@ -1010,13 +1013,14 @@ class PayloadContract(TrialCase):
         ("assignment.py", "for_issue"): ("issueKey", "assignments", "responsibleRelationship"),
         ("cli.py", "cmd_criteria_show"): ("setDigest", "sourceRef", "criteria"),
         ("cli.py", "cmd_settings_show"): ("task", "usable", "missing", "settings"),
-        ("cli.py", "cmd_doctor"): ("ledger",),
+        ("cli.py", "cmd_doctor"): ("ledger", "nonce"),
         ("cli.py", "_ledger_location"): ("configured", "split"),
         ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode"),
         ("store.py", "compare_store"): ("sameStore",),
         ("service.py", "status"): ("lock", "staleRecord", "ownership", "pid", "storeId"),
         ("registry.py", "_row_to_record"): ("authorizedScope", "scopeRef", "artifactRoots",
-                                            "child", "parent", "taskId", "cwd"),
+                                            "allowedRecipients", "child", "parent", "taskId",
+                                            "cwd"),
     }
 
     def keys_built_by(self, name, function):
@@ -1847,6 +1851,36 @@ class EighthHostedRound(TrialCase):
             document = world.preflight()
             self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"],
                              NOT_VERIFIED, repr(value) + " was read as a workspace")
+
+
+class NinthHostedRound(TrialCase):
+    """The recipients a registration authorises, and the challenge a peer was asked about."""
+
+    def test_a_registration_that_does_not_authorise_both_endpoints_fails(self):
+        for allowed in ([World.PARENT_A], [World.CHILD_A], ["somebody-else"], []):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.captures["register-A.json"]["authorizedScope"]["allowedRecipients"] = allowed
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"],
+                             NOT_VERIFIED, json.dumps(allowed) + " was accepted")
+
+    def test_a_peer_asked_about_another_challenge_is_not_this_trials_proof(self):
+        self.world.captures["doctor-" + World.CHILD_A + ".json"]["nonce"] = {
+            "nonce": "an-older-challenge", "found": True, "readable": True}
+        self.world.flush()
+        document = self.world.preflight()
+        cell = cells_of(document, "storeIdentity")["peer:" + World.CHILD_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("an-older-challenge", cell["evidence"])
+
+    def test_a_peer_payload_without_its_challenge_is_unknown(self):
+        self.world.captures["doctor-" + World.CHILD_A + ".json"].pop("nonce")
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.CHILD_A]["value"],
+                         UNKNOWN)
 
 
 if __name__ == "__main__":                                           # pragma: no cover

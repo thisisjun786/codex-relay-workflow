@@ -688,6 +688,17 @@ def registration_identity(record, boundary, receipt):
         return False, "it names issue " + str(shown(field(receipt, "issueKey")))
     if field(receipt, "status") != "active":
         return False, "its status is " + str(shown(field(receipt, "status")))
+    # Both endpoints have to be allowed recipients of this registration. The relay delivers only
+    # to a recipient recorded here (OPS-7.3), so a registration authorising somebody else is one
+    # under which this trial's completion and correction have nowhere to go.
+    allowed = field(receipt, "authorizedScope", "allowedRecipients")
+    if not isinstance(allowed, list):
+        return False, "it records no allowed recipients"
+    for role in ("parent", "child"):
+        task = next((p.get("taskId") for p in boundary.get("participants") or []
+                     if p.get("role") == role), None)
+        if task is not None and not any(same(entry, task) for entry in allowed):
+            return False, "its allowed recipients do not include the " + role
     if this_one:
         if not same(field(receipt, "relationshipId"), assignment.get("relationshipId")):
             return False, "it names relationship " + str(shown(field(receipt, "relationshipId")))
@@ -965,17 +976,25 @@ def reading_store(record, relay):
             continue
         peer = found["payload"]
         peer_same = field(peer, "sameStore")
+        # The verdict speaks for the nonce it was given, and the payload carries which one that
+        # was: a peer run against an older challenge could report proven about a store this trial
+        # never wrote to.
+        asked = field(peer, "nonce", "nonce")
+        nonce_agrees = same(asked, store.get("challengeNonce"))
         agrees = (same(field(peer, "store", "storeId"), store.get("storeId"))
                   and same(field(peer, "store", "device"), store.get("device"))
                   and same(field(peer, "store", "inode"), store.get("inode")))
-        cells.append(graded("peer:" + name, peer_same, peer_same == "proven" and agrees,
+        answered = MISSING if (peer_same is MISSING or asked is MISSING) else peer_same
+        cells.append(graded("peer:" + name, answered,
+                            peer_same == "proven" and agrees and nonce_agrees,
                             provenance=CAPTURED, measured_at=found["capturedAt"],
-                            unreadable="this peer's doctor payload carries no same-store verdict",
+                            unreadable="this peer's doctor payload carries no same-store verdict"
+                                       " and the challenge it was asked about",
                             evidence=("this peer reports " + str(shown(peer_same)) + " and its own"
                                       " store identity "
                                       + ("agrees with" if agrees else "disagrees with")
-                                      + " the record. A verdict alone speaks only for whatever"
-                                      " arguments produced it"),
+                                      + " the record, for challenge " + str(shown(asked))
+                                      + ". A verdict speaks only for the nonce it was given"),
                             detail=found["path"]))
     return cells
 
