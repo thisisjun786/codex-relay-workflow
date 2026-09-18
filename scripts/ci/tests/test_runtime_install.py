@@ -8081,20 +8081,47 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                          runtime_install_module.OWNERSHIP_WITHDRAWN)
 
     def test_the_resume_exit_reports_the_same_outstanding_claim(self):
-        """SUPPORT, and labelled so after measuring rather than assuming.
-
-        A resume never reaches the update's exit, so the two fields a receipt reads for an
+        """A resume never reaches the update's exit, so the two fields a receipt reads for an
         outstanding claim are produced there too, from one helper, so the same failure cannot
         read one way on one path and another way on the other. Raised by an independent review
         of this pull request.
 
-        It is NOT red-at-parent evidence. Run against 33d139a it passes, and run against
-        ceeb5d9 -- the head just before the fields reached this exit -- it passes as well. I
-        claimed a red baseline for it twice and measured neither; both runs are recorded beside
-        the other evidence. What it pins is the contract going forward: this exit reports the
-        claim, the other exit reports it identically, and .get() is used so an absent field
+        Its red baseline is ceeb5d9, the head before these fields reached this exit, not the
+        issue's 33d139a -- MEASURED, after I twice wrote down a baseline I had not run. There it
+        fails with "None != <pointer path>". The fields are read with .get() so an absent one
         fails as the absence it is rather than as a KeyError.
         """
+        import runtime_install
+
+        real_update = hostrecord.update
+
+        def refuse_the_rollback_write(path, version, **delta):
+            if "drop_pointer" in delta or "restore_pointer" in delta:
+                raise OSError("the record could not be written")
+            return real_update(path, version, **delta)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self._link_deleted_under_it(host)
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=refuse_the_rollback_write):
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="replace the owned pointer")
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertEqual(payload.get("residualOwnership"), str(host.pointer_path),
+                         "the resume's exit names the claim it left, the way the update's does")
+        self.assertIn("settle the host record's pointer ownership",
+                      payload.get("recoveryRequires") or "")
+        self.assertEqual(payload["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_UNREADABLE)
 
     def test_ownership_evidence_is_bound_to_the_path_it_is_about(self):
         """SUPPORT. An entry is ABOUT a path, and a caller holding a path derived somewhere else
@@ -8147,21 +8174,29 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                                      host.data["definitionVersion"]).value
             record["pointer"] = {"path": str(host.root / "elsewhere" / "current")}
             hostrecord.save(host.record_path, record)
-            # ... while the record selects this environment and a link this record accounts for
-            # sits at the path this call was handed.
+            # ... while the record selects the CANDIDATE and the link at the path this call was
+            # handed still names the predecessor, which the record accounts for. Selecting the
+            # candidate is what makes the outcome observable: finishing moves the link, refusing
+            # leaves it where it was.
+            host.candidate.mkdir(parents=True, exist_ok=True)
+            (host.candidate / "site").mkdir(exist_ok=True)
             hostrecord.update(host.record_path, host.data["definitionVersion"],
-                              select={c["component"]: str(host.previous_site / c["module"])
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
                                       for c in host.data["components"]})
             emitted = []
             with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
                 code = runtime_install._finish_promotion(
-                    host.record_path, host.data, host.previous, host.pointer_path,
+                    host.record_path, host.data, host.candidate, host.pointer_path,
                     {"command": "install", "applied": False}, issue="CRW-95", reported={})
+            reached = pointer.read(host.pointer_path)["target"]
 
         self.assertEqual(code, 0, json.dumps(emitted[-1])[:900])
-        self.assertNotIn("not this run's to replace", json.dumps(emitted[-1]),
-                         "an entry about another path is not evidence about this one, and"
-                         " refusing on it is a judgment taken from the wrong reading")
+        # Asserted on what the call DID, not on what it said. A message check would go on
+        # passing if the refusal came back under different words, and this repository does not
+        # take text matching as proof of behaviour.
+        self.assertEqual(reached, str(host.candidate),
+                         "the resume finished: an entry about another path is not evidence"
+                         " about this one, so there was nothing here to refuse on")
         import runtime_install
 
         real_update = hostrecord.update
@@ -8561,6 +8596,72 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                          "a link this record does not say this command placed is left exactly"
                          " as it is, by the resume as well as by the promotion")
         self.assertIn("not this run's to replace", json.dumps(payload))
+
+
+def _bodiless_tests(tree):
+    """Test methods whose body is a docstring, or nothing, and no more.
+
+    A test that asserts nothing passes, and reports that it passed. The name still appears in
+    the run, the count still goes up, and a reader takes the green for evidence.
+    """
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+            continue
+        doing = [statement for statement in node.body
+                 if not isinstance(statement, ast.Pass)
+                 and not (isinstance(statement, ast.Expr)
+                          and isinstance(statement.value, ast.Constant)
+                          and isinstance(statement.value.value, str))]
+        if not doing:
+            found.append(node.name)
+    return found
+
+
+class BodilessTestTests(unittest.TestCase):
+    """A test with no body in it, which is the one failure a test suite cannot report.
+
+    This existed. A patch replaced a docstring and took the body away with it, and the empty
+    method then went on reporting success -- through three commits, and twice into a pull
+    request description as a MEASURED baseline, because running it produced a green result and
+    the green looked like a reading. Everything else in this file is about a cell carrying an
+    answer its own question's reading did not produce; this is that, one layer out, where the
+    reading was the test suite itself.
+
+    Derived over every test module here rather than the one that had it, because the next one
+    will not be in the same file.
+    """
+
+    def _modules(self):
+        return sorted(Path(__file__).resolve().parent.glob("test_*.py"))
+
+    def test_no_test_in_this_suite_asserts_nothing(self):
+        empty = []
+        for module in self._modules():
+            for name in _bodiless_tests(ast.parse(module.read_text(encoding="utf-8"))):
+                empty.append(module.name + "::" + name)
+
+        self.assertEqual(empty, [],
+                         "a test with nothing in it passes and reports that it passed: "
+                         + json.dumps(empty))
+
+    def test_the_scan_is_not_looking_at_an_empty_set(self):
+        """Guards the reader. A glob that matched nothing would pass the claim above silently."""
+        modules = self._modules()
+        self.assertGreaterEqual(len(modules), 4, [m.name for m in modules])
+        self.assertIn("test_runtime_install.py", [m.name for m in modules])
+
+    def test_the_scan_sees_a_test_that_only_has_a_docstring(self):
+        """The negative control, in both shapes it takes."""
+        self.assertEqual(
+            _bodiless_tests(ast.parse("class T:\n"
+                                      "    def test_documented(self):\n"
+                                      '        """says what it would do"""\n'
+                                      "    def test_passing(self):\n"
+                                      "        pass\n"
+                                      "    def test_real(self):\n"
+                                      "        assert True\n")),
+            ["test_documented", "test_passing"])
 
 
 class LegacyInstallTests(unittest.TestCase):
