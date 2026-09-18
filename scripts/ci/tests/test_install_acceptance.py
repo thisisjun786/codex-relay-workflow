@@ -554,7 +554,8 @@ REFUSAL_ANSWERS = ("not_verified", "unknown", "not_applicable", reading.UNREADAB
 # The places that require a refusal, and what makes the refusal the right answer there. None of
 # them is an acceptance row accepting its own failure: every one of the seven is separately
 # required to read its success answer. A new place that settles for a refusal has to say which
-# of these it is, and a check derives the set from this file so it cannot arrive unannounced.
+# of these it is, and a check derives the set from this file -- for the spellings that
+# derivation can see, which is narrower than the class this set names.
 ACCEPTS_A_REFUSAL = {
     "test_a_daemon_that_could_not_be_read_is_neither_running_nor_stopped":
         "the refusal IS the question: a daemon that could not be read is a third answer, and"
@@ -1114,9 +1115,11 @@ class SevenReadingsTests(unittest.TestCase):
         declaration. AGENTS.md states the rule for this repository: a text-matching test is not
         proof of behaviour.
 
-        So the places are derived from this file instead of listed by hand. Anything that reads
-        source to reach a conclusion has to be declared with the reason it cannot ask the thing
-        itself, and a new one is a failure here rather than a fourth round.
+        So the places are derived from this file instead of listed by hand. What the derivation
+        sees is a call to ast.parse inside a function: a place that reaches its conclusion from
+        source text another way -- read_text compared directly, a phrase searched for -- is
+        invisible to it and would have to be declared by hand. This covers the shape that has
+        arrived three times, not the whole class it names.
         """
         tree = ast.parse(HERE.read_text(encoding="utf-8"))
         reading_text = set()
@@ -1337,9 +1340,12 @@ class SevenReadingsTests(unittest.TestCase):
     def test_every_place_that_settles_for_a_refusal_is_declared(self):
         """The inventory of accepted answers, derived from what the assertions require.
 
-        Derived by the ANSWER an assertion requires, not by the shape of the assertion. A sweep
-        over shapes misses a refusal reached through a helper or spelled as a constant, and that
-        is how two of these survived earlier passes.
+        What the derivation sees is a refusal spelled as a literal, or as one of this module's
+        named constants, inside an assert call. It does not decide which answer an assertion
+        REQUIRES: a refusal reached through an alias reads as absent, and an assertNotEqual
+        against one reads as present although it requires the opposite. So this catches the
+        spellings that have arrived, and a place can still settle for a refusal without
+        entering the inventory.
 
         The point is not that refusals are forbidden -- this repository is built on absence
         being a real answer. It is that a place settling for one has to say why the refusal is
