@@ -9204,17 +9204,18 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         self.assertIn("reclaim", guidance)
 
     def test_pointer_cleanup_guidance_never_reads_as_an_unconditional_delete(self):
-        """Same class as the directory guidance. An install can repoint the link after
-        _pointer_finding read it, and acting on the stale result removes a pointer that has
-        become live, breaking every registered command that goes through it."""
+        """Same class as the directory guidance, and one step further. Rereading before
+        removing does not close the gap -- a run can repoint the link between the reread and
+        the removal -- so the guidance names repointing as the recovery and declines to
+        recommend removal by hand at all."""
         with tempfile.TemporaryDirectory() as temporary:
             host = _Host(temporary)
             pointer.place(host.pointer_path, host.destination / "env-that-went-away")
             found = _diagnose(host)["residue"]
         guidance = " ".join(found["recoveryRequires"])
         self.assertIn(str(host.pointer_path), found["residualPaths"])
-        self.assertIn("held none", guidance)
-        self.assertIn("reading it again", guidance)
+        self.assertIn("under the lock this reading did not hold", guidance)
+        self.assertIn("does NOT recommend removing the link by hand", guidance)
 
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer

@@ -1614,8 +1614,17 @@ def status(codex_home=None, environ=None, event=EVENT):
     # and a hook that had never fired at all then produced identical cells, which is the
     # distinction the operator procedure had to write down as missing. None is elected, because
     # electing one would make the answer depend on which path happened to sort first.
-    startable = {probe["registration"]: {probe["adapter"], probe["interpreter"]}
-                 == {reading.PRESENT} for probe in start_probes}
+    # Three answers, not two. A probe this command did not judge -- a workspace-dependent
+    # spelling, or one it could not reach -- is neither "starts" nor "cannot start", and
+    # recording it as the latter dropped that registration's journal from every question while
+    # a blocked neighbour supplied a settled explanation for the whole host.
+    startable = {}
+    for probe in start_probes:
+        halves = {probe["adapter"], probe["interpreter"]}
+        startable[probe["registration"]] = (
+            True if halves == {reading.PRESENT}
+            else False if halves & {reading.ABSENT, reading.UNREADABLE}
+            else None)
     named_journals = journals_named(
         [
         {"registration": entry["identity"],

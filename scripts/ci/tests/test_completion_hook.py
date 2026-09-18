@@ -2364,6 +2364,32 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                             "a configuration naming no journal root must not key as a path;"
                             " the empty string normalises to one a configuration may name")
 
+    def test_a_peer_nobody_could_judge_is_not_treated_as_one_that_cannot_start(self):
+        """A probe this command did not judge -- a workspace-dependent spelling, or one it
+        could not reach -- is neither 'starts' nor 'cannot start'. Recorded as the latter, that
+        registration's journal dropped out of every question while a blocked neighbour supplied
+        a settled explanation for the whole host."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            second_registration(temporary, "journal-two")
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entries = document["hooks"][completion.EVENT][0]["hooks"]
+            # One registration definitively blocked: its adapter is gone.
+            entries[0]["command"] = entries[0]["command"].replace(
+                str(ENTRY_POINT), str(Path(temporary) / completion.ENTRY_POINT_NAME))
+            # The other unjudged: a relative interpreter resolves per workspace, so this
+            # command does not probe it and cannot say whether the host can start it.
+            entries[1]["command"] = "./python " + entries[1]["command"].split(" ", 1)[1]
+            path.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE,
+                         "a blocked registration settled the whole host while a peer nobody"
+                         " could judge was quietly counted as unable to run")
+        self.assertIn(firing.ADAPTER_CANNOT_RUN,
+                      [entry["cause"] for entry in cell.get("candidates") or []])
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition
