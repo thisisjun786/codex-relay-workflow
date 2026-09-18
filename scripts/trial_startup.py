@@ -684,6 +684,11 @@ def registration_identity(record, boundary, receipt):
     """
     assignment = record.get("assignment") or {}
     this_one = boundary.get("issueKey") == assignment.get("issueKey")
+    for path in (("issueKey",), ("status",), ("authorizedScope", "allowedRecipients")):
+        # A field the receipt does not carry is a reading nobody took, not a registration that
+        # disagrees, and the cell above has to be able to tell them apart.
+        if field(receipt, *path) is MISSING:
+            return MISSING, "it does not carry " + ".".join(path)
     if not same(field(receipt, "issueKey"), boundary.get("issueKey")):
         return False, "it names issue " + str(shown(field(receipt, "issueKey")))
     if field(receipt, "status") != "active":
@@ -1044,6 +1049,10 @@ def reading_boundaries(record, relay):
             child = next((p for p in boundary.get("participants") or []
                           if p.get("role") == "child"), {})
             current, why = registration_identity(record, boundary, receipt)
+            # MISSING is an object and objects are truthy, so this verdict is compared rather than
+            # tested: a receipt missing a field its identity is decided from is unknown, not one
+            # that disagreed.
+            current_ok = current is True
             parent = next((p for p in boundary.get("participants") or []
                            if p.get("role") == "parent"), {})
 
@@ -1065,7 +1074,7 @@ def reading_boundaries(record, relay):
             workspaces = [workspace("child", child.get("cwd")),
                           workspace("parent", parent.get("cwd"))]
             ok = (same(scope, boundary.get("scopeRef"))
-                  and current
+                  and current_ok
                   and same(field(receipt, "child", "taskId"), child.get("taskId"))
                   and same(field(receipt, "parent", "taskId"),
                            next((p.get("taskId") for p in boundary.get("participants") or []
@@ -1074,11 +1083,13 @@ def reading_boundaries(record, relay):
                   # discovery and a parent registered against another one has delivery withheld.
                   and all(answer is True for answer in workspaces))
             # The cell is answerable only where every field its predicate reads is there.
-            answered = MISSING if (scope is MISSING or MISSING in workspaces) else scope
+            answered = (MISSING if (scope is MISSING or MISSING in workspaces
+                                    or current is MISSING) else scope)
             cells.append(graded("registration:" + str(name), answered, ok, provenance=CAPTURED,
                                 measured_at=found["capturedAt"],
                                 unreadable="this registration receipt does not carry both the"
-                                           " authorised scope and each endpoint's workspace",
+                                           " authorised scope, each endpoint's workspace and the"
+                                           " fields its identity is decided from",
                                 evidence=("the registration names scope " + str(shown(scope))
                                           + ", issue " + str(shown(field(receipt, "issueKey")))
                                           + ", status " + str(shown(field(receipt, "status")))
@@ -1225,7 +1236,7 @@ def order_gate(record, store_payload, entry):
     found, why = capture(record, "registration", str(owning.get("name")))
     if found is not None:
         current, detail = registration_identity(record, owning, found["payload"])
-        if current:
+        if current is True:
             roots = field(found["payload"], "authorizedScope", "artifactRoots")
             roots_source = found["path"]
         else:
@@ -1515,6 +1526,26 @@ def judgments(document):
     return found
 
 
+def launcher_unchanged(record):
+    """The launcher's bytes read again, after every probe has run.
+
+    The pointer the host record names is an atomically movable symlink, which is how an update is
+    meant to work, so the digest taken before the first probe says nothing about what the last one
+    ran. Reading it at both ends does not prevent a move; it reports one, which is what the off/on
+    harness does with its own source identity and for the same reason.
+    """
+    anchor = record.get("_relay") or {}
+    try:
+        after = digest_of(anchor.get("launcher"))
+    except (OSError, TypeError) as error:
+        return {"passed": False, "before": anchor.get("sha256"), "after": None,
+                "detail": type(error).__name__ + ": " + str(error)}
+    return {"passed": after == anchor.get("sha256"), "before": anchor.get("sha256"),
+            "after": after,
+            "detail": "the pointer moves on update by design, so this is read at both ends of the"
+                      " run: it reports a move rather than preventing one"}
+
+
 def preflight(record, *, sleeper=time.sleep):
     """Every reading, then the gate, in one run immediately before the dispatch."""
     relay = Relay(record)
@@ -1553,6 +1584,7 @@ def preflight(record, *, sleeper=time.sleep):
         "pythonVersion": sys.version.split()[0],
         "startedAt": stamp(STARTED),
         "relay": record["_relay"],
+        "launcherStillTheSameBytes": launcher_unchanged(record),
         "readings": assembled,
         "orderGate": gate,
         "readyToStart": all(r["met"] for r in assembled.values()) and gate["passed"],

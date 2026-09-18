@@ -236,7 +236,9 @@ the only programs it can start are `git` and the relay entry point that the runt
 under the state home names through its owned pointer. The record cannot nominate another program:
 the host record's location comes from the environment, the declared launcher has to be that pointer
 as the host record spells it rather than something that resolves to it, and the pointer is the path
-that runs. A link accepted because it resolved to the pointer could be replaced afterwards, and the
+that runs. Its bytes are read again after the last probe, because the pointer is an
+atomically movable symlink and moving it is how an update is meant to work: reading it at both ends
+reports a move rather than preventing one. A link accepted because it resolved to the pointer could be replaced afterwards, and the
 probes would have run whatever replaced it.
 
 The ledger command reads the trial root and the window and nothing else, so it does not ask for the

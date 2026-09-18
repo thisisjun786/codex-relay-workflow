@@ -1883,5 +1883,50 @@ class NinthHostedRound(TrialCase):
                          UNKNOWN)
 
 
+class TenthHostedRound(TrialCase):
+    """A receipt missing a field its identity is decided from, and a pointer that moved."""
+
+    def test_a_receipt_without_its_allowed_recipients_is_unknown(self):
+        for path in (("authorizedScope", "allowedRecipients"), ("issueKey",), ("status",)):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            node = world.captures["register-A.json"]
+            for key in path[:-1]:
+                node = node[key]
+            node.pop(path[-1])
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"],
+                             UNKNOWN, ".".join(path) + " was read as a disagreement")
+
+    def test_the_gate_does_not_take_roots_from_a_receipt_it_could_not_identify(self):
+        self.world.captures["register-A.json"]["authorizedScope"].pop("allowedRecipients")
+        self.world.flush()
+        gate = self.world.preflight()["orderGate"]
+        self.assertFalse(gate["passed"])
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "registrationIdentity" and c["agrees"] is False])
+
+    def test_the_launcher_is_read_again_after_the_probes(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertTrue(document["launcherStillTheSameBytes"]["passed"])
+        self.assertEqual(document["launcherStillTheSameBytes"]["before"],
+                         document["launcherStillTheSameBytes"]["after"])
+
+    def test_a_pointer_moved_during_the_run_is_reported(self):
+        self.world.start_supervisor()
+
+        def move(seconds):
+            # The pointer is meant to move on update; this is the moment an update would do it.
+            self.world.launcher.write_text(LAUNCHER + "\n# a different build\n", encoding="utf-8")
+            self.world.launcher.chmod(0o755)
+
+        document = self.world.preflight_with(move)
+        self.assertFalse(document["launcherStillTheSameBytes"]["passed"])
+        self.assertIn("launcherStillTheSameBytes.passed", document["judgmentsThatFailed"])
+        self.assertFalse(document["readyToStart"])
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
