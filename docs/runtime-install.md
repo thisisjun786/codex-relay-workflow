@@ -1322,8 +1322,12 @@ never `False`, and never the value of the cell beside it.
 | Model and permission preservation | the acceptance module | the model and permission keys, read before and again after | that anything else in the configuration survived |
 | Delivery acceptance | `diagnose` | `checks.results.deliveryAccepted` | that an accepted delivery was acted on |
 
-Reaching an answer and reaching it down the path the row names are two questions, and the
-second is the one a source-level shortcut passes silently. In the suite the link, import,
+Reaching an answer, reaching it down the path the row names, and reaching it on the host the
+rest of the run describes are three questions, and the last two are the ones a shortcut passes
+silently. All seven readings are taken against one host: the Codex home this run installed
+into, the destination it built in, and the state directory it was pointed at. A row answered
+from a second Codex home made for it would compose readings about two machines and look
+exactly like a composition. In the suite the link, import,
 registration, hook and preservation rows travel the thing the run installed: the links it
 created, the packages inside the candidate, the registration `register-mcp` wrote, the command
 line in the hook file executed as a program with a Stop payload on its stdin, and the
@@ -1334,7 +1338,9 @@ above says a host reading needs the live half for.
 The hook row is worth naming twice. Calling the adapter helper directly would answer exactly as
 the registered command does, while leaving the entry point, the settings argument the install
 chose and the stdin contract entirely untested. The registration is half of what this page
-documents, so the row reads it out of the hook file and runs it.
+documents, so the row reads it out of the hook file and runs it -- out of the hook file in the
+Codex home the rest of the run used, because a registration read from anywhere else is a
+registration on another machine.
 
 The vocabularies are deliberately not merged. The result rows answer in `check.VALUES`, the hook
 row answers in the completion module's own words, and the listing row answers with a listing. A

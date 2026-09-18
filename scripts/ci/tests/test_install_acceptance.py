@@ -610,30 +610,35 @@ ACCEPTS_A_REFUSAL = {
 # Declared per row so a reading that quietly moves onto a shortcut has to move a sentence too.
 READING_PATHS = {
     "skillLink":
-        "installed: the links this run created under the temporary Codex home, listed by the"
-        " repository check the diagnosis itself runs.",
+        "installed, on the run's own Codex home: the links this run created under it, listed"
+        " by the repository check the diagnosis itself runs.",
     "runtimeImport":
-        "installed: the recorded interpreter imports the packages copied into the candidate,"
-        " and the success case requires the resolved locations to be inside it.",
+        "installed, on the run's own destination: the recorded interpreter imports the packages"
+        " copied into the candidate, and the success case requires the resolved locations to be"
+        " inside it.",
     "mcpToolExposure":
-        "installed: the registration register-mcp --apply wrote, compared with the tool names"
-        " supplied. The tool list is an input; on a host it comes from a session that listed"
-        " them, which the procedure says.",
+        "installed, on the run's own Codex home: the registration register-mcp --apply wrote"
+        " into it, compared with the tool names supplied. The tool list is an input; on a host"
+        " it comes from a session that listed them, which the procedure says.",
     "appServerConnection":
-        "stand-in: a relay executable this suite wrote answers the doctor. No App Server runs"
-        " here, and the claim is narrowed to match -- the row is fixture, and the procedure"
-        " states that a live socket is what a host reading needs.",
+        "stand-in, on the run's own state directory: a relay executable this suite wrote"
+        " answers the doctor about that state. No App Server runs here, and the claim is"
+        " narrowed to match -- the row is fixture, and the procedure states that a live socket"
+        " is what a host reading needs.",
     "hookCallback":
-        "registered: the command line in the hook file the installer wrote, read back out of"
-        " that file and executed as a program with the Stop payload on its stdin. Calling the"
-        " adapter helper directly would have left the entry point, the settings argument and"
-        " the stdin contract untested while the row still reached one.",
+        "registered, on the run's own Codex home: the command line in the hook file the"
+        " installer wrote THERE, read back out of that file and executed as a program with the"
+        " Stop payload on its stdin. Calling the adapter helper directly would have left the"
+        " entry point, the settings argument and the stdin contract untested; firing into a"
+        " Codex home of its own would have answered from a machine the other six never saw.",
     "modelPermissionPreservation":
-        "installed: the Codex configuration the install acted over, read on both sides of it.",
+        "installed, on the run's own Codex home: the configuration the install acted over,"
+        " read on both sides of it.",
     "deliveryAcceptance":
-        "stand-in: a relay executable this suite wrote carries the eight steps, while the"
-        " preflight asks the relay predicate imported from the copy inside the candidate. No"
-        " live relay completes a delivery here, and the row is fixture for that reason.",
+        "stand-in, on the run's own state directory: a relay executable this suite wrote"
+        " carries the eight steps against that state, while the preflight asks the relay"
+        " predicate imported from the copy inside the candidate. No live relay completes a"
+        " delivery here, and the row is fixture for that reason.",
 }
 # Rows whose success answer cannot be required on every supported interpreter, with the reason.
 # The exception exists because absence is a real state here and the answer set can say so; it
@@ -678,9 +683,11 @@ def succeeding(root):
     registration = base.run("register-mcp", "--codex-home", str(host.codex_home),
                             "--bridge-command", registered, "--apply")
 
-    hook_directory = root / "hook"
-    hook_directory.mkdir(exist_ok=True)
-    _before, after, _registered, _done = fire_the_hook(hook_directory)
+    # The SAME Codex home the runtime was installed into, the skills were linked into and the
+    # registration was written into. Firing into a second home of its own would have answered
+    # this row from a clean hook file with no relation to the host the other six readings
+    # describe -- a composition of readings about two different machines is not a composition.
+    _before, after, _registered, _done = fire_the_hook(host.codex_home)
 
     return {
         "diagnose": diagnose_for(
@@ -1097,9 +1104,11 @@ def observe_all(root):
     # of "every skill missing" that an assertion would then have to accept.
     linked_skills(host)
 
-    hook_directory = root / "hook"
-    hook_directory.mkdir(exist_ok=True)
-    _before, after, _registered, _done = fire_the_hook(hook_directory)
+    # The SAME Codex home the runtime was installed into, the skills were linked into and the
+    # registration was written into. Firing into a second home of its own would have answered
+    # this row from a clean hook file with no relation to the host the other six readings
+    # describe -- a composition of readings about two different machines is not a composition.
+    _before, after, _registered, _done = fire_the_hook(host.codex_home)
 
     return {
         "diagnose": diagnose_for(root, host),
@@ -1371,6 +1380,15 @@ class SevenReadingsTests(unittest.TestCase):
                              "the registration the exposure row compares against was not"
                              " written by this run")
 
+        # One host, not several. The hook row answers from the journal of the Codex home the
+        # rest of this run installed into; answering from a home of its own would compose
+        # readings about two different machines and still look like a composition.
+        journal = rows["hookCallback"]["value"].get("journalRoot")
+        self.assertIsNotNone(journal, "the hook cell names no journal it counted")
+        self.assertTrue(inside(journal, candidate.parent.parent / "codex"),
+                        "the callback was recorded under " + str(journal) + ", which is not the"
+                        " Codex home this run installed into")
+
         self.assertTrue(resolved, "the diagnosis reported no component at all")
         for name, where in resolved.items():
             with self.subTest(name):
@@ -1453,6 +1471,11 @@ class SevenReadingsTests(unittest.TestCase):
         delivers an acceptance test for installation and hook REGISTRATION, so a row that skips
         the registration is not a residual detail, it is the claim missing its subject.
 
+        And the path is only half of it. A row can travel the registered command and still be
+        reading a second Codex home this suite made for it, which composes readings about two
+        machines and looks exactly like a composition. So each row names the host it looks at
+        as well as the path it takes.
+
         The paths are not derivable from the source: what an executed command reaches is a fact
         about the run, not about the call graph. So each is declared, and what this check holds
         is that no row is silent about which one it travels.
@@ -1463,12 +1486,11 @@ class SevenReadingsTests(unittest.TestCase):
         for cell, path in READING_PATHS.items():
             with self.subTest(cell):
                 self.assertTrue(path.strip(), cell + " declares no path")
-                self.assertTrue(path.startswith(("installed:", "registered:", "stand-in:")),
+                self.assertTrue(path.startswith(("installed,", "registered,", "stand-in,")),
                                 cell + " names a path this suite has no word for: " + path[:40])
-                if path.startswith("stand-in:"):
-                    self.assertIn(cell, dict.fromkeys(SEVEN),
-                                  cell + " is a stand-in row and must still be one of the"
-                                  " seven, declared fixture rather than quietly host")
+                self.assertIn("on the run's own", path,
+                              cell + " names a path but not the host it reads, and a row can"
+                              " travel the right path on the wrong machine")
     def test_a_row_that_cannot_require_success_says_why_absence_is_normal(self):
         """The only exception, and it has to carry its reason.
 
