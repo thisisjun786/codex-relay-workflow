@@ -298,17 +298,21 @@ def _delivery_of(store, event_id):
     produce another message.
 
     The last two columns are the half of _claim's predicate that no later event can make true
-    again: a relationship that has stopped or been superseded, and an event that is not the
-    current final revision of the current generation. Those rows stay `queued` and are
-    refused by the claim forever, so a state check alone reads them as retryable. Asked here
-    rather than approximated, and asked as the claim asks it; if that predicate moves, this
-    moves with it.
+    again. Supersession is one: a superseded relationship has been replaced and nothing
+    returns it. A generation the assignment has already moved past is the other. Those rows
+    stay `queued` and the claim refuses them forever, so a state check alone reads them as
+    retryable.
+
+    Being inactive is NOT one of them, which is the distinction this query turns on. paused,
+    cancelled and archived are statuses `resume` can lift, and a report recorded while the
+    assignment was paused stays attached to the queued delivery and is rendered by the first
+    claim after it comes back. Treating inactivity as permanent would accept an oversized
+    report during the pause and send it, without the block, once the assignment resumed.
     """
     return store.one(
         "SELECT d.state, d.hold_reason, d.attempt_count,"
         "       EXISTS (SELECT 1 FROM relationships r"
         "                WHERE r.relationship_id = d.relationship_id"
-        "                  AND r.status = 'active'"
         "                  AND r.superseded_by IS NULL) AS relationship_live,"
         "       EXISTS (SELECT 1 FROM events e"
         "                JOIN relationships rr ON rr.relationship_id = e.relationship_id"
@@ -346,7 +350,7 @@ def _project_restoration(store, event, row):
         "no delivery is queued for it" if delivery is None
         else f"the delivery is held: {delivery['hold_reason']!r}"
         if delivery["hold_reason"] is not None
-        else "its relationship is no longer active, or has been superseded"
+        else "its relationship has been superseded"
         if not delivery["relationship_live"]
         else "the event is behind the assignment's current generation"
         if not delivery["event_current"]

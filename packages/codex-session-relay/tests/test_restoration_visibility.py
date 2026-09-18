@@ -594,21 +594,39 @@ class RestorationDelivery(DeliveryTestCase):
         self.assertIn("presend_attempt_cap", reported.get("detail", ""))
 
     def test_a_superseded_relationship_can_never_claim_again(self):
-        """A stopped assignment leaves the row queued and the claim refuses it forever.
+        """A superseded assignment leaves the row queued and the claim refuses it forever.
 
         Reading only the state and the hold classifies it as retryable, so an oversized
         historical report is refused over bytes no attempt can ever build.
         """
         revision = self._oversized_correction("v-superseded")
         self.store.db.execute(
-            "UPDATE relationships SET status = 'cancelled' WHERE relationship_id ="
-            " (SELECT relationship_id FROM deliveries WHERE event_id = ?)",
+            "UPDATE relationships SET superseded_by = 'rel-replacement' WHERE"
+            " relationship_id = (SELECT relationship_id FROM deliveries WHERE event_id = ?)",
             (revision,),
         )
         recorded = self._record_oversized(revision)
         reported = recorded.get("restoration") or {"outcome": "nothing was recorded"}
         self.assertEqual(reported.get("outcome"), "unmeasured")
-        self.assertIn("no longer active", reported.get("detail", ""))
+        self.assertIn("superseded", reported.get("detail", ""))
+
+    def test_a_paused_assignment_is_still_measured_because_resume_exists(self):
+        """Inactive is reversible, and a report recorded during a pause survives it.
+
+        The report stays attached to the queued delivery, so the first claim after the
+        assignment comes back renders it. Treating the pause as permanent would accept an
+        oversized report while nothing could send it and then send it, without the block,
+        the moment it could.
+        """
+        revision = self._oversized_correction("v-paused")
+        self.store.db.execute(
+            "UPDATE relationships SET status = 'paused' WHERE relationship_id ="
+            " (SELECT relationship_id FROM deliveries WHERE event_id = ?)",
+            (revision,),
+        )
+        with self.assertRaises(RelayError) as caught:
+            self._record_oversized(revision)
+        self.assertEqual(caught.exception.reason.value, "restoration_undeliverable")
 
     def test_two_findings_cannot_both_declare_the_block(self):
         """Two candidates is a block nobody can locate, which is the silence again."""
