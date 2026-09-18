@@ -1390,6 +1390,7 @@ python3 scripts/runtime_install.py register-mcp --codex-home <codex-home> \
 python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state> --socket <socket> \
     --bridge-command <destination>/current/bin/<console-script> \
+    --relay-command <destination>/current/bin/codex-session-relay \
     --observed-tool get_capabilities \
     --trial --issue <issue> \
     --parent-task <parent-task> --child-task <child-task> --recipient <recipient> \
@@ -1413,14 +1414,20 @@ python3 scripts/runtime_install.py diagnose --dest <destination> --record <recor
     --codex-home <codex-home> --state <state>
 ```
 
-Every flag after `--trial` is required, and a blank one is refused before anything is written:
-the set is declared once in the source as `TRIAL_REQUIRED_INPUTS` together with
-`--recipient-settings`, which is additionally asked of the relay's own settings reader. Without
-`--observed-tool` the exposure answer is that no tool names were observed; without the trial
-inputs delivery is `not_applicable`; before a Stop has reached the hook the callback row is an
-absence. Those are answers, and they are the right ones. What they are not is a failure of the
-thing they were asked about, and recording them as though the questions had been put is the one
-way this procedure can lie.
+Name the relay too. Left out, the entry point is discovered on `PATH`, which finds whichever
+relay this host already has rather than the runtime just installed under the destination -- and
+with none on `PATH` the trial refuses before it runs. Every flag after `--trial` is required and
+a blank one is refused before anything is written; the set is declared once in the source as
+`TRIAL_REQUIRED_INPUTS`, together with `--recipient-settings`, which is additionally asked of the
+relay's own settings reader.
+
+The absences are answers, and they are different answers. Omitting `--trial` leaves delivery
+`not_applicable`: nothing was attempted. Asking for a trial whose inputs are missing or blank
+gives `not_verified` naming the input that was not supplied: something was attempted and did not
+establish itself. Without `--observed-tool` the exposure answer is that no tool names were
+observed, and before a Stop has reached the hook the callback row is an absence. What none of
+them is, is a failure of the thing they were asked about, and recording them as though the
+questions had been put is the one way this procedure can lie.
 
 Stopping is not on that list, because nothing here starts anything. The installer never starts or
 stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well

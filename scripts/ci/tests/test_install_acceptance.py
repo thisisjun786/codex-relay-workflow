@@ -156,6 +156,25 @@ OWN_SHAPE_ROWS = ("skillLink", "modelPermissionPreservation")
 PRESERVED = "preserved"
 CHANGED = "changed"
 
+# The flags that make the supplied interpreter hermetic: no site directory, no inherited import
+# path. Named here so the case can require the wrapper to still carry them -- an interpreter
+# whose shebang was quietly changed back is the whole isolation gone, and every path this suite
+# reports would still look right.
+HERMETIC_FLAGS = ("-S", "-E")
+
+
+def inside(where, root):
+    """Whether a path is under this root, by ancestry rather than by how it is spelled.
+
+    A prefix comparison reads /tmp/root-escape as being inside /tmp/root, which is the one
+    mistake a containment check must not make.
+    """
+    try:
+        Path(where).resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return False
+    return True
+
 # What this module can say about where a row was performed. "fixture" is narrower than the
 # record own "temporary": a temporary destination whose build steps and relay are stand-ins.
 # A committed row is never "host", and a check enforces it, because the one thing this suite
@@ -384,28 +403,6 @@ def isolated(root, host=None):
         "PYTHONPATH": "",
         "PYTHONNOUSERSITE": "1",
     }
-
-
-def diagnosed(root):
-    """Run diagnose against paths of our own, and return what it emitted."""
-    codex_home = root / "codex"
-    codex_home.mkdir(exist_ok=True)
-    for directory in ("dest", "state"):
-        (root / directory).mkdir(exist_ok=True)
-    done = subprocess.run(
-        [sys.executable, str(RUNTIME), "diagnose",
-         "--codex-home", str(codex_home),
-         "--dest", str(root / "dest"),
-         "--record", str(root / "record.json"),
-         "--state", str(root / "state"),
-         "--socket", str(root / "no.sock"),
-         # Named rather than discovered: an installed entry point on PATH would otherwise be
-         # resolved and run, and this suite is not allowed to reach one.
-         "--relay-command", str(root / "no-relay"),
-         "--temporary"],
-        capture_output=True, text=True, timeout=180,
-        env=dict(os.environ, **isolated(root, host)))
-    return json.loads(done.stdout)
 
 
 def hook_settings(directory, **overrides):
@@ -1039,9 +1036,11 @@ class SevenReadingsTests(unittest.TestCase):
                                    "--observed-tool", "get_capabilities")
             tried = diagnose_for(root, host, "--trial")
 
-        directions = [("deliveryAcceptance", tried)]
+        # The exact transition, not merely a different value: not_applicable becoming verified,
+        # or a verdict falling to unknown, would satisfy "it moved" while meaning the opposite.
+        directions = [("deliveryAcceptance", tried, "not_applicable", "not_verified")]
         if HAS_READER:
-            directions.append(("mcpToolExposure", exposed))
+            directions.append(("mcpToolExposure", exposed, "not_verified", "verified"))
         else:
             without = read("mcpToolExposure", {"diagnose": exposed})["value"]
             self.assertEqual(without["value"], "not_verified",
@@ -1049,13 +1048,14 @@ class SevenReadingsTests(unittest.TestCase):
                              " be compared, so exposure stays unverified -- and it must stay so"
                              " for that reason rather than rise on a tool list alone")
 
-        for moved_cell, varied in directions:
+        for moved_cell, varied, was_expected, now_expected in directions:
             with self.subTest(moved_cell):
                 before = read(moved_cell, {"diagnose": plain})["value"]
                 after = read(moved_cell, {"diagnose": varied})["value"]
-                self.assertNotEqual(after["value"], before["value"],
-                                    moved_cell + ": the input never reached the question that"
-                                    " asks about it, so this direction varies nothing")
+                self.assertEqual((before["value"], after["value"]),
+                                 (was_expected, now_expected),
+                                 moved_cell + ": the transition is the claim, and a verdict that"
+                                 " moved somewhere else is not the claim being made")
                 for other in CHECK_FIELD_ROWS:
                     if other == moved_cell:
                         continue
@@ -1086,7 +1086,7 @@ class SevenReadingsTests(unittest.TestCase):
             if where is None:
                 continue
             with self.subTest(where):
-                self.assertTrue(str(Path(where).resolve()).startswith(str(root)),
+                self.assertTrue(inside(where, root),
                                 where + " is outside the temporary directory")
 
     def test_the_diagnosis_does_not_import_or_run_what_the_host_has_installed(self):
@@ -1102,22 +1102,44 @@ class SevenReadingsTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
-            payloads, _host = observe_all(root)
+            payloads, host = observe_all(root)
+            supplied = host.candidate / "bin" / "python"
+            present = supplied.is_file()
+            wrapper = supplied.read_text(encoding="utf-8") if present else ""
+            # The console scripts are run as programs by the survey, so their first line is what
+            # decides the interpreter for those invocations. The record does not govern that
+            # one: a shebang changed back to this machine's interpreter would leave every
+            # recorded path reading correctly while the survey ran outside the supplied runtime.
+            shebangs = {c["consoleScript"]:
+                        (host.candidate / "bin" / c["consoleScript"]).read_text(
+                            encoding="utf-8").splitlines()[0]
+                        for c in host.data["components"]}
         components = payloads["diagnose"].get("components") or {}
 
         self.assertTrue(components, "the diagnosis reported no component at all")
+        self.assertTrue(present, "the supplied runtime is not there at all")
+        for flag in HERMETIC_FLAGS:
+            self.assertIn(flag, wrapper,
+                          "the supplied interpreter stopped being hermetic, so every path this"
+                          " case reads could be right while the probe ran with this machine's"
+                          " site directory and import path")
+        for script, first in shebangs.items():
+            with self.subTest(script):
+                self.assertEqual(first, "#!" + str(supplied),
+                                 script + " is run as a program, and its first line sends it to "
+                                 + first + " rather than to the supplied runtime")
         for name, component in components.items():
             with self.subTest(name):
                 asked = component.get("interpreterPath")
                 self.assertIsNotNone(asked, name + ": no interpreter was named at all")
-                self.assertTrue(str(Path(asked).resolve()).startswith(str(root)),
-                                name + " was probed through " + str(asked) + ", which is this"
-                                " machine's interpreter rather than the supplied runtime")
-                self.assertNotEqual(str(Path(asked).resolve()), str(Path(sys.executable).resolve()))
+                self.assertEqual(Path(asked), supplied,
+                                 name + " was probed through " + str(asked) + " rather than the"
+                                 " runtime this suite supplied")
+                self.assertNotEqual(Path(asked), Path(sys.executable).resolve())
                 where = component.get("importedLocation")
                 if where is None:
                     continue
-                self.assertTrue(str(Path(where).resolve()).startswith(str(root)),
+                self.assertTrue(inside(where, root),
                                 name + " was imported from " + where + ", which is installed on"
                                 " this host rather than in the destination under test")
 
