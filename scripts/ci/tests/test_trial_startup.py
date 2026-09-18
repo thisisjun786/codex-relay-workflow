@@ -1005,7 +1005,8 @@ class PayloadContract(TrialCase):
     # no payload carried.
     PRODUCERS = {
         ("assignment.py", "state"): ("relationshipId", "issueKey", "childTaskId",
-                                     "relationshipStatus", "executionGeneration", "criteria"),
+                                     "parentTaskId", "relationshipStatus", "executionGeneration",
+                                     "criteria"),
         ("assignment.py", "for_issue"): ("issueKey", "assignments", "responsibleRelationship"),
         ("cli.py", "cmd_criteria_show"): ("setDigest", "sourceRef", "criteria"),
         ("cli.py", "cmd_settings_show"): ("task", "usable", "missing", "settings"),
@@ -1015,7 +1016,7 @@ class PayloadContract(TrialCase):
         ("store.py", "compare_store"): ("sameStore",),
         ("service.py", "status"): ("lock", "staleRecord", "ownership", "pid", "storeId"),
         ("registry.py", "_row_to_record"): ("authorizedScope", "scopeRef", "artifactRoots",
-                                            "child", "taskId", "cwd"),
+                                            "child", "parent", "taskId", "cwd"),
     }
 
     def keys_built_by(self, name, function):
@@ -1259,6 +1260,132 @@ class ReproducedDefects(TrialCase):
         code, payload, stderr = self.world.run_cli()
         self.assertEqual(code, 2, stderr)
         self.assertIn("number", payload["refused"])
+
+
+class HostedReviewFindings(TrialCase):
+    """What two hosted reviewers found on the first pushed head, each with the case that reproduces it.
+
+    Five were defects in the checker and two were claims it could not support. They are together
+    because the reason they exist is one reason: every one of them passed the suite that was green
+    when the pull request opened.
+    """
+
+    def test_a_structured_lifecycle_status_is_resolved(self):
+        # The host's own lifecycle answer carries status as an object, so a predicate insisting on
+        # a string rejected every capture a real host produces.
+        self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
+            "threadId": World.PARENT_A,
+            "status": {"state": "idle", "activeTurn": None}, "goal": None}
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(
+            cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]["value"],
+            VERIFIED)
+
+    def test_an_empty_structured_status_is_still_not_resolved(self):
+        self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
+            "threadId": World.PARENT_A, "status": {}}
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(
+            cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_a_relationship_under_another_parent_fails(self):
+        self.world.payloads["assignment-find"]["payload"]["assignments"][0][
+            "parentTaskId"] = "another-parent"
+        self.world.flush()
+        document = self.world.preflight()
+        cell = cells_of(document, "assignmentState")["relationship"]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("another-parent", cell["evidence"])
+
+    def test_a_registration_under_another_parent_fails(self):
+        self.world.captures["register-A.json"]["parent"]["taskId"] = "another-parent"
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"], NOT_VERIFIED)
+
+    def test_an_assignment_file_with_no_artifacts_is_a_mismatch(self):
+        for value in ([], None, "not a list"):
+            self.world.assignment_file.write_text(json.dumps({
+                "relationshipId": World.RELATIONSHIP, "childTaskId": World.CHILD_A,
+                "executionGeneration": 1, "artifacts": value}), encoding="utf-8")
+            gate = self.world.preflight()["orderGate"]
+            self.assertFalse(gate["passed"], repr(value))
+            self.assertTrue([c for c in gate["comparisons"]
+                             if c["field"] == "artifacts" and c["agrees"] is False])
+
+    def test_an_assignment_file_naming_other_artifacts_is_a_mismatch(self):
+        other = self.world.repos["A"] / "other.py"
+        other.write_text("# other\n", encoding="utf-8")
+        self.world.assignment_file.write_text(json.dumps({
+            "relationshipId": World.RELATIONSHIP, "childTaskId": World.CHILD_A,
+            "executionGeneration": 1, "artifacts": [str(other)]}), encoding="utf-8")
+        gate = self.world.preflight()["orderGate"]
+        self.assertFalse(gate["passed"])
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "artifacts" and c["agrees"] is False])
+
+    def test_the_clock_cannot_be_pinned_from_the_command_line(self):
+        code, payload, stderr = self.world.run_cli(extra=("--now", startup.stamp(time.time())))
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("unrecognized arguments", stderr)
+
+    def test_a_ledger_window_that_disagrees_with_the_record_is_refused(self):
+        now = time.time()
+        self.world.record["window"] = {"opensAt": startup.stamp(now - 600),
+                                       "closesAt": startup.stamp(now - 500)}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": startup.stamp(now - 60), "kind": "window_open", "segment": "window"},
+            {"at": startup.stamp(now - 5), "kind": "window_close", "segment": "window"},
+        ])
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("does not match the one the record declares", raised.exception.reason)
+
+    def test_a_segment_that_never_closes_is_refused(self):
+        now = time.time()
+        opened, closed = now - 60, now - 5
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": startup.stamp(now - 300), "kind": "segment_start", "segment": "interrupted"},
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window"},
+        ])
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("never closes", raised.exception.reason)
+
+    def test_a_segment_closing_without_an_outcome_is_refused(self):
+        now = time.time()
+        opened, closed = now - 60, now - 5
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        for outcome in (None, "went fine"):
+            line = {"at": startup.stamp(now - 200), "kind": "segment_end", "segment": "one"}
+            if outcome is not None:
+                line["outcome"] = outcome
+            self.world.ledger_lines([
+                {"at": startup.stamp(now - 300), "kind": "segment_start", "segment": "one"},
+                line,
+                {"at": startup.stamp(opened), "kind": "window_open", "segment": "window"},
+                {"at": startup.stamp(closed), "kind": "window_close", "segment": "window"},
+            ])
+            with self.assertRaises(startup.Refused) as raised:
+                self.world.run_ledger()
+            self.assertIn("failed or succeeded", raised.exception.reason)
+
+    def test_the_write_free_claim_is_about_this_process_only(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        claim = document["wroteNothing"]
+        self.assertIn("no file of its own", claim)
+        self.assertIn("temporary file", claim)
 
 
 if __name__ == "__main__":                                           # pragma: no cover

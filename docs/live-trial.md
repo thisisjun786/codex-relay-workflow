@@ -42,11 +42,11 @@ it is stale past the record's own bound, which may not exceed fifteen minutes.
 | Reading | Answered by | Met when | Never established by |
 | -- | -- | -- | -- |
 | `processPersistence` | `os.kill(pid, 0)` and `os.getsid`, the supervisor's witness file, and `service status` where the supervisor is the relay's own service | the process is alive at two observations, sits outside the caller's session, has lived at least the declared minimum since it was launched, and its witness names that pid and advances its counter between them; where a service is declared, `ownership` is `ours`, the lock is held, `staleRecord` is false, and the pid and store id agree | that a launch command returned, or that a pid appears in a record. A recorded pid with a free lock is what `staleRecord` is for |
-| `parentLifecycle` | a captured host response per parent | the capture names that task, carries no error, and resolves a thread status | a creation receipt. `thread not found`, `missing source rollout` and `no rollout found` are the three answers that fail it by name. A null goal is not one of them: a healthy task without a goal has one |
+| `parentLifecycle` | a captured host response per parent | the capture names that task, carries no error, and resolves a thread status. The host answers that status as a structured object rather than a word, so what is required is that it resolved to something, not that it reads as a particular string | a creation receipt. `thread not found`, `missing source rollout` and `no rollout found` are the three answers that fail it by name. A null goal is not one of them: a healthy task without a goal has one |
 | `capability` | the captured creation receipt, and `settings-show` for the same task | each payload names the task it is about, the receipt's `settings.actual` equals every setting the record declares, its `findings` are empty, and the store's own settings record is usable, complete and carries the same values | that a provider served that model. A matching echo says the host recorded the request. `usable` alone is completeness, not agreement |
 | `storeIdentity` | `doctor` with `--expect-store`, `--expect-inode` and `--expect-nonce`, and each peer's captured `doctor` | the relay's own `sameStore` reports `proven` here, and every declared participant has a captured `doctor` of its own reporting `proven` while its own store identity agrees with the record. A participant with no capture is unknown, never absent from the count | an equal path string, or an agreeing store id and inode. The relay grades those as `unproven` on their own: proof takes a nonce another participant wrote, found beside an agreeing device and inode |
 | `boundaries` | the record's declaration, each boundary's captured registration receipt, and `git rev-parse --show-toplevel` in each declared directory | there are at least two boundaries whose issue key, scope reference and resolved repository root are all pairwise distinct, each receipt names that boundary's scope reference, child task and directory, and each directory is the repository it was declared to be | a display name, a title or a working directory, none of which identifies anything ([OPS-7.2](../skills/crw-run/references/operations.md)). Two boundaries in one repository are not two repository identities |
-| `assignmentState` | `assignment-find --issue` and `criteria-show` | the responsible relationship is the one the record names, its entry carries the same child task and execution generation with status `active`, and the criteria set matches by digest, source reference and count | a relationship id written in a file. A non-empty criteria set is not the intended one |
+| `assignmentState` | `assignment-find --issue` and `criteria-show` | the responsible relationship is the one the record names, its entry carries the same parent task, child task and execution generation with status `active`, and the criteria set matches by digest, source reference and count. The parent is compared because a relationship under another parent delivers to that parent, whatever the trial intended | a relationship id written in a file. A non-empty criteria set is not the intended one |
 
 Every fact a reading later compares a payload against is required in the record itself, before any
 command runs. Two absent values compare equal to each other, so a record that stated nothing would
@@ -102,11 +102,14 @@ observed failures were checks made too early, or not made.
     childTaskId       ═══    childTaskId
     executionGeneration ═    executionGeneration
                              relationshipStatus is active
+    artifacts         ═══    the artifacts the record declares
     artifacts         ─────  inside the registration receipt's artifact roots
                                                               contains each artifact path
 
 A file written for a previous relationship carries that relationship's id, and that is the
-comparison that catches it. The artifact roots come from the captured registration receipt, because
+comparison that catches it. The artifacts compared are the file's own: the file is what the child
+reads, so a missing or empty list there is a mismatch rather than an occasion to fall back on what
+the record intended. The artifact roots come from the captured registration receipt, because
 no read-only command returns them; what actually enforces them is the manifest `emit` builds, which
 is where it belongs.
 
@@ -130,7 +133,10 @@ A segment is bounded by its own start and end, which are times rather than posit
 segments are built as intervals and two that intersect are a refusal, because a pairing taken from
 line order accepted two overlapping segments and counted one intervention inside both. `segment_end`
 carries `failed` or `succeeded`.
-The window is bounded by `window_open` and `window_close`. Classification is by timestamp and by
+The window is bounded by `window_open` and `window_close`, which must be the same window the record declares;
+a ledger naming a different one is a refusal, because a moved boundary moves interventions out of
+the measured window. Every segment must close, and close saying `failed` or `succeeded`: a segment left
+open is an attempt whose outcome was never recorded, and it is refused rather than reported. Classification is by timestamp and by
 nothing else: an intervention inside the window's bounds is a window intervention whatever it calls
 itself, and `claimed` exists so that a label disagreeing with its own timestamp is a refusal rather
 than a correction.
@@ -219,8 +225,9 @@ the store and the rest read it back, which is what turns an agreeing store id an
 
 The checker reads. It does not create a task, register a relationship, emit, deliver, record a
 verdict, or start or stop anything, so nothing in its document is evidence that a delivery
-happened. That is not the same as saying it writes nothing: every relay command opens the store on
-construction. The honest claim is that it composes only `doctor`, `service status`,
+happened. That is not the same as saying nothing is written: this process creates no file of its
+own, but every relay command it runs opens the store on construction, and `doctor` measures whether
+the state directory is writable by writing a temporary file in it. The honest claim is that it composes only `doctor`, `service status`,
 `assignment-find`, `criteria-show` and `settings-show`, that none of those registers, emits,
 delivers, records a verdict or changes service state, and that `doctor` runs before anything that
 could construct a store.

@@ -668,6 +668,11 @@ def reading_lifecycle(record):
             refusal = next((text for text in LIFECYCLE_REFUSALS
                             if text in json.dumps(payload).lower()), None)
             status = field(payload, "status")
+            # The host's own lifecycle answer carries status as a structured object, not a word.
+            # A predicate insisting on a string failed every capture a real host produced.
+            resolved_status = (status is not MISSING and status is not None
+                               and (bool(str(status).strip()) if not isinstance(status, (dict, list))
+                                    else bool(status)))
             names = (same(field(payload, "threadId"), task)
                      or same(field(payload, "taskId"), task))
             if status is MISSING and refusal is None:
@@ -675,10 +680,11 @@ def reading_lifecycle(record):
                                   evidence="the capture carries no thread status to read",
                                   provenance=CAPTURED, measured_at=found["capturedAt"]))
                 continue
-            ok = (refusal is None and names and isinstance(status, str) and bool(status.strip())
+            ok = (refusal is None and names and resolved_status
                   and not carries(payload, "error") and not carries(payload, "isError"))
             cells.append(cell("parentLifecycle:" + str(task), VERIFIED if ok else NOT_VERIFIED,
-                              evidence=("the host resolved this thread with status " + str(status)
+                              evidence=("the host resolved this thread with status "
+                                        + json.dumps(shown(status))
                                         if refusal is None else
                                         "the host answered " + refusal + ", which is a participant"
                                         " with no rollout to read"),
@@ -778,8 +784,8 @@ def reading_store(record, relay):
                           evidence="the store's createdAt could not be read as a time: "
                                    + str(created)))
     else:
-        # Against this process's real start, never against a pinned clock: a run given --now could
-        # otherwise pass a store its own first command had just created.
+        # Against this process's real start: a store that did not exist before this run began is
+        # one this run created, and its identity would be plausible and its contents empty.
         before = when.timestamp() < STARTED
         cells.append(cell("storeAge", VERIFIED if before else NOT_VERIFIED, probe=probe,
                           provenance=EXECUTED,
@@ -866,6 +872,9 @@ def reading_boundaries(record, relay):
                           if p.get("role") == "child"), {})
             ok = (same(scope, boundary.get("scopeRef"))
                   and same(field(receipt, "child", "taskId"), child.get("taskId"))
+                  and same(field(receipt, "parent", "taskId"),
+                           next((p.get("taskId") for p in boundary.get("participants") or []
+                                 if p.get("role") == "parent"), None))
                   and (child.get("cwd") is None
                        or resolve(str(field(receipt, "child", "cwd"))) == resolve(child.get("cwd"))))
             cells.append(graded("registration:" + str(name), scope, ok, provenance=CAPTURED,
@@ -874,7 +883,9 @@ def reading_boundaries(record, relay):
                                 evidence=("the registration names scope " + str(shown(scope))
                                           + ", child "
                                           + str(shown(field(receipt, "child", "taskId"))) + " at "
-                                          + str(shown(field(receipt, "child", "cwd")))),
+                                          + str(shown(field(receipt, "child", "cwd")))
+                                          + ", parent "
+                                          + str(shown(field(receipt, "parent", "taskId")))),
                                 detail=found["path"]))
 
         for participant in boundary.get("participants") or []:
@@ -905,12 +916,14 @@ def reading_assignment(record, relay):
     ok = (same(responsible, assignment.get("relationshipId")) and entry is not MISSING
           and field(entry, "relationshipStatus") == "active"
           and same(field(entry, "childTaskId"), assignment.get("childTaskId"))
+          and same(field(entry, "parentTaskId"), assignment.get("parentTaskId"))
           and same(field(entry, "executionGeneration"), assignment.get("executionGeneration")))
     cells.append(graded("relationship", responsible, ok, probe=probe, provenance=EXECUTED,
                         unreadable="the store did not answer which relationship owns this issue",
                         evidence=("the responsible relationship is " + str(shown(responsible))
                                   + ", status " + str(shown(field(entry, "relationshipStatus")))
                                   + ", child " + str(shown(field(entry, "childTaskId")))
+                                  + ", parent " + str(shown(field(entry, "parentTaskId")))
                                   + ", generation "
                                   + str(shown(field(entry, "executionGeneration"))))))
 
@@ -986,7 +999,24 @@ def order_gate(record, store_payload, entry):
     if found is not None:
         roots = field(found["payload"], "authorizedScope", "artifactRoots")
         roots_source = found["path"]
-    artifacts = in_file.get("artifacts") or assignment.get("artifacts") or []
+    # The assignment file is the input the child reads, so its own list is the one under test. A
+    # fallback to the record's artifacts validated the trial's intention against a file that did
+    # not carry it, and an empty list took the fallback exactly like an absent key.
+    declared = assignment.get("artifacts") or []
+    in_file_artifacts = in_file.get("artifacts")
+    if not isinstance(in_file_artifacts, list) or not in_file_artifacts:
+        comparisons.append({"field": "artifacts", "agrees": False, "left": shown(in_file_artifacts),
+                            "right": shown(declared), "leftSource": "the assignment file",
+                            "rightSource": "the start record"})
+        artifacts = []
+    else:
+        comparisons.append({"field": "artifacts",
+                            "agrees": sorted(str(a) for a in in_file_artifacts)
+                                      == sorted(str(a) for a in declared),
+                            "left": shown(in_file_artifacts), "right": shown(declared),
+                            "leftSource": "the assignment file",
+                            "rightSource": "the start record"})
+        artifacts = in_file_artifacts
     if roots is MISSING or not isinstance(roots, list):
         comparisons.append({"field": "artifactRoots", "agrees": None,
                             "left": shown(artifacts), "right": None,
@@ -1065,6 +1095,17 @@ def ledger_report(record):
     if closed < opened:
         raise Refused("the window closes before it opens", opensAt=opens[0].get("at"),
                       closesAt=closes[0].get("at"))
+    # The record declares the window and the ledger records it, and they have to be the same
+    # window. Grading the ledger's own pair alone let a mistaken boundary move an intervention
+    # out of the measured window and report the result as clean.
+    for key, event in (("opensAt", opens[0]), ("closesAt", closes[0])):
+        declared = field(record, "window", key)
+        if declared is MISSING or declared is None:
+            raise Refused("the start record does not declare window." + key)
+        if moment(declared, "window." + key) != event["_at"]:
+            raise Refused("the ledger's window does not match the one the record declares",
+                          field=key, declared=declared, ledger=event.get("at"),
+                          line=event["_line"])
 
     # Segments are intervals, built from their own timestamps and then checked for intersection.
     # Pairing them by the order their lines happen to sit in accepted two segments that overlap in
@@ -1092,6 +1133,12 @@ def ledger_report(record):
     for segment in ordered:
         if segment["_from"] is None:
             raise Refused("a segment ends without starting", segment=segment["name"])
+        if segment["_to"] is None:
+            raise Refused("a segment never closes, so what it attempted was never recorded",
+                          segment=segment["name"], opensAt=segment["opensAt"])
+        if segment["outcome"] not in ("failed", "succeeded"):
+            raise Refused("a segment closes without saying whether it failed or succeeded",
+                          segment=segment["name"], outcome=shown(segment["outcome"]))
         if segment["_to"] is not None and segment["_to"] < segment["_from"]:
             raise Refused("a segment closes before it opens", segment=segment["name"])
     for first, second in zip(ordered, ordered[1:]):
@@ -1233,9 +1280,10 @@ def preflight(record, *, sleeper=time.sleep):
         "readings": assembled,
         "orderGate": gate,
         "readyToStart": all(r["met"] for r in assembled.values()) and gate["passed"],
-        "wroteNothing": "this command writes no file anywhere. Every relay command it composes"
-                        " opens the store on construction, so that is a claim about this process"
-                        " rather than about the store",
+        "wroteNothing": "this process creates no file of its own. It is not a claim about the"
+                        " commands it runs: every relay command opens the store on construction,"
+                        " and doctor measures whether the state directory is writable by writing a"
+                        " temporary file in it",
         "standIns": {
             "capturedLifecycle": "a lifecycle read this process did not make; it carries its own"
                                  " time and goes stale",
@@ -1270,14 +1318,14 @@ def main(argv=None):
         one = sub.add_parser(name)
         one.add_argument("--start", required=True,
                          help="the start record under the private trial root")
-        one.add_argument("--now", help="pin the clock for capture freshness; it never serves the"
-                                       " comparison against the store's own createdAt")
     args = parser.parse_args(argv)
 
     try:
         record = load_start(args.start)
-        record["_now"] = (moment(args.now, "--now") if args.now
-                          else datetime.datetime.now(datetime.timezone.utc))
+        # The clock is this process's own. A pinned one was offered for tests, and an old capture
+        # replayed beside an equally old pinned time was fresh by construction, which is the one
+        # thing capture freshness exists to refuse.
+        record["_now"] = datetime.datetime.now(datetime.timezone.utc)
         document = preflight(record) if args.command == "preflight" else ledger(record)
     except Refused as refused:
         print(json.dumps(refused.to_record(), indent=2, sort_keys=True))
