@@ -423,6 +423,16 @@ SUMMARY_SITES = (
      True, "self.assertTrue(intent.identity_contested(self.facts()))",
      "the consequence, paired with the coverage assertion above it; on its own it is true for a"
      " missing resolution and for one naming somebody else as well"),
+    ("test_intent.py", "test_coverage_needs_the_digest_to_match_the_content", "covered", True,
+     "self.assertTrue(intent.covered(competing, intent._resolutions(self.facts())), 'a"
+     " resolution carrying the recorded digest did not cover the fact')",
+     "the positive control, and review measured why it is load-bearing: without it the negative"
+     " above is satisfied by a covered() that answers False to everything. The two resolutions"
+     " differ only in the digest, which is the comparison the name is about"),
+    ("test_intent.py", "test_coverage_needs_the_digest_to_match_the_content", "identity_contested",
+     False, "self.assertFalse(intent.identity_contested(self.facts()))",
+     "the consequence of the control above; it closes the contest only because the covering"
+     " resolution also names the bound identity"),
     ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within", True,
      "self.assertTrue(is_within('/a/b', '/a/b'))",
      "the disjunction is the contract, and this case names its first branch, a path equal to"
@@ -502,8 +512,9 @@ SUMMARY_SITES = (
      "PROXY, and review measured it: the case starts nothing, so the three assertions in it are"
      " the preconditions a start reads rather than a start that succeeded. Replacing"
      " RelayService.start with a raise leaves it green. What it does establish is that a"
-     " terminated holder leaves no ownership and no lock; that a start then succeeds is"
-     " established in LaunchReporting below it, and this name reaches further than this body"),
+     " terminated holder leaves no ownership and no lock. LaunchReporting below it exercises a"
+     " start, but a clean one rather than one after this record, so nothing joins the two and"
+     " the name reaches further than the body"),
     ("test_service.py", "test_a_worker_that_exits_is_replaced_on_the_same_store", "lock_is_held",
      False,
      "self.assertFalse(service.lock_is_held(), 'the supervisor released on the way out')",
