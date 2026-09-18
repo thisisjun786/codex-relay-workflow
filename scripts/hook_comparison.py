@@ -52,6 +52,11 @@ import sys
 import tempfile
 import time
 
+# Before the first import of anything in this repository. Importing writes __pycache__ beside the
+# source unless this is set, and those are writes into the checkout by a command whose result says
+# everything it writes goes under the directory it made for itself.
+sys.dont_write_bytecode = True
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -498,6 +503,10 @@ def environment(arm):
              "XDG_STATE_HOME": str(arm.root / "xdg-state"),
              "CODEX_HOME": str(arm.codex_home),
              "PYTHONPATH": "", "PYTHONNOUSERSITE": "1",
+             # The subprocesses import the relay and the runtime modules out of this checkout, and
+             # would leave __pycache__ beside that source. Those are writes, and this run says it
+             # makes none outside its own directory.
+             "PYTHONDONTWRITEBYTECODE": "1",
              "LANG": os.environ.get("LANG", "C.UTF-8")}
     for directory in (built["HOME"], built["XDG_STATE_HOME"]):
         Path(directory).mkdir(parents=True, exist_ok=True)
@@ -979,11 +988,19 @@ def measures(scenarios):
                 if fired["cells"]["heldFile"]["value"] == RESERVED]
     printed = [declared["name"] for declared, _i, fired in guarded
                if fired["cells"]["printedBlock"]["value"] == PRINTED_A_BLOCK]
+    # A reading that could not be taken is not evidence that nothing was held. Dropping it from
+    # the list made the criterion read as met on the strength of a reservation nobody could look
+    # at, which is the one substitution this whole arrangement refuses.
+    unreadable = [declared["name"] + "/" + cell for declared, _i, fired in guarded
+                  for cell in ("heldFile", "printedBlock")
+                  if fired["cells"][cell]["value"] not in
+                  (RESERVED, NOT_RESERVED, PRINTED_A_BLOCK, PRINTED_NOTHING)]
     answers["wrongBlock"] = {
         "answer": MEASURED,
         "criterion": "zero holds on unmarked sessions, on blocked_needs_input and on interrupted",
         "watched": list(watched), "reserved": reserved, "printedABlock": printed,
-        "met": not reserved and not printed,
+        "unreadable": unreadable,
+        "met": not reserved and not printed and not unreadable,
         "narrowing": "the holds counted are this hook's own, which is what the contract makes it"
                      " responsible for. Whether a host would honour a printed block is not"
                      " observed here, and a default installation is observe mode and prints none.",
@@ -1110,8 +1127,11 @@ def _digest(target):
     """One digest over a file, or over a directory's files by path and content."""
     summed = hashlib.sha256()
     try:
+        # Every file, not every module: the installer reads components.json, and a digest that
+        # only saw Python would report the same identity across a change that decides an install.
         paths = [target] if target.is_file() else sorted(
-            path for path in target.rglob("*.py") if path.is_file())
+            path for path in target.rglob("*") if path.is_file()
+            and "__pycache__" not in path.parts)
         if not paths:
             return reading.UNREADABLE
         for path in paths:
@@ -1205,6 +1225,19 @@ def absence_places():
     return places
 
 
+def stability(earlier, later):
+    """Whether the source stood still for the length of the run.
+
+    Taken before the first subprocess and again after the last. A file edited while the run was
+    going means earlier scenarios executed different bytes from later ones, and an identity
+    recorded at either end would describe a source no single scenario ran.
+    """
+    return {"before": earlier, "after": later,
+            "met": earlier.get("sourceDigests") == later.get("sourceDigests"),
+            "what": "every source whose contents decide a run had the same digest before the first"
+                    " subprocess and after the last"}
+
+
 def compare(root):
     """Build both arms, drive every scenario at both, and read what each one has afterwards."""
     launcher = launcher_for(root)
@@ -1244,7 +1277,7 @@ def compare(root):
     return scenarios
 
 
-def document(scenarios, root):
+def document(scenarios, root, earlier):
     places = absence_places()
     rows = [(declared["name"], arm, index, fired)
             for declared in SCENARIOS
@@ -1259,7 +1292,7 @@ def document(scenarios, root):
     body = {
         "source": SOURCE,
         "harnessVersion": HARNESS_VERSION,
-        "sourceIdentity": source_identity(),
+        "sourceIdentity": stability(earlier, source_identity()),
         "pythonVersion": ".".join(str(part) for part in sys.version_info[:3]),
         "root": str(root),
         "mode": completion.HOLD,
@@ -1319,7 +1352,8 @@ def main(argv=None):
         return 2
     answer = None
     try:
-        answer = document(compare(root), root)
+        earlier = source_identity()
+        answer = document(compare(root), root, earlier)
     except RelayError as error:
         answer = refusal("a relay command a scenario needed refused: " + str(error))
     finally:

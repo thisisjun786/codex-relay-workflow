@@ -178,7 +178,7 @@ One JSON object on stdout, and nothing else on stdout.
 | Field | What it carries |
 | -- | -- |
 | `source` | `hook-comparison`, the stamp a reader checks before walking a path into this document |
-| `sourceIdentity` | the commit, whether the working tree was clean when the run started, and a digest of each source whose contents decide a run: the harness, the installer, the entry point, the runtime modules and the relay. A commit identifies bytes only in a clean checkout, and anyone developing this runs it in a dirty one |
+| `sourceIdentity` | the commit, whether the working tree was clean, and a digest of every file in each source whose contents decide a run: the harness, the installer, the entry point, the runtime modules and the relay. Taken before the first subprocess and again after the last, because a file edited during a run means earlier scenarios executed different bytes from later ones, and an identity from either end would name a source no scenario ran. A commit identifies bytes only in a clean checkout, and anyone developing this runs it in a dirty one |
 | `pythonVersion` | the interpreter that ran it |
 | `mode` and `isolation` | the mode the on arm was registered in, and what makes holding legitimate here |
 | `arms` | per arm, the install reading, the registration reading, the Codex home and the argv of the install |
@@ -223,7 +223,8 @@ The place named by `--root` is where the run makes a directory of its own; it is
 works. The harness writes a launcher and two Codex homes at fixed names, so using the named
 directory itself would replace whatever was already using those names, and a directory an operator
 points at is exactly where something else already lives. Everything the run writes goes in the
-directory it created, and `wroteOnlyInsideItsRoot` in the result is that claim checked against
+directory it created, including the bytecode its subprocesses would otherwise leave beside the
+source they import, and `wroteOnlyInsideItsRoot` in the result is that claim checked against
 the resolved path of every place written rather than against how the paths are spelled. With no
 `--root` the run makes a temporary directory and removes it afterwards; with one it keeps everything,
 which is what an operator wants when a row has to be explained.

@@ -542,6 +542,25 @@ class ReadingTests(unittest.TestCase):
         self.assertEqual(found["value"], harness.reading.UNREADABLE)
         self.assertIn("could not be parsed", found["detail"])
 
+    def test_the_environment_handed_to_a_subprocess_writes_nothing_into_the_checkout(self):
+        """Asked of the function that builds it, because the promise is about what it hands over.
+
+        The subprocesses import the relay and the runtime modules out of this checkout. Without
+        this they leave __pycache__ beside that source, which is a write into the checkout by a
+        command whose result says everything it writes goes under its own directory.
+        """
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-env-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        arm = type("Arm", (object,), {"root": root, "codex_home": root / "codex"})()
+        built = harness.environment(arm)
+        self.assertEqual(built.get("PYTHONDONTWRITEBYTECODE"), "1")
+        self.assertEqual(built.get("PYTHONPATH"), "")
+        self.assertEqual(built.get("CODEX_HOME"), str(root / "codex"))
+        for leaked in ("CRW_COMPLETION_HOOK_CONFIG", "CODEX_SESSION_RELAY_MARKER_ROOT"):
+            self.assertNotIn(leaked, built,
+                             leaked + " is handed to the subprocesses, and it can send them"
+                                      " outside the directory this run made for itself")
+
     def test_a_stat_that_failed_is_not_reported_as_an_absence(self):
         """The reading that answers whether a file is there must not answer for one it cannot see.
 
