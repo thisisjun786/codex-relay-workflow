@@ -7,15 +7,17 @@ another task may not have the same connectors.
 
 ## Child task titles
 
-Name each managed implementation task as `ISSUE-ID · short task name · workflow`,
-for example `JUN-44 · 가격 조회 계약 · CXC Loop` or
-`JUN-41 · 기간 집계 · CXC Loop`. These are formatting examples, not issue assignments.
+Name each managed issue task as `ISSUE-ID · short task name`,
+for example `JUN-44 · 가격 조회 계약` or `JUN-41 · 기간 집계`.
+These are formatting examples, not issue assignments.
 
-Use the real Linear identifier, a concise Korean description of the assigned
-result, and the agreed execution mode. Use `CXC Loop` when it is the effective
-workflow; otherwise use the actual mode, such as `구현` or `검증`. The suffix names
-the assignment, not proof that a loop started. Keep runtime verification separate.
-Preserve an explicit user-supplied title. Each implementation packet names its
+Use only the real Linear identifier and a concise Korean description of the
+assigned result. Do not append workflow labels (including `CXC Loop`), repository,
+PR number, model, CI status, or merge status. Keep the execution mode in the
+packet's `Workflow` field and verify runtime behavior separately. A title or a
+chat link does not establish the task's native PR association; keep PR linkage
+separate from naming. A later explicit user-supplied title takes precedence over
+this default. Each implementation packet names its
 one issue and intended PR. A batch retains separate packets and issue/PR pairs;
 do not use a primary issue to hide a combined delivery. If no issue is linked,
 use the known project name instead of inventing an issue number and reconcile
@@ -25,8 +27,9 @@ The coordinator passes the title through the creation tool's supported title/nam
 field and includes it in the packet. Prompt text alone does not prove the app title
 was set. Read back the actual title using the returned task ID. If the host generates
 or changes it, correct that same managed task through a supported title tool within
-the creation/management assignment, then verify it. Keep the title on routine repair
-follow-ups; do not create a replacement task to fix a name. If title control or
+the creation/management assignment, then verify it. Keep a compliant title on routine
+repair follow-ups; normalize a legacy workflow or status suffix on the same task
+rather than creating a replacement task to fix a name. If title control or
 read-back is unavailable, record the requested title and limitation and continue
 authorized work. Task identity and recovery always use stable IDs, not title matches.
 
@@ -49,7 +52,7 @@ Parent: [one Linear project ID and verified coordinator task ID, or no project
 Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
   or existing PR URL; related issues are dependencies, not additional deliveries.
   For non-PR work, state the result and how it will be verified]
-Title: [issue ID · short task name · agreed workflow, following Child task titles]
+Title: [issue ID · short task name, following Child task titles]
 Workflow: [effective workflow per Default independent execution]
 
 Context:
