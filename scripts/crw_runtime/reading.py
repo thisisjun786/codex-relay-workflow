@@ -39,6 +39,32 @@ def unusable(state):
     return state in UNUSABLE
 
 
+# Directory readers whose answer to a subtree they cannot read is to LEAVE IT OUT. A walk that
+# skips is not a walk that failed: it returns a complete, well-formed value describing a
+# DIFFERENT tree, so the boundary above it sees a value and whatever compares that value
+# decides on it. That is how a package digest came back as exactly the digest of the smaller
+# tree, and the component was reported a fork for a subdirectory nobody could read.
+#
+# Every use of one in these modules is declared below with what omission means where it is
+# used, because "it does not matter here" is a judgement and an undeclared judgement is the
+# shape this whole family of defects is made of.
+# os.walk belongs here for the same reason and is easy to miss: its default onerror is None,
+# which means it discards the error and goes on, so it omits exactly the way rglob does.
+# os.scandir is deliberately absent: it raises, which is the behaviour this list exists to
+# require rather than to forbid.
+OMITTING_READERS = ("rglob", "glob", "iterdir", "walk")
+
+OMISSION_DECLARED = {
+    "store_places": "the root is listed first and unconditionally, so a listing that cannot be"
+                    " read loses the scopes under it and never the root itself",
+    "filesystem_candidates": "a pattern that cannot be listed drops that pattern's matches;"
+                             " every entry says it was listed rather than identified, and the"
+                             " relay owns the judgement about what a store is",
+    "directory_occupied": "an unreadable listing answers None, which is stated to be different"
+                          " from an empty directory and is never read as one",
+}
+
+
 # Derived from the exception lattice rather than enumerated, because enumerating it is what
 # let two paths escape: ValueError covers UnicodeDecodeError, json.JSONDecodeError and the
 # ValueError a NUL-bearing string raises from Path.resolve; LookupError covers KeyError and

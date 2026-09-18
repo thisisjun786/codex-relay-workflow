@@ -2098,6 +2098,27 @@ def _trial(args, relay_executable, relay_interpreter=None):
 
 # ------------------------------------------------------------------------- hook
 
+def _hook_busy(adapter, path, error, *, settings):
+    """Another run holds the hook file. Nothing about this hook was established.
+
+    The answer install, register-mcp and release_candidate already give for the same event.
+    Left to escape, a competing run was reported as an internalError -- a claim that this
+    command has a defect, which is about the code rather than about the host and sends whoever
+    reads it somewhere that has nothing wrong with it.
+
+    Whether the settings were written is carried rather than decided: they are written before
+    the hook, so a lock taken between the two leaves them on disk and saying otherwise would be
+    a second false claim on top of the first.
+    """
+    emit({"command": "hook", "adapter": adapter, "hookFile": str(path), "outcome": BUSY,
+          "settings": settings, "result": None, "applied": False, "wrote": False,
+          "refused": "another run holds " + str(path) + ": " + str(error),
+          "note": ("nothing about this hook was established and no hook was appended. What"
+                   " happened to the settings is reported above and is not changed by this"
+                   " refusal.")})
+    return EXIT_REFUSED
+
+
 def cmd_hook(args):
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     path = codex_home / "hooks.json"
@@ -2161,8 +2182,11 @@ def cmd_hook(args):
         # Preconditions are settled. Now the writes, settings before the hook that reads them:
         # a hook registered against settings that are not there releases on every Stop and says
         # so nowhere, while settings with no hook cost nothing at all.
-        settings = completion.write_configuration(
-            configuration, wanted, apply=args.apply)
+        try:
+            settings = completion.write_configuration(
+                configuration, wanted, apply=args.apply)
+        except TimeoutError as error:
+            return _hook_busy(adapter, configuration, error, settings=None)
         if settings["outcome"] not in completion.CONFIG_SETTLED:
             emit({"command": "hook", "adapter": adapter, "settings": settings,
                   "hookFile": str(path), "result": None,
@@ -2174,7 +2198,10 @@ def cmd_hook(args):
         command = args.hook_command
         event = args.event or SESSION_START
     hook = {"type": "command", "command": command, "timeout": args.timeout}
-    result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
+    try:
+        result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
+    except TimeoutError as error:
+        return _hook_busy(adapter, path, error, settings=settings)
     landed = None
     if adapter == COMPLETION and args.apply:
         # Read back after the append, because the duplicate check above and the append itself
@@ -3861,6 +3888,17 @@ def main(argv=None):
               "reading": stop.reading.refusal(),
               "note": "a record could not be read and the command that reads it did not"
                       " report the refusal itself"})
+        return EXIT_REFUSED
+    except TimeoutError as error:
+        # A lock another run holds is a modelled outcome of every command that takes one, and
+        # it says the same thing wherever it happens: nothing was established. Each site that
+        # can say more answers it itself; this is the backstop, so a sibling added later cannot
+        # report a competing run as a defect in this command the way the hook path did.
+        emit({"command": args.command, "outcome": BUSY,
+              "refused": "another run holds a lock this command needs: " + str(error),
+              "raisedAt": reading.where(error),
+              "note": "nothing was established by the step that needed the lock, and a run"
+                      " that holds it is not a defect in this command."})
         return EXIT_REFUSED
     except Exception as error:                                   # noqa: BLE001 - see above
         emit({"command": args.command, "internalError": {

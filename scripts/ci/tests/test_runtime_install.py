@@ -8221,3 +8221,220 @@ class StrengthAndSiteTests(unittest.TestCase):
                     "the relay " + ("holds" if consumer_holds else "refuses")
                     + " this root and the preflight " + ("refuses" if problems else "accepts")
                     + " it: " + repr(problems))
+
+
+# =========================================================================================
+# Check 20 - an incomplete reading is not a value, and a busy lock is not a defect
+#
+# The same class from underneath. A cell can also be filled wrongly because the READER never
+# reported a failure at all:
+#
+#   a walk that answers an unreadable subtree by leaving it out returns a well-formed value
+#   a refusal shape applied at one call site and not at its siblings
+#
+# Neither is about which predicate was declared. Both are about a boundary being handed
+# something it cannot tell from an answer.
+# =========================================================================================
+
+
+def _omitting_reader_uses(readers, declared):
+    """Every call to a reader whose answer to an unreadable subtree is to leave it out."""
+    offenders = []
+    for path in RUNTIME_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            if function.name in declared:
+                continue
+            for node in ast.walk(function):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in readers):
+                    offenders.append(
+                        path.stem + "." + function.name + ":" + str(node.lineno) + " uses "
+                        + node.func.attr + ", which answers a subtree it cannot read by"
+                        " leaving it out, and does not declare what that omission means")
+    return sorted(offenders)
+
+
+def _called_names(function):
+    names = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                names.add(node.func.attr)
+    return names
+
+
+def _lock_reachers():
+    """Every function in these modules that can reach an exclusive lock.
+
+    Read as a call graph rather than listed, so a sibling added later is in the set the moment
+    it can meet a busy lock, instead of the moment somebody remembers to add it.
+    """
+    functions = {}
+    for path in RUNTIME_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                functions[path.stem + "." + node.name] = _called_names(node)
+    takers = {key for key, names in functions.items() if "Locked" in names}
+    growing = True
+    while growing:
+        growing = False
+        leaves = {key.split(".")[-1] for key in takers}
+        for key, names in functions.items():
+            if key not in takers and names & leaves:
+                takers.add(key)
+                growing = True
+    return takers
+
+
+def _handler_arms(function_name):
+    """The exception names each except clause of a function catches, in source order."""
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == function_name):
+            continue
+        arms = []
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Try):
+                for handler in inner.handlers:
+                    arms.append((handler.lineno, ast.unparse(handler.type)
+                                 if handler.type else "bare"))
+        return [name for _line, name in sorted(arms)]
+    return []
+
+
+class IncompleteReadingTests(unittest.TestCase):
+    """A walk that skips is not a walk that failed."""
+
+    def test_the_reader_inventory_is_not_empty(self):
+        # Guards the scan: an empty reader set would find nothing and pass on every source.
+        self.assertIn("rglob", reading.OMITTING_READERS)
+        self.assertIn("store_places", reading.OMISSION_DECLARED)
+
+    def test_every_omitting_reader_in_these_modules_declares_what_omission_means(self):
+        self.assertEqual(
+            _omitting_reader_uses(reading.OMITTING_READERS, reading.OMISSION_DECLARED), [])
+
+    def test_the_scan_sees_an_omission_nobody_declared(self):
+        offenders = _omitting_reader_uses(reading.OMITTING_READERS, {})
+        self.assertTrue(offenders, "the scan finds nothing at all, so it proves nothing")
+        self.assertTrue(any("store_places" in offender for offender in offenders), offenders)
+
+    def test_a_subtree_that_cannot_be_read_is_a_refusal_rather_than_a_digest(self):
+        """The defect measured: the value that came back was not merely wrong, it was exactly
+        the digest the smaller tree really has. Nothing downstream could tell them apart."""
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "pkg"
+            (package / "sub").mkdir(parents=True)
+            (package / "a.py").write_text("a", encoding="utf-8")
+            (package / "sub" / "b.py").write_text("b", encoding="utf-8")
+            whole = definition.ops12_digest(package)
+            smaller = Path(temporary) / "smaller"
+            smaller.mkdir()
+            (smaller / "a.py").write_text("a", encoding="utf-8")
+            self.assertNotEqual(whole, definition.ops12_digest(smaller))
+            os.chmod(package / "sub", 0o000)
+            try:
+                if os.access(package / "sub", os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                with self.assertRaises(OSError):
+                    definition.ops12_digest(package)
+            finally:
+                os.chmod(package / "sub", 0o755)
+
+    def test_an_unreadable_subtree_stops_the_classification_rather_than_forking_it(self):
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment = root / "env"
+            (environment / "bin").mkdir(parents=True)
+            entry = environment / "bin" / component["consoleScript"]
+            entry.write_text("#!" + sys.executable + chr(10), encoding="utf-8")
+            entry.chmod(0o755)
+            installed = root / "site" / component["module"]
+            (installed / "inner").mkdir(parents=True)
+            (installed / "__init__.py").write_text("", encoding="utf-8")
+            (installed / "inner" / "x.py").write_text("x", encoding="utf-8")
+            record = hostrecord.empty(1)
+            hostrecord.put_install(record, component["component"], {
+                "location": str(installed), "environment": str(environment),
+                "entryPoint": str(entry), "interpreterPath": sys.executable})
+            os.chmod(installed / "inner", 0o000)
+            try:
+                if os.access(installed / "inner", os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                with mock.patch.dict(os.environ,
+                                     dict(os.environ, PYTHONPATH=str(root / "site")),
+                                     clear=True), \
+                     mock.patch.object(runtime_install, "codex_cli_version",
+                                       return_value="0.0.0-for-this-case"), \
+                     self.assertRaises(reading.Refused) as refused:
+                    runtime_install.classify_component(
+                        component, record=record, entry_override=str(entry), app_server="a")
+            finally:
+                os.chmod(installed / "inner", 0o755)
+        self.assertTrue(reading.unusable(refused.exception.reading.state),
+                        refused.exception.reading.refusal())
+
+
+class LockSiblingTests(unittest.TestCase):
+    """A run that holds a lock is a fact about the host, never a defect in this command."""
+
+    def test_the_lock_inventory_is_not_empty(self):
+        takers = _lock_reachers()
+        # Guards the reader, and names the sibling this layer was opened by.
+        self.assertIn("hooks.install", takers)
+        self.assertIn("runtime_install.cmd_hook", takers)
+        self.assertIn("runtime_install.cmd_install", takers)
+
+    def test_the_busy_answer_is_closed_at_the_boundary_and_not_only_at_the_siblings(self):
+        """Every command that can reach a lock is covered, without listing them.
+
+        The instance was one handler out of several. Answering it there and stopping would be
+        the same repair the previous four rounds made: correct, and open again at the next
+        sibling. main() answers a busy lock too, BEFORE the arm that files anything unmodelled
+        as a defect in this command, so a sibling added later cannot reopen it.
+        """
+        commands = sorted(key for key in _lock_reachers()
+                          if key.startswith("runtime_install.cmd_"))
+        self.assertTrue(commands, "no command reaches a lock, so this proves nothing")
+        arms = _handler_arms("main")
+        self.assertIn("TimeoutError", arms, "main() files a busy lock as an unmodelled defect")
+        self.assertLess(arms.index("TimeoutError"), arms.index("Exception"),
+                        "the catch-all runs first, so the busy arm is unreachable")
+
+    def test_the_hook_path_reports_a_busy_lock_rather_than_a_defect(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            hook_file = home / "hooks.json"
+            hook_file.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+            held = hostrecord.Locked(hook_file, timeout=0.2)
+            held.__enter__()
+            try:
+                done = run("hook", "--codex-home", str(home), "--hook-command", "/bin/true",
+                           "--issue", "CRW-87", "--apply")
+            finally:
+                held.__exit__()
+        payload = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 1)
+        self.assertIsNone(payload.get("internalError"),
+                          "a competing run was reported as a defect in this command")
+        self.assertEqual(payload["outcome"], runtime_install_module.BUSY)
+        self.assertIn(str(hook_file), payload["refused"])
+
+    def test_a_busy_lock_escaping_any_handler_is_never_an_internal_defect(self):
+        import runtime_install
+
+        emitted = []
+        with mock.patch.object(runtime_install, "cmd_verify_definition",
+                               side_effect=TimeoutError("another run holds it")), \
+             mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            code = runtime_install.main(["verify-definition"])
+        self.assertEqual(code, 1)
+        self.assertIsNone(emitted[0].get("internalError"))
+        self.assertEqual(emitted[0]["outcome"], runtime_install.BUSY)
