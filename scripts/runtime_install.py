@@ -1058,6 +1058,10 @@ def cmd_diagnose(args):
     # destination being surveyed compared unequal and was reported as another installation's.
     residue_root = (Path(destination).expanduser().absolute() if destination
                     else Path(owned_pointer).parent if owned_pointer else None)
+    # Which directory the protection reading asks about. The pointer the HOST reaches a runtime
+    # through is the recorded one, and it does not have to sit under the destination this run
+    # was invoked with.
+    pointer_home = Path(owned_pointer).parent if owned_pointer else residue_root
 
     def ownership_of(environment):
         """The caller's ownership reading, which residue never takes for itself.
@@ -1066,8 +1070,15 @@ def cmd_diagnose(args):
         the record or the pointer names the environment AND when either of those readings
         failed -- and 'selected' is True only when the record was read and names it. Both are
         passed through unchanged, because the decision they feed is the installer's own.
+
+        It is asked about the RECORDED pointer's own directory, not about this survey's root.
+        protected_environment derives the pointer from the destination it is handed, and
+        cmd_install deliberately reuses a previously recorded pointer across a destination
+        change, so handing it --dest asked about a pointer the host does not use: an
+        environment the real pointer still reaches, under a record that does not select it,
+        classified as reclaimable while a live process was running out of it.
         """
-        protected, detail = protected_environment(record, environment, residue_root, data)
+        protected, detail = protected_environment(record, environment, pointer_home, data)
         return protected, detail["recordSelectsIt"]
 
     residual = residue.survey(

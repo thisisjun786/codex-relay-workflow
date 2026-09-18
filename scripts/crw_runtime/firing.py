@@ -258,7 +258,13 @@ def _recorded_on_another_path(observed):
 
 
 def _journalling_off(observed):
-    _holding, empty, off, unread = _record_answers(observed)
+    # Read over every registration whose settings are usable, startable or not. Unlike an
+    # empty journal, a disabled policy is NOT explained by the adapter being unstartable:
+    # repairing the adapter still produces no firing evidence until journalling is switched
+    # back on, so filtering this cause by startability hid a repair the other one does not
+    # cover.
+    off = [entry for entry in (observed.get("namedJournals") or [])
+           if entry.get("usable") and entry.get("recordsAnswer") == NO_RECORDS_KEPT]
     # ANY such registration, for the same reason a missing settings file is: a peer that keeps
     # a journal is not evidence that this one does. Requiring every registration to be off hid
     # a registration configured never to record behind a neighbour that records normally, and
@@ -358,18 +364,29 @@ CAUSE_REQUIRES = {
     # journal readings carry their own registration's startability instead, so an unstartable
     # registration is simply not in the set those rules read -- which is both narrower and
     # exactly right, because its journal is empty BECAUSE it cannot start.
-    RECORDS_FOUND: (NOT_REGISTERED,),
     RECORDED_ON_ANOTHER_PATH: (NOT_REGISTERED,),
     JOURNALLING_OFF: (NOT_REGISTERED,),
     POLICY_RECORDS_ONLY_FAULTS: (NOT_REGISTERED,),
     NOTHING_RECORDED: (NOT_REGISTERED,),
+    # RECORDS_FOUND is the one terminal answer here: it says there is no absence to explain,
+    # and unlike every cause above it cannot meaningfully stand beside one. It used to be
+    # established off the subset of registrations this command could read, so a host with one
+    # unreadable spelling and one journal holding records reported found-records as though it
+    # were a repair. It is now asked last and only once every defect cause is ruled out.
+    RECORDS_FOUND: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED, ADAPTER_CANNOT_RUN,
+                    SETTINGS_ABSENT, SETTINGS_UNUSABLE, JOURNALLING_OFF,
+                    RECORDED_ON_ANOTHER_PATH, POLICY_RECORDS_ONLY_FAULTS, NOTHING_RECORDED),
 }
 
 # The order causes are reported in. Their dependencies come from CAUSE_REQUIRES and not from
 # this sequence, which exists so a reader meets them upstream first.
+# RECORDS_FOUND is last, because it is the only terminal answer: every cause before it names
+# something to repair and they can legitimately stand together, while "there is no absence to
+# explain" cannot stand beside any of them. Its requirements are checked against causes already
+# decided, so being asked last is what makes them askable at all.
 CAUSE_ORDER = (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED, ADAPTER_CANNOT_RUN, SETTINGS_ABSENT,
-               SETTINGS_UNUSABLE, RECORDS_FOUND, RECORDED_ON_ANOTHER_PATH, JOURNALLING_OFF,
-               POLICY_RECORDS_ONLY_FAULTS, NOTHING_RECORDED)
+               SETTINGS_UNUSABLE, RECORDED_ON_ANOTHER_PATH, JOURNALLING_OFF,
+               POLICY_RECORDS_ONLY_FAULTS, NOTHING_RECORDED, RECORDS_FOUND)
 
 NOTE = ("Registered, startable and observed to have recorded are separate claims. What no"
         " answer here establishes: a journal write that fails removes what it left and cannot"

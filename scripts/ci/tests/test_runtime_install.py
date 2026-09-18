@@ -9077,6 +9077,33 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
                       "an established pointer repair was dropped because a listing beside it"
                       " could not be made")
 
+    def test_an_environment_the_recorded_pointer_reaches_is_never_reclaimable(self):
+        """cmd_install deliberately reuses a previously recorded pointer across a destination
+        change. Asking protected_environment about --dest then asked about a pointer the host
+        does not use, so an environment the real pointer still reaches -- under a record that
+        does not select it -- classified as reclaimable while a process could be running out
+        of it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            elsewhere = Path(temporary) / "old-destination"
+            elsewhere.mkdir()
+            far = pointer.pointer_path(elsewhere)
+            host.candidate.mkdir(parents=True)
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-100")
+            # The pointer the host actually reaches a runtime through lives under the OLD
+            # destination and names a staging under the new one.
+            pointer.place(far, host.candidate)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(far), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host)
+        entries = {entry["path"]: entry for entry in found["residue"]["entries"]}
+        self.assertNotEqual(entries[str(host.candidate)]["decision"], staging.RECLAIM,
+                            "a live target of the pointer this host uses was reported as"
+                            " clearable")
+        self.assertNotIn(str(host.candidate), found["residualPaths"])
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here

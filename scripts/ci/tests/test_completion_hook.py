@@ -2153,6 +2153,41 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             cell = why_no_record(temporary)
         self.assertEqual(cell.get("value"), firing.RECORD_PATH_UNIDENTIFIED)
 
+    def test_found_records_never_stand_beside_a_repair(self):
+        """records_found is the one terminal answer: it says there is no absence to explain.
+        Established off the subset this command could read, it appeared beside
+        record_path_unidentified and presented found records as though they were a repair."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            first, second = second_registration(temporary, "journal-two")
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={},
+                           settings=str(second))
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["hooks"][completion.EVENT][0]["hooks"][0]["command"] = (
+                document["hooks"][completion.EVENT][0]["hooks"][0]["command"].replace(
+                    str(first), "relative-settings.json"))
+            path.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.RECORD_PATH_UNIDENTIFIED,
+                         "records that need no repair were reported as one of several causes")
+
+    def test_a_disabled_journal_survives_its_registration_being_unstartable(self):
+        """Unlike an empty journal, a disabled policy is not explained by the adapter being
+        unstartable: repairing the adapter still produces no firing evidence until journalling
+        is switched back on, so that is a second repair and has to be said."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            amend_settings(temporary, journalPolicy=completion.NO_JOURNAL)
+            break_the_target(temporary)
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES)
+        self.assertEqual(
+            sorted(entry["cause"] for entry in cell.get("candidates") or []),
+            sorted((firing.ADAPTER_CANNOT_RUN, firing.JOURNALLING_OFF)))
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition
