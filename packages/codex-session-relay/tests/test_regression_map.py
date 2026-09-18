@@ -278,9 +278,9 @@ FOLD_FREE_BOOLEANS = (
 # three are locals bound by tuple unpacking that happen to share a declared field's name; the
 # reader cannot tell that from a producer, so it says so rather than guessing.
 UNACCOUNTED_OCCURRENCES = (
-    ("bridge_adapter.py", 115, "exhausted", "_scan_listing"),
-    ("currency.py", 191, "covered", "head_revision"),
-    ("guard.py", 389, "found", "hold_counters"),
+    ("bridge_adapter.py", "_scan_listing", "exhausted"),
+    ("currency.py", "head_revision", "covered"),
+    ("guard.py", "hold_counters", "found"),
 )
 
 # A read of a folded boolean whose asserted value this reader cannot attribute.
@@ -670,7 +670,10 @@ def producer_paths():
                 continue
             if isinstance(getattr(node, "ctx", None), ast.Load):
                 continue
-            leftover.append((path.name, node.lineno, name, owner.get(node, "<module>")))
+            # Keyed by the function rather than the line, because a line number turns an
+            # unrelated edit anywhere above it into a failure here, and this list exists to
+            # catch a producer form nobody enumerated rather than to pin a location.
+            leftover.append((path.name, owner.get(node, "<module>"), name))
     return paths, tuple(sorted(leftover))
 
 
@@ -910,6 +913,48 @@ class TheSweepDerivesItsOwnReachRatherThanClaimingIt(unittest.TestCase):
         self.assertEqual(unresolved, UNRESOLVED_READS)
         self.assertGreater(
             len(sites), 20, f"only {len(sites)} sites were read, so the scan stopped matching",
+        )
+
+    def test_the_counts_this_map_prints_are_the_counts_the_suite_produces(self):
+        """Prose numbers, read back out of the file and compared.
+
+        The landed table and the sweep paragraph both quote counts, and nothing parsed either
+        of them: the criterion-table reader above only looks at five-cell numbered rows. Two
+        went stale exactly that way - a module's case count stayed at 6 across a change that
+        took it to 13, and the partition counts outlived the rule that produced them. A map
+        whose stated reach can drift without failing anything is the shape this file exists to
+        close, so the numbers it prints are derived here too.
+        """
+        text = MAP.read_text(encoding="utf-8")
+        landed = re.findall(
+            r"^\| " + TICK + r"(test_[a-z0-9_]+\.py)" + TICK + r" \| (\d+) \|", text, re.M,
+        )
+        self.assertGreater(len(landed), 4, "the landed table stopped being readable")
+        for name, printed in landed:
+            path = TESTS / name
+            self.assertTrue(path.exists(), f"the landed table names {name}, which is not here")
+            cases = sum(
+                1 for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+                if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+            )
+            self.assertEqual(
+                int(printed), cases,
+                f"the map says {name} has {printed} cases and it has {cases}",
+            )
+
+        summaries, beyond, plain = partitioned_booleans()
+        sites, _unresolved = summary_reads()
+        printed = re.search(
+            r"(\d+) booleans as (\d+) / (\d+) / (\d+), and (\d+) measured\s+places", text,
+        )
+        self.assertIsNotNone(printed, "the sweep section stopped printing its counts")
+        self.assertEqual(
+            tuple(int(group) for group in printed.groups()),
+            (
+                len(summaries) + len(beyond) + len(plain),
+                len(summaries), len(beyond), len(plain), len(sites),
+            ),
+            "the counts the map prints and the ones the suite produces disagree",
         )
 
     def test_no_declared_site_is_left_without_a_reading(self):

@@ -74,10 +74,10 @@ overstatement this map exists to avoid.
 | Module | Cases | Covers |
 |---|---|---|
 | `test_registration_contention.py` | 4 | 1 |
-| `test_failure_recovery.py` | 6 | 2, 3 |
+| `test_failure_recovery.py` | 13 | 2, 3 |
 | `test_multi_parent_isolation.py` | 8 | 5, 6 |
 | `test_operational_scale.py` | 8 | 7, 8 |
-| `test_regression_map.py` | 9 | 9, and the sweep's own reach |
+| `test_regression_map.py` | 10 | 9, and the sweep's own reach |
 
 ## Clock provenance, derived rather than asserted
 
@@ -209,11 +209,12 @@ asserts the cheap side is a place to read again.
 
 `TheSweepDerivesItsOwnReachRatherThanClaimingIt` produces that reach. Every boolean this
 package declares is partitioned into one of three lists and the suite checks the partition is
-total: the ones that fold, the ones that fold where the reduction rule cannot follow, and the
-ones that fold nothing. Every place the suite measures something with one of the first kind is
-listed, keyed by the assertion's own text, with a verdict written beside it. Today that reads
-47 booleans as 10 / 11 / 26, and 24 measured places; those counts come from the suite, and a
-number here that disagreed with it would fail there.
+total: the ones whose fold reduces to a cheap side, the ones that fold where the rule cannot
+weigh them, and the ones that reach their value down a single path. Every place the suite
+measures something with either folded kind is listed, keyed by the assertion's own text, with
+a verdict written beside it. Today that reads 47 booleans as 10 / 28 / 9, and 61 measured
+places. Those counts, and the per-module case counts in the landed table above, are read back
+out of this file and compared against the suite, so a number here that went stale fails there.
 
 Its first run produced two findings, which is the answer to whether it is bookkeeping.
 It named the isolation case this work was opened for, and it named a second one review
@@ -251,19 +252,15 @@ is that pair together rather than the timeout alone.
 
 ## Findings owned elsewhere, reported rather than fixed
 
-- `guard.SQLITE_TIMEOUT` documents the lock wait the readiness check may spend, and the
-  bound that actually applies is set elsewhere: `intent.read_only_connection` carries its
-  own literal of the same value, and `guard.lookup_receipt` calls that function without
-  passing a timeout at all. The wait is real and reachable - an exclusive writer makes the
-  guard's read raise after a measured 2.00 seconds - and it is that literal producing it.
-  What `test_failure_recovery.py` pins is only the deciding place: it asks
-  `read_only_connection` for its signature, so the day a timeout parameter appears there
-  the test fails and the change becomes a decision rather than a drift. It does NOT establish
-  that nothing anywhere reads the constant; a check over the whole import graph, and the
-  question of whether a second literal should survive at all, belong to CRW-96, whose
-  acceptance already states that leaving the second literal in place is not satisfaction.
-  Wiring or removing it would also move `intent.dispatch_generation_state`, which is why it
-  is reported here rather than fixed.
+- The two-literal lock wait is CLOSED, and this passage described it as open until CRW-96
+  landed. What it said: `guard.SQLITE_TIMEOUT` documented a bound that
+  `intent.read_only_connection` actually set from its own literal, so the constant a reader
+  found was not the one producing the measured 2.00-second wait. What is there now:
+  `intent.SQLITE_TIMEOUT` sits directly above `read_only_connection` and is the only
+  literal, `guard.py` declares no bound of its own and points at that one, and
+  `read_only_connection` still takes no timeout parameter, deliberately, so
+  `guard.lookup_receipt` and `intent.dispatch_generation_state` cannot be given different
+  waits. The signature check in `test_failure_recovery.py` still pins the deciding place.
 - `intent.register_relationship` reads the dispatch generation state and then publishes
   `relationship.json` as two operations with nothing held between them. An advance
   committing in that window returns success over a generation the store has already moved
