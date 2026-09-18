@@ -74,8 +74,10 @@ ARMS = (OFF, ON)
 # fails before writing leaves exactly the empty Codex home a successful dry run leaves, so without
 # this the off arm would pass on a run that never happened.
 ARM_INSTALL = {
-    OFF: {"installExit": 0, "installResult": "MISSING", "installSettings": "config_would_create"},
-    ON: {"installExit": 0, "installResult": "CREATED", "installSettings": "config_created"},
+    OFF: {"installExit": 0, "installResult": "MISSING", "installSettings": "config_would_create",
+          "registration": 0, "foreignRegistration": "present"},
+    ON: {"installExit": 0, "installResult": "CREATED", "installSettings": "config_created",
+         "registration": 1, "foreignRegistration": "present"},
 }
 
 # The one reason the off arm has nothing to read. Written once, because it is one fact about one
@@ -123,6 +125,7 @@ CELLS = (
     ("heldFile", MARKER_ROOT, ("heldFile",), "guard.reserve_hold"),
     ("journalElapsedMs", JOURNAL, ("elapsedMs",), "completion.run"),
     ("processWallMs", HARNESS, ("wallMs",), "hook_comparison.fire"),
+    ("processExit", HARNESS, ("exitCode",), "hook_comparison.fire"),
 )
 
 ARM_CELLS = ("installExit", "installResult", "installSettings", "registration",
@@ -160,17 +163,17 @@ SCENARIOS = (
     scenario("receipt_missing", MANAGED,
              {"observation": "receipt_missing", "guardDecision": "block",
               "guardState": "receipt_missing", "printedBlock": PRINTED_A_BLOCK,
-              "heldFile": RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED}),
     scenario("managed_unregistered", MANAGED,
              {"observation": "managed_unregistered", "guardDecision": "block",
               "guardState": "managed_unregistered", "printedBlock": PRINTED_A_BLOCK,
-              "heldFile": RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED}),
     scenario("undeclared_turn_end", MANAGED,
              {"observation": "undeclared_turn_end", "guardDecision": "block",
               "guardState": "undeclared_turn_end", "printedBlock": PRINTED_A_BLOCK,
-              "heldFile": RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED}),
     # The positive control. Without it the three omission rows would assert about a cell that had
     # never been seen to move the other way, which is the shape of a suite that passes while the
@@ -178,7 +181,7 @@ SCENARIOS = (
     scenario("declared_ready_receipted", MANAGED,
              {"observation": "declared_ready_receipted", "guardDecision": "release",
               "guardState": "declared_ready_receipted", "printedBlock": PRINTED_NOTHING,
-              "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED},
              absent={"heldFile": "a turn that declared itself releases on its own declaration,"
                                  " and a reservation here would be the defect this scenario"
@@ -186,7 +189,7 @@ SCENARIOS = (
     scenario("declared_in_progress", MANAGED,
              {"observation": "declared_in_progress", "guardDecision": "release",
               "guardState": "declared_in_progress", "printedBlock": PRINTED_NOTHING,
-              "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED},
              absent={"heldFile": "a turn that declared itself releases on its own declaration,"
                                  " and a reservation here would be the defect this scenario"
@@ -194,7 +197,7 @@ SCENARIOS = (
     scenario("declared_blocked_needs_input", MANAGED,
              {"observation": "declared_blocked_needs_input", "guardDecision": "release",
               "guardState": "declared_blocked_needs_input", "printedBlock": PRINTED_NOTHING,
-              "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED},
              absent={"heldFile": "a turn that declared itself releases on its own declaration,"
                                  " and a reservation here would be the defect this scenario"
@@ -202,7 +205,7 @@ SCENARIOS = (
     scenario("declared_interrupted", MANAGED,
              {"observation": "declared_interrupted", "guardDecision": "release",
               "guardState": "declared_interrupted", "printedBlock": PRINTED_NOTHING,
-              "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED},
              absent={"heldFile": "a turn that declared itself releases on its own declaration,"
                                  " and a reservation here would be the defect this scenario"
@@ -210,7 +213,7 @@ SCENARIOS = (
     scenario("unmanaged", UNMANAGED,
              {"observation": "unmanaged", "guardDecision": "release",
               "guardState": "unmanaged", "printedBlock": PRINTED_NOTHING,
-              "heldFile": NOT_RESERVED, "recordedAs": NOT_PUBLISHED,
+              "processExit": 0, "heldFile": NOT_RESERVED, "recordedAs": NOT_PUBLISHED,
               "observationFile": NOT_PUBLISHED},
              absent={"recordedAs": "no marker names this workspace, so no assignment directory was"
                                    " selected and the guard had nowhere to publish",
@@ -220,7 +223,7 @@ SCENARIOS = (
     scenario("cxc_concurrent", MANAGED,
              {"observation": "undeclared_turn_end", "guardDecision": "release",
               "guardState": "hold_in_flight", "printedBlock": PRINTED_NOTHING,
-              "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": NOT_RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED},
              stop_hook_active=True,
              absent={"heldFile": "a continuation is already running for this turn, so the omission"
@@ -228,12 +231,12 @@ SCENARIOS = (
     scenario("duplicate", MANAGED,
              {"observation": "undeclared_turn_end", "guardDecision": "block",
               "guardState": "undeclared_turn_end", "printedBlock": PRINTED_A_BLOCK,
-              "heldFile": RESERVED, "recordedAs": PUBLISHED,
+              "processExit": 0, "heldFile": RESERVED, "recordedAs": PUBLISHED,
               "observationFile": RESOLVED},
              fire_twice=True,
              second={"observation": "undeclared_turn_end", "guardDecision": "release",
                      "guardState": "hold_in_flight", "printedBlock": PRINTED_NOTHING,
-                     "heldFile": RESERVED, "recordedAs": PUBLISHED,
+                     "processExit": 0, "heldFile": RESERVED, "recordedAs": PUBLISHED,
                      "observationFile": RESOLVED}),
 )
 
@@ -263,6 +266,11 @@ STAND_INS = {
     "no daemon and no App Server":
         "replaces the running service. Delivery, acknowledgement, parent verification and recovery"
         " after a fault are outside every row here.",
+    "the reported argv":
+        "replaces a witness at the process boundary. The command is read back out of the hook file"
+        " and compared, and the journal and the published observations are read from disk, so a"
+        " row establishes that a hook process ran and reached the guard. It does not establish"
+        " which executable the kernel started.",
     "the harness as sole writer":
         "replaces a sandbox grant. It is what makes hold mode legitimate here, and it means no row"
         " proves that a real child under a real grant could not forge the facts the guard read.",
@@ -774,7 +782,7 @@ def _there(path, present, missing):
 def harness_payload(fired):
     if fired is None:
         return {"source": HARNESS, "absent": NO_REGISTRATION}
-    return {"source": HARNESS, "wallMs": fired["wallMs"]}
+    return {"source": HARNESS, "wallMs": fired["wallMs"], "exitCode": fired["exitCode"]}
 
 
 # ------------------------------------------------------------------ one row
@@ -1084,6 +1092,9 @@ def document(scenarios, root):
     failed = [name + "/" + arm + "#" + str(index)
               for name, arm, index, fired in rows if not fired["verdict"]["passed"]]
     armed = [name for name in ARMS if not scenarios["_arms"][name]["installed"]["passed"]]
+    answers = measures(scenarios)
+    missed = sorted(name for name, measure in answers.items()
+                    if measure.get("answer") == MEASURED and not measure.get("met"))
     return {
         "source": SOURCE,
         "harnessVersion": HARNESS_VERSION,
@@ -1100,13 +1111,18 @@ def document(scenarios, root):
                           for declared in SCENARIOS),
         "absenceIsNormalAt": [dict(place, arm=arm, scenario=name, cell=cell)
                               for (arm, name, cell), place in sorted(places.items())],
-        "measures": measures(scenarios),
+        "measures": answers,
         "supplemental": supplemental(scenarios),
         "standIns": STAND_INS,
         "notPerformed": NOT_PERFORMED_HERE,
         "armsThatDisagreed": armed,
         "rowsThatDisagreed": failed,
+        "measuresThatMissedTheirBound": missed,
         "everyRowPassed": not failed and not armed,
+        # The answer, and the only thing the exit status is taken from. Keeping the rows and the
+        # measures apart let a run whose latency exceeded the contract's bound, or whose wrong
+        # block criterion was unmet, exit 0 because every row had agreed with its own table.
+        "passed": not failed and not armed and not missed,
     }
 
 
@@ -1142,7 +1158,7 @@ def main(argv=None):
     sys.stdout.write("\n")
     if answer.get("refused"):
         return 2
-    return 0 if answer["everyRowPassed"] else 1
+    return 0 if answer["passed"] else 1
 
 
 if __name__ == "__main__":

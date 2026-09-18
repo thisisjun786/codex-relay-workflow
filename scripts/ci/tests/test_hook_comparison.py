@@ -48,7 +48,7 @@ ARM_CELLS = ("installExit", "installResult", "installSettings", "registration",
 
 FIRING_CELLS = ("firedCommand", "adapterOutcome", "observation", "guardDecision", "guardState",
                 "printedBlock", "recordedAs", "observationFile", "heldFile", "journalElapsedMs",
-                "processWallMs")
+                "processWallMs", "processExit")
 
 # Every answer that means there is nothing there, written here. The harness declares its own and
 # this check requires the two to be the same set: importing the harness's would have made every
@@ -90,6 +90,7 @@ CELL_READINGS = {
     "heldFile": ("marker-root", ["heldFile"]),
     "journalElapsedMs": ("journal", ["elapsedMs"]),
     "processWallMs": ("harness", ["wallMs"]),
+    "processExit": ("harness", ["exitCode"]),
 }
 
 MEASURES = ("missedDetectionStateAndReceiptAbsent", "missedDetectionReceiptAbsentOnly",
@@ -179,8 +180,13 @@ class ComparisonRunTests(unittest.TestCase):
         self.assertEqual(answer.get("source"), "hook-comparison",
                          "a document without the stamp is not this command's answer")
         self.assertIsNone(answer.get("refused"), "the run refused rather than comparing anything")
-        self.assertTrue(answer.get("everyRowPassed"),
-                        "rows disagreed: " + json.dumps(answer.get("rowsThatDisagreed")))
+        self.assertTrue(answer.get("passed"),
+                        "the run did not pass: rows "
+                        + json.dumps(answer.get("rowsThatDisagreed")) + ", arms "
+                        + json.dumps(answer.get("armsThatDisagreed")) + ", measures "
+                        + json.dumps(answer.get("measuresThatMissedTheirBound")))
+        self.assertEqual(answer.get("measuresThatMissedTheirBound"), [],
+                         "a criterion this command exists to judge was not met")
 
     def test_the_inventories_are_the_ones_this_check_names(self):
         """Counted against literals, so a scenario that vanished takes no assertion with it."""
@@ -221,6 +227,9 @@ class ComparisonRunTests(unittest.TestCase):
                 (cells["observation"]["value"], cells["guardDecision"]["value"],
                  cells["guardState"]["value"], cells["printedBlock"]["value"],
                  cells["heldFile"]["value"]), declared, where + "the state disagrees")
+            self.assertEqual(cells["processExit"]["value"], 0,
+                             where + "the hook process exited nonzero, which the host reads as a"
+                                     " failed hook run whatever it wrote")
             self.assertTrue(one["verdict"]["passed"], where + json.dumps(one["verdict"]))
 
     def test_a_managed_scenario_publishes_an_observation_that_is_actually_there(self):
@@ -261,7 +270,10 @@ class ComparisonRunTests(unittest.TestCase):
         self.assertEqual(answer["arms"]["on"]["installExit"]["value"], 0)
         self.assertEqual(answer["arms"]["on"]["installResult"]["value"], "CREATED")
         self.assertEqual(answer["arms"]["on"]["installSettings"]["value"], "config_created")
+        self.assertEqual(answer["arms"]["off"]["registration"]["value"], 0)
+        self.assertEqual(answer["arms"]["on"]["registration"]["value"], 1)
         for arm in ARMS:
+            self.assertEqual(answer["arms"][arm]["foreignRegistration"]["value"], "present")
             self.assertTrue(answer["arms"][arm]["installed"]["passed"],
                             json.dumps(answer["arms"][arm]["installed"]))
 
@@ -341,6 +353,21 @@ class ComparisonRunTests(unittest.TestCase):
             self.assertEqual(cells["heldFile"]["value"], "not_reserved")
             self.assertEqual(cells["printedBlock"]["value"], "printed_nothing")
 
+    def test_a_measured_criterion_that_misses_its_bound_is_collected(self):
+        """The overall answer covers the criteria, not only the rows.
+
+        Keeping them apart let a run whose latency exceeded the contract's bound exit 0 because
+        every row had agreed with its own table.
+        """
+        answer = run_once()
+        measured = [name for name in MEASURES
+                    if answer["measures"][name].get("answer") == "measured"]
+        self.assertTrue(measured, "no criterion was measured, so the collection is vacuous")
+        for name in measured:
+            self.assertIn("met", answer["measures"][name], name + " reports no verdict to collect")
+        self.assertIn("measuresThatMissedTheirBound", answer,
+                      "the document does not collect the criteria that missed their bound")
+
     def test_the_latency_distribution_is_measured_against_the_budget(self):
         answer = run_once()
         measure = answer["measures"]["addedLatency"]
@@ -381,7 +408,7 @@ class ReadingTests(unittest.TestCase):
             "stdout": {"source": "stdout", "printed": "printed_a_block"},
             "marker-root": {"source": "marker-root", "observationFile": "resolved",
                             "heldFile": "reserved"},
-            "harness": {"source": "harness", "wallMs": 11},
+            "harness": {"source": "harness", "wallMs": 11, "exitCode": 0},
             "hook-file": {"source": "hook-file", "entries": 1, "foreign": "present",
                           "command": "python3 completion_hook.py settings.json"},
         }
@@ -468,7 +495,8 @@ class VerdictTests(unittest.TestCase):
     """A row's assertion has to be able to fail, and to fail for the right reason."""
 
     def cells(self, **overrides):
-        values = {"adapterOutcome": "guard_answered", "observation": "receipt_missing",
+        values = {"processExit": 0,
+                  "adapterOutcome": "guard_answered", "observation": "receipt_missing",
                   "guardDecision": "block", "guardState": "receipt_missing",
                   "printedBlock": "printed_a_block", "heldFile": "reserved",
                   "recordedAs": "hook/s/t/0", "observationFile": "resolved",

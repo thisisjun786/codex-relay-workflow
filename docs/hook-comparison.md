@@ -46,7 +46,7 @@ document records that rather than asserting it, every block and reservation it p
 synthetic hold-mode output, and none of it describes what a default installation does when a turn
 ends, which is nothing.
 
-## Sixteen cells, sixteen readings
+## Seventeen cells, seventeen readings
 
 Each cell is filled by the reading its own question called for. A reading that could not be made
 answers `unreadable` and names why; it never answers false and never takes the value of the cell
@@ -70,6 +70,7 @@ beside it.
 | `heldFile` | the assignment directory | the create-once `hold.json` reservation itself | counting decisions that said block |
 | `journalElapsedMs` | the hook's journal record | `elapsedMs`, the adapter's measure of itself | the harness's clock |
 | `processWallMs` | the harness | the wall clock around the process, interpreter start included | the adapter's `elapsedMs` |
+| `processExit` | the harness | the status the hook process exited with | anything it wrote |
 
 Several of these pairings deserve their reason in the open. `printedBlock` answers in the vocabulary
 the host sees, which is that a block was printed or that nothing was printed; it is not translated
@@ -103,18 +104,18 @@ not right now, and `unresolved_handoff` says the assignment has stopped convergi
 are both a silent release carrying no new reservation, so a scenario that declared one and accepted
 the other would pass while the thing it was watching for had happened.
 
-| Scenario | What it builds | Observation | Decision | Decision state | Printed |
-| -- | -- | -- | -- | -- | -- |
-| `receipt_missing` | declared, bound, claimed, registered, `ready_for_review` recorded, no receipt emitted | `receipt_missing` | block | `receipt_missing` | a block |
-| `managed_unregistered` | declared, bound, claimed, no relationship fact published | `managed_unregistered` | block | `managed_unregistered` | a block |
-| `undeclared_turn_end` | declared, bound, claimed, registered, nothing recorded for the turn | `undeclared_turn_end` | block | `undeclared_turn_end` | a block |
-| `declared_ready_receipted` | the same as `receipt_missing` plus a real `emit` over real bytes | `declared_ready_receipted` | release | `declared_ready_receipted` | nothing |
-| `declared_in_progress` | a progress report recorded for this turn | `declared_in_progress` | release | `declared_in_progress` | nothing |
-| `declared_blocked_needs_input` | a turn waiting on a person | `declared_blocked_needs_input` | release | `declared_blocked_needs_input` | nothing |
-| `declared_interrupted` | a turn the user stopped | `declared_interrupted` | release | `declared_interrupted` | nothing |
-| `unmanaged` | a workspace no marker names | `unmanaged` | release | `unmanaged` | nothing |
-| `cxc_concurrent` | an omission turn carrying `stop_hook_active`, beside a foreign CXC entry in the same hook file | `undeclared_turn_end` | release | `hold_in_flight` | nothing |
-| `duplicate` | one omission turn, the command fired twice | `undeclared_turn_end` both times | block, then release | `undeclared_turn_end`, then `hold_in_flight` | a block, then nothing |
+| Scenario | What it builds | Observation | Decision | Decision state | Printed | Reservation |
+| -- | -- | -- | -- | -- | -- | -- |
+| `receipt_missing` | declared, bound, claimed, registered, `ready_for_review` recorded, no receipt emitted | `receipt_missing` | block | `receipt_missing` | a block | reserved |
+| `managed_unregistered` | declared, bound, claimed, no relationship fact published | `managed_unregistered` | block | `managed_unregistered` | a block | reserved |
+| `undeclared_turn_end` | declared, bound, claimed, registered, nothing recorded for the turn | `undeclared_turn_end` | block | `undeclared_turn_end` | a block | reserved |
+| `declared_ready_receipted` | the same as `receipt_missing` plus a real `emit` over real bytes | `declared_ready_receipted` | release | `declared_ready_receipted` | nothing | none |
+| `declared_in_progress` | a progress report recorded for this turn | `declared_in_progress` | release | `declared_in_progress` | nothing | none |
+| `declared_blocked_needs_input` | a turn waiting on a person | `declared_blocked_needs_input` | release | `declared_blocked_needs_input` | nothing | none |
+| `declared_interrupted` | a turn the user stopped | `declared_interrupted` | release | `declared_interrupted` | nothing | none |
+| `unmanaged` | a workspace no marker names | `unmanaged` | release | `unmanaged` | nothing | none |
+| `cxc_concurrent` | an omission turn carrying `stop_hook_active`, beside a foreign CXC entry in the same hook file | `undeclared_turn_end` | release | `hold_in_flight` | nothing | none |
+| `duplicate` | one omission turn, the command fired twice | `undeclared_turn_end` both times | block, then release | `undeclared_turn_end`, then `hold_in_flight` | a block, then nothing | reserved once, and still the one |
 
 The first three are the omissions CRW-68 asks for: a declared readiness whose receipt never arrived
 is the missing `emit`, and a claimed marker whose relationship was never registered is the management
@@ -134,8 +135,8 @@ supplied by the harness rather than delivered by a host.
 | -- | -- | -- |
 | every off-arm firing cell | the journal record, the stdout, the published observation, the reservation | `adapter_entries` found no registration under `Stop`, so no command existed to run, and the install reported the dry run that leaves none |
 | `unmanaged`, `recordedAs` | the published observation | no assignment directory was selected, so there was nowhere to publish |
-| every releasing scenario, `heldFile` | the reservation | a release reserves nothing, and a hold file here would be the defect |
-| every releasing scenario, `printedBlock` | stdout | the adapter prints only a block it re-validated, so silence is what the host is meant to see |
+| every scenario the guard releases on its own declaration, `heldFile` | the reservation | a turn that declared itself releases on that declaration, and a reservation here would be the defect the scenario watches for |
+| `cxc_concurrent`, `heldFile` | the reservation | a continuation is already running for the turn, so the omission is recorded and nothing is held |
 
 The set of places is built from the scenario and cell declarations rather than listed by hand, so a
 scenario or cell added later either declares its absence answer or fails.
@@ -184,18 +185,21 @@ One JSON object on stdout, and nothing else on stdout.
 | `scenarios` | per scenario, per arm, every cell as a value with the source that answered it, the path it was read from, whether it was readable, and the detail when it was not; beside the observation and decision the scenario declared in advance, and the provenance of what was handed to the command |
 | `measures` | the six, each with its answer, the rows it was computed from, and its narrowing sentence |
 | `supplemental` | observations reported under their own name because they are not one of the six |
+| `measuresThatMissedTheirBound` | the measured criteria that were not met, and the only thing the exit status is taken from beside the rows and the arms |
 | `notPerformed` | what was not run and why, including the CRW-68 criteria this arrangement cannot reach |
 | `standIns` | per stand-in, what it replaces and what a row travelling through it therefore does not prove |
 
-A row on the on arm passes when the install succeeded as its arm declares, exactly one entry names
-this adapter, the adapter outcome is `guard_answered`, the observation and the decision and the
+A run passes when every row passes, both arms installed as they declare, and no measured criterion
+missed its bound. A row on the on arm passes when the install succeeded as its arm declares, exactly
+one entry names this adapter, the hook process exited zero, the adapter outcome is `guard_answered`, the observation and the decision and the
 decision state and the printed answer and the reservation are all the ones the scenario declared in
 advance, and a managed scenario resolves its published observation on disk. A row on the off arm
 passes when the install succeeded as a dry run and every firing cell is absent for the one declared
 reason.
 
 Everything in the document comes from the run's own inputs and its own temporary root. The command
-lines it reports carry absolute paths because they are the command lines that ran: the interpreter,
+lines it reports carry absolute paths because they are the command lines it was given to run: the
+interpreter,
 the entry point and the installer inside this checkout, and the relay launcher, the Codex home, the
 marker root and the store under the temporary root. The sessions, turns, issue keys and task
 identities are names the harness invents. Nothing is read from a Linear document, a transcript, a
