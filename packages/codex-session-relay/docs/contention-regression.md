@@ -139,6 +139,18 @@ was actually examined and refusing a walk that examined nothing. Every test in
 read, and the guards were checked by breaking the file three ways: removing the table fails
 three of the four tests, a renamed class fails one, and a wrong clock label fails one.
 
+**How far that sweep actually reached, which is less far than the paragraph above sounds.**
+It read assertion shape: which comparisons could not fail, and which loops could examine
+nothing. It did not read what each test helper counted, and a fifth review round found a
+case in exactly that gap - `TheDeclaredLoad.drain` measures the backlog as
+`state = 'queued'` alone, while `delivery.CLAIMABLE` is
+`(queued, deferred_busy, withheld_pre_send)`, so an event withheld before sending would
+leave the count at zero and the load would read as drained with that event still owed.
+Measured on this branch, all events reach `dispatched` and nothing is currently hidden,
+so this is a latent unsoundness rather than a passing falsehood. It is recorded here
+unfixed and the review thread is left open, because the coordinator reserved the decision on
+it. A sweep that missed one belongs in this file as plainly as the three it caught.
+
 **A test that depends on a configuration production cannot reach must say so.** This
 repository configures write-ahead logging and writes with `BEGIN IMMEDIATE`; nothing in
 it sets any other locking mode. The exclusive-lock case in `test_failure_recovery.py` is
