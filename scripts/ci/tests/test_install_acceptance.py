@@ -201,10 +201,10 @@ TOUCHES_SOURCE_WITHOUT_CONCLUDING = {
     "importable_runtime":
         "it names __init__.py to decide where a package is, which is a question about the"
         " filesystem rather than about what the file says.",
-    "source_spellings":
+    "source_spellings.is_source_file":
         "it names the .py suffix to decide which bindings are source files. Which files exist"
         " is a question for the filesystem, and it asks the filesystem.",
-    "_source_spelled":
+    "_source_spelled.spelled":
         "the matcher: it names the suffix in order to look for it, which is the question"
         " rather than an answer taken from a file.",
     "asked_over":
@@ -228,6 +228,9 @@ SOURCE_AT_MODULE_LEVEL = {
 # fails its own declaration instead of sitting here forever.
 EVERY_INTERPRETER = "every supported interpreter"
 THE_FLOOR = "the 3.10 floor"
+# Where the floor entries stop being unreadable. Written down because no object can be asked it:
+# it is a fact about which interpreter gave its builtin types an introspectable signature.
+READABLE_FROM = (3, 11)
 SOURCE_UNDECIDED_CALLS = {
     "getattr": (EVERY_INTERPRETER, "a builtin whose signature is not introspectable"),
     "vars": (EVERY_INTERPRETER, "the same"),
@@ -1329,7 +1332,9 @@ def observe_all(root):
 # form nobody anticipated is still an occurrence, so it arrives as a failure rather than as
 # another review round. What the derivation still cannot reach is not argued away in a sentence:
 # it is returned as data, declared, and each declared form carries a control that plants it and
-# requires the derivation not to see it, so the list cannot rot in either direction.
+# requires the derivation not to see it. That is what keeps the declaration from rotting: widening
+# the derivation later makes the control for the form it now covers fail, which is the prompt to
+# delete the entry rather than leave a limitation standing that stopped being true.
 
 MODULE_LEVEL = "<module>"
 
@@ -1345,25 +1350,32 @@ def _dotted(node):
 
 
 def _places(tree):
-    """Which function each node sits in, and which class, with MODULE_LEVEL for neither.
+    """Which place each node sits in, and which class, with MODULE_LEVEL for neither.
 
-    The OUTERMOST function, not the innermost. A nested helper is part of the function that
-    defines it, two of them can share a name, and the declarations this feeds are keyed by the
-    names a reader can find -- module-level functions and test methods.
+    The INNERMOST function, named by the chain of functions around it, because a nested helper
+    and a lambda are places of their own: the check this replaces walked every FunctionDef and
+    would have reported one, and attributing them to whatever encloses them would let a new
+    conclusion arrive inside an already declared place and be absorbed. The chain is what keeps
+    the names apart -- two helpers may both be called spelled -- while a top-level function or a
+    method still answers to the plain name the declarations are keyed by. Classes are not part of
+    the chain, so two classes with a method of the same name collide on purpose, and the pin
+    below fails rather than letting one declaration speak for both.
     """
     found = {}
 
-    def walk(node, function, klass):
+    def walk(node, chain, klass):
         for child in ast.iter_child_nodes(node):
-            inner, owner = function, klass
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and function is None:
-                inner = child.name
+            inner, owner = chain, klass
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = chain + [child.name]
+            elif isinstance(child, ast.Lambda):
+                inner = chain + ["<lambda>"]
             elif isinstance(child, ast.ClassDef):
                 owner = child.name
-            found[id(child)] = (inner or MODULE_LEVEL, owner)
+            found[id(child)] = (".".join(inner) if inner else MODULE_LEVEL, owner)
             walk(child, inner, owner)
 
-    walk(tree, None, None)
+    walk(tree, [], None)
     return found
 
 
@@ -1426,12 +1438,12 @@ def _held_by_class(tree, spelled):
     """
     places, held = _places(tree), {}
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         function, klass = places.get(id(node), (MODULE_LEVEL, None))
-        if klass is None or not _reachable(node.value, spelled, klass, set()):
+        if node.value is None or klass is None or not _reachable(node.value, spelled, klass, set()):
             continue
-        for target in node.targets:
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
             if isinstance(target, ast.Attribute) and _dotted(target.value) == "self":
                 held.setdefault(klass, set()).add(target.attr)
             elif isinstance(target, ast.Name) and function == MODULE_LEVEL:
@@ -1448,8 +1460,12 @@ def _hands_on(tree, spelled):
     """
     places = _places(tree)
     bound = {}
-    mine = {node.name for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    # Every place a call in this file can name: a module-level function, a method, a nested
+    # helper. Keyed by the last name in the chain, because that is how a call spells it.
+    mine = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            mine.setdefault(node.name, places.get(id(node), (MODULE_LEVEL, None))[0])
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             function, klass = places.get(id(node), (MODULE_LEVEL, None))
@@ -1469,9 +1485,19 @@ def _hands_on(tree, spelled):
 
     calls = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in mine:
-            function, _klass = places.get(id(node), (MODULE_LEVEL, None))
-            calls.setdefault(function, []).append((node.func.id, node.lineno))
+        if not isinstance(node, ast.Call):
+            continue
+        # A bare name, or a method called on self: both name a place defined in this file.
+        if isinstance(node.func, ast.Name):
+            named = node.func.id
+        elif isinstance(node.func, ast.Attribute) and _dotted(node.func.value) == "self":
+            named = node.func.attr
+        else:
+            continue
+        if named not in mine:
+            continue
+        function, _klass = places.get(id(node), (MODULE_LEVEL, None))
+        calls.setdefault(function, []).append((mine[named], node.lineno))
 
     handed, growing = set(carriers), True
     while growing:
@@ -1651,19 +1677,41 @@ def _source_spelled(handles, hands_source, held):
     return spelled
 
 
-def planted_source(declared, spelling, planted, lines):
+def planted_source(declared, spelling, planted, lines, beside=()):
     """A synthetic module: one stub per declared place, and one place spelled the planted way.
 
-    Generated FROM the declared map rather than written out, so it stays a balanced control while
-    the map moves. Each stub carries a spelling the check recognises, so the only thing separating
-    the planted place from the declared ones is the form it is written in.
+    Generated FROM the declared maps rather than written out, so it stays a balanced control while
+    they move. Each stub carries a spelling the check recognises, so the only thing separating the
+    planted place from the declared ones is the form it is written in.
+
+    The companion maps are looked up by name rather than referenced, because this same case is
+    run against the commit BEFORE they existed in order to measure the red it produces there, and
+    a reference would make that an attribute error instead of the refusal being measured. What
+    this control establishes is that the complaint about the planted place is caused by the
+    plant; it does not make the synthetic module a copy of this one, and the check may still say
+    other things about a module that is not the file it was written for.
     """
     text = []
-    for name in sorted(declared):
-        text += ["def " + name + "(self):", "    " + spelling, ""]
+    names = set(declared)
+    for other in beside:
+        names |= set(globals().get(other) or ())
+    for name in sorted(names):
+        # A declared place may be a helper inside another one, and its name is the chain that
+        # keeps it apart. The stub is written as that same chain so the derivation computes the
+        # name the declaration is keyed by, rather than one the check would call undeclared.
+        parts = name.split(".")
+        for depth, part in enumerate(parts):
+            text.append("    " * depth + "def " + part + "(self):")
+        text += ["    " * len(parts) + spelling, ""]
     if planted is not None:
         text += ["def " + planted + "(self):"] + ["    " + line for line in lines] + [""]
     return "\n".join(text)
+
+
+# The companion maps, named rather than referenced, so a control can be run against a commit
+# where they do not exist yet.
+BESIDE_TEXT = ("TOUCHES_SOURCE_WITHOUT_CONCLUDING",)
+BESIDE_REFUSAL = ("NAMES_A_REFUSAL_WITHOUT_SETTLING",)
 
 
 def asked_over(check, source):
@@ -1774,8 +1822,11 @@ class SevenReadingsTests(unittest.TestCase):
         module carries, every called name that hands source back (asked of the callable, which
         is where ast.parse comes from, so the one form that used to be spelled out by hand is
         now read off ast.parse's own signature), and every string naming a .py file. Then it
-        accounts for EVERY occurrence of one. A place that reaches source text some way nobody
-        anticipated is still an occurrence of a handle, so it arrives here as a failure.
+        accounts for EVERY occurrence of one, attributed to the innermost function it sits in and
+        named by the chain around it, so a nested helper or a lambda inside an already declared
+        place is its own place rather than something that place absorbs. A place that reaches
+        source text some way nobody anticipated is still an occurrence of a handle, so it arrives
+        here as a failure.
 
         This claims exactly that much. A name this derivation could not read is in
         SOURCE_UNDECIDED_CALLS rather than assumed harmless, and the forms it cannot reach at all
@@ -1811,6 +1862,10 @@ class SevenReadingsTests(unittest.TestCase):
                 self.assertTrue(why.strip(), name + " is undecided without a reason")
                 self.assertIn(name, called,
                               name + " is written down as unreadable and nothing here calls it")
+                if where == THE_FLOOR and sys.version_info < READABLE_FROM:
+                    self.assertIn(name, undecided,
+                                  name + " is declared unreadable on the floor and the floor"
+                                  " read it, so the declaration is now wrong")
                 if where == EVERY_INTERPRETER:
                     self.assertIn(name, undecided,
                                   name + " is declared unreadable on every supported"
@@ -2055,14 +2110,17 @@ class SevenReadingsTests(unittest.TestCase):
         name here too, and a refusal bound to a name before the assertion, or required through
         assertIn against the answers themselves, was never looked at at all.
 
-        So nothing is enumerated now. refusal_spellings asks the objects: the answers are
+        So nothing in the spelling table is written down now. refusal_spellings asks the objects: the answers are
         REFUSAL_ANSWERS, and every way one can be written is derived from them -- an attribute an
         imported module binds to one, a global here bound to one, a collection here or on an
         imported module that contains one, and an attribute a class binds one to for its own
         methods to read. Then EVERY occurrence of any of those is accounted for: it belongs to a
         place that settles for a refusal, or to one that names a refusal without settling, or the
-        module fails naming the place, the line and the spelling. A helper that hands a refusal
-        BACK rather than returning a container holding one carries its callers in with it.
+        module fails naming the place, the line and the spelling. The place is the innermost
+        function the occurrence sits in, named by the chain around it, so a nested helper or a
+        lambda inside an already declared method is its own place rather than something the
+        declaration absorbs. A helper that hands a refusal BACK rather than returning a container
+        holding one carries its callers in with it, through a bare call or through self.
 
         The point is not that refusals are forbidden -- this repository is built on absence being
         a real answer. It is that a place settling for one has to say why the refusal is the
@@ -2117,12 +2175,13 @@ class SevenReadingsTests(unittest.TestCase):
                  ['self.assertIn("a phrase", HERE.read_text(encoding="utf-8"))'], "HERE")):
             with self.subTest(planted):
                 check = self.test_every_text_reading_place_is_declared
-                control = asked_over(check, planted_source(TEXT_EVIDENCE, "ast.parse(text)",
-                                                           None, ()))
+                control = asked_over(check, planted_source(TEXT_EVIDENCE, "ast.parse(text)", None, (),
+                                                           BESIDE_TEXT))
                 self.assertNotIn(planted, control or "",
                                  "the synthetic module already complains about the planted place"
                                  " before it is planted, so refusing it would prove nothing")
-                built = planted_source(TEXT_EVIDENCE, "ast.parse(text)", planted, lines)
+                built = planted_source(TEXT_EVIDENCE, "ast.parse(text)", planted, lines,
+                                       BESIDE_TEXT)
                 at = built.splitlines().index("    " + lines[0]) + 1
                 said = asked_over(check, built)
                 self.assertIsNotNone(said,
@@ -2149,12 +2208,13 @@ class SevenReadingsTests(unittest.TestCase):
                  ["settled = reading.UNREADABLE", "self.assertEqual(row, settled)"])):
             with self.subTest(planted):
                 check = self.test_every_place_that_settles_for_a_refusal_is_declared
-                control = asked_over(check, planted_source(ACCEPTS_A_REFUSAL, spelling, None, ()))
+                control = asked_over(check, planted_source(ACCEPTS_A_REFUSAL, spelling, None, (),
+                                                           BESIDE_REFUSAL))
                 self.assertNotIn(planted, control or "",
                                  "the synthetic module already complains about the planted place"
                                  " before it is planted, so refusing it would prove nothing")
-                said = asked_over(check, planted_source(ACCEPTS_A_REFUSAL, spelling,
-                                                        planted, lines))
+                said = asked_over(check, planted_source(ACCEPTS_A_REFUSAL, spelling, planted,
+                                                        lines, BESIDE_REFUSAL))
                 self.assertIsNotNone(said,
                                      planted + ": the check accepted a module in which a place"
                                      " settles for a refusal without being declared")
@@ -2213,17 +2273,15 @@ class SevenReadingsTests(unittest.TestCase):
         """Support: the declarations are keyed by name, so two places sharing one would merge.
 
         Counted from the parsed file, which keeps both, rather than from _functions_here(), whose
-        set has already discarded the second by the time anyone could look. Only the names a
-        declaration can be keyed by are counted: a nested helper belongs to the function that
-        defines it, and two of those may share a name without anything merging.
+        set has already discarded the second by the time anyone could look. The names counted are
+        the ones the derivation computes, so a nested helper is kept apart by the chain around it
+        while two classes with a method of the same name collide here, which is the case a flat
+        key cannot survive.
         """
         tree = ast.parse(HERE.read_text(encoding="utf-8"))
-        named = [node.name for node in tree.body
-                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
-        for node in tree.body:
-            if isinstance(node, ast.ClassDef):
-                named += [inner.name for inner in node.body
-                          if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        places = _places(tree)
+        named = [places[id(node)][0] for node in ast.walk(tree)
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
         repeated = sorted({name for name in named if named.count(name) > 1})
         self.assertEqual(repeated, [],
                          "two places share a name, so one declaration now speaks for both: "
