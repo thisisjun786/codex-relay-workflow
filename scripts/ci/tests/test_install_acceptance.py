@@ -1432,8 +1432,8 @@ def _reachable(expression, spelled, klass, bound):
     leave the inventory unable to distinguish anything.
 
     So this descends only where the expression's own value comes from: the branches of a
-    conditional, the operands of a boolean, and what an await waits for. It does not descend into
-    a comparison or into a
+    conditional, the operands of a boolean, what an await waits for and what a named expression
+    binds. It does not descend into a comparison or into a
     call's arguments, because mentioning the thing while answering a different question -- as
     value.suffix == ".py" does -- is not handing it back.
     """
@@ -1447,6 +1447,8 @@ def _reachable(expression, spelled, klass, bound):
     if isinstance(expression, ast.BoolOp):
         return any(_reachable(value, spelled, klass, bound) for value in expression.values)
     if isinstance(expression, ast.Await):
+        return _reachable(expression.value, spelled, klass, bound)
+    if isinstance(expression, ast.NamedExpr):
         return _reachable(expression.value, spelled, klass, bound)
     return False
 
@@ -1500,14 +1502,37 @@ def _hands_on(tree, spelled):
             chain.pop()
         yield MODULE_LEVEL
 
+    taken_names = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
+        args = node.args
+        taken_names[where] = {arg.arg for arg in
+                              (args.posonlyargs + args.args + args.kwonlyargs
+                               + ([args.vararg] if args.vararg else [])
+                               + ([args.kwarg] if args.kwarg else []))}
+
     def outwards(caller, named, aliases=None):
+        """Every place this name may reach, innermost scope first.
+
+        A set, not one place. A name can be assigned twice and this reader does not decide which
+        assignment a given call saw, so it answers with all of them; picking one would alternate
+        forever between them, and picking the first would be a guess wearing a precise face.
+
+        A parameter is different from a rebinding. Which object a parameter holds is a fact about
+        the run, but that the name belongs to the parameter and not to a module-level function of
+        the same name is a fact about the text, so the search stops there.
+        """
         for scope in scopes(caller):
             if aliases and named in aliases.get(scope, {}):
-                return aliases[scope][named]
+                return set(aliases[scope][named])
             candidate = named if scope == MODULE_LEVEL else scope + "." + named
             if candidate in defined:
-                return candidate
-        return None
+                return {candidate}
+            if named in taken_names.get(scope, ()):
+                return set()
+        return set()
 
     # A name bound to a function, kept for the whole scope that binds it and visible to the
     # scopes inside it, the way a closure sees one. Chains are followed to a fixpoint, because
@@ -1522,26 +1547,29 @@ def _hands_on(tree, spelled):
     while growing:
         growing = False
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                continue
+            if not isinstance(node.value, ast.Name):
                 continue
             function, _klass = places.get(id(node), (MODULE_LEVEL, None))
-            target = outwards(function, node.value.id, aliases)
-            if target is None:
+            targets = outwards(function, node.value.id, aliases)
+            if not targets:
                 continue
-            for named in node.targets:
+            for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
                 if not isinstance(named, ast.Name):
                     continue
-                known = aliases.setdefault(function, {})
-                if known.get(named.id) != target:
-                    known[named.id] = target
+                known = aliases.setdefault(function, {}).setdefault(named.id, set())
+                if not targets <= known:
+                    known |= targets
                     growing = True
 
     def called(node, function):
+        """Every place this call may reach."""
         if isinstance(node.func, ast.Name):
             return outwards(function, node.func.id, aliases)
         if isinstance(node.func, ast.Attribute) and _dotted(node.func.value) == "self":
-            return node.func.attr if node.func.attr in defined else None
-        return None
+            return {node.func.attr} if node.func.attr in defined else set()
+        return set()
 
     # A function hands the thing back when its returned expression IS the thing, and it keeps
     # handing it back when a call that hands it back flows into that expression. Calling one
@@ -1561,9 +1589,9 @@ def _hands_on(tree, spelled):
         def reaching(function, klass):
             def hands(expression, inner):
                 if isinstance(expression, ast.Call):
-                    place = called(expression, function)
-                    if place is not None and place in carriers:
-                        return "through " + place
+                    reached = called(expression, function) & carriers
+                    if reached:
+                        return "through " + sorted(reached)[0]
                 return spelled(expression, inner)
             return hands
 
@@ -1607,8 +1635,7 @@ def _hands_on(tree, spelled):
         # names nothing itself, so skipping it would drop the very hop that made it a carrier.
         if function == MODULE_LEVEL:
             continue
-        place = called(node, function)
-        if place is not None and place in carriers:
+        for place in sorted(called(node, function) & carriers):
             taken.append((False, function, node.lineno, "through " + place))
     return carriers, taken
 
