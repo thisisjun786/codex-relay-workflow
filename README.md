@@ -167,6 +167,7 @@ Repository checks need only Python 3.10+:
 
 ```sh
 python3 scripts/ci/validate.py
+python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
 python3 scripts/ci/contracts.py
 git diff --check
