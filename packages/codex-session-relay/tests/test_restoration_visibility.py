@@ -444,6 +444,32 @@ class RestorationDelivery(DeliveryTestCase):
         self.assertEqual(reported.get("outcome"), "carried")
         self.assertEqual(reported.get("criterion"), "c2")
 
+    def test_an_empty_restoration_argument_is_refused_rather_than_skipped(self):
+        """Omitted and empty are different answers.
+
+        argparse leaves the option None when it is absent, so a falsy check let
+        `--restoration "$UNSET"` skip carrier validation and marking altogether. The verdict
+        then opened the next generation recording not_carried, while every other carrier that
+        names nothing is refused before that point. An operator who asked for a carrier and
+        got silence is exactly what this path exists to remove.
+        """
+        _relationship, event_id = self._acknowledged()
+        with self.assertRaises(cli.SystemExit2) as caught:
+            cli.cmd_verdict(
+                SimpleNamespace(ack=self.ack),
+                SimpleNamespace(
+                    event=event_id, verdict="needs_changes", verdict_turn="v-empty-arg",
+                    criterion=None, finding=["c2=needs_changes:resume context"],
+                    criteria=None, restoration="", reason=None,
+                    expect_criteria_digest=None,
+                ),
+            )
+        self.assertIn("cannot be empty", str(caught.exception))
+        self.assertIsNone(
+            self.store.one("SELECT event_id FROM verdicts WHERE event_id = ?", (event_id,)),
+            "no ruling may have been recorded",
+        )
+
     # ------------------------------------------------- an unlocatable declaration
 
     def test_each_attempt_records_what_its_own_bytes_carried(self):
@@ -649,6 +675,28 @@ class RestorationDelivery(DeliveryTestCase):
         reported = recorded.get("restoration") or {"outcome": "nothing was recorded"}
         self.assertEqual(reported.get("outcome"), "unmeasured")
         self.assertIn("superseded", reported.get("detail", ""))
+
+    def test_an_answered_correction_can_never_claim_again(self):
+        """The child's answer annotates the outstanding revision and _claim honours it.
+
+        That annotation is written for exactly the deliveries whose state cannot be
+        rewritten, so the row sits at sending or held_uncertain with its relationship and
+        generation still current. Reading the state alone calls it retryable and refuses a
+        valid later report over a message no claim will ever build.
+        """
+        revision = self._oversized_correction("v-answered")
+        self.store.db.execute(
+            "UPDATE deliveries SET state = 'held_uncertain' WHERE event_id = ?", (revision,),
+        )
+        self.store.db.execute(
+            "INSERT INTO delivery_supersession (event_id, reason, noted_at, applied)"
+            " VALUES (?,?,?,0)",
+            (revision, "superseded_revision", self.clock.iso()),
+        )
+        recorded = self._record_oversized(revision)
+        reported = recorded.get("restoration") or {"outcome": "nothing was recorded"}
+        self.assertEqual(reported.get("outcome"), "unmeasured")
+        self.assertIn("already been answered", reported.get("detail", ""))
 
     def test_a_paused_assignment_is_still_measured_because_resume_exists(self):
         """Inactive is reversible, and a report recorded during a pause survives it.

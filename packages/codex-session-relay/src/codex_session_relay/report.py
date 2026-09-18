@@ -297,11 +297,14 @@ def _delivery_of(store, event_id):
     delivery parked at its attempt cap keeps a claimable-looking state while being unable to
     produce another message.
 
-    The last two columns are the half of _claim's predicate that no later event can make true
-    again. Supersession is one: a superseded relationship has been replaced and nothing
-    returns it. A generation the assignment has already moved past is the other. Those rows
-    stay `queued` and the claim refuses them forever, so a state check alone reads them as
-    retryable.
+    The last three columns are the half of _claim's predicate that no later event can make
+    true again. A superseded relationship has been replaced and nothing returns it. A
+    generation the assignment has already moved past cannot be claimed. And a correction the
+    child has already answered is annotated in delivery_supersession, which _claim consults
+    before anything else - that row is written precisely for the outstanding deliveries whose
+    state CANNOT be rewritten, so such a delivery sits at `sending` or `held_uncertain` with
+    its relationship and generation still current and reads as retryable from the state alone.
+    All three leave the claim refusing forever.
 
     Being inactive is NOT one of them, which is the distinction this query turns on. paused,
     cancelled and archived are statuses `resume` can lift, and a report recorded while the
@@ -314,6 +317,8 @@ def _delivery_of(store, event_id):
         "       EXISTS (SELECT 1 FROM relationships r"
         "                WHERE r.relationship_id = d.relationship_id"
         "                  AND r.superseded_by IS NULL) AS relationship_live,"
+        "       NOT EXISTS (SELECT 1 FROM delivery_supersession s"
+        "                    WHERE s.event_id = d.event_id) AS correction_open,"
         "       EXISTS (SELECT 1 FROM events e"
         "                JOIN relationships rr ON rr.relationship_id = e.relationship_id"
         "               WHERE e.event_id = d.event_id AND e.stage = 'final'"
@@ -352,6 +357,8 @@ def _project_restoration(store, event, row):
         if delivery["hold_reason"] is not None
         else "its relationship has been superseded"
         if not delivery["relationship_live"]
+        else "the correction it belongs to has already been answered and superseded"
+        if not delivery["correction_open"]
         else "the event is behind the assignment's current generation"
         if not delivery["event_current"]
         else f"the delivery is {delivery['state']!r}"

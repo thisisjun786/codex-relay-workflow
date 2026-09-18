@@ -634,15 +634,26 @@ def cmd_verdict(services, args) -> dict:
         })
     if args.criteria:
         findings.extend(_settings_json(args.criteria))
-    if args.restoration:
+    if args.restoration is not None:
         # Declared against a finding, because a finding is the only thing the correction
         # actually carries. Naming one that is not there is refused rather than ignored: a
         # flag that silently attaches to nothing is the same silence this whole path removes.
+        #
+        # Omitted and empty are different answers, and argparse leaves this None only when the
+        # option is absent. A falsy check let --restoration "$UNSET" skip validation and
+        # marking altogether, so the verdict opened the next generation recording not_carried
+        # while every other carrier that names nothing is refused before that point.
         # Compared through criteria.finding_id on BOTH sides, so this surface and the
         # normalisation that follows it agree about which findings exist. Comparing the raw
         # argument rejected ' c2' as naming no finding while the verdict went on to accept it
         # as 'c2', and a rule that normalises one operand is half a rule.
         wanted = finding_id(args.restoration)
+        if not wanted:
+            raise SystemExit2(
+                "--restoration names the criterion id whose finding carries the block, so it "
+                "cannot be empty. Leave the option out to carry no block",
+                EXIT_USAGE,
+            )
         marked = [
             item for item in criteria + findings
             # Shape-checked here because --criteria accepts arbitrary JSON and this runs
