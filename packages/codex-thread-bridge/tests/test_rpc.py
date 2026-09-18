@@ -157,7 +157,7 @@ async def test_an_oversized_frame_is_not_blamed_on_whatever_was_pending(fake_ser
     fake, path = fake_server
     client = AppServer(path, max_frame_bytes=64 * 1024)
     try:
-        fake.oversize_before = {"thread/goal/get": 100 * 1024}
+        fake.oversize_before = {"thread/goal/get": [100 * 1024]}
         with pytest.raises(ResponseTooLarge) as refused:
             await client.call("thread/goal/get", {"threadId": "thread-1"})
         error = refused.value

@@ -42,7 +42,9 @@ class FakeServer:
         self.oversize = lambda method, params: None
         # Padding for the notification this fake already interleaves BEFORE a method's response.
         # That is how an oversized frame belonging to no request at all takes the connection down
-        # while somebody else's request is still pending.
+        # while somebody else's request is still pending. A queue per method rather than one
+        # value, so a test can fail a rung of a ladder twice and let the next one through; a flat
+        # value would fail every rung alike and could never show a fallback succeeding.
         self.oversize_before = {}
         # A close the PEER initiates, carrying the same reason a locally refused frame produces,
         # so a test can prove that which side sent it is what tells the two apart.
@@ -252,7 +254,8 @@ class FakeServer:
             if method == self.pause_after:
                 self.paused.set()
                 await self.release.wait()
-            padding = self.oversize_before.get(method)
+            queued = self.oversize_before.get(method)
+            padding = queued.pop(0) if queued else None
             await ws.send(
                 json.dumps(
                     {

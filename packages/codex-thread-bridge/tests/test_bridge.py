@@ -502,7 +502,7 @@ async def test_a_mutation_caught_in_someone_elses_oversized_frame_is_unknown(
     fake, _ = fake_server
     created = await create(bridge, "create", str(tmp_path), prompt="first")
     started = fake.count("turn/start")
-    fake.oversize_before = {"turn/start": 100 * 1024}
+    fake.oversize_before = {"turn/start": [100 * 1024]}
     receipt = await send(bridge, "send", created["threadId"], "second")
     assert receipt["status"] == "outcome_unknown"
     assert receipt["retrySafe"] is False
@@ -551,6 +551,40 @@ async def test_item_detail_that_never_arrives_does_not_fail_a_read_that_did(
     assert read["observation"]["turnsPageStatus"] == "summary"
     assert read["observation"]["detailTurnsRequested"] == 1
     assert read["observation"]["detailTurnsObserved"] == 0
+
+
+async def test_a_frame_belonging_to_nobody_can_drive_the_ladder_down(
+    small_frame_bridge, fake_server, tmp_path
+):
+    """The fallback fires on frames this connection cannot attribute to the request in flight.
+
+    Here the oversized frames are notifications, which carry no request id at all, so nothing
+    about the summary pages was ever too large — they simply never arrived. That is why the
+    notLoaded note says what was received rather than what would fit: the response would otherwise
+    assert a size in one field while recording attribution "unestablished" in the next.
+    """
+    bridge = small_frame_bridge
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="first")
+    await send(bridge, "send", created["threadId"], "second")
+    # Two rungs of the ladder lose their connection to somebody else's frame; the third is let
+    # through, which a single flat padding value could never express.
+    fake.oversize_before = {"thread/turns/list": [100 * 1024, 100 * 1024]}
+    read = await bridge.read_thread(created["threadId"], limit=2)
+    assert read["observation"]["turnsPageStatus"] == "not_loaded"
+    assert read["observation"]["itemsView"] == "notLoaded"
+    assert [turn["id"] for turn in read["turnsPage"]["data"]] == ["turn-2", "turn-1"]
+    assert all(turn["items"] == [] for turn in read["turnsPage"]["data"])
+    note = read["observation"]["note"]
+    assert "no page carrying items was received" in note
+    assert "would fit" not in note
+    assert "does not say those pages were too large" in note
+    for attempt in read["observation"]["pageAttempts"]:
+        assert attempt["attribution"] == "unestablished"
+    # And the newest turn's items still arrive on this rung, which is the other half of why the
+    # note must not claim the response has no content.
+    assert read["turnsPage"]["data"][0]["itemsDetailStatus"] == "complete"
+    assert read["observation"]["detailTurnsObserved"] == 1
 
 
 async def test_low_text_limit_preserves_page_cursors_and_protocol_fields(
