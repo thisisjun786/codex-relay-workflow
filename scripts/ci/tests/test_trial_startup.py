@@ -57,6 +57,14 @@ if subcommand == "service":
     subcommand = "service " + (words[3] if len(words) > 3 else "")
 with (here / "calls.jsonl").open("a") as handle:
     handle.write(json.dumps({"subcommand": subcommand, "argv": sys.argv[1:]}) + "\n")
+# A trial can ask this stub to replace itself partway through, which is what an update moving the
+# pointer looks like from the caller's side.
+rewrite = here / "rewrite-after"
+if rewrite.exists():
+    calls = len((here / "calls.jsonl").read_text().splitlines())
+    if calls == int(rewrite.read_text().strip()):
+        mine = Path(__file__)
+        mine.write_text(mine.read_text() + "\n# a different build\n")
 entry = payloads.get(subcommand)
 if entry is None:
     sys.stderr.write("no payload for " + subcommand + "\n")
@@ -193,6 +201,8 @@ class World:
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
                           "createdAt": "2020-01-01T00:00:00Z"},
                 "ledger": {"configured": True, "split": False},
+                "actorReachability": {"socketConnect": "ok"},
+                "nonce": {"nonce": self.NONCE, "found": True, "readable": True},
             }},
             "service status": {"payload": {
                 "lock": "held", "staleRecord": False, "ownership": "ours", "pid": 0,
@@ -232,7 +242,7 @@ class World:
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
             self.captures["receipt-" + task + ".json"] = {
                 "taskId": task, "settings": {"requested": echo, "actual": echo, "findings": []}}
-        for task in (self.PARENT_A, self.PARENT_B):
+        for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
             self.captures["lifecycle-" + task + ".json"] = {
                 "threadId": task, "status": "idle", "goal": None}
         for name, issue in (("A", self.ISSUE_A), ("B", self.ISSUE_B)):
@@ -284,7 +294,8 @@ class World:
         captures = {
             "parentLifecycle": {task: {"path": str(self.trial / ("lifecycle-" + task + ".json")),
                                        "capturedAt": startup.stamp(now - 10)}
-                                for task in (self.PARENT_A, self.PARENT_B)},
+                                for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B,
+                                             self.CHILD_B)},
             "creationReceipt": {task: {"path": str(self.trial / ("receipt-" + task + ".json")),
                                        "capturedAt": startup.stamp(now - 10)}
                                 for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B,
@@ -420,7 +431,7 @@ class AgreeingRun(TrialCase):
         self.world.start_supervisor()
         document = self.world.preflight()
         lifecycle = cells_of(document, "parentLifecycle")
-        self.assertEqual(lifecycle["parentLifecycle:" + World.PARENT_A]["provenance"], "captured")
+        self.assertEqual(lifecycle["lifecycle:" + World.PARENT_A]["provenance"], "captured")
         self.assertEqual(cells_of(document, "storeIdentity")["sameStore"]["provenance"], "executed")
 
     def test_a_refused_subcommand_never_reaches_a_process(self):
@@ -454,7 +465,7 @@ class UnknownIsNotFalse(TrialCase):
         (self.world.trial / ("lifecycle-" + World.PARENT_B + ".json")).unlink()
         document = self.world.preflight()
         self.assertEqual(
-            cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_B]["value"],
+            cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_B]["value"],
             UNKNOWN)
 
     def test_a_stale_capture_answers_unknown_rather_than_fresh(self):
@@ -463,7 +474,7 @@ class UnknownIsNotFalse(TrialCase):
         self.world.record["captureMaxAgeSeconds"] = 60
         self.world.flush()
         document = self.world.preflight()
-        cell = cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]
+        cell = cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]
         self.assertEqual(cell["value"], UNKNOWN)
         self.assertIn("seconds old", cell["evidence"])
 
@@ -560,14 +571,14 @@ class ParentLifecycle(TrialCase):
                 "threadId": World.PARENT_A, "status": "unknown", "error": text}
             self.world.flush()
             document = self.world.preflight()
-            cell = cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]
+            cell = cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]
             self.assertEqual(cell["value"], NOT_VERIFIED, text)
             self.assertIn(text, cell["evidence"])
 
     def test_a_healthy_capture_with_a_null_goal_is_met(self):
         document = self.world.preflight()
         self.assertEqual(
-            cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]["value"],
+            cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]["value"],
             VERIFIED)
 
     def test_a_capture_naming_another_task_is_not_this_ones_evidence(self):
@@ -576,7 +587,7 @@ class ParentLifecycle(TrialCase):
         self.world.flush()
         document = self.world.preflight()
         self.assertEqual(
-            cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]["value"],
+            cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]["value"],
             NOT_VERIFIED)
 
 
@@ -1013,7 +1024,8 @@ class PayloadContract(TrialCase):
         ("assignment.py", "for_issue"): ("issueKey", "assignments", "responsibleRelationship"),
         ("cli.py", "cmd_criteria_show"): ("setDigest", "sourceRef", "criteria"),
         ("cli.py", "cmd_settings_show"): ("task", "usable", "missing", "settings"),
-        ("cli.py", "cmd_doctor"): ("ledger", "nonce"),
+        ("cli.py", "cmd_doctor"): ("ledger", "nonce", "actorReachability"),
+        ("cli.py", "_reachability"): ("socketConnect",),
         ("cli.py", "_ledger_location"): ("configured", "split"),
         ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode"),
         ("store.py", "compare_store"): ("sameStore",),
@@ -1283,7 +1295,7 @@ class HostedReviewFindings(TrialCase):
         self.world.flush()
         document = self.world.preflight()
         self.assertEqual(
-            cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]["value"],
+            cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]["value"],
             VERIFIED)
 
     def test_an_empty_structured_status_is_still_not_resolved(self):
@@ -1292,7 +1304,7 @@ class HostedReviewFindings(TrialCase):
         self.world.flush()
         document = self.world.preflight()
         self.assertEqual(
-            cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]["value"],
+            cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]["value"],
             NOT_VERIFIED)
 
     def test_a_relationship_under_another_parent_fails(self):
@@ -1475,7 +1487,7 @@ class ThirdHostedRound(TrialCase):
             startup.load_start(str(self.world.trial / "start.json"),
                                environment=self.world.environment()),
             sleeper=time.sleep)
-        cell = cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]
+        cell = cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]
         self.assertEqual(cell["value"], UNKNOWN)
         self.assertIn("seconds old", cell["evidence"])
 
@@ -1964,6 +1976,82 @@ class EleventhHostedRound(TrialCase):
         # Readiness and the judgment walk answer together: neither may say yes while the other
         # says no, which is what readiness outrunning launcherStillTheSameBytes did.
         self.assertEqual(document["readyToStart"], not document["judgmentsThatFailed"])
+
+
+class TwelfthHostedRound(TrialCase):
+    """The socket, the decoy assignment file, the child nobody looked up, and the A-B-A move."""
+
+    def test_an_unreachable_socket_fails_the_store_reading(self):
+        for answer in ("refused", "timeout", None):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.payloads["doctor"]["payload"]["actorReachability"] = {"socketConnect": answer}
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(cells_of(document, "storeIdentity")["socketReachable"]["value"],
+                             NOT_VERIFIED, repr(answer) + " was accepted as reachable")
+
+    def test_a_doctor_payload_without_reachability_is_unknown(self):
+        self.world.payloads["doctor"]["payload"].pop("actorReachability")
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "storeIdentity")["socketReachable"]["value"], UNKNOWN)
+
+    def test_an_assignment_file_outside_the_owning_childs_workspace_is_refused(self):
+        decoy = self.world.repos["B"] / "assignment.json"
+        decoy.write_text((self.world.repos["A"] / "assignment.json").read_text(encoding="utf-8"),
+                         encoding="utf-8")
+        self.world.record["assignment"]["assignmentFile"] = str(decoy)
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("owning child's workspace", refused.reason)
+
+    def test_every_participant_needs_a_lifecycle_capture_not_only_the_parents(self):
+        (self.world.trial / ("lifecycle-" + World.CHILD_A + ".json")).unlink()
+        document = self.world.preflight()
+        cells = cells_of(document, "parentLifecycle")
+        self.assertEqual(len(cells), 4)
+        self.assertEqual(cells["lifecycle:" + World.CHILD_A]["value"], UNKNOWN)
+        self.assertFalse(document["readyToStart"])
+
+    def test_a_child_with_no_rollout_fails_its_own_reading(self):
+        self.world.captures["lifecycle-" + World.CHILD_A + ".json"] = {
+            "threadId": World.CHILD_A, "status": "unknown", "error": "thread not found"}
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(
+            cells_of(document, "parentLifecycle")["lifecycle:" + World.CHILD_A]["value"],
+            NOT_VERIFIED)
+
+    def test_a_replacement_present_at_a_later_probe_is_caught(self):
+        # The stub replaces itself after its first call, which is a pointer moved mid-run.
+        self.world.start_supervisor()
+        (self.world.bin / "rewrite-after").write_text("1", encoding="utf-8")
+        document = self.world.preflight()
+        launcher = document["launcherStillTheSameBytes"]
+        self.assertFalse(launcher["passed"])
+        self.assertGreater(len(launcher["beforeEachProbe"]), 1)
+        self.assertFalse(document["readyToStart"])
+
+    def test_a_replacement_reverted_between_two_readings_is_not_claimed(self):
+        # The stated limit, asserted rather than left implied: nothing spawns while it is changed,
+        # so no reading sees it, and the document says whose witness that is.
+        self.world.start_supervisor()
+        original = self.world.launcher.read_text(encoding="utf-8")
+
+        def swap(seconds):
+            self.world.launcher.write_text(original + "\n# briefly another build\n",
+                                           encoding="utf-8")
+            self.world.launcher.chmod(0o755)
+            time.sleep(min(seconds, 0.4))
+            self.world.launcher.write_text(original, encoding="utf-8")
+            self.world.launcher.chmod(0o755)
+
+        document = self.world.preflight_with(swap)
+        launcher = document["launcherStillTheSameBytes"]
+        self.assertTrue(launcher["passed"])
+        self.assertIn("CRW-102", launcher["detail"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover

@@ -35,16 +35,18 @@ about the runtime's own guarantees.
 
 Six things are confirmed before the first dispatch. Four of them the checker reads itself. The
 other two it cannot: no read-only relay command performs a lifecycle read, and none returns what a
-creation receipt echoed, so those two arrive as captures the operator recorded elsewhere. A capture
+creation receipt echoed, so those two arrive as captures the operator recorded elsewhere. The
+lifecycle capture is per participant rather than per parent: a child created without a standby turn
+cannot be looked up either, and a correction is delivered to it. A capture
 is the caller's claim about a read this process did not make, it carries the time it was taken, and
 it is stale past the record's own bound, which may not exceed fifteen minutes.
 
 | Reading | Answered by | Met when | Never established by |
 | -- | -- | -- | -- |
 | `processPersistence` | `os.kill(pid, 0)` and `os.getsid`, the supervisor's witness file, and `service status` where the supervisor is the relay's own service | the process is alive at two observations, sits outside the caller's session, has lived at least the declared minimum since it was launched, and its witness names that pid and advances its counter between them; where a service is declared, `ownership` is `ours`, the lock is held, `staleRecord` is false, and the pid and store id agree | that a launch command returned, or that a pid appears in a record. A recorded pid with a free lock is what `staleRecord` is for |
-| `parentLifecycle` | a captured host response per parent | the capture names that task, carries no error, and resolves a thread status. That is all it establishes: whether the recipient is archived, paused, usage-limited or able to accept input is what the relay reads for itself at delivery, and this reading does not stand in for it. The host answers that status as a structured object rather than a word, so what is required is that it resolved to something, not that it reads as a particular string | a creation receipt. `thread not found`, `missing source rollout` and `no rollout found` are the three answers that fail it by name. A null goal is not one of them: a healthy task without a goal has one |
+| `lifecycle` | a captured host response per participant | the capture names that task, carries no error, and resolves a thread status. That is all it establishes: whether the recipient is archived, paused, usage-limited or able to accept input is what the relay reads for itself at delivery, and this reading does not stand in for it. The host answers that status as a structured object rather than a word, so what is required is that it resolved to something, not that it reads as a particular string | a creation receipt. `thread not found`, `missing source rollout` and `no rollout found` are the three answers that fail it by name. A null goal is not one of them: a healthy task without a goal has one |
 | `capability` | the captured creation receipt, and `settings-show` for the same task | each payload names the task it is about, the receipt's `settings.actual` equals every setting the record declares, its `findings` are empty, and the store's own settings record is usable, complete and carries the same values | that a provider served that model. A matching echo says the host recorded the request. `usable` alone is completeness, not agreement |
-| `storeIdentity` | `doctor` with `--expect-store`, `--expect-inode` and `--expect-nonce`, and each peer's captured `doctor` | the relay's own `sameStore` reports `proven` here, and every declared participant has a captured `doctor` of its own reporting `proven` about this trial's challenge, with its own store identity agreeing with the record. A verdict speaks only for the nonce it was given, so a peer asked about an older challenge is not this trial's proof. A participant with no capture is unknown, never absent from the count | an equal path string, or an agreeing store id and inode. The relay grades those as `unproven` on their own: proof takes a nonce another participant wrote, found beside an agreeing device and inode |
+| `storeIdentity` | `doctor` with `--expect-store`, `--expect-inode` and `--expect-nonce`, and each peer's captured `doctor` | `doctor` reaches the App Server socket, the relay's own `sameStore` reports `proven` here, and every declared participant has a captured `doctor` of its own reporting `proven` about this trial's challenge, with its own store identity agreeing with the record. A verdict speaks only for the nonce it was given, so a peer asked about an older challenge is not this trial's proof. A participant with no capture is unknown, never absent from the count | an equal path string, or an agreeing store id and inode. The relay grades those as `unproven` on their own: proof takes a nonce another participant wrote, found beside an agreeing device and inode |
 | `boundaries` | the record's declaration, each boundary's captured registration receipt, and `git rev-parse --show-toplevel` in each declared directory | there are at least two boundaries whose issue key, scope reference, resolved repository root and participants are all pairwise distinct, because two boundaries sharing a participant are not two parents, each receipt names that boundary's issue, an active status, its scope reference, both endpoints' tasks and workspaces, and both endpoints among the recipients it authorises, and for the assignment being dispatched its relationship and generation as well, and each directory is the repository it was declared to be | a display name, a title or a working directory, none of which identifies anything ([OPS-7.2](../skills/crw-run/references/operations.md)). Two boundaries in one repository are not two repository identities |
 | `assignmentState` | `assignment-find --issue` and `criteria-show` | the responsible relationship is the one the record names, its entry carries the same parent task, child task and execution generation with status `active`, and the criteria set matches by digest, source reference and count. The parent is compared because a relationship under another parent delivers to that parent, whatever the trial intended | a relationship id written in a file. A non-empty criteria set is not the intended one |
 
@@ -172,9 +174,9 @@ What this accounting cannot see is an intervention nobody wrote down.
 Everything the trial writes for itself lives under one trial root outside every git worktree: the
 start record, the captures, the ledger and the result. The shared state directory the relay probes
 reach is held to the same rule, because operational state never lives inside a repository and the
-first command to open one there would construct it. The assignment file and the dispatch message
-belong to the child's workspace and sit where that workspace is, and the only rule for them is that
-they are not inside this repository. Paths are compared after symbolic links are followed, so a
+first command to open one there would construct it. The assignment file is the one in the owning child's own workspace, because the file under test is
+the file that child reads, and a matching copy anywhere else is a different file. It and the dispatch
+message sit where that workspace is, outside this repository. Paths are compared after symbolic links are followed, so a
 link out of the trial root is the escape it looks like rather than a spelling that passes.
 
 The reason is not tidiness. Operational state never lives inside a repository
@@ -188,7 +190,7 @@ synthetic. This document carries placeholders for the same reason.
     python3 scripts/trial_startup.py ledger    --start <trial-root>/start.json
 
 The first is run once, immediately before the dispatch that opens the window. The second is run
-after the window closes, or at any point while it is open. Both print one JSON object on standard
+after the window has closed, which is what it needs in order to grade anything. Both print one JSON object on standard
 output and write nothing. Exit 0 means no judgment in the document said false, 1 means one did, and
 2 means it refused before it could assemble a result and printed the refusal instead.
 

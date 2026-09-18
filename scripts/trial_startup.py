@@ -531,6 +531,15 @@ def load_start(path, *, environment=None, mode="preflight"):
         if within(item, ROOT):
             raise Refused("an input path is inside this repository", path=str(item),
                           repository=str(ROOT))
+    # And the assignment file is the one in the owning child's workspace, not a matching decoy
+    # somewhere else: the file under test is the file that child reads.
+    child_cwd = next((p.get("cwd") for p in (owning[0].get("participants") or [])
+                      if isinstance(p, dict) and p.get("role") == "child"), None)
+    assignment_file = absolute(field(record, "assignment", "assignmentFile"),
+                               "assignment.assignmentFile")
+    if child_cwd is None or not within(assignment_file, child_cwd):
+        raise Refused("the assignment file is not in the owning child's workspace",
+                      path=str(assignment_file), workspace=shown(child_cwd))
 
     for index, boundary in enumerate(record.get("boundaries") or []):
         if not isinstance(boundary, dict) or not isinstance(boundary.get("participants"), list):
@@ -591,6 +600,7 @@ class Relay:
         self.state = field(record, "relay", "stateDirectory")
         self.socket = field(record, "relay", "socket")
         self.cwd = field(record, "trialRoot")
+        self.digests = set()
 
     def relay(self, subcommand, *arguments):
         if subcommand == "service":
@@ -602,6 +612,9 @@ class Relay:
                           subcommand=subcommand)
         argv = [self.launcher, "--state", self.state, "--socket", self.socket, subcommand]
         argv.extend(arguments)
+        # The launcher's bytes are read immediately before each spawn, so a pointer moved between
+        # two probes is caught at the next one rather than only at the end of the run.
+        self.digests.add(digest_or_none(self.launcher))
         return run(argv, cwd=self.cwd)
 
     @staticmethod
@@ -822,16 +835,18 @@ def reading_process(record, relay, sleeper=time.sleep):
 
 
 def reading_lifecycle(record):
-    """Per parent, a captured host response. A creation receipt is not one of these."""
+    """Per participant, a captured host response. A creation receipt is not one of these.
+
+    Every participant, not only the parents: a child created without a standby turn cannot be
+    looked up either, and a correction is delivered to it.
+    """
     cells = []
     for boundary in record.get("boundaries") or []:
         for participant in boundary.get("participants") or []:
-            if participant.get("role") != "parent":
-                continue
             task = participant.get("taskId")
             found, why = capture(record, "parentLifecycle", task)
             if found is None:
-                cells.append(cell("parentLifecycle:" + str(task), UNKNOWN, evidence=why,
+                cells.append(cell("lifecycle:" + str(task), UNKNOWN, evidence=why,
                                   provenance=CAPTURED))
                 continue
             payload = found["payload"]
@@ -846,13 +861,13 @@ def reading_lifecycle(record):
             names = (same(field(payload, "threadId"), task)
                      or same(field(payload, "taskId"), task))
             if status is MISSING and refusal is None:
-                cells.append(cell("parentLifecycle:" + str(task), UNKNOWN,
+                cells.append(cell("lifecycle:" + str(task), UNKNOWN,
                                   evidence="the capture carries no thread status to read",
                                   provenance=CAPTURED, measured_at=found["capturedAt"]))
                 continue
             ok = (refusal is None and names and resolved_status
                   and not carries(payload, "error") and not carries(payload, "isError"))
-            cells.append(cell("parentLifecycle:" + str(task), VERIFIED if ok else NOT_VERIFIED,
+            cells.append(cell("lifecycle:" + str(task), VERIFIED if ok else NOT_VERIFIED,
                               evidence=("the host resolved this thread with status "
                                         + json.dumps(shown(status))
                                         if refusal is None else
@@ -963,6 +978,13 @@ def reading_store(record, relay):
                                     " started at " + stamp(STARTED))))
 
     configured = field(payload, "ledger", "configured")
+    reach = field(payload, "actorReachability", "socketConnect")
+    cells.append(graded("socketReachable", reach, reach == "ok", probe=probe, provenance=EXECUTED,
+                        unreadable="doctor did not report whether it could reach the socket",
+                        evidence=("the acting process reaches the App Server socket: "
+                                  + str(shown(reach)) + ". A store comparison is decided on the"
+                                  " database and says nothing about the socket the delivery will"
+                                  " use")))
     if configured is False:
         cells.append(cell("ledgerSplit", NOT_APPLICABLE, probe=probe, provenance=EXECUTED,
                           evidence="no socket is configured, so there is no transport ledger to"
@@ -1530,24 +1552,39 @@ def judgments(document):
     return found
 
 
-def launcher_unchanged(record):
+def digest_or_none(path):
+    try:
+        return digest_of(path)
+    except (OSError, TypeError):
+        return None
+
+
+def launcher_unchanged(record, relay=None):
     """The launcher's bytes read again, after every probe has run.
 
     The pointer the host record names is an atomically movable symlink, which is how an update is
     meant to work, so the digest taken before the first probe says nothing about what the last one
     ran. Reading it at both ends does not prevent a move; it reports one, which is what the off/on
     harness does with its own source identity and for the same reason.
+
+    It is also read immediately before each spawn, which narrows the unwatched interval to one
+    probe. A replacement put back before the next reading is still invisible: catching that needs
+    a witness at the process boundary, which is CRW-102's and is not claimed here.
     """
     anchor = record.get("_relay") or {}
+    seen = sorted(d for d in (relay.digests if relay is not None else set()) if d)
     try:
         after = digest_of(anchor.get("launcher"))
     except (OSError, TypeError) as error:
         return {"passed": False, "before": anchor.get("sha256"), "after": None,
+                "beforeEachProbe": seen,
                 "detail": type(error).__name__ + ": " + str(error)}
-    return {"passed": after == anchor.get("sha256"), "before": anchor.get("sha256"),
-            "after": after,
+    return {"passed": (after == anchor.get("sha256")
+                       and all(d == anchor.get("sha256") for d in seen)),
+            "before": anchor.get("sha256"), "after": after, "beforeEachProbe": seen,
             "detail": "the pointer moves on update by design, so this is read at both ends of the"
-                      " run: it reports a move rather than preventing one"}
+                      " run and before each spawn: it reports a move rather than preventing one,"
+                      " and a replacement put back between two readings is CRW-102's witness"}
 
 
 def preflight(record, *, sleeper=time.sleep):
@@ -1580,7 +1617,7 @@ def preflight(record, *, sleeper=time.sleep):
         assembled[name] = {"value": value, "met": value == VERIFIED, "cells": cells}
 
     gate = order_gate(record, store_payload, entry)
-    launcher = launcher_unchanged(record)
+    launcher = launcher_unchanged(record, relay)
     document = {
         "source": SOURCE,
         "checkerVersion": CHECKER_VERSION,
