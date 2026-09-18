@@ -2171,6 +2171,13 @@ INJECTIONS = {
                  " patched at that moment and changes nothing.",
     "probes": "a list the store probe appends the interpreter it was asked through to. It"
               " records and changes nothing.",
+    "dest": "the destination the run is invoked with, which is an argument the command really"
+            " accepts and not a stand-in for anything. A retry after a failure can be aimed"
+            " somewhere else, and that is the whole difference between the ordinary case and"
+            " the one a pointer path recorded under an earlier destination is about.",
+    "observe": "a list the stubbed classification appends what it was HANDED to: the"
+               " registration and pointer readings it would have judged on. It records and"
+               " changes nothing.",
     "clean_store": "REFUSED: it reports the store absent and empty to the run while the fixture"
                    " has built a populated one at that path, so what the run is told and what"
                    " the scenario built disagree.",

@@ -378,11 +378,48 @@ class Exclusive:
         return False
 
 
+# --------------------------------------------------------------- what an ownership entry says
+
+# The pointer ownership entry answers TWO questions with one object, and a rollback can take one
+# of them away without the other.
+#
+# 'path' is WHICH path this host's pointer is. The Codex registration names it and every later
+# run derives it from there, so it has to outlive a failed promotion: erased, a retry with a
+# different --dest derives another path and reads the registration that is still there as a
+# conflict.
+#
+# These keys are the other question -- the evidence that a link THIS COMMAND PLACED is at that
+# path, which is what the promotion reads before it replaces a link. A rollback that establishes
+# the link is GONE has disproved this one and not the first, so it keeps the path and withdraws
+# these. Kept whole, the entry would go on authorising the replacement of whatever link appears
+# there next.
+POINTER_PLACEMENT = ("recordedAt", "recordedBy")
+
+
+def placement_recorded(entry):
+    """Whether this record says a link this command placed is at the pointer path.
+
+    Asked of this module rather than tested against a key at the call site, because one object
+    answers two questions and the guard deciding whether a link may be replaced needs the
+    narrower one. An entry carrying only a path is a path this host's pointer is KNOWN BY and
+    not a link anybody recorded placing.
+    """
+    if not isinstance(entry, dict) or not entry.get("path"):
+        return False
+    return all(entry.get(key) for key in POINTER_PLACEMENT)
+
+
+def without_placement(entry):
+    """The same entry with its placement evidence withdrawn, and its path kept."""
+    return {key: value for key, value in dict(entry or {}).items()
+            if key not in POINTER_PLACEMENT}
+
+
 # ------------------------------------------------------------------ the one way to write
 
 def update(path, definition_version, *, installs=None, points=None, select=None,
            component_facts=None, outgoing=None, drop_environment=None, pointer=None,
-           deselect=None, drop_pointer=None):
+           deselect=None, drop_pointer=None, restore_pointer=None):
     """Apply narrow deltas to state this helper loads itself, inside the lock, at write time.
 
     The helper never accepts a record, and that is the whole point. A caller that loads a
@@ -404,6 +441,16 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
     than remove, for the same reason the selection restore is narrow -- an entry another run
     has since moved on belongs to that run, and undoing a promotion this run never made is a
     worse outcome than the failure being rolled back.
+
+    'restore_pointer' is the delta for the other half of that question, and the only one that
+    puts a value BACK. Absence is the right answer only for a run that INTRODUCED the ownership
+    entry; a run that INHERITED one and then failed must not erase it, because the path goes
+    with it and the registration depends on that path. It carries two values because two
+    different questions are being asked of it: 'wrote' is the path THIS RUN recorded, and the
+    only thing it may compare against, while 'found' is the entry it replaced and what goes
+    back. They are not always the same path -- a caller handed its path before the lock can
+    have written over an entry naming somewhere else -- so collapsing them into one would make
+    the compare answer about the wrong record.
 
     Returns the Reading it loaded, so a caller can report an unreadable record rather than
     guess. Nothing is written when the record could not be read.
@@ -450,6 +497,14 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
             owned = record.get("pointer")
             if isinstance(owned, dict) and owned.get("path") == str(drop_pointer):
                 del record["pointer"]
+        if restore_pointer is not None:
+            # Compare-and-replace, and it compares for the reason the other two do: an entry
+            # another run has since moved on belongs to that run. REPLACE rather than merge, so
+            # a key the failed run added that the found entry never had does not survive as
+            # this run's fingerprint on an entry it did not introduce.
+            owned = record.get("pointer")
+            if isinstance(owned, dict) and owned.get("path") == str(restore_pointer["wrote"]):
+                record["pointer"] = dict(restore_pointer["found"])
         save(path, record)
     return current
 

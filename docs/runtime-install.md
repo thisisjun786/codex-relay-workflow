@@ -482,6 +482,21 @@ entry that still names what this run wrote, and `drop_pointer` only the ownershi
 path this run recorded. Undoing a promotion this run never made is a worse outcome than the
 failure being rolled back.
 
+`restore_pointer` is the third rollback delta and the only one that puts a value **back**, for
+the half of that question absence cannot answer. The pointer ownership entry answers two things
+at once: `path` is which path this host's pointer **is**, and the placement keys
+(`hostrecord.POINTER_PLACEMENT`) are the evidence that a link this command **placed** is there.
+Absence is the right rollback only for a run that INTRODUCED the entry. A run that inherited one
+and failed must not erase it, because the path goes with it and the registration names that
+path — a retry with a different `--dest` then derives another path and reads a registration
+nobody changed as a conflict. So an inherited entry goes back: whole where the link was put
+back, and with its placement **withdrawn** where the rollback established the link is absent,
+which keeps the path and still refuses a link that turns up there afterwards. It compares
+against the path **this run wrote** and carries the entry it **found** as two separate values,
+because a caller handed its path before the lock can have written over an entry naming
+somewhere else. What the rollback actually did is read back from the record rather than inferred
+from the delta having been sent, so it can answer `moved on` truthfully.
+
 ### The failure contract
 
 The reading boundary answers questions about records. Underneath it, `main()` converts anything

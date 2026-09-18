@@ -138,8 +138,8 @@ CONFLICT_READINGS = ("registration", "links", "pointer")
 # Declared rather than remembered, because the previous three got in exactly where nothing was
 # looking. The check reads this set, finds the promotion critical section, and fails any member
 # that is read there without having been assigned there.
-PROMOTION_FRESH = ("fresh", "previous_selection", "gate", "before", "pointer_read",
-                   "pointer_path")
+PROMOTION_FRESH = ("fresh", "previous_selection", "gate", "before", "owned_before",
+                   "pointer_read", "pointer_path")
 
 # Every answer this command gives about a state as it was FOUND, and the operation each one
 # says "there was nothing there" with.
@@ -2670,7 +2670,13 @@ def cmd_install(args):
                 # swap reads, guards and replaces is not the link a host reaches through.
                 # Assigned before the refusal below reports it, so the member is read fresh
                 # everywhere in this section.
-                pointer_path = Path(((fresh.value or {}).get("pointer") or {}).get("path")
+                # The ownership entry as this run FOUND it, read where the path is derived from
+                # it and before anything is written. Whether this promotion INTRODUCES that
+                # entry or refreshes one that was already there is the whole of what its
+                # rollback may take away, and the write below is a merge that erases the
+                # difference -- so the difference is read here and carried to the rollback.
+                owned_before = (fresh.value or {}).get("pointer")
+                pointer_path = Path((owned_before or {}).get("path")
                                     or pointer.pointer_path(destination))
                 if not fresh.usable:
                     return _install_failed(record_path, data["definitionVersion"], performed,
@@ -2719,8 +2725,13 @@ def cmd_install(args):
                 # succeeds whoever made it, so ownership is established from the record: a
                 # pointer this command placed is recorded when it is placed, and a link nobody
                 # recorded belongs to somebody else.
-                recorded_pointer = (fresh.value.get("pointer") or {}).get("path")
-                if before["state"] == pointer.LINK and not recorded_pointer:
+                # The question is whether a link this command PLACED is recorded at that path,
+                # which is not the question of which path the record names. A rollback that
+                # established the link was gone keeps the path -- the registration depends on it
+                # -- and withdraws the placement, so a link that turns up there afterwards is
+                # still somebody else's and is still refused here.
+                if before["state"] == pointer.LINK and not hostrecord.placement_recorded(
+                        owned_before):
                     performed.append({"step": "establish the pointer is this command's",
                                       "ok": False,
                                       "detail": "a symbolic link is already at "
@@ -2819,7 +2830,7 @@ def cmd_install(args):
                     # place() can fail with the link already replaced, so the same restoration
                     # answers this branch: whatever is there now goes back to what was found.
                     put_back = _restore_pointer(pointer_path, before, environment, record_path,
-                                                data["definitionVersion"])
+                                                data["definitionVersion"], owned_before)
                     performed.append({"step": "put the pointer back", "ok": put_back["verified"],
                                       "detail": put_back["detail"]})
                     return _install_failed(
@@ -2836,7 +2847,7 @@ def cmd_install(args):
                     performed.append({"step": "read the owned pointer back", "ok": False,
                                       "detail": pointer.read(pointer_path).get("detail")})
                     put_back = _restore_pointer(pointer_path, before, environment, record_path,
-                                                data["definitionVersion"])
+                                                data["definitionVersion"], owned_before)
                     performed.append({"step": "put the pointer back", "ok": put_back["verified"],
                                       "detail": put_back["detail"]})
                     return _install_failed(
@@ -2970,6 +2981,11 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
         # link written here was a link nobody recorded -- and the next update refuses to
         # replace one of those. Adopting a host once and then refusing it for ever is the
         # failure this command exists to remove, so the record is written with the link.
+        #
+        # Read as found first, for the same reason the promotion does: this write is a merge,
+        # and afterwards there is no way to tell an entry this call introduced from one it
+        # refreshed. Only the first is its rollback's to take away.
+        owned_before = (current.value or {}).get("pointer")
         owning = hostrecord.update(record_path, data["definitionVersion"],
                                    pointer={"path": str(pointer_path), "recordedAt": now(),
                                             "recordedBy": issue})
@@ -2983,7 +2999,7 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
             pointer.place(pointer_path, environment)
         except OSError as error:
             put_back = _restore_pointer(pointer_path, before, environment, record_path,
-                                        data["definitionVersion"])
+                                        data["definitionVersion"], owned_before)
             emit(dict(standing, refused="the missing half of this promotion could not be"
                                         " written: "
                                         + type(error).__name__ + ": " + str(error),
@@ -2994,7 +3010,7 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
             # Put back what was found, absence included, so a destination this call could not
             # repair is left the way it was rather than holding a link nothing selects.
             put_back = _restore_pointer(pointer_path, before, environment, record_path,
-                                        data["definitionVersion"])
+                                        data["definitionVersion"], owned_before)
             emit(dict(standing, refused="the pointer did not land on the environment the host"
                                         " record already selects",
                       pointerRestored=put_back))
@@ -3145,8 +3161,46 @@ def _selected_install(record, name):
     return None
 
 
+# What a rollback did with the host record's pointer ownership entry. Five answers, because
+# "it was not taken away" had three entirely different reasons and one boolean answered all
+# three with False: an entry this run INHERITED is kept deliberately, an entry another run has
+# since moved on is not this one's to touch, and a write that failed is a rollback that did not
+# finish. None is the sixth thing and is not an answer: nothing was attempted.
+OWNERSHIP_DROPPED = "dropped"
+OWNERSHIP_WITHDRAWN = "withdrawn"
+OWNERSHIP_RESTORED = "restored"
+OWNERSHIP_MOVED_ON = "moved on"
+OWNERSHIP_UNREADABLE = "unreadable"
+OWNERSHIP_ANSWERS = (OWNERSHIP_DROPPED, OWNERSHIP_WITHDRAWN, OWNERSHIP_RESTORED,
+                     OWNERSHIP_MOVED_ON, OWNERSHIP_UNREADABLE)
+
+
+def _ownership_answer(written, wanted):
+    """What the host record says about pointer ownership after a rollback wrote to it.
+
+    READ BACK from the record the single writer loaded, never inferred from the delta having
+    been sent. Every rollback delta is compare-and-act: a record another run has since moved on
+    is left exactly as it stands and the write still reports usable, so "the call returned" and
+    "the entry is what this rollback meant to leave" are two facts, and only the second one is
+    the answer this reports.
+
+    'wanted' is the entry the rollback meant to leave, and None when it meant to leave nothing.
+    """
+    if not written.usable:
+        return OWNERSHIP_UNREADABLE, ("the ownership record could not be written: "
+                                      + str(written.detail))
+    after = (written.value or {}).get("pointer")
+    if after == wanted:
+        if wanted is None:
+            return OWNERSHIP_DROPPED, ""
+        return (OWNERSHIP_RESTORED if hostrecord.placement_recorded(after)
+                else OWNERSHIP_WITHDRAWN), ""
+    return OWNERSHIP_MOVED_ON, ("the ownership record names " + str((after or {}).get("path"))
+                                + " now, so the entry this run wrote is not its to put back")
+
+
 def _restore_pointer(pointer_path, before, environment, record_path=None,
-                     definition_version=None):
+                     definition_version=None, ownership=None):
     """Put the pointer back the way this run found it, INCLUDING finding it absent.
 
     The rollback could only restore a previous target, which has no answer for a first or legacy
@@ -3159,47 +3213,76 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
     'Restore to absence' was the value missing from this answer set, the same shape as the
     established-absent answer the in-flight cell was missing.
 
-    Restoring absence takes the OWNERSHIP RECORD away with the link. The record is what makes a
-    link this command's: the promotion refuses to replace one this record never recorded
-    placing. Left behind for a path where the link was removed, it says this command owns a
-    link that is not there, and the next run then reads a stranger's link at that path as its
-    own. Half a rollback re-arms the guard against the host it protects, so the record goes
-    only when the link went, and only for the path this run recorded.
+    'ownership' is the RECORD side of the same question, and it is the second thing this had to
+    be handed. A link state of NO_POINTER says the LINK was not there; it says nothing about the
+    RECORD, and a host whose recorded link was deleted out from under it has the entry and no
+    link. Taking that entry away is not a rollback: it removes the path the Codex registration
+    names, and a retry with a different --dest then derives another path and reads a
+    registration nobody changed as a conflict. So only an entry this run INTRODUCED goes away
+    with the link, and only for the path this run recorded.
+
+    An entry this run INHERITED goes back, and what goes back depends on what the link ended up
+    as, because the entry answers two questions (hostrecord.POINTER_PLACEMENT). Where the link
+    was put back, the whole entry goes back -- which also takes this run's refreshed stamp off
+    an entry it did not introduce. Where the link is established ABSENT, the path goes back and
+    the placement evidence is WITHDRAWN: the registration still needs the path, and a link that
+    turns up there afterwards is still one this command never recorded placing, which is what
+    the promotion refuses. Put back whole it would authorise replacing that link, which is the
+    protection the absence rollback was written to keep.
 
     A restoration that cannot be read back is reported as residual rather than claimed: the
     caller then keeps the candidate, which is the safe direction when the disk and the record
     may disagree.
     """
+    restored_to, verified, residual = None, True, None
+    detail = "this run placed no pointer, so there is nothing to put back"
+    # What the record should hold once this is over, and whether it may be written yet. 'wanted'
+    # of None means nothing should be there, which is the answer only for an entry this run
+    # introduced.
+    wanted, settled = None, False
+
     if before["state"] == pointer.NO_POINTER:
         removed, detail = pointer.remove(pointer_path, environment)
-        dropped = None
-        if removed and record_path is not None:
-            # Only after the link is verifiably gone. Dropping the record first would leave a
-            # link nobody recorded, which is the refusal shape from the opposite side.
-            written = hostrecord.update(record_path, definition_version,
-                                        drop_pointer=str(pointer_path))
-            dropped = written.usable
-            if not written.usable:
-                detail = (detail + ", but the ownership record for it could not be taken away: "
-                          + str(written.detail))
-        return {"restoredTo": "absent" if removed else None, "verified": removed,
-                "residualPointer": None if removed else str(pointer_path),
-                "ownershipDropped": dropped, "detail": detail}
-    if before["state"] == pointer.LINK and before.get("target"):
+        restored_to = "absent" if removed else None
+        verified = removed
+        residual = None if removed else str(pointer_path)
+        # Only after the link is verifiably gone. Writing the record first would leave a link
+        # nobody recorded, which is the refusal shape from the opposite side.
+        settled = removed
+        wanted = hostrecord.without_placement(ownership) if ownership else None
+    elif before["state"] == pointer.LINK and before.get("target"):
         try:
             pointer.place(pointer_path, before["target"])
         except OSError as error:
-            return {"restoredTo": None, "verified": False,
-                    "residualPointer": str(pointer_path),
-                    "detail": "the previous target could not be put back: "
-                              + type(error).__name__ + ": " + str(error)}
-        back = pointer.names(pointer_path, before["target"]) is True
-        return {"restoredTo": str(before["target"]) if back else None, "verified": back,
-                "residualPointer": None if back else str(pointer_path),
-                "detail": ("the previous target was put back and read back" if back
-                           else "the previous target could not be read back after restoring it")}
-    return {"restoredTo": None, "verified": True, "residualPointer": None,
-            "detail": "this run placed no pointer, so there is nothing to put back"}
+            verified, residual = False, str(pointer_path)
+            detail = ("the previous target could not be put back: " + type(error).__name__
+                      + ": " + str(error))
+        else:
+            verified = pointer.names(pointer_path, before["target"]) is True
+            restored_to = str(before["target"]) if verified else None
+            residual = None if verified else str(pointer_path)
+            detail = ("the previous target was put back and read back" if verified
+                      else "the previous target could not be read back after restoring it")
+        # A link was here and a link is here, so nothing disproved the placement. The entry
+        # goes back exactly as found, and an entry this run introduced over no entry at all --
+        # a legacy adoption that failed -- goes away, which is the same "as found".
+        settled = True
+        wanted = dict(ownership) if ownership else None
+
+    owned = None
+    if settled and record_path is not None:
+        if wanted is None:
+            written = hostrecord.update(record_path, definition_version,
+                                        drop_pointer=str(pointer_path))
+        else:
+            written = hostrecord.update(record_path, definition_version,
+                                        restore_pointer={"wrote": str(pointer_path),
+                                                         "found": wanted})
+        owned, note = _ownership_answer(written, wanted)
+        if note:
+            detail = detail + ", but " + note
+    return {"restoredTo": restored_to, "verified": verified, "residualPointer": residual,
+            "ownership": owned, "detail": detail}
 
 
 def _restore_selection(record_path, definition_version, previous, installs):

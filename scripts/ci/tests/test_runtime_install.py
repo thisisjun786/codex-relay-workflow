@@ -5760,12 +5760,17 @@ class UpdateRecoveryTests(unittest.TestCase):
     }
 
     def _run(self, host, *, breaking=None, gate=None, interpose=None, probes=None,
-             clean_store=False):
+             clean_store=False, dest=None, observe=None):
         import runtime_install
 
+        # A retry can be invoked against a DIFFERENT destination, which is the whole of what
+        # distinguishes the bad case in CRW-95 from the ordinary one, and the candidate has to
+        # move with it or the fake install writes under a directory this run does not own.
+        destination = Path(dest) if dest else host.destination
+        candidate = destination / host.candidate.name
         emitted = []
         args = argparse.Namespace(
-            dest=str(host.destination), apply=True, record=str(host.record_path),
+            dest=str(destination), apply=True, record=str(host.record_path),
             python=sys.executable, socket=None, state=str(host.state), issue="CRW-49",
             codex_home=str(host.codex_home))
 
@@ -5784,7 +5789,7 @@ class UpdateRecoveryTests(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, "", "")
 
         def fake_location(python, module):
-            site = host.candidate / "site" / module
+            site = candidate / "site" / module
             site.mkdir(parents=True, exist_ok=True)
             return str(site), None, [str(python), "-c", "import " + module]
 
@@ -5834,6 +5839,21 @@ class UpdateRecoveryTests(unittest.TestCase):
         if gate == "store would be downgraded":
             candidate_declares = {"relationships": schema["relationships"]}
 
+        def fake_classification(component, **read):
+            """Stubbed, and OBSERVABLE at the boundary it is stubbed at.
+
+            The class itself is about the checkout this suite runs in rather than about any
+            behaviour under test, so it is stubbed. What the classifier is HANDED is a different
+            matter: the registration it receives is the post-inheritance value, which is the one
+            a conflict would actually be judged from, and a caller that wants to assert on it
+            must not have to re-derive it.
+            """
+            if observe is not None:
+                observe.append({"component": component["component"],
+                                "registration": read.get("registration"),
+                                "pointer": read.get("pointer")})
+            return {"class": ownership.OWN, "reasons": ["for this case"]}
+
         patches = [
             mock.patch.object(runtime_install, "emit", side_effect=emitted.append),
             mock.patch.object(runtime_install.subprocess, "run", side_effect=fake_run),
@@ -5858,7 +5878,7 @@ class UpdateRecoveryTests(unittest.TestCase):
             mock.patch.object(runtime_install, "candidate_tables",
                               return_value={"readable": True, "tables": candidate_declares}),
             mock.patch.object(runtime_install, "classify_component",
-                              return_value={"class": ownership.OWN, "reasons": ["for this case"]}),
+                              side_effect=fake_classification),
         ]
         if breaking == "replace the owned pointer":
             # The link LANDS and then the call fails, which is the case the code claims to
@@ -7887,7 +7907,8 @@ class PointerOwnershipRollbackTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIsNone(record.get("pointer"),
                           "the record must not claim a link this run took away")
-        self.assertTrue(payload["pointer"]["pointerRestored"]["ownershipDropped"])
+        self.assertEqual(payload["pointer"]["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_DROPPED)
 
     def test_a_link_this_command_did_not_place_is_refused_after_the_rollback(self):
         """The consequence, end to end. The leftover claim made a stranger's link ours."""
@@ -7920,6 +7941,211 @@ class PointerOwnershipRollbackTests(unittest.TestCase):
 
         self.assertEqual((kept or {}).get("path"), "/dest/current")
         self.assertIsNone(gone)
+
+
+class PointerOwnershipLifetimeTests(unittest.TestCase):
+    """An ownership entry OLDER than the promotion that failed.
+
+    CRW-49 taught the rollback to restore absence, and it took the ownership entry away with the
+    link. It keyed that on the LINK state, and a missing link is not a missing RECORD: a host
+    whose recorded link was deleted out from under it has the entry and no link. There the
+    rollback erased an entry that predated the promotion entirely -- and that entry holds the
+    path the Codex registration names, so erasing it is what makes a retry with a different
+    --dest read a registration nobody changed as a conflict.
+
+    The entry answers two questions and the rollback now answers them separately. The path stays
+    because the registration depends on it. The placement evidence goes, because the rollback
+    just established there is no link this command placed there -- which keeps CRW-49's refusal
+    of a stranger's link armed rather than trading it away for the path.
+    """
+
+    def _link_deleted_under_it(self, host):
+        """The state this defect needs: the record's entry intact, the link gone.
+
+        Only the LINK. PointerOwnershipRollbackTests removes both, which is the first or legacy
+        install where the run really does introduce the entry -- the case CRW-49 closed, and the
+        one these must not reopen.
+        """
+        host.pointer_path.unlink()
+
+    def _entry(self, host):
+        record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value or {}
+        return record.get("pointer")
+
+    def test_an_ownership_entry_older_than_this_promotion_survives_its_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            found = dict(self._entry(host))
+            self._link_deleted_under_it(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="read the owned pointer back")
+            entry = self._entry(host)
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertIsNotNone(entry,
+                             "a failed promotion erased an ownership entry it did not introduce")
+        self.assertEqual(entry.get("path"), found["path"],
+                         "and the path the registration names has to survive with it")
+        self.assertEqual(payload["pointer"]["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_WITHDRAWN)
+
+    def test_the_placement_evidence_goes_even_though_the_path_stays(self):
+        """The two questions the entry answers, answered separately rather than together."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._link_deleted_under_it(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="read the owned pointer back")
+            entry = self._entry(host)
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual((entry or {}).get("path"), str(host.pointer_path))
+        self.assertFalse(hostrecord.placement_recorded(entry),
+                         "the rollback established there is no link here that this command"
+                         " placed, so it must not go on saying there is")
+
+    def _retry_elsewhere(self, host):
+        """Fail a promotion, then retry the install against a DIFFERENT destination.
+
+        Returns the retry's result and what the classification was handed, because the two
+        halves of the consequence are read in two places and only one of them needs a
+        configuration reader.
+        """
+        self._link_deleted_under_it(host)
+        UpdateRecoveryTests()._run(host, breaking="read the owned pointer back")
+        seen = []
+        code, payload = UpdateRecoveryTests()._run(
+            host, dest=str(host.root / "somewhere-else"), observe=seen)
+        return code, payload, [s["registration"] for s in seen if s["registration"] is not None]
+
+    def test_a_retry_with_a_different_dest_stays_on_the_recorded_pointer_path(self):
+        """Half the consequence the issue names, and the half that needs no reader.
+
+        The recorded path is the only thing that keeps one host on one pointer across a --dest
+        change. Erased, the retry derives its pointer from the NEW destination instead.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload, _ = self._retry_elsewhere(host)
+            recorded = str(host.pointer_path)
+
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertEqual(payload["pointer"]["path"], recorded,
+                         "the retry has to stay on the pointer path the record recorded")
+
+    @needs_reader
+    def test_a_retry_with_a_different_dest_is_not_read_as_a_registration_conflict(self):
+        """The other half, and the one the issue is actually about.
+
+        The configuration registers <recorded pointer>/bin/<script>. Derive the pointer from the
+        new destination and the registered command stops matching -- and _inherited_registration
+        does not rescue it, because that only forgives a recorded INSTALL entry point and a
+        pointer path is not one.
+
+        Read at the CLASSIFIER boundary rather than from registration_state. The harness stubs
+        the class, so the exit code cannot show this; what the classifier is HANDED is the
+        post-inheritance registration a conflict would actually be judged from.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload, judged = self._retry_elsewhere(host)
+
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertEqual(len(judged), 1, "exactly one component is judged on the registration")
+        self.assertEqual(judged[0]["outcome"], codexconfig.LINKED,
+                         "a configuration nobody changed must not read as a conflict: "
+                         + json.dumps(judged[0].get("detail"))[:400])
+
+    def test_the_resume_path_does_not_erase_an_entry_it_inherited_either(self):
+        """_finish_promotion writes the same entry before placing and rolls back through the
+        same helper, so it carried the same defect and closes with the same answer."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self._link_deleted_under_it(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="replace the owned pointer")
+            entry = self._entry(host)
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertIsNotNone(entry,
+                             "the resume rollback erased an entry it did not introduce")
+        self.assertEqual(entry.get("path"), str(host.pointer_path))
+        self.assertEqual(payload["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_WITHDRAWN)
+
+    # ---------------------------------------------------------------- support, not evidence
+
+    def test_a_stranger_link_is_still_refused_after_an_inherited_rollback(self):
+        """SUPPORT (negative control). Green at the parent too, because the parent refuses for
+        the opposite reason -- it erased the entry. What it proves is that keeping the path did
+        not buy the retry at the cost of CRW-49's protection: restoring the entry WHOLE makes
+        this run succeed and replace a link it never placed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._link_deleted_under_it(host)
+            UpdateRecoveryTests()._run(host, breaking="read the owned pointer back")
+            pointer.place(host.pointer_path, host.previous)
+            code, payload = UpdateRecoveryTests()._run(host)
+            still = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["failedStep"], "establish the pointer is this command's")
+        self.assertEqual(still, str(host.previous),
+                         "a link nobody recorded placing is left exactly as it is")
+
+    def test_the_delta_leaves_an_entry_another_run_has_moved_on(self):
+        """SUPPORT. The keyword does not exist at the parent, so this can only raise there
+        rather than fail on the defect. It pins the compare the rollback depends on."""
+        mine = {"path": "/dest/current", "recordedAt": "t0", "recordedBy": "me"}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            hostrecord.update(path, 1, pointer={"path": "/moved-on/current",
+                                                "recordedAt": "t", "recordedBy": "another run"})
+            hostrecord.update(path, 1, restore_pointer={"wrote": "/dest/current",
+                                                        "found": mine})
+            kept = (hostrecord.load(path, 1).value or {}).get("pointer")
+            hostrecord.update(path, 1, pointer={"path": "/dest/current", "recordedAt": "t9",
+                                                "recordedBy": "the failed run"})
+            hostrecord.update(path, 1, restore_pointer={"wrote": "/dest/current",
+                                                        "found": mine})
+            back = (hostrecord.load(path, 1).value or {}).get("pointer")
+
+        self.assertEqual(kept.get("recordedBy"), "another run",
+                         "an entry another run has moved on is that run's to keep")
+        self.assertEqual(back, mine,
+                         "and the entry this run replaced goes back whole, stamp included")
+
+    def test_the_rollback_answer_is_read_back_rather_than_assumed(self):
+        """SUPPORT. compare-and-act means a miss still reports usable, so 'the call returned'
+        and 'the entry is what this rollback meant to leave' are two different facts."""
+        mine = {"path": "/dest/current", "recordedAt": "t0", "recordedBy": "me"}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            hostrecord.update(path, 1, pointer={"path": "/moved-on/current",
+                                                "recordedAt": "t", "recordedBy": "another run"})
+            written = hostrecord.update(path, 1, restore_pointer={"wrote": "/dest/current",
+                                                                  "found": mine})
+            answer, note = runtime_install_module._ownership_answer(written, mine)
+
+        self.assertTrue(written.usable, "the write itself succeeded, which is the point")
+        self.assertEqual(answer, runtime_install_module.OWNERSHIP_MOVED_ON)
+        self.assertIn("/moved-on/current", note)
+
+    def test_the_found_entry_is_a_declared_member_of_the_promotions_fresh_set(self):
+        """SUPPORT. The record side of the prior state is decided on inside the promotion, so it
+        is protected by the same scan that protects the link side."""
+        import runtime_install
+
+        self.assertIn("owned_before", runtime_install.PROMOTION_FRESH)
 
 
 class LegacyInstallTests(unittest.TestCase):
