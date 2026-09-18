@@ -275,19 +275,6 @@ is that pair together rather than the timeout alone.
   `test_manifest_scope.py` never reached because they all use `/a/b`. A case now names
   that branch, positive and negative. What stays open is a scope question rather than a test
   one: whether an authorized root of `/` is reachable at all.
-- `intent.register_relationship` reads the dispatch generation state and then publishes
-  `relationship.json` as two operations with nothing held between them. An advance
-  committing in that window returns success over a generation the store has already moved
-  past, leaving the marker naming a stale one. Found by
-  `test_registration_contention.py`, which therefore asserts what actually holds - the
-  disagreement stays readable, so the next evaluation sees it - rather than asserting the
-  absence of a race the source does not prevent. Closing the window needs the check and the
-  publication under one hold, which is a source change this issue does not own.
-- `scope.is_within` answers two different ways and this suite exercises one of them. The
-  derived inventory lists `return: path.startswith('/')` as a producer path it could not
-  reduce, and that path is the whole answer when the root is `/`; the five cases in
-  `test_manifest_scope.py` all use `/a/b`. Whether a root of `/` is reachable at all is a
-  scope question rather than a test question, which is why it is reported here.
 - The workflow-restore section is the only non-essential block in the revision direction
   of `report.render_revision`, so a tight budget removes it first. CRW-94 owns that
   behaviour; nothing here changes it.
