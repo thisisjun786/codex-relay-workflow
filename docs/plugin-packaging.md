@@ -23,6 +23,13 @@ Only those three entries may sit in the plugin root. Installation copies that
 directory verbatim, including untracked and ignored files, so anything left there
 is published. `python3 scripts/ci/plugin.py` enforces the rule.
 
+Everything that ships also has to sit inside the declared skills path, beside the
+files under `.codex-plugin/` and `LICENSE`, because a file outside it would install
+without ever being validated as a skill. The manifest itself may carry only the keys
+the ingestion validator knows, and optional presentation fields are checked against
+its shapes: URLs that begin with `https://`, a `#RRGGBB` brand colour, and `./`
+relative asset paths the package actually ships.
+
 The manifest declares `skills` and nothing else. On this Codex version a declared
 component replaces default discovery rather than adding to it, so declaring
 `hooks` or `mcpServers` would change what loads; wiring those belongs to its own

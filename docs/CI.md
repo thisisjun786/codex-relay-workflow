@@ -51,6 +51,14 @@ declared skill to carry `SKILL.md` and `agents/openai.yaml`, and the repository
 root link to point at the declared skills directory so the linked and packaged
 installations cannot drift apart.
 
+An empty directory is refused for the same reason: it carries no file for any other
+rule to inspect and still reaches the cache. Shipped files must sit inside the
+declared skills path, beside the files under `.codex-plugin/` and `LICENSE`; the
+manifest may carry only keys the ingestion validator knows; and optional interface
+fields are checked against its https, colour and asset shapes, so those
+ingestion-shape mismatches are rejected here too. The working tree is checked with
+the same rules as the revision, because a local marketplace installs it.
+
 `--json` prints the payload digest and the namespaced skill names derived from the
 revision, and `--payload <dir>` applies the same rules to an installed cache tree,
 so an installed package can be compared with the source it came from. Passing is
