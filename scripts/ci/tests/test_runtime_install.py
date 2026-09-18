@@ -9160,6 +9160,49 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
                          "a pointer that only passes the lexical test reached the boundary")
         self.assertNotIn(str(host.pointer_path), found["residualPaths"])
 
+    def test_a_recorded_path_that_cannot_name_a_file_is_a_reading_not_a_crash(self):
+        """hostrecord.shape accepts any string for the pointer path, including one carrying a
+        NUL. scandir raises ValueError rather than OSError for it, so an otherwise readable
+        host record produced an internalError where a reading belongs."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(host.destination / "cur\x00rent"),
+                                 "recordedAt": "2026-09-18T00:00:00Z", "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            # Caught here so the failure is the assertion below rather than the traceback
+            # itself: "it raised" is the defect, and the case has to say so in its own words.
+            try:
+                found = residue.survey(
+                    Path(str(host.destination / "un\x00readable")),
+                    pointer_path=record["pointer"]["path"],
+                    recorded_pointer=record["pointer"]["path"],
+                    protection=lambda environment: (False, False))
+            except Exception as error:
+                found = {"read": None, "unreadable": [], "residualPaths": [],
+                         "raised": type(error).__name__ + ": " + str(error)}
+        self.assertIsNotNone(found["read"],
+                             "a path that cannot name a file raised out of the survey instead"
+                             " of answering: " + str(found.get("raised")))
+        self.assertFalse(found["read"])
+        self.assertTrue(found["unreadable"], "a path that cannot name a file left no reading")
+        self.assertEqual(found["residualPaths"], [],
+                         "nothing was established, so nothing is recommended for removal")
+
+    def test_cleanup_guidance_never_reads_as_an_unconditional_delete(self):
+        """This survey holds no lock. An install taking one immediately after the liveness
+        check can be building in that directory while the reading still says DEAD, so the
+        guidance points at the path the installer reclaims under its own lock and says what
+        removing it by hand would require."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            _failed_update_leaving_its_candidate(host)
+            found = _diagnose(host)["residue"]
+        self.assertTrue(found["recoveryRequires"])
+        guidance = " ".join(found["recoveryRequires"])
+        self.assertIn("no lock", guidance)
+        self.assertIn("reclaim", guidance)
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here

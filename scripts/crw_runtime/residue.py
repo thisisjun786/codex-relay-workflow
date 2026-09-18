@@ -96,11 +96,16 @@ def _same_directory(one, other):
     fails in on purpose.
     """
     one, other = str(one), str(other)
-    if os.path.normpath(one) != os.path.normpath(other):
+    try:
+        if os.path.normpath(one) != os.path.normpath(other):
+            return False
+        # realpath answers best-effort and does not raise on a loop, but a NUL-bearing
+        # string cannot name a path at all and raises ValueError from either of these.
+        return os.path.realpath(one) == os.path.realpath(other)
+    except ValueError:
+        # Nothing was established, and this comparison's conservative answer is
+        # "different", which keeps the pointer out of the cleanup list.
         return False
-    # realpath answers best-effort and does not raise, including on a loop, so this cannot
-    # turn a comparison into a failure.
-    return os.path.realpath(one) == os.path.realpath(other)
 
 
 def _target_exists(path):
@@ -141,7 +146,10 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
         # Not a glob: a listing that cannot be made must raise here rather than come back as a
         # complete description of a smaller tree (reading.OMITTING_READERS).
         found = sorted(entry.path for entry in os.scandir(str(root)))
-    except OSError as error:
+    except (OSError, ValueError) as error:
+        # ValueError as well as OSError: a recorded pointer path may carry a NUL, which cannot
+        # name a file at all, and scandir raises ValueError for it. A host record that is
+        # otherwise readable must still produce a reading here rather than an internal error.
         answer["unreadable"].append("the destination could not be listed: "
                                     + type(error).__name__ + ": " + str(error))
         # The pointer is read and PUBLISHED on this path too. Returning before the common
@@ -201,8 +209,10 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
         if residual:
             answer["residualPaths"].append(str(entry))
             answer["recoveryRequires"].append(
-                "remove " + str(entry) + " by hand, or let the next install of this same"
-                " combination reclaim it: " + reason)
+                "let the next install of this same combination reclaim " + str(entry)
+                + ", which takes the lock this reading did not: " + reason
+                + ". Removing it by hand means re-reading it first, because this survey holds"
+                  " no lock and an install may have started building there since it looked")
         elif not claim.usable:
             answer["unreadable"].append(str(entry) + ": " + str(claim.detail))
         elif liveness == staging.UNKNOWN:
