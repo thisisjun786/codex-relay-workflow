@@ -1446,5 +1446,144 @@ class SecondHostedRound(TrialCase):
         self.assertIn("no declared boundary", refused.reason)
 
 
+class ThirdHostedRound(TrialCase):
+    """The findings the hosted reviewers returned on the second and third pushed heads."""
+
+    def window_ledger(self, lines):
+        now = time.time()
+        opened, closed = now - 60, now - 5
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        self.world.ledger_lines(list(lines(now, opened, closed)))
+        return now, opened, closed
+
+    def test_a_capture_is_aged_at_the_moment_it_is_read(self):
+        # The bound used to be compared against a clock sampled before the run, so a capture stayed
+        # fresh for as long as the run took. The witness delay is real time inside one preflight.
+        self.world.start_supervisor()
+        self.world.record["captureMaxAgeSeconds"] = 1
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 2
+        self.world.record["captures"]["parentLifecycle"][World.PARENT_A]["capturedAt"] = (
+            startup.stamp(time.time() - 0.5))
+        self.world.flush()
+        document = startup.preflight(
+            startup.load_start(str(self.world.trial / "start.json"),
+                               environment=self.world.environment()),
+            sleeper=time.sleep)
+        cell = cells_of(document, "parentLifecycle")["parentLifecycle:" + World.PARENT_A]
+        self.assertEqual(cell["value"], UNKNOWN)
+        self.assertIn("seconds old", cell["evidence"])
+
+    def test_a_boundary_that_is_not_an_object_is_named_rather_than_raised(self):
+        self.world.record["boundaries"][1] = "not a boundary"
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("boundary is not an object", payload["refused"])
+        self.assertNotIn("raised before it could report", payload["refused"])
+
+    def test_an_assignment_whose_participants_are_another_boundarys_is_refused(self):
+        for key, value in (("parentTaskId", World.PARENT_B), ("childTaskId", World.CHILD_B)):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.record["assignment"][key] = value
+            world.flush()
+            try:
+                startup.load_start(str(world.trial / "start.json"),
+                                   environment=world.environment())
+            except startup.Refused as refused:
+                self.assertIn("is not the one its boundary declares", refused.reason)
+            else:                                                    # pragma: no cover
+                self.fail(key + " was accepted from another boundary")
+
+    def test_two_boundaries_sharing_a_participant_are_not_two_parents(self):
+        self.world.record["boundaries"][1]["participants"][0]["taskId"] = World.PARENT_A
+        self.world.record["captures"]["creationReceipt"][World.PARENT_A] = (
+            self.world.record["captures"]["creationReceipt"][World.PARENT_A])
+        self.world.flush()
+        document = self.world.preflight()
+        cell = cells_of(document, "boundaries")["declaration"]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("two sharing a participant", cell["evidence"])
+
+    def test_the_gate_refuses_roots_from_a_registration_of_another_relationship(self):
+        self.world.captures["register-A.json"]["relationshipId"] = "rel-000000000000beef"
+        self.world.flush()
+        gate = self.world.preflight()["orderGate"]
+        self.assertFalse(gate["passed"])
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "registrationIdentity" and c["agrees"] is False])
+        self.assertFalse([c for c in gate["comparisons"] if c["field"] == "artifact"])
+
+    def test_an_unnormalised_artifact_path_is_refused(self):
+        odd = str(self.world.repos["A"]) + "/sub/../artifact.py"
+        self.world.record["assignment"]["artifacts"] = [odd]
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("normalised", refused.reason)
+        for value in (str(self.world.repos["A"]) + "/", "~/artifact.py",
+                      str(self.world.repos["A"]) + "//artifact.py"):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.record["assignment"]["artifacts"] = [value]
+            world.flush()
+            self.assertIsNotNone(world.refusal(), value + " was accepted")
+
+    def test_an_unnormalised_artifact_in_the_assignment_file_fails_the_gate(self):
+        odd = str(self.world.repos["A"]) + "/sub/../artifact.py"
+        self.world.assignment_file.write_text(json.dumps({
+            "relationshipId": World.RELATIONSHIP, "childTaskId": World.CHILD_A,
+            "executionGeneration": 1, "artifacts": [odd]}), encoding="utf-8")
+        gate = self.world.preflight()["orderGate"]
+        self.assertFalse(gate["passed"])
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "artifactIsCanonical" and c["agrees"] is False])
+
+    def test_a_message_naming_a_longer_path_does_not_carry_the_artifact(self):
+        self.world.message_file.write_text(
+            "Work under relationship " + World.RELATIONSHIP + "x and emit "
+            + str(self.world.artifact) + ".bak when ready.\n", encoding="utf-8")
+        gate = self.world.preflight()["orderGate"]
+        self.assertFalse(gate["passed"])
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "messageCarriesArtifact" and c["agrees"] is False])
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "messageCarriesRelationship" and c["agrees"] is False])
+
+    def test_exact_naming_still_accepts_ordinary_prose(self):
+        for around in ("relationship {id} and artifact {path}.",
+                       "({id}) [{path}]", "{id}\n{path}\n"):
+            self.world.message_file.write_text(
+                around.format(id=World.RELATIONSHIP, path=str(self.world.artifact)),
+                encoding="utf-8")
+            gate = self.world.preflight()["orderGate"]
+            self.assertTrue([c for c in gate["comparisons"]
+                             if c["field"] == "messageCarriesArtifact" and c["agrees"] is True],
+                            around)
+
+    def test_a_window_whose_open_and_close_name_different_segments_is_refused(self):
+        self.window_ledger(lambda now, opened, closed: [
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window-4"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window-5"},
+        ])
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("different segments", raised.exception.reason)
+
+    def test_a_preparation_segment_running_through_the_window_is_refused(self):
+        self.window_ledger(lambda now, opened, closed: [
+            {"at": startup.stamp(now - 300), "kind": "segment_start", "segment": "long"},
+            {"at": startup.stamp(closed + 1), "kind": "segment_end", "segment": "long",
+             "outcome": "failed"},
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window"},
+        ])
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("overlaps the trial window", raised.exception.reason)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

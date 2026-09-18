@@ -185,6 +185,22 @@ def absolute(value, what):
     return Path(value)
 
 
+def canonical(value, what):
+    """An absolute, normalised POSIX path, which is the contract the relay's manifest enforces.
+
+    An absolute path is not enough: the relay's own normalize_declared_path refuses a path holding
+    .. or . segments, a trailing slash, a doubled separator or a ~, and a gate that accepted one
+    would report a dispatch as ready that emit then refuses.
+    """
+    path = absolute(value, what)
+    text = str(value)
+    if ("~" in text or text != os.path.normpath(text)
+            or (text.endswith("/") and text != "/") or "//" in text):
+        raise Refused(what + " is not a normalised absolute path", value=text,
+                      normalised=os.path.normpath(text))
+    return path
+
+
 def resolve(path):
     """The path after every symbolic link, because containment compares places and not spellings."""
     return Path(str(path)).expanduser().resolve()
@@ -377,21 +393,37 @@ def load_start(path, *, environment=None):
     if not isinstance(field(record, "assignment", "artifacts"), list):
         raise Refused("assignment.artifacts must be a list")
     for artifact in field(record, "assignment", "artifacts"):
-        absolute(artifact, "an assignment artifact")
+        canonical(artifact, "an assignment artifact")
     if not isinstance(field(record, "captures"), dict):
         raise Refused("captures must be an object of capture kinds",
                       captures=type(record.get("captures")).__name__)
     if not isinstance(record.get("boundaries"), list) or len(record["boundaries"]) < 2:
         raise Refused("a live trial declares at least two boundaries",
                       boundaries=len(record.get("boundaries") or []))
+    for index, boundary in enumerate(record["boundaries"]):
+        # Before anything reads a boundary's fields, because a non-object one reached a generic
+        # failure and reported an internal fault rather than the malformed record it was.
+        if not isinstance(boundary, dict):
+            raise Refused("a boundary is not an object", index=index,
+                          boundary=type(boundary).__name__)
     # The assignment being dispatched has to belong to a boundary this record declared. Falling
     # back to the first one read the wrong boundary's registration and let an assignment outside
     # every declared repository and project pass every reading.
-    if not any(b.get("issueKey") == field(record, "assignment", "issueKey")
-               for b in record["boundaries"]):
+    owning = [b for b in record["boundaries"]
+              if b.get("issueKey") == field(record, "assignment", "issueKey")]
+    if not owning:
         raise Refused("the assignment's issue belongs to no declared boundary",
                       issueKey=field(record, "assignment", "issueKey"),
                       boundaries=[b.get("issueKey") for b in record["boundaries"]])
+    # And its participants have to be that boundary's own, or the readings would cover one set of
+    # tasks while the dispatch went to another.
+    roles = {p.get("role"): p.get("taskId") for p in (owning[0].get("participants") or [])
+             if isinstance(p, dict)}
+    for role, key in (("parent", "parentTaskId"), ("child", "childTaskId")):
+        if not same(roles.get(role), field(record, "assignment", key)):
+            raise Refused("the assignment's " + role + " is not the one its boundary declares",
+                          boundary=owning[0].get("name"), declared=shown(roles.get(role)),
+                          assignment=shown(field(record, "assignment", key)))
     launched = moment(field(record, "supervisor", "launchedAt"), "supervisor.launchedAt")
     if launched.timestamp() > time.time():
         raise Refused("the supervisor's launchedAt is in the future",
@@ -545,7 +577,10 @@ def capture(record, kind, name):
         return None, "no capture is declared for " + kind + " " + name
     path = field(entry, "path")
     taken = moment(field(entry, "capturedAt"), "captures." + kind + "." + name + ".capturedAt")
-    now = record["_now"]
+    # The clock is read here rather than once before the run, because a witness delay and several
+    # subprocesses sit between the first capture and the last, and a bound sampled at the start
+    # would call a capture fresh for as long as the run happened to take.
+    now = datetime.datetime.now(datetime.timezone.utc)
     if taken > now:
         raise Refused("a capture is dated in the future", kind=kind, name=name,
                       capturedAt=stamp(taken.timestamp()), now=stamp(now.timestamp()))
@@ -560,6 +595,29 @@ def capture(record, kind, name):
 
 
 # ---------------------------------------------------------------------- readings
+
+
+def registration_identity(record, boundary, receipt):
+    """Whether this receipt is the registration this boundary is running under.
+
+    A receipt agreeing on a scope and two task names while carrying another issue, another
+    relationship, another generation or an archived status is a stale registration, and the
+    authorised roots inside it belong to that other assignment.
+    """
+    assignment = record.get("assignment") or {}
+    this_one = boundary.get("issueKey") == assignment.get("issueKey")
+    if not same(field(receipt, "issueKey"), boundary.get("issueKey")):
+        return False, "it names issue " + str(shown(field(receipt, "issueKey")))
+    if field(receipt, "status") != "active":
+        return False, "its status is " + str(shown(field(receipt, "status")))
+    if this_one:
+        if not same(field(receipt, "relationshipId"), assignment.get("relationshipId")):
+            return False, "it names relationship " + str(shown(field(receipt, "relationshipId")))
+        if not same(field(receipt, "executionGeneration"),
+                    assignment.get("executionGeneration")):
+            return False, ("it names generation "
+                           + str(shown(field(receipt, "executionGeneration"))))
+    return True, "it is this boundary's current registration"
 
 
 def read_witness(path):
@@ -863,14 +921,18 @@ def reading_boundaries(record, relay):
     keys = [b.get("issueKey") for b in boundaries]
     scopes = [b.get("scopeRef") for b in boundaries]
     roots = [str(resolve(b.get("repositoryRoot"))) for b in boundaries]
+    tasks = [p.get("taskId") for b in boundaries for p in b.get("participants") or []]
     distinct = (len(boundaries) >= 2 and len(set(keys)) == len(keys)
-                and len(set(scopes)) == len(scopes) and len(set(roots)) == len(roots))
+                and len(set(scopes)) == len(scopes) and len(set(roots)) == len(roots)
+                and len(set(tasks)) == len(tasks))
     cells.append(cell("declaration", VERIFIED if distinct else NOT_VERIFIED, provenance=READ,
                       evidence=(str(len(boundaries)) + " boundaries declared, issue keys "
                                 + json.dumps(keys) + ", scope references " + json.dumps(scopes)
                                 + ", repository roots " + json.dumps(roots)
+                                + ", participants " + json.dumps(tasks)
                                 + ". Two boundaries in one repository are not two repository"
-                                  " identities"),
+                                  " identities, and two sharing a participant are not two"
+                                  " parents"),
                       measured_at=stamp()))
 
     for boundary in boundaries:
@@ -884,20 +946,9 @@ def reading_boundaries(record, relay):
             scope = field(receipt, "authorizedScope", "scopeRef")
             child = next((p for p in boundary.get("participants") or []
                           if p.get("role") == "child"), {})
-            # A receipt is a whole registration, and a stale one agrees on the parts a scope and a
-            # task name while naming another issue, another relationship or a status that is no
-            # longer active.
-            owns = same(field(receipt, "issueKey"), boundary.get("issueKey"))
-            active = field(receipt, "status") == "active"
-            assignment = record.get("assignment") or {}
-            this_one = boundary.get("issueKey") == assignment.get("issueKey")
-            current = (not this_one
-                       or (same(field(receipt, "relationshipId"),
-                                assignment.get("relationshipId"))
-                           and same(field(receipt, "executionGeneration"),
-                                    assignment.get("executionGeneration"))))
+            current, why = registration_identity(record, boundary, receipt)
             ok = (same(scope, boundary.get("scopeRef"))
-                  and owns and active and current
+                  and current
                   and same(field(receipt, "child", "taskId"), child.get("taskId"))
                   and same(field(receipt, "parent", "taskId"),
                            next((p.get("taskId") for p in boundary.get("participants") or []
@@ -982,6 +1033,31 @@ def reading_assignment(record, relay):
 # --------------------------------------------------------------------- the gate
 
 
+def names_exactly(text, value):
+    """Whether the message names this exact value rather than something beginning with it.
+
+    A substring test agreed that a message naming /repo/artifact.py.bak carried /repo/artifact.py,
+    so the gate reported an identity the child would never receive. An occurrence counts when the
+    whole path-like run around it is this value, allowing for the sentence punctuation that follows
+    a path in prose: the message is prose, and a path at the end of a sentence carries a full stop
+    that belongs to the sentence rather than to the path.
+    """
+    if not value:
+        return False
+    token = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/~+-")
+    start = text.find(value)
+    while start != -1:
+        left, right = start, start + len(value)
+        while left > 0 and text[left - 1] in token:
+            left -= 1
+        while right < len(text) and text[right] in token:
+            right += 1
+        if text[left:right].rstrip(".,;:!?") == value:
+            return True
+        start = text.find(value, start + 1)
+    return False
+
+
 def order_gate(record, store_payload, entry):
     """The file, the store and the message, compared before the message is sent.
 
@@ -1036,8 +1112,16 @@ def order_gate(record, store_payload, entry):
                 "comparisons": []}
     found, why = capture(record, "registration", str(owning.get("name")))
     if found is not None:
-        roots = field(found["payload"], "authorizedScope", "artifactRoots")
-        roots_source = found["path"]
+        current, detail = registration_identity(record, owning, found["payload"])
+        if current:
+            roots = field(found["payload"], "authorizedScope", "artifactRoots")
+            roots_source = found["path"]
+        else:
+            comparisons.append({"field": "registrationIdentity", "agrees": False,
+                                "left": shown(field(found["payload"], "relationshipId")),
+                                "right": shown(assignment.get("relationshipId")),
+                                "leftSource": found["path"] + ": " + detail,
+                                "rightSource": "the start record"})
     # The assignment file is the input the child reads, so its own list is the one under test. A
     # fallback to the record's artifacts validated the trial's intention against a file that did
     # not carry it, and an empty list took the fallback exactly like an absent key.
@@ -1057,13 +1141,16 @@ def order_gate(record, store_payload, entry):
                             "rightSource": "the start record"})
         artifacts = in_file_artifacts
     for artifact in artifacts:
-        if not str(artifact).startswith("/"):
-            comparisons.append({"field": "artifactIsAbsolute", "agrees": False,
-                                "left": shown(artifact), "right": "an absolute path",
+        try:
+            canonical(artifact, "an artifact in the assignment file")
+        except Refused as refused:
+            comparisons.append({"field": "artifactIsCanonical", "agrees": False,
+                                "left": shown(artifact),
+                                "right": "an absolute, normalised path",
                                 "leftSource": "the assignment file",
-                                "rightSource": "a relative path is resolved against whatever"
-                                               " directory a reader happens to be in, so it names"
-                                               " no place"})
+                                "rightSource": "the relay's manifest refuses a path that is"
+                                               " relative, unnormalised, trailing-slashed or"
+                                               " holding a tilde: " + refused.reason})
     if roots is MISSING or not isinstance(roots, list):
         comparisons.append({"field": "artifactRoots", "agrees": None,
                             "left": shown(artifacts), "right": None,
@@ -1085,7 +1172,7 @@ def order_gate(record, store_payload, entry):
                                            + str(message.state) + ")"})
     else:
         text = message.value or ""
-        carried = str(assignment.get("relationshipId")) in text
+        carried = names_exactly(text, str(assignment.get("relationshipId")))
         comparisons.append({"field": "messageCarriesRelationship", "agrees": carried,
                             "left": shown(assignment.get("relationshipId")),
                             "right": "the message text",
@@ -1093,7 +1180,8 @@ def order_gate(record, store_payload, entry):
                             "rightSource": str(assignment.get("dispatchMessageFile"))})
         for artifact in artifacts:
             comparisons.append({"field": "messageCarriesArtifact",
-                                "agrees": str(artifact) in text, "left": shown(artifact),
+                                "agrees": names_exactly(text, str(artifact)),
+                                "left": shown(artifact),
                                 "right": "the message text", "leftSource": "the assignment file",
                                 "rightSource": str(assignment.get("dispatchMessageFile"))})
 
@@ -1138,6 +1226,12 @@ def ledger_report(record):
     if not opens or not closes:
         raise Refused("the window is not bounded in this ledger", opened=len(opens),
                       closed=len(closes))
+    # One window is one named interval. Pairing an open and a close that name different segments
+    # built a synthetic interval, and interventions were classified against something nobody ran.
+    if not opens[0].get("segment") or opens[0].get("segment") != closes[0].get("segment"):
+        raise Refused("the window's open and close name different segments",
+                      opensAt=opens[0].get("at"), opensSegment=shown(opens[0].get("segment")),
+                      closesAt=closes[0].get("at"), closesSegment=shown(closes[0].get("segment")))
     opened, closed = opens[0]["_at"], closes[0]["_at"]
     if closed < opened:
         raise Refused("the window closes before it opens", opensAt=opens[0].get("at"),
@@ -1198,6 +1292,14 @@ def ledger_report(record):
             raise Refused("two segments overlap in time", earlier=first["name"],
                           later=second["name"], earlierClosesAt=first["closesAt"],
                           laterOpensAt=second["opensAt"])
+    for segment in ordered:
+        # A preparation segment running through the measured window means preparation was still
+        # happening inside it, whether or not anybody wrote an intervention down.
+        if segment["_from"] <= closed and opened <= segment["_to"]:
+            raise Refused("a preparation segment overlaps the trial window",
+                          segment=segment["name"], opensAt=segment["opensAt"],
+                          closesAt=segment["closesAt"], windowOpensAt=opens[0].get("at"),
+                          windowClosesAt=closes[0].get("at"))
     segments = ordered
 
     preparation, inside = [], []
