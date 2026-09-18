@@ -77,7 +77,7 @@ overstatement this map exists to avoid.
 | `test_failure_recovery.py` | 6 | 2, 3 |
 | `test_multi_parent_isolation.py` | 7 | 5, 6 |
 | `test_operational_scale.py` | 8 | 7, 8 |
-| `test_regression_map.py` | 4 | 9 |
+| `test_regression_map.py` | 9 | 9, and the sweep's own reach |
 
 ## Clock provenance, derived rather than asserted
 
@@ -139,12 +139,23 @@ that run and is not the baseline: it has no `codex_thread_bridge` on the path, a
 this filesystem does not honour the unreadable directory one of the scope tests depends
 on, so it reports failures that belong to the runner.
 
-## Two things every test here was swept for
+## Two things every test here was swept for, and how far the sweep actually reaches
 
 Three review rounds found the same shape three times: an assertion that passes in the
 situation its own name describes, and prose claiming more than the assertion establishes.
-Fixing the instances a fourth time would miss the point, so all five modules were checked
-against two rules derived from source rather than from memory.
+Fixing the instances a fourth time would miss the point, so the suite was checked against two
+rules derived from source rather than from memory.
+
+It did not work, and the way it failed is the reason this section is now written differently.
+The sweep said five modules had been checked, and two more instances of the same shape arrived
+after this work merged - one of them, `test_multi_parent_isolation.py`'s isolation case, exactly
+the kind the predicate below names. That was the third time in this project a sweep's stated
+reach was wider than the reach behind it: `ca9de94`'s sweep missed the `drain()` case, that
+map's sweep clause was an overstatement and corrected itself in `db6b132e`, and then these.
+
+A sentence saying how much was examined is the thing that keeps being wrong. So the reach is no
+longer written here. It is produced by `tests/test_regression_map.py`, and the numbers below
+are read back from that suite rather than asserted by this file.
 
 **An assertion must go red when the condition it is named for is violated, and the
 predicate for checking that is written here so the next reader knows what was examined.**
@@ -156,7 +167,7 @@ thing as the condition written above it, following into the helper that computes
 quantity*. Anywhere a helper narrows a state set, an id set or a count and the assertion
 only sees the result, the two can disagree silently.
 
-Re-derived under that predicate, five helpers across the five modules narrow something -
+Re-derived under that predicate by hand, five helpers across the five modules narrow something -
 by SQL filter, by comprehension filter, or by path glob. Four of them fail safe, and the
 reason is worth stating because it is what makes them acceptable rather than lucky: if
 `hold_files` or `observations` stopped matching the paths the source writes, they
@@ -174,9 +185,40 @@ the drain test separately asserts that every loaded event id reached `DISPATCHED
 named apart from the backlog because a count reaching zero is a statement about what is
 still claimable, and arrival is a different statement.
 
-What this predicate still does not cover: whether a test asserts something another test
-already asserts, and whether the condition a test names is the condition worth naming. Both
-are reading judgements. The reuse column records the first; nothing here records the second.
+### The part of that predicate the suite now derives
+
+One quantity in it is mechanical: a boolean the source folds out of several inputs, handed to a
+caller as one value. `TickReport.quiet` is `not (observed or reconciled or delivered or
+deferred or acksVerified or anchorsBound or requeued)`, so `assertFalse(report.quiet)` is
+satisfied by any one of seven counters moving and names none of them, while `assertTrue` pins
+all seven. Which side is cheap is read off the expression rather than judged, and a place that
+asserts the cheap side is a place to read again.
+
+`TheSweepDerivesItsOwnReachRatherThanClaimingIt` produces that reach. Every boolean this
+package declares is partitioned into one of three lists and the suite checks the partition is
+total: the ones that fold, the ones that fold where the reduction rule cannot follow, and the
+ones that fold nothing. Every place the suite measures something with one of the first kind is
+listed, keyed by the assertion's own text, with a verdict written beside it. Today that reads
+47 booleans as 10 / 11 / 26, and 25 measured places; those counts come from the suite, and a
+number here that disagreed with it would fail there.
+
+What the derivation does NOT do, said plainly because the alternative is the overstatement this
+section exists to end: it does not decide whether a place is a proxy. It supplies the reach and
+the polarity; the verdict beside each site is a reading judgement a person wrote. Its blind
+spots are declared as data rather than described - a read it cannot attribute a value to, an
+occurrence in a write context that is not a producer form it knows, a producer it cannot
+reduce - and each list is checked, so a blind spot that grows fails the suite.
+
+It also carries stated boundaries. This package only; `bool`-annotated fields and
+`bool`-returning functions only; matching by name; no following through an alias, a dict key
+or `**kwargs`; and the fold-free list is declared by key alone, so it can hide one constant
+producer being swapped for another. It cannot hide a fold, because a symbol that starts folding
+moves lists and breaks the partition.
+
+Two things stay outside all of it: whether a test asserts something another test already
+asserts, and whether the condition a test names is the condition worth naming. Both are reading
+judgements. The reuse column records the first; the site verdicts now record the second for the
+places this derivation reaches, and nothing records it anywhere else.
 
 **A test that depends on a configuration production cannot reach must say so.** This
 repository configures write-ahead logging and writes with `BEGIN IMMEDIATE`; nothing in
@@ -211,6 +253,11 @@ is that pair together rather than the timeout alone.
   disagreement stays readable, so the next evaluation sees it - rather than asserting the
   absence of a race the source does not prevent. Closing the window needs the check and the
   publication under one hold, which is a source change this issue does not own.
+- `scope.is_within` answers two different ways and this suite exercises one of them. The
+  derived inventory lists `return: path.startswith('/')` as a producer path it could not
+  reduce, and that path is the whole answer when the root is `/`; the five cases in
+  `test_manifest_scope.py` all use `/a/b`. Whether a root of `/` is reachable at all is a
+  scope question rather than a test question, which is why it is reported here.
 - The workflow-restore section is the only non-essential block in the revision direction
   of `report.render_revision`, so a tight budget removes it first. CRW-94 owns that
   behaviour; nothing here changes it.

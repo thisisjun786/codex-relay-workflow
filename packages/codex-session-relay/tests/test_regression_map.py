@@ -186,5 +186,577 @@ class TheMapNamesEveryTestThatSpendsRealTime(unittest.TestCase):
         self.assertGreater(checked, 6, f"only {checked} criterion rows were read")
 
 
+# ---------------------------------------------------------- the sweep's own reach
+#
+# The map's sweep clause used to say five modules were checked. That is a claim about the
+# sweeper. What follows produces the reach instead: which places in this suite measure a
+# property with a boolean the production source folded, what each of those booleans folds,
+# and - the part that matters - what this reader could NOT see, emitted as data rather than
+# left to prose.
+#
+# What is derived and what is written down are different things, and conflating them would be
+# the same overstatement. DERIVED: the inventory, the polarities, the blind spots. WRITTEN
+# DOWN: whether the summary at a site means the same thing as the condition its test is named
+# for. That is a reading judgement and no scan performs it; every site carries one.
+#
+# Boundaries, stated because a boundary nobody wrote down is how a sweep ends up claiming more
+# than it reached:
+#   - this package only, and only bool-annotated fields and bool-returning functions;
+#   - matching is by name, so a local named like a summary function and then called counts;
+#   - a value carried through an alias, a dict key or **kwargs is not followed;
+#   - FOLD_FREE_BOOLEANS is declared by key alone, so it cannot show a constant producer being
+#     swapped for another constant. It cannot hide a FOLD: a symbol that starts folding moves
+#     lists and breaks the partition below. Listing those producers verbatim would copy
+#     production SQL into this module and fail it on an unrelated query edit.
+
+SUMMARIES = {
+    ("daemon.py", "TickReport", "quiet", "field"):
+        ((False,), (("declaration default: True", 1),), ("notes", "skipped")),
+    ("delivery.py", None, "_rate_limited", "function"):
+        ((False,), (("return: False", 1), ("return: True", 1)), ()),
+    ("marker.py", None, "named", "function"): ((False,), (), ()),
+    ("marker.py", None, "same_identity", "function"): ((False,), (), ()),
+    ("receipts.py", None, "deliverable", "function"): ((False,), (), ()),
+    ("scope.py", None, "is_within", "function"):
+        ((True,), (("return: path.startswith('/')", 1),), ()),
+    ("service.py", None, "_holder_is_ours", "function"):
+        ((False,), (("return: False", 1), ("return: True", 1)), ()),
+    ("service.py", None, "_is_live", "function"): ((True,), (("return: False", 4),), ()),
+    ("service.py", None, "_worker_identified", "function"):
+        ((False,), (("return: False", 3),), ()),
+    ("service.py", None, "alive", "function"): ((False,), (), ()),
+}
+
+# Folds where the reduction rule cannot follow it, so the fold leaves a trace anyway.
+# guard.receipt_matches is the case that forced this list to exist: four checks folded through
+# early returns inside an if not (...), so no producer path reduces.
+FOLDS_BEYOND_ITS_PATHS = (
+    ("ack.py", None, "_re_review_open", "function"),
+    ("daemon.py", None, "_reads_were_complete", "function"),
+    ("guard.py", None, "receipt_matches", "function"),
+    ("guard.py", None, "reserve_hold", "function"),
+    ("intent.py", None, "_ambiguity_resolved", "function"),
+    ("intent.py", None, "correlated", "function"),
+    ("intent.py", None, "covered", "function"),
+    ("intent.py", None, "identity_contested", "function"),
+    ("marker.py", None, "valid_assignment", "function"),
+    ("report.py", None, "_may_have_reached", "function"),
+    ("scope.py", None, "still_held", "function"),
+)
+
+# Folds nothing a reader of this package can see.
+FOLD_FREE_BOOLEANS = (
+    ("ack.py", None, "_ruling_is_current", "function"),
+    ("ack.py", None, "certainly_before", "function"),
+    ("admission.py", None, "_stored", "function"),
+    ("admission.py", "Admission", "admitted", "field"),
+    ("assignment.py", None, "_any_receipt", "function"),
+    ("assignment.py", None, "_claimed", "function"),
+    ("assignment.py", None, "_criteria_current", "function"),
+    ("bridge_adapter.py", None, "_scan_listing", "function"),
+    ("cli.py", None, "_reads_no_selected_store", "function"),
+    ("daemon.py", None, "_already_observed", "function"),
+    ("daemon.py", None, "_alternate", "function"),
+    ("daemon.py", None, "_worth_polling", "function"),
+    ("hostadapter.py", "TokenScan", "exhausted", "field"),
+    ("hostadapter.py", "TokenScan", "found", "field"),
+    ("lifecycle.py", None, "is_busy", "function"),
+    ("lifecycle.py", None, "may_send", "function"),
+    ("manifest.py", None, "_is_access_failure", "function"),
+    ("marker.py", None, "valid_segment", "function"),
+    ("reconcile.py", None, "_is_current", "function"),
+    ("scope.py", None, "acquire", "function"),
+    ("scope.py", None, "at_least", "function"),
+    ("service.py", None, "lock_is_held", "function"),
+    ("service.py", None, "send", "function"),
+    ("service.py", None, "stop_requested", "function"),
+    ("service.py", None, "usable", "function"),
+    ("transport.py", "TransportFacts", "retry_safe", "field"),
+)
+
+# A write context naming a declared boolean that is not one of the producer forms above. All
+# three are locals bound by tuple unpacking that happen to share a declared field's name; the
+# reader cannot tell that from a producer, so it says so rather than guessing.
+UNACCOUNTED_OCCURRENCES = (
+    ("bridge_adapter.py", 115, "exhausted", "_scan_listing"),
+    ("currency.py", 191, "covered", "head_revision"),
+    ("guard.py", 389, "found", "hold_counters"),
+)
+
+# A read of a summary whose asserted value this reader cannot attribute.
+UNRESOLVED_READS = (
+    ("test_daemon_cadence.py", "test_a_real_run_spends_its_deadline_polling", "quiet",
+     "reached through GeneratorExp/Call"),
+)
+
+# Every place this suite measures something with a summary: module, test, summary, the value
+# asserted, the assertion verbatim, and the verdict a reader wrote after following the summary
+# into what computes it. The assertion is part of the key on purpose - keying by test name and
+# polarity alone let a case be replaced by a duplicate of its neighbour with the inventory
+# unchanged, which is how a derived list quietly narrows.
+SUMMARY_SITES = (
+    ("test_daemon.py", "test_two_consecutive_unchanged_ticks_write_no_journal_rows", "quiet",
+     True, "self.assertTrue(report.quiet)",
+     "the flag is the subject of the test, and this polarity pins all seven counters it folds;"
+     " the journal-row count beside it covers skipped and notes, which quiet does not fold"),
+    ("test_daemon.py", "test_a_tick_that_changed_something_is_not_quiet", "quiet",
+     False, "self.assertFalse(report.quiet)",
+     "the flag is the subject - the name is about quiet itself - and assertEqual(report"
+     ".delivered, 1) beside it names which of the seven counters moved"),
+    ("test_daemon.py", "test_a_failed_turn_suppresses_the_staged_claim_instead_of_delivering_it",
+     "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
+     "same meaning: deliverable folds a row existing with its stage final, and the stage is"
+     " asserted suppressed two lines below, so an absent row cannot read as a suppressed one"),
+    ("test_fairness.py", "test_cancelling_one_assignment_leaves_the_others_served", "quiet",
+     False, "self.assertFalse(report.quiet)",
+     "redundant rather than wrong: the condition the name states is carried by the send-list"
+     " assertions above it, and this line on its own pins none of the seven counters"),
+    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "named",
+     False, "self.assertFalse(marker.named(blank))",
+     "the function is the subject; a blank fails both of its conjuncts and the cases enumerate"
+     " the blanks rather than asking the summary to tell them apart"),
+    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "same_identity",
+     False, "self.assertFalse(marker.same_identity(blank, blank))",
+     "the function is the subject and both arguments are written out, so this polarity names"
+     " the case rather than standing in for it"),
+    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "same_identity",
+     False, "self.assertFalse(marker.same_identity(blank, 'a-real-identity'))",
+     "as above, and the asymmetric pair is the case a symmetric one would miss"),
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
+     True, "self.assertTrue(is_within('/a/b', '/a/b'))",
+     "the disjunction is the contract, and this case names its first branch, a path equal to"
+     " the root"),
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
+     True, "self.assertTrue(is_within('/a/b', '/a/b/c'))",
+     "the second branch, a path descending from the root; between them the two cases cover"
+     " both sides of the or rather than either one twice"),
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
+     False, "self.assertFalse(is_within('/a/b', '/a/bc'))",
+     "this polarity pins both branches at once, and the sibling-with-a-longer-name is the"
+     " string-prefix trap the function exists to refuse"),
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
+     False, "self.assertFalse(is_within('/a/b', '/a/bc/d'))",
+     "the same trap one component deeper, where a prefix test would still answer yes"),
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
+     False, "self.assertFalse(is_within('/a/b', '/a'))",
+     "containment in the wrong direction; an ancestor is not inside its own descendant"),
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
+     False, "self.assertFalse(marker.same_identity(None, None))",
+     "the function is the subject and the pair is written out, so this names the case"),
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
+     False, "self.assertFalse(marker.same_identity('', ''))",
+     "as above, for the empty string rather than the absent value"),
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
+     False, "self.assertFalse(marker.same_identity('  ', '  '))",
+     "as above, for whitespace, which is the member named() strips rather than rejects"),
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
+     False, "self.assertFalse(marker.same_identity('a', None))",
+     "as above, asymmetric, so a blank on one side alone is enough"),
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
+     True, "self.assertTrue(marker.same_identity('a', 'a'))",
+     "this polarity pins both named() conjuncts and the equality, which is the whole function;"
+     " it is the positive control that stops the four negatives passing on a broken summary"),
+    ("test_marker.py", "test_nothing_names_nothing", "named",
+     False, "self.assertFalse(marker.named(value), repr(value))",
+     "table-driven over a written list of unnamed values, and the message names which member"
+     " failed, so the summary is the subject and the case is identified"),
+    ("test_multi_parent_isolation.py",
+     "test_pausing_then_archiving_a_stops_neither_b_nor_the_shared_daemon", "quiet",
+     False,
+     "self.assertFalse(first.quiet, 'the shared daemon went quiet when one project paused')",
+     "PROXY, and the instance this inventory was built for: it is the only evidence that B"
+     " kept being served while A was paused, and any one of seven counters satisfies it, so an"
+     " observation or a reconciliation alone passes it with nothing delivered to B"),
+    ("test_wp1_regressions.py", "test_a_claim_from_a_live_turn_is_accepted_but_staged",
+     "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
+     "paired: the stage is asserted staged on the line above and the turn status below, so an"
+     " absent row cannot read as a staged one"),
+    ("test_wp1_regressions.py", "test_normal_completion_finalizes_the_staged_claim_exactly_once",
+     "deliverable", True, "self.assertTrue(self.intake.deliverable(payload['eventId']))",
+     "this polarity pins both conjuncts, and the finalized list beside it names the event"),
+    ("test_wp1_regressions.py", "test_a_failed_ending_suppresses_the_staged_claim",
+     "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
+     "paired: the row's stage is asserted suppressed two lines below"),
+    ("test_wp1_regressions.py", "test_an_interrupted_ending_suppresses_the_staged_claim",
+     "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
+     "PROXY, found by this inventory rather than by review: deliverable is equally false for a"
+     " row that is absent, and alone among its four siblings this case asserts no stage, so it"
+     " cannot tell suppression from the claim never having been recorded at all"),
+    ("test_wp1_regressions.py", "test_a_still_running_turn_leaves_the_claim_staged",
+     "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
+     "paired: result['pending'] above it names the condition the test is named for"),
+    ("test_wp1_regressions.py", "test_a_receipt_from_a_completed_turn_is_final_immediately",
+     "deliverable", True, "self.assertTrue(self.intake.deliverable(payload['eventId']))",
+     "this polarity pins both conjuncts and the stage is asserted final above it"),
+)
+
+
+SOURCE = TESTS.parent / "src" / "codex_session_relay"
+
+
+def weak_value(node):
+    """The value this expression can take from ONE of its inputs alone, or None.
+
+    This is why a boolean summary can be measured without measuring anything. An or answers
+    True to any single truthy input, an and answers False to any single falsy one, and a not
+    swaps which side is cheap. So asserting a summary's weak value pins none of its inputs,
+    while asserting the other value pins all of them.
+    """
+    if isinstance(node, ast.BoolOp):
+        return isinstance(node.op, ast.Or)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        inner = weak_value(node.operand)
+        return None if inner is None else (not inner)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "bool":
+        return weak_value(node.args[0]) if node.args else None
+    return None
+
+
+def _is_bool(annotation):
+    return isinstance(annotation, ast.Name) and annotation.id == "bool"
+
+
+def _declared_default(node):
+    """The value a field takes when nobody assigns it, including the field(...) spellings."""
+    value = node.value
+    if value is None:
+        return None
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "field":
+        for keyword in value.keywords:
+            if keyword.arg in ("default", "default_factory"):
+                return keyword.value
+        return None
+    return value
+
+
+def _record_layout(node):
+    order, booleans = [], set()
+    for statement in node.body:
+        if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+            order.append(statement.target.id)
+            if _is_bool(statement.annotation):
+                booleans.add(statement.target.id)
+    return order, booleans
+
+
+def declared_booleans():
+    """Every bool-annotated dataclass field and every bool-returning function in the package."""
+    declared, layouts = {}, {}
+    for path in sorted(SOURCE.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                order, booleans = _record_layout(node)
+                layouts[node.name] = (order, booleans)
+                for name in booleans:
+                    declared[(path.name, node.name, name, "field")] = tuple(order)
+            if isinstance(node, ast.FunctionDef) and _is_bool(node.returns):
+                declared[(path.name, None, node.name, "function")] = ()
+    return declared, layouts
+
+
+def producer_paths():
+    """Every occurrence of a declared name, sorted into producers and what is left over.
+
+    Occurrence accounting rather than a list of producer forms, because three review rounds
+    each found a form the list did not have: a partially reducible return, then a declaration
+    default. A form nobody enumerated now lands in the leftovers and fails this module until
+    somebody writes down what it is, instead of disappearing from a reach that claims to be
+    complete.
+    """
+    declared, layouts = declared_booleans()
+    names = {key[2] for key in declared}
+    paths, leftover = [], []
+    for path in sorted(SOURCE.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        accounted, owner = set(), {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for child in ast.walk(node):
+                    owner.setdefault(child, node.name)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                if node.target.id in names:
+                    accounted.add(id(node.target))
+                    default = _declared_default(node)
+                    if default is not None:
+                        accounted.add(id(default))
+                        paths.append((node.target.id, None, "declaration default", default))
+            if isinstance(node, ast.FunctionDef) and node.name in names:
+                accounted.add(id(node))
+                if _is_bool(node.returns):
+                    for inner in ast.walk(node):
+                        if isinstance(inner, ast.Return) and inner.value is not None:
+                            paths.append((node.name, path.name, "return", inner.value))
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Attribute) and target.attr in names:
+                        accounted.add(id(target))
+                        paths.append((target.attr, None, "attribute assignment", node.value))
+                    if isinstance(target, ast.Name) and target.id in names:
+                        accounted.add(id(target))
+                        paths.append((target.id, None, "name assignment", node.value))
+            if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Attribute):
+                if node.target.attr in names:
+                    accounted.add(id(node.target))
+                    paths.append((node.target.attr, None, "augmented assignment", node.value))
+            if isinstance(node, ast.Call):
+                callee = node.func.id if isinstance(node.func, ast.Name) else None
+                order, booleans = layouts.get(callee, ((), set()))
+                for index, argument in enumerate(node.args):
+                    if index < len(order) and order[index] in booleans:
+                        paths.append((order[index], None, "positional construction", argument))
+                for keyword in node.keywords:
+                    if keyword.arg in names:
+                        paths.append((keyword.arg, None, "keyword construction", keyword.value))
+        for node in ast.walk(tree):
+            name = None
+            if isinstance(node, ast.Attribute) and node.attr in names:
+                name = node.attr
+            elif isinstance(node, ast.Name) and node.id in names:
+                name = node.id
+            if name is None or id(node) in accounted:
+                continue
+            if isinstance(getattr(node, "ctx", None), ast.Load):
+                continue
+            leftover.append((path.name, node.lineno, name, owner.get(node, "<module>")))
+    return paths, tuple(sorted(leftover))
+
+
+def _order(key):
+    module, holder, name, kind = key
+    return (module, holder or "", name, kind)
+
+
+def declared_boolean_rows():
+    """One row per declared boolean. No symbol is classified out of the inventory.
+
+    Four parts, and the last three are the reason this exists. A reach that reports only what
+    it reached is the overstatement this file was written to stop, so every row also carries
+    every producer path whose value this rule could not reduce, the sibling fields of a record
+    that the boolean does not fold at all, and whether the symbol folds somewhere the reduction
+    rule cannot follow.
+
+    An empty first part means the symbol folds nothing this reader can see: it is not a
+    summary. It still gets a row, because a symbol that falls out of the inventory is exactly
+    how a sweep ends up claiming a reach it does not have.
+    """
+    declared, _layouts = declared_booleans()
+    paths, _leftover = producer_paths()
+    rows = {}
+    for key, order in sorted(declared.items(), key=lambda item: _order(item[0])):
+        module, _holder, name, kind = key
+        if kind == "function":
+            mine = [p for p in paths if p[0] == name and p[2] == "return" and p[1] == module]
+        else:
+            mine = [p for p in paths if p[0] == name and p[2] != "return"]
+        folded = tuple(sorted({
+            weak_value(e) for _n, _m, _k, e in mine if weak_value(e) is not None
+        }))
+        seen = {}
+        for _n, _m, k, e in mine:
+            if weak_value(e) is None:
+                label = k + ": " + ast.unparse(e)
+                seen[label] = seen.get(label, 0) + 1
+        unreduced = tuple(sorted(seen.items()))
+        touched = set()
+        for _n, _m, _k, expression in mine:
+            if weak_value(expression) is not None:
+                touched |= {x.attr for x in ast.walk(expression) if isinstance(x, ast.Attribute)}
+        siblings = tuple(sorted(set(order) - touched - {name})) if folded else ()
+        beyond = _folds_outside_its_paths(module, name, kind)
+        rows[key] = (folded, unreduced if folded else (), siblings, beyond)
+    return rows
+
+
+def partitioned_booleans():
+    """Every declared boolean in exactly one of three lists, so none is classified out.
+
+    A symbol that folds is a summary and carries its whole row. A symbol that folds somewhere
+    this rule cannot follow is named, because that fold would otherwise leave no trace at all.
+    Everything else folds nothing a reader of this package can see. Membership is derived; a
+    symbol that starts folding moves lists and fails this module until somebody says so.
+    """
+    rows = declared_boolean_rows()
+    summaries = {key: row for key, row in rows.items() if row[0]}
+    beyond = tuple(sorted((key for key, row in rows.items() if not row[0] and row[3]), key=_order))
+    plain = tuple(sorted(
+        (key for key, row in rows.items() if not row[0] and not row[3]), key=_order))
+    return summaries, beyond, plain
+
+
+def _folds_outside_its_paths(module, name, kind):
+    """Does this symbol fold where the reduction rule cannot follow it?
+
+    guard.receipt_matches is the case this exists for: four checks folded through early
+    returns inside an if not (...), so no producer path reduces and the fold would otherwise
+    leave no trace in the inventory at all.
+    """
+    if kind != "function":
+        return False
+    tree = ast.parse((SOURCE / module).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name and _is_bool(node.returns):
+            reduced = any(
+                weak_value(inner.value) is not None
+                for inner in ast.walk(node)
+                if isinstance(inner, ast.Return) and inner.value is not None
+            )
+            return (not reduced) and any(isinstance(x, ast.BoolOp) for x in ast.walk(node))
+    return False
+
+
+def boolean_summaries():
+    """The rows that actually fold something. A summary is a row with a weak value."""
+    return {key: row for key, row in declared_boolean_rows().items() if row[0]}
+
+
+def _is_assertion(node):
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr.startswith("assert"))
+
+
+def _asserted_value(call, read):
+    """Which boolean this assertion pins the read to, or None if this reader cannot say."""
+    name, args = call.func.attr, call.args
+    if name in ("assertTrue", "assertFalse") and args and args[0] is read:
+        return name == "assertTrue"
+    if name in ("assertEqual", "assertIs", "assertNotEqual", "assertIsNot") and len(args) >= 2:
+        for left, right in ((args[0], args[1]), (args[1], args[0])):
+            if left is read and isinstance(right, ast.Constant) and isinstance(right.value, bool):
+                return right.value if name in ("assertEqual", "assertIs") else not right.value
+    return None
+
+
+def summary_reads():
+    """Every place this suite measures something with a summary, and every read it cannot read.
+
+    One entry per occurrence rather than per distinct text: two identical assertions in one
+    test are two rows, so deleting one of them is a failure rather than a silent narrowing.
+    """
+    summaries = boolean_summaries()
+    fields = {key[2] for key in summaries if key[3] == "field"}
+    functions = {key[2] for key in summaries if key[3] == "function"}
+    sites, unresolved = [], []
+    for path in sorted(TESTS.glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parent, owner = {}, {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parent[child] = node
+            if isinstance(node, ast.FunctionDef):
+                for child in ast.walk(node):
+                    owner.setdefault(child, node.name)
+        for node in ast.walk(tree):
+            name = None
+            if isinstance(node, ast.Attribute) and node.attr in fields:
+                if isinstance(node.ctx, ast.Load):
+                    name = node.attr
+            elif isinstance(node, ast.Call):
+                called = node.func
+                callee = called.id if isinstance(called, ast.Name) else (
+                    called.attr if isinstance(called, ast.Attribute) else None)
+                if callee in functions:
+                    name = callee
+            if name is None:
+                continue
+            cursor, through = node, []
+            while cursor in parent:
+                cursor = parent[cursor]
+                if _is_assertion(cursor):
+                    break
+                through.append(type(cursor).__name__)
+            else:
+                cursor = None
+            where = owner.get(node, "<module>")
+            if cursor is None:
+                unresolved.append((path.name, where, name, "no enclosing assertion"))
+                continue
+            value = _asserted_value(cursor, node)
+            if value is None:
+                shape = "/".join(through) if through else cursor.func.attr
+                unresolved.append((path.name, where, name, "reached through " + shape))
+                continue
+            sites.append((path.name, where, name, value, ast.unparse(cursor)))
+    return tuple(sites), tuple(sorted(unresolved))
+
+class TheSweepDerivesItsOwnReachRatherThanClaimingIt(unittest.TestCase):
+    """The reach above is produced from source here, so a new place cannot go unexamined.
+
+    Three review rounds on CRW-3 found the same shape three times, the sweep that followed
+    claimed five modules and missed a fourth instance anyway, and two more arrived after that
+    work merged. A sentence naming how much was checked is the thing that keeps being wrong.
+    These cases replace it: the inventory is derived, a symbol or a site that is not declared
+    fails here, and what the derivation cannot see is declared beside what it can.
+    """
+
+    def test_every_declared_boolean_is_in_exactly_one_of_the_three_lists(self):
+        """The property that stops a symbol falling between classifications.
+
+        Four earlier drafts each lost a producer form somewhere - a partially reducible
+        return, a declaration default, a constant positional argument. Partitioning every
+        declared boolean rather than selecting the interesting ones is what makes that
+        impossible rather than unlikely.
+        """
+        summaries, beyond, plain = partitioned_booleans()
+        declared, _layouts = declared_booleans()
+        listed = list(summaries) + list(beyond) + list(plain)
+        self.assertEqual(
+            len(listed), len(set(listed)), "a boolean is in more than one list",
+        )
+        self.assertEqual(
+            set(listed), set(declared),
+            "the partition and the declarations disagree."
+            f" Only declared: {sorted(map(str, set(declared) - set(listed)))}."
+            f" Only listed: {sorted(map(str, set(listed) - set(declared)))}.",
+        )
+        self.assertGreater(
+            len(declared), 40, f"only {len(declared)} booleans were found, so the scan stopped"
+            " seeing the source it is supposed to be reading",
+        )
+
+    def test_the_derived_summaries_and_their_blind_spots_are_the_declared_ones(self):
+        summaries, beyond, plain = partitioned_booleans()
+        self.assertEqual(
+            {key: row[:3] for key, row in summaries.items()}, SUMMARIES,
+            "the summaries this suite measures with and the source disagree. A row is"
+            " (weak values, producer paths this rule could not reduce, record siblings it does"
+            " not fold); all three move when the source does.",
+        )
+        self.assertEqual(beyond, FOLDS_BEYOND_ITS_PATHS)
+        self.assertEqual(plain, FOLD_FREE_BOOLEANS)
+
+    def test_no_occurrence_of_a_declared_boolean_goes_unaccounted(self):
+        """Occurrence accounting is the rule, so a producer form nobody listed fails here."""
+        _paths, leftover = producer_paths()
+        self.assertEqual(
+            leftover, UNACCOUNTED_OCCURRENCES,
+            "an occurrence of a declared boolean in a write context is neither a producer form"
+            " this reader knows nor declared. Say what it is, or teach the reader the form.",
+        )
+
+    def test_every_place_a_summary_is_measured_is_declared_with_a_verdict(self):
+        sites, unresolved = summary_reads()
+        declared = tuple(row[:5] for row in SUMMARY_SITES)
+        self.assertEqual(
+            sorted(sites), sorted(declared),
+            "the places this suite measures a property with a folded boolean, and the places"
+            " written down, disagree. Read the new one, say whether the summary means what the"
+            " test is named for, and declare it.",
+        )
+        self.assertEqual(len(sites), len(declared), "an occurrence was dropped or duplicated")
+        self.assertEqual(unresolved, UNRESOLVED_READS)
+        self.assertGreater(
+            len(sites), 20, f"only {len(sites)} sites were read, so the scan stopped matching",
+        )
+
+    def test_no_declared_site_is_left_without_a_reading(self):
+        for module, test, summary, _value, _source, verdict in SUMMARY_SITES:
+            self.assertTrue(
+                verdict.strip(),
+                f"{module} {test} measures {summary} with no verdict written beside it",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
