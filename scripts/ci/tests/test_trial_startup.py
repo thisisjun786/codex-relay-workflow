@@ -2331,5 +2331,48 @@ class NineteenthHostedRound(TrialCase):
         self.assertTrue(document["readyToStart"])
 
 
+class TwentiethHostedRound(TrialCase):
+    """A repository nested inside the trial root, and a refusal phrase in ordinary prose."""
+
+    def test_a_private_record_inside_a_nested_worktree_is_refused(self):
+        nested = self.world.trial / "nested-repo"
+        nested.mkdir()
+        subprocess.run(["git", "init", "-q", str(nested)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        moved = nested / "lifecycle.json"
+        moved.write_text(json.dumps({"threadId": World.PARENT_A, "status": "idle"}),
+                         encoding="utf-8")
+        self.world.record["captures"]["parentLifecycle"][World.PARENT_A]["path"] = str(moved)
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("inside a git worktree", refused.reason)
+
+    def test_a_refusal_phrase_in_ordinary_content_is_not_a_refusal(self):
+        self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
+            "threadId": World.PARENT_A, "status": "idle",
+            "goal": {"objective": "Investigate why thread not found was reported yesterday"}}
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(
+            cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]["value"],
+            VERIFIED)
+
+    def test_the_same_phrase_in_an_error_field_still_refuses(self):
+        for where in ({"error": "thread not found"},
+                      {"error": {"message": "thread not found"}},
+                      {"message": "no rollout found"},
+                      {"detail": "missing source rollout"}):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.captures["lifecycle-" + World.PARENT_A + ".json"] = dict(
+                {"threadId": World.PARENT_A, "status": "unknown"}, **where)
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(
+                cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]["value"],
+                NOT_VERIFIED, json.dumps(where))
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

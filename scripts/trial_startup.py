@@ -555,6 +555,12 @@ def load_start(path, *, environment=None, mode="preflight"):
         if not within(item, trial_root):
             raise Refused("a private trial record is outside the trial root", path=str(item),
                           trialRoot=str(trial_root))
+        # And not inside a worktree nested under the trial root: the rule is that operational
+        # state is in no repository, not that the root itself is in none.
+        nested = git_worktree_of(item)
+        if nested is not None:
+            raise Refused("a private trial record is inside a git worktree", path=str(item),
+                          worktree=str(nested))
     for key in ("assignmentFile", "dispatchMessageFile"):
         item = absolute(field(record, "assignment", key), "assignment." + key)
         if within(item, ROOT):
@@ -885,8 +891,13 @@ def reading_lifecycle(record):
                                   provenance=CAPTURED))
                 continue
             payload = found["payload"]
-            refusal = next((text for text in LIFECYCLE_REFUSALS
-                            if text in json.dumps(payload).lower()), None)
+            # Only the fields a host puts a refusal in. Searching the whole payload marked a
+            # healthy participant as refused because a goal or a title said those words.
+            said = " ".join(str(shown(field(payload, *path))).lower()
+                            for path in (("error",), ("error", "message"), ("message",),
+                                         ("detail",), ("status",), ("status", "detail"))
+                            if field(payload, *path) is not MISSING)
+            refusal = next((text for text in LIFECYCLE_REFUSALS if text in said), None)
             status = field(payload, "status")
             # The host's own lifecycle answer carries status as a structured object, not a word.
             # A predicate insisting on a string failed every capture a real host produced.
