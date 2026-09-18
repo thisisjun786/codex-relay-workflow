@@ -42,9 +42,9 @@ The failures are kept apart because a caller has to answer each one differently:
                               the requested shape has no representation this bridge can use.
 
 A raised RpcError or TransportError is the third cause named in the issue, delivery failure, and
-it deliberately stays on the bridge's existing failed / outcome_unknown path rather than becoming
-a finding: those mean the request may not have arrived, which is a different question from what
-the host did with a request that did.
+it deliberately stays on the bridge's existing failed / outcome_unknown / not_attempted path
+rather than becoming a finding: whether the request arrived at all is a different question from
+what the host did with one that did.
 """
 
 from pathlib import Path

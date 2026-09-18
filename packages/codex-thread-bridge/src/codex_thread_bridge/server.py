@@ -34,7 +34,10 @@ def make_server(bridge: Bridge):
             "Create and message Codex sessions on this same host using its running App Server. "
             "Get user authorization before mutations. Use a stable request_id for each intended "
             "mutation; reuse it after an uncertain response and inspect get_operation. Never use "
-            "a new ID to blindly retry. Accepted means dispatched, not completed. No automatic "
+            "a new ID to blindly retry. A receipt saying not_attempted is the one case where "
+            "reusing the id makes the attempt instead of replaying an answer: nothing was sent "
+            "and nothing was created, which its attemptedEffects shows. Accepted means "
+            "dispatched, not completed. No automatic "
             "Goal or verified Desktop project binding. Isolated creation requires explicit "
             "bridge-managed-retained ownership; it is not Desktop-managed. Read/list/wait never "
             "resume threads. Every mutation that starts a turn states its model and reasoning "
@@ -93,6 +96,7 @@ def make_server(bridge: Bridge):
         resending; a receipt retained before model/reasoning_effort were required cannot be
         replayed through this tool and is reconciled with get_operation instead, never with a new
         ID. A failed/unknown operation may have created a thread.
+        A not_attempted receipt began nothing and is retried by reusing the same id.
         """
         return await bridge.create_thread(
             request_id,
@@ -139,7 +143,13 @@ def make_server(bridge: Bridge):
         host's execution policy before any Git work happens, so a refused request leaves no
         worktree behind; policy_exception cites an operator-declared exception by id.
         Reuse request_id after uncertainty: receipts replay without continuing partial work.
+        A not_attempted receipt is the exception: nothing was reserved or sent, so reusing that
+        id starts the launch rather than replaying it.
         Known artifacts and recovery requirements are retained even on failure/cancellation.
+        initialPrompt reports the prompt itself: not_requested when none was given, not_sent when
+        it was withheld or its turn never reached the socket, rejected when the host refused that
+        turn, accepted when the host took it, and outcome_unknown only when the turn went out and
+        no answer came back.
         """
         return await bridge.create_worktree_thread(
             request_id,
@@ -188,6 +198,8 @@ def make_server(bridge: Bridge):
         Supplied settings are part of the request identity, so reusing an id with different
         settings is refused, and a receipt retained before expected_settings became required is
         reconciled with get_operation rather than replayed here.
+        A not_attempted receipt means no resume and no turn went out, so reusing that id sends
+        the message rather than replaying a receipt.
         """
         return await bridge.send_message_to_thread(
             request_id, thread_id, message, expected_settings, policy_exception
@@ -267,7 +279,8 @@ def make_server(bridge: Bridge):
 
         The steer is recorded with clientUserMessageId "steer:<request_id>", so after an uncertain
         response you replay the same request_id and read the turn's items for that id instead of
-        sending again.
+        sending again. If that receipt says not_attempted, no steer was written to the socket and
+        replaying the id sends it.
         """
         return await bridge.steer_thread(request_id, thread_id, expected_turn_id, message)
 
@@ -294,7 +307,12 @@ def make_server(bridge: Bridge):
 
     @mcp.tool(annotations=READ)
     async def get_operation(request_id: str) -> dict[str, Any]:
-        """Read a mutation receipt, including known IDs after partial or uncertain delivery."""
+        """Read a mutation receipt, including known IDs after partial or uncertain delivery.
+
+        attemptedEffects lists what the operation actually began, which is what separates an
+        unknown outcome from one that never started; attempt and priorAttempts appear once a
+        request has been retried.
+        """
         return bridge.ledger.get(request_id)
 
     return mcp

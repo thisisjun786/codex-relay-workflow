@@ -301,25 +301,160 @@ async def test_list_preserves_long_cursor(bridge, fake_server, tmp_path):
 
 
 async def test_cancellation_keeps_unknown_receipt_and_prevents_retry(bridge, fake_server, tmp_path):
+    """Cancelled with the frame already on the wire, which is the case a resend would duplicate.
+
+    This test used to replace rpc.call outright, so thread/start never reached the socket and the
+    cancellation it measured was one where nothing had been attempted at all. Reading that as an
+    unknown outcome is the conflation this contract now separates, so the simulation moves to the
+    server: it applies the mutation and then stops before answering. The claim under test is
+    unchanged.
+    """
     fake, _ = fake_server
-    started = asyncio.Event()
-    original = bridge.rpc.call
-
-    async def slow(method, params):
-        if method == "thread/start":
-            started.set()
-            await asyncio.Event().wait()
-        return await original(method, params)
-
-    bridge.rpc.call = slow
+    fake.pause_after = "thread/start"
     task = asyncio.create_task(create(bridge, "cancel", str(tmp_path)))
-    await started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert bridge.ledger.get("cancel")["status"] == "outcome_unknown"
-    repeat = await create(bridge, "cancel", str(tmp_path))
-    assert repeat["replayed"] and fake.count("thread/start") == 0
+    try:
+        await asyncio.wait_for(fake.paused.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        receipt = bridge.ledger.get("cancel")
+        assert receipt["status"] == "outcome_unknown" and not receipt["retrySafe"]
+        assert receipt["attemptedEffects"] == ["thread/start"]
+        repeat = await create(bridge, "cancel", str(tmp_path))
+        assert repeat["replayed"] and fake.count("thread/start") == 1
+    finally:
+        fake.release.set()
+
+
+async def test_cancelling_before_anything_was_sent_leaves_the_id_usable(
+    bridge, fake_server, tmp_path
+):
+    """The same cancellation one call earlier, where the turn has not been asked for yet."""
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.pause_after = "thread/read"
+    task = asyncio.create_task(send(bridge, "cancel-early", created["threadId"], "instruction"))
+    try:
+        await asyncio.wait_for(fake.paused.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        # This fake serves one request at a time per connection, so the retry below would wait
+        # behind the paused handler until it is released.
+        fake.pause_after = None
+        fake.release.set()
+    receipt = bridge.ledger.get("cancel-early")
+    assert receipt["status"] == "not_attempted" and receipt["retrySafe"]
+    assert receipt["attemptedEffects"] == []
+    retried = await send(bridge, "cancel-early", created["threadId"], "instruction")
+    assert retried["status"] == "accepted" and not retried.get("replayed")
+    assert retried["attempt"] == 2 and fake.count("turn/start") == 2
+
+
+async def test_a_lost_read_before_a_message_leaves_the_request_id_usable(
+    bridge, fake_server, tmp_path
+):
+    """The defect this contract change exists for, on the tool that ran into it.
+
+    thread/read is the question send_message_to_thread asks before it decides whether a turn can
+    be started at all. Losing its answer was recorded as outcome_unknown, which told every later
+    reader that the message might already have been delivered and spent the request id for good
+    on a socket that had merely gone away.
+    """
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.drop_after = "thread/read"
+    lost = await send(bridge, "message", created["threadId"], "instruction")
+    assert lost["status"] == "not_attempted" and lost["retrySafe"]
+    assert lost["attemptedEffects"] == [] and fake.count("turn/start") == 1
+
+    fake.drop_after = None
+    retried = await send(bridge, "message", created["threadId"], "instruction")
+    assert not retried.get("replayed") and retried["status"] == "accepted"
+    assert retried["attempt"] == 2 and fake.count("turn/start") == 2
+    assert bridge.ledger.get("message")["priorAttempts"][0]["status"] == "not_attempted"
+
+
+async def test_a_lost_project_read_never_created_a_thread(bridge, fake_server, tmp_path):
+    fake, _ = fake_server
+    launch = {"prompt": "hello", "app_server_project_id": "project-1"}
+    fake.drop_after = "project/read"
+    lost = await create(bridge, "project", str(tmp_path), **launch)
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert not fake.threads
+
+    fake.drop_after = None
+    retried = await create(bridge, "project", str(tmp_path), **launch)
+    assert retried["status"] == "accepted" and fake.count("thread/start") == 1
+
+
+async def test_a_lost_handshake_is_not_an_unknown_creation(bridge, fake_server, tmp_path):
+    """The handshake goes out before the mutation does, and losing it settles nothing about one."""
+    fake, _ = fake_server
+    fake.drop_after = "initialize"
+    lost = await create(bridge, "handshake", str(tmp_path), prompt="hello")
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert not fake.threads
+
+    fake.drop_after = None
+    retried = await create(bridge, "handshake", str(tmp_path), prompt="hello")
+    assert retried["status"] == "accepted" and fake.count("thread/start") == 1
+
+
+async def test_a_request_that_never_reached_a_socket_can_be_retried(fake_server, tmp_path):
+    """Here the failure is the connection itself rather than a lost answer, and it lands the same.
+
+    The verdict follows what went out, not which exception came back, so an unreachable socket and
+    a dropped preliminary read agree: nothing was begun, and the id is still good.
+    """
+    from codex_thread_bridge.bridge import Bridge
+    from codex_thread_bridge.rpc import AppServer
+
+    fake, socket = fake_server
+    ledger = Ledger(tmp_path / "state" / "operations.sqlite3")
+    absent = AppServer(tmp_path / "absent.sock", timeout=1)
+    live = AppServer(socket, timeout=1)
+    try:
+        offline = await create(Bridge(absent, ledger), "offline", str(tmp_path), prompt="hello")
+        assert offline["status"] == "not_attempted" and offline["attemptedEffects"] == []
+        assert not fake.threads
+        online = await create(Bridge(live, ledger), "offline", str(tmp_path), prompt="hello")
+        assert online["status"] == "accepted" and fake.count("thread/start") == 1
+    finally:
+        await absent.close()
+        await live.close()
+        ledger.close()
+
+
+async def test_a_lost_resume_response_is_unknown_and_never_resent(bridge, fake_server, tmp_path):
+    """thread/resume carries cwd, model, sandbox and config, so it is not treated as a question."""
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.drop_after = "thread/resume"
+    lost = await send(bridge, "resume-lost", created["threadId"], "instruction")
+    assert lost["status"] == "outcome_unknown" and not lost["retrySafe"]
+    assert lost["attemptedEffects"] == ["thread/resume"]
+
+    fake.drop_after = None
+    replay = await send(bridge, "resume-lost", created["threadId"], "instruction")
+    assert replay["replayed"] and replay["status"] == "outcome_unknown"
+    assert fake.count("thread/resume") == 1 and fake.count("turn/start") == 1
+
+
+async def test_a_lost_message_turn_response_is_unknown_and_never_resent(
+    bridge, fake_server, tmp_path
+):
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.drop_after = "turn/start"
+    lost = await send(bridge, "turn-lost", created["threadId"], "instruction")
+    assert lost["status"] == "outcome_unknown"
+    assert lost["attemptedEffects"] == ["thread/resume", "turn/start"]
+
+    fake.drop_after = None
+    replay = await send(bridge, "turn-lost", created["threadId"], "instruction")
+    assert replay["replayed"] and fake.count("turn/start") == 2
 
 
 def test_ledger_survives_restarts_and_is_private(tmp_path):
@@ -707,6 +842,36 @@ async def test_a_lost_pause_response_is_unknown_and_never_sent_again(bridge, fak
     fake.drop_after = None
     replay = await bridge.pause_goal("lost-pause", created["threadId"])
     assert replay["replayed"] and fake.count("thread/goal/set") == 1
+
+
+async def test_a_lost_read_before_a_steer_is_not_an_unknown_steer(bridge, fake_server, tmp_path):
+    """A steer withheld because the thread could not be read is a steer that was never sent."""
+    fake, _ = fake_server
+    thread_id = await running(bridge, fake, tmp_path)
+    fake.drop_after = "thread/read"
+    lost = await bridge.steer_thread("steer", thread_id, "turn-1", "one instruction")
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert fake.count("turn/steer") == 0
+
+    fake.drop_after = None
+    retried = await bridge.steer_thread("steer", thread_id, "turn-1", "one instruction")
+    assert retried["status"] == "accepted" and retried["delivery"] == "accepted_not_applied"
+    assert fake.count("turn/steer") == 1
+
+
+async def test_a_lost_goal_read_never_paused_anything(bridge, fake_server, tmp_path):
+    fake, _ = fake_server
+    created = await create(bridge, "create", str(tmp_path), prompt="work")
+    fake.goal = {"objective": "o", "status": "active", "tokenBudget": None}
+    fake.drop_after = "thread/goal/get"
+    lost = await bridge.pause_goal("pause", created["threadId"])
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert fake.count("thread/goal/set") == 0 and fake.goal["status"] == "active"
+
+    fake.drop_after = None
+    retried = await bridge.pause_goal("pause", created["threadId"])
+    assert retried["status"] == "accepted" and fake.goal["status"] == "paused"
+    assert retried["pause"] == "goal_paused_turn_may_still_be_running"
 
 
 def test_a_version_is_identified_by_token_not_by_substring():
