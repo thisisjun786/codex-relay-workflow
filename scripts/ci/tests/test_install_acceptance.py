@@ -1549,10 +1549,17 @@ def _hands_on(tree, spelled):
         for node in ast.walk(tree):
             if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
                 continue
-            if not isinstance(node.value, ast.Name):
-                continue
             function, _klass = places.get(id(node), (MODULE_LEVEL, None))
-            targets = outwards(function, node.value.id, aliases)
+            if isinstance(node.value, ast.Name):
+                targets = outwards(function, node.value.id, aliases)
+            elif (isinstance(node.value, ast.Attribute)
+                    and _dotted(node.value.value) == "self"
+                    and node.value.attr in defined):
+                # A bound method put behind a name reaches exactly what calling it directly
+                # would, and alias = self.carrier is as ordinary as alias = carrier.
+                targets = {node.value.attr}
+            else:
+                continue
             if not targets:
                 continue
             for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
