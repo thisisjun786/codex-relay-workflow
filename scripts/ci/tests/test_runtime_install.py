@@ -8241,8 +8241,15 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
         self.assertEqual(after["selected"], found["selected"],
                          "the selection this promotion moved has to go back even when the"
                          " ownership record could not be written")
-        self.assertEqual(payload["pointer"]["pointerRestored"]["ownership"],
-                         runtime_install_module.OWNERSHIP_UNREADABLE)
+        restored = payload["pointer"]["pointerRestored"]
+        self.assertEqual(restored["ownership"], runtime_install_module.OWNERSHIP_UNREADABLE)
+        # And it is not reported as a rollback that finished. The link went back, the record
+        # did not, and the record still claims a placement for a link that is gone -- which is
+        # the claim the next promotion reads before replacing whatever turns up at that path.
+        self.assertFalse(restored["verified"],
+                         "half a rollback is not a completed one")
+        self.assertEqual(restored["residualOwnership"], str(host.pointer_path),
+                         "and the path whose claim somebody has to settle is named")
 
     def test_the_resume_path_refuses_a_stranger_link_after_a_withdrawal_too(self):
         """The withdrawal has to mean the same thing to both readers of the record.

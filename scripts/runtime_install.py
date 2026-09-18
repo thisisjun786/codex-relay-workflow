@@ -3257,6 +3257,12 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
     A restoration that cannot be read back is reported as residual rather than claimed: the
     caller then keeps the candidate, which is the safe direction when the disk and the record
     may disagree.
+
+    That applies to the RECORD half too. The link going back and the record not going with it
+    is half a rollback, not a completed one: the record still says this command placed a link
+    at a path where there is now none, and that claim is exactly what the next promotion reads
+    before it replaces whatever has turned up there. So the restoration is not claimed as
+    verified and the path whose claim somebody has to settle is named.
     """
     restored_to, verified, residual = None, True, None
     detail = "this run placed no pointer, so there is nothing to put back"
@@ -3294,6 +3300,7 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
         wanted = dict(ownership) if ownership else None
 
     owned = None
+    residual_claim = None
     if settled and record_path is not None:
         try:
             if wanted is None:
@@ -3320,8 +3327,16 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
             owned, note = _ownership_answer(written, wanted)
             if note:
                 detail = detail + ", but " + note
+        if owned in (OWNERSHIP_UNREADABLE, OWNERSHIP_MOVED_ON):
+            # Reporting this as a completed rollback is the one outcome that would let a
+            # re-armed guard pass unseen: the candidate is released, the result says retriable
+            # and clean, and the record goes on claiming a placement for a link that is gone.
+            # 'restoredTo' still says what the LINK was put back to, because that part is true;
+            # 'verified' is about the restoration as a whole, and this one did not finish.
+            verified = False
+            residual_claim = str(pointer_path)
     return {"restoredTo": restored_to, "verified": verified, "residualPointer": residual,
-            "ownership": owned, "detail": detail}
+            "residualOwnership": residual_claim, "ownership": owned, "detail": detail}
 
 
 def _restore_selection(record_path, definition_version, previous, installs):
