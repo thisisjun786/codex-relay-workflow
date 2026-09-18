@@ -1398,12 +1398,17 @@ python3 scripts/runtime_install.py diagnose --dest <destination> --record <recor
     --turn-thread <turn-thread> --turn-id <turn-id> --dispatch-turn-id <dispatch-turn-id> \
     --recipient-settings <settings-or-@path>
 
-# The hook has to have fired. hook-status counts what the hook recorded about itself, so before
-# any Stop has reached it the honest answer is that the journal is absent.
+# The hook has to have fired, and the count alone cannot say that it did: hook-status reports
+# what this hook has recorded about itself CUMULATIVELY, so on a host where it fired last week
+# an old nonzero count reads as evidence for a callback that never happened. Read it before and
+# after, and require the difference.
 python3 scripts/runtime_install.py hook --codex-home <codex-home> --adapter completion \
     --dest <destination> --apply
+python3 scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.before.json
 #   ... then end a real turn, and only then:
-python3 scripts/runtime_install.py hook-status --codex-home <codex-home>
+python3 scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.after.json
+#   The reading is the change, not the number. An unchanged count is a turn that did not reach
+#   the hook, whatever the count happens to be.
 
 # Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
 # registration above deliberately appended a table, so a whole-file diff reports a change that
