@@ -3009,8 +3009,15 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
         #
         # An installation older than claims has NO entry at all, which says nothing either way,
         # and it keeps the adoption this path exists for.
-        if (before["state"] == pointer.LINK and owned_before
-                and not hostrecord.placement_recorded(owned_before)):
+        #
+        # Bound to THIS path. The entry is read fresh under this lock while pointer_path was
+        # derived before it, so the two can be about different places -- and an entry naming
+        # somewhere else says nothing at all about the link here. Read unbound, this guard
+        # answered about one path from a reading taken of another, which is the very shape the
+        # rest of this change exists to remove.
+        owned_here = hostrecord.pointer_entry_for(owned_before, pointer_path)
+        if (before["state"] == pointer.LINK and owned_here
+                and not hostrecord.placement_recorded(owned_here)):
             emit(dict(standing,
                       refused="a symbolic link is at " + str(pointer_path) + " and this host"
                               " record holds that path without recording that this command"
@@ -3213,7 +3220,7 @@ OWNERSHIP_ANSWERS = (OWNERSHIP_DROPPED, OWNERSHIP_WITHDRAWN, OWNERSHIP_RESTORED,
                      OWNERSHIP_MOVED_ON, OWNERSHIP_UNREADABLE)
 
 
-def _ownership_answer(written, wanted):
+def _ownership_answer(written, wanted, wrote):
     """What the host record says about pointer ownership after a rollback wrote to it.
 
     READ BACK from the record the single writer loaded, never inferred from the delta having
@@ -3227,6 +3234,10 @@ def _ownership_answer(written, wanted):
     one, because the question a reader has is what the NEXT run will read.
 
     'wanted' is the entry the rollback meant to leave, and None when it meant to leave nothing.
+    'wrote' is the path THIS RUN recorded, and it is what separates the two ways the record can
+    disagree with 'wanted'. An entry naming somewhere else belongs to another run. An entry
+    still naming this run's path is this run's own, left because the delta did not land -- and
+    calling that "moved on" would hand it to a run that never touched it.
     """
     if not written.usable:
         return OWNERSHIP_UNREADABLE, ("the ownership record could not be written: "
@@ -3237,8 +3248,12 @@ def _ownership_answer(written, wanted):
             return OWNERSHIP_DROPPED, ""
         return (OWNERSHIP_RESTORED if hostrecord.placement_recorded(after)
                 else OWNERSHIP_WITHDRAWN), ""
-    return OWNERSHIP_MOVED_ON, ("the ownership record names " + str((after or {}).get("path"))
-                                + " now, so the entry this run wrote is not its to put back")
+    if (after or {}).get("path") != str(wrote):
+        return OWNERSHIP_MOVED_ON, ("the ownership record names "
+                                    + str((after or {}).get("path")) + " now, so the entry this"
+                                    " run wrote is not its to put back")
+    return OWNERSHIP_UNREADABLE, ("the ownership record still holds what this promotion wrote"
+                                  " at " + str(wrote) + ", so the rollback's delta did not land")
 
 
 def _restore_pointer(pointer_path, before, environment, record_path=None,
@@ -3339,11 +3354,26 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
             # being read as anything -- a lock this run could not take and a disk that refused
             # the write are the same answer here, which is that the record does not say what
             # this rollback meant it to.
-            owned = OWNERSHIP_UNREADABLE
-            detail = (detail + ", but the ownership record could not be written: "
+            #
+            # It is also not evidence that the write did not HAPPEN. The save lands inside the
+            # lock and releasing that lock can raise afterwards, so a run can have committed
+            # the delta and still come out here. Answering "unreadable" from the exception
+            # alone invented an outstanding claim for a record that was already correct, so the
+            # record is READ BACK and the answer comes from what it says; only a read-back that
+            # also fails leaves the outcome unknown.
+            detail = (detail + ", but writing the ownership record raised: "
                       + type(error).__name__ + ": " + str(error))
+            after = hostrecord.load(record_path, definition_version)
+            if not after.usable:
+                owned = OWNERSHIP_UNREADABLE
+                detail = (detail + ", and the record could not be read back to establish"
+                          " whether it landed: " + str(after.detail))
+            else:
+                owned, note = _ownership_answer(after, wanted, pointer_path)
+                detail = detail + (", but " + note if note
+                                   else ", and the record reads back as " + str(owned))
         else:
-            owned, note = _ownership_answer(written, wanted)
+            owned, note = _ownership_answer(written, wanted, pointer_path)
             if note:
                 detail = detail + ", but " + note
         if owned in (OWNERSHIP_UNREADABLE, OWNERSHIP_MOVED_ON):
@@ -3377,10 +3407,17 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
                 "the record holds an entry this run introduced" if not ownership
                 else "the record still carries this run's stamp on an entry it did not"
                      " introduce")
+            # The consequence is a THIRD reading, not a restatement of the first. Where nothing
+            # went back, the link there and the record that claims it are both this run's, so
+            # they do not disagree -- saying they do would name a conflict that is not the
+            # problem. What is wrong there is that a failed promotion's link and entry are the
+            # ones a host now reaches through.
             reaches = (
                 "so the next update would read a link that appears at that path as its own"
                 if restored_to == "absent"
-                else "so the record and the link disagree about who placed it")
+                else "so the record and the link disagree about who placed it" if restored_to
+                else "so a host reaches through the link this failed run left, and the record"
+                     " agrees with it")
             settle_claim = ("settle the host record's pointer ownership for "
                             + str(pointer_path) + ": " + link_says + " and " + record_says
                             + ", " + reaches)

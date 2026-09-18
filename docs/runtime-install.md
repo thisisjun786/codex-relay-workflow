@@ -946,8 +946,13 @@ The ownership record goes with the link, for the run that PUT IT THERE. The reco
 a link this command's — the promotion refuses to replace one the record never recorded placing —
 so a rollback that removed the link and left the record behind said this command owns a link that
 is not there, and armed that guard in favour of whatever appeared at that path next. An entry this
-run introduced is therefore dropped, only after the link is verifiably gone and only for the path
-this run recorded.
+run introduced is therefore dropped, and only for the path this run recorded. Where the rollback
+restored ABSENCE the record is written only after the link is verifiably gone, because writing it
+first would leave a link nobody recorded — the refusal shape from the opposite side. Where a link
+was REPLACED the record is written whichever way the restoration went, including when putting the
+previous target back could not be read back: a link is at that path either way, so the ordering
+that protects the absence case has nothing to protect here, and the result reports the link's own
+`verified: false` for what did not land.
 
 An entry this run INHERITED is a different question, because a link that is missing does not mean
 a record that is missing: a host whose recorded link was deleted out from under it has the entry
@@ -1711,12 +1716,15 @@ for path in sys.argv[1:]:
 # and concludes there was nothing to clear. That is why the install above is kept.
 #
 # residualOwnership and recoveryRequires are read from the same result and for the same reason.
-# A rollback can put the LINK back and fail to put the RECORD back, and what that leaves is a
-# claim rather than a path: nothing is on disk to delete, so residualPaths is empty and correct
-# while the record still says something about that path. residualOwnership names the path whose
-# claim is outstanding, and recoveryRequires says which of the two states it is -- a claim for a
-# link that was taken away, or a stamp on an entry that run did not introduce -- because those
-# need different things done about them.
+# A rollback can settle the LINK and fail to settle the RECORD, and what that leaves is a claim
+# rather than a path: nothing is on disk to delete, so residualPaths is empty and correct while
+# the record still says something about that path. residualOwnership names the path whose claim
+# is outstanding. recoveryRequires is COMPOSED rather than chosen from a list, because what has
+# to be settled is two separate readings -- what became of the LINK (taken away, put back to a
+# named target, or not put back at all) and where the ENTRY came from (introduced by that run,
+# or inherited and left carrying its stamp) -- and the consequence follows from the pair. A
+# sentence that assumed either would tell an operator the link was put back when it was not, or
+# report a disagreement between a link and a record that in fact agree.
 #
 # Both are empty for a rollback that found the entry belonged to ANOTHER run by the time it
 # wrote. Nothing there is this run's to settle, so asking an operator to settle it would send

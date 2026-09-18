@@ -431,6 +431,21 @@ def without_placement(entry):
             if key not in POINTER_PLACEMENT}
 
 
+def pointer_entry_for(entry, path):
+    """The ownership entry, and only when it is ABOUT this path.
+
+    An entry is about a path. A caller holding a path it derived somewhere else can otherwise
+    read placement evidence that belongs to a different one -- which is exactly how a resume
+    came to decide whether a link here could be replaced from a record that was talking about
+    somewhere else. Returning None for a mismatch keeps that unrepresentable, and it is None
+    rather than False because "no entry about this path" and "an entry about it that records no
+    placement" are the two answers a caller has to tell apart.
+    """
+    if isinstance(entry, dict) and entry.get("path") == str(path):
+        return entry
+    return None
+
+
 # ------------------------------------------------------------------ the one way to write
 
 def update(path, definition_version, *, installs=None, points=None, select=None,

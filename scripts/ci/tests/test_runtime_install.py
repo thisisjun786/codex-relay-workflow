@@ -8081,13 +8081,44 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                          runtime_install_module.OWNERSHIP_WITHDRAWN)
 
     def test_the_resume_exit_reports_the_same_outstanding_claim(self):
-        """A resume never reaches the update's exit, so the two fields a receipt reads for an
-        outstanding claim had to be produced there too -- from one helper, so the same failure
-        cannot read one way on one path and another way on the other.
+        """SUPPORT, and labelled so after measuring rather than assuming.
 
-        Raised by an independent review of this pull request: the documented receipt read nulls
-        here for a claim that was outstanding.
+        A resume never reaches the update's exit, so the two fields a receipt reads for an
+        outstanding claim are produced there too, from one helper, so the same failure cannot
+        read one way on one path and another way on the other. Raised by an independent review
+        of this pull request.
+
+        It is NOT red-at-parent evidence. Run against 33d139a it passes, and run against
+        ceeb5d9 -- the head just before the fields reached this exit -- it passes as well. I
+        claimed a red baseline for it twice and measured neither; both runs are recorded beside
+        the other evidence. What it pins is the contract going forward: this exit reports the
+        claim, the other exit reports it identically, and .get() is used so an absent field
+        fails as the absence it is rather than as a KeyError.
         """
+
+    def test_ownership_evidence_is_bound_to_the_path_it_is_about(self):
+        """SUPPORT. An entry is ABOUT a path, and a caller holding a path derived somewhere else
+        can read evidence that belongs to a different one -- which is how a resume came to decide
+        whether a link here could be replaced from a record talking about somewhere else. The
+        three answers have to stay three: no entry about this path, an entry about it with no
+        placement, and an entry about it that records one."""
+        placed = {"path": "/dest/current", "recordedAt": "t", "recordedBy": "CRW-95"}
+        withdrawn = {"path": "/dest/current"}
+        elsewhere = {"path": "/elsewhere/current", "recordedAt": "t", "recordedBy": "CRW-95"}
+
+        self.assertEqual(hostrecord.pointer_entry_for(placed, "/dest/current"), placed)
+        self.assertEqual(hostrecord.pointer_entry_for(withdrawn, "/dest/current"), withdrawn)
+        self.assertIsNone(hostrecord.pointer_entry_for(elsewhere, "/dest/current"),
+                          "an entry naming somewhere else says nothing about this path, and"
+                          " reading it as evidence here authorised replacing a link from a"
+                          " record that was not about it")
+        self.assertIsNone(hostrecord.pointer_entry_for(None, "/dest/current"))
+        self.assertTrue(hostrecord.placement_recorded(
+            hostrecord.pointer_entry_for(placed, "/dest/current")))
+        self.assertFalse(hostrecord.placement_recorded(
+            hostrecord.pointer_entry_for(withdrawn, "/dest/current")),
+            "and the withdrawn one is an entry about this path that records no placement,"
+            " which is a different answer from having none at all")
         import runtime_install
 
         real_update = hostrecord.update
@@ -8113,7 +8144,7 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
 
         self.assertEqual(code, 1, json.dumps(payload)[:900])
         self.assertEqual(payload["stagingDecision"], staging.RESUME)
-        self.assertEqual(payload["residualOwnership"], str(host.pointer_path),
+        self.assertEqual(payload.get("residualOwnership"), str(host.pointer_path),
                          "the resume's exit names the claim it left, the way the update's does")
         self.assertIn("settle the host record's pointer ownership",
                       payload["recoveryRequires"] or "")
@@ -8174,11 +8205,34 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                                                 "recordedAt": "t", "recordedBy": "another run"})
             written = hostrecord.update(path, 1, restore_pointer={"wrote": "/dest/current",
                                                                   "found": mine})
-            answer, note = runtime_install_module._ownership_answer(written, mine)
+            answer, note = runtime_install_module._ownership_answer(written, mine,
+                                                                    "/dest/current")
 
         self.assertTrue(written.usable, "the write itself succeeded, which is the point")
         self.assertEqual(answer, runtime_install_module.OWNERSHIP_MOVED_ON)
         self.assertIn("/moved-on/current", note)
+
+    def test_a_delta_that_did_not_land_is_not_another_run_s_entry(self):
+        """SUPPORT. Two different things make the record disagree with what a rollback wanted,
+        and the path separates them: an entry naming somewhere else belongs to another run,
+        while one still naming the path THIS run wrote is this run's own, left because the delta
+        did not land. Calling the second 'moved on' hands an outstanding claim to a run that
+        never touched it, and nothing then asks for it to be settled."""
+        mine = {"path": "/dest/current", "recordedAt": "t0", "recordedBy": "me"}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            # This run's own refreshed stamp, at the path this run wrote: the promotion's write
+            # landed and the rollback's did not.
+            hostrecord.update(path, 1, pointer={"path": "/dest/current", "recordedAt": "t9",
+                                                "recordedBy": "the failed run"})
+            stood = hostrecord.load(path, 1)
+            answer, note = runtime_install_module._ownership_answer(stood, mine, "/dest/current")
+
+        self.assertEqual(answer, runtime_install_module.OWNERSHIP_UNREADABLE,
+                         "the record still holds what this promotion wrote, so the claim is"
+                         " this run's and outstanding")
+        self.assertIn("did not land", note)
 
     def test_the_found_entry_is_a_declared_member_of_the_promotions_fresh_set(self):
         """SUPPORT. The record side of the prior state is decided on inside the promotion, so it
@@ -8302,11 +8356,14 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                          " reader deletes from stays about directories")
 
     def test_the_outstanding_claim_says_which_state_it_is(self):
-        """SUPPORT. Three different states leave an outstanding ownership claim, and one
-        sentence for all three is worse than none: it would tell an operator the link was taken
-        away when it is back, or send them to settle an entry another run now owns. Driven
+        """SUPPORT. A rollback whose record half did not land has to say WHICH state that is.
+
+        Two of them leave an outstanding claim of this run's and need different sentences -- the
+        link taken away, and the link put back -- and a third, an entry another writer owns,
+        leaves no claim of this run's at all and must not ask anyone to settle it. Driven
         through _restore_pointer directly, because the moved-on case needs a record something
-        else changed underneath this run."""
+        else changed underneath this run.
+        """
         import runtime_install
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -8332,7 +8389,11 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
             # A link put back, and the record write refusing.
             pointer.place(here, environment)
             hostrecord.save(record_path, hostrecord.empty(1))
-            hostrecord.update(record_path, 1, pointer=dict(mine))
+            # What the promotion leaves before it fails: this run's own refreshed stamp over
+            # the entry it inherited. The rollback means to put 'mine' back, so the record NOT
+            # equalling that is what makes the failed write outstanding rather than harmless.
+            hostrecord.update(record_path, 1, pointer={"path": str(here), "recordedAt": "t9",
+                                                       "recordedBy": "the failed run"})
             with mock.patch.object(runtime_install.hostrecord, "update",
                                    side_effect=OSError("the record could not be written")):
                 link_back = runtime_install._restore_pointer(
@@ -8379,6 +8440,11 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
             # A legacy adoption: no entry existed, so this run introduced one. The link
             # restoration also fails, so neither half went back.
             pointer.place(here, environment)
+            # The entry this run INTRODUCED, written the way _finish_promotion writes it before
+            # placing. Without it the record already matches what the rollback wants and the
+            # failed write leaves nothing outstanding -- the state this is about would not exist.
+            hostrecord.update(record_path, 1, pointer={"path": str(here), "recordedAt": "t9",
+                                                       "recordedBy": "this run"})
             with mock.patch.object(runtime_install.hostrecord, "update",
                                    side_effect=OSError("the record could not be written")):
                 with mock.patch.object(runtime_install.pointer, "place",
@@ -8393,6 +8459,9 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                       "a restoration that failed is not reported as one that happened")
         self.assertIn("an entry this run introduced", introduced["settleOwnership"],
                       "and an entry this run created is not reported as one it inherited")
+        self.assertNotIn("disagree about who placed it", introduced["settleOwnership"],
+                         "and a link this run left with a record that agrees with it is not"
+                         " reported as a disagreement")
 
     def test_a_blank_issue_is_refused_before_anything_is_written(self):
         """SUPPORT. --issue is written into the ownership entry as the evidence that this
