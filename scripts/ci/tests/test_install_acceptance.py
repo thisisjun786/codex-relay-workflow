@@ -927,6 +927,26 @@ class SevenReadingsTests(unittest.TestCase):
             self.assertEqual(preservation, reading.UNREADABLE,
                              "without a reader this is unread, and unread is not preserved")
 
+
+    def test_every_question_is_declared_to_answer_in_exactly_one_vocabulary(self):
+        """The three families have to cover the seven, once each.
+
+        Not decoration: the families are what stops a row being compared against the wrong set
+        of admissible answers. A row in none of them would be checked against nothing, and a row
+        in two would be checked against a vocabulary it does not answer in -- which is the same
+        borrowing this module refuses, arriving through the door marked housekeeping.
+        """
+        families = {"check.VALUES": CHECK_FIELD_ROWS,
+                    "the completion cells": COMPLETION_CELL_ROWS,
+                    "a shape of their own": OWN_SHAPE_ROWS}
+        declared = [cell for members in families.values() for cell in members]
+
+        self.assertEqual(sorted(declared), sorted(SEVEN),
+                         "every question answers in one declared vocabulary, and only the seven"
+                         " do: " + json.dumps(families))
+        self.assertEqual(len(set(declared)), len(declared),
+                         "a question in two vocabularies is checked against one it does not"
+                         " answer in")
     def test_each_row_reads_its_own_path_and_no_other(self):
         """The property, stated as a change rather than as a declaration.
 
