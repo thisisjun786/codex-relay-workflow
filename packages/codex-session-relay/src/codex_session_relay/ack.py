@@ -603,6 +603,15 @@ class AckService:
                     recipient_task_id=child,
                 )
                 record["nextExecutionGeneration"] = next_generation
+                # The same finding, filed under the event the CHILD is sent to. The revision
+                # message ends with "Full record: ... show --event <revision>", so that is
+                # where a recipient looks, and filing this only under the superseded
+                # completion left that lookup empty until an attempt or a report existed. An
+                # empty list there cannot be told from a correction nobody measured, which is
+                # the distinction this whole path exists to make.
+                correction_event = revision_event
+            else:
+                correction_event = None
 
             db.execute(
                 "INSERT INTO verdicts (event_id, record, verdict, next_generation,"
@@ -621,6 +630,10 @@ class AckService:
             # allows, that schema freezes additionalProperties on the record, and this store
             # has no migration path for a new verdict_context column.
             self.store.journal("restoration_projected", event_id, projected, at=now)
+            if correction_event is not None:
+                self.store.journal(
+                    "restoration_projected", correction_event, projected, at=now,
+                )
             if re_review:
                 # The schema has one verdict row per event and this change adds no table, so
                 # the ruling being replaced is kept where an append-only record already exists.

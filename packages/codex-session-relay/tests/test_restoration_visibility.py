@@ -473,6 +473,29 @@ class RestorationDelivery(DeliveryTestCase):
             [("restoration_attempted", "carried", 1)],
         )
 
+    def test_show_on_the_revision_the_child_is_sent_to_reports_the_ruling(self):
+        """The correction's own message points the child at the revision event.
+
+        Filing the ruling's finding only under the superseded completion left that lookup
+        empty until an attempt or a report existed, and an empty list cannot be told from a
+        correction nobody measured.
+        """
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-child-look",
+            findings=_findings(3),
+        )
+        revision = self._revision_of(relationship, event_id, "v-child-look")
+        payload = cli.cmd_show(
+            SimpleNamespace(intake=self.intake, delivery=self.delivery, store=self.store),
+            SimpleNamespace(event=revision, message=False),
+        )
+        self.assertEqual(
+            [entry.get("outcome") for entry in payload.get("restoration") or []
+             if entry.get("kind") == "restoration_projected"],
+            ["not_carried"],
+        )
+
     def test_a_report_no_attempt_will_render_is_not_refused(self):
         """A correction that already went out is not made undeliverable by a later report.
 
