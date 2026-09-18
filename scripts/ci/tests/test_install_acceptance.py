@@ -1406,7 +1406,14 @@ def _module_statements(tree):
     for, so the statement answers with the names it binds.
     """
     named = {}
+    statements = []
     for statement in tree.body:
+        # A class body first, so a statement in it is named by the class and what it binds
+        # rather than by the class statement that happens to enclose it.
+        if isinstance(statement, ast.ClassDef):
+            statements += [(statement.name, inner) for inner in statement.body]
+        statements.append((None, statement))
+    for klass, statement in statements:
         bound = []
         if isinstance(statement, ast.Assign):
             for target in statement.targets:
@@ -1416,6 +1423,8 @@ def _module_statements(tree):
         elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
             bound = [_dotted(statement.value.func) or "a call"]
         name = ", ".join(bound) if bound else type(statement).__name__
+        if klass:
+            name = klass + "." + name
         for node in ast.walk(statement):
             named.setdefault(id(node), name)
     return named
@@ -1491,6 +1500,18 @@ def _held_by_class(tree, spelled):
                 held.setdefault(klass, set()).add(target.attr)
             elif isinstance(target, ast.Name) and function == MODULE_LEVEL:
                 held.setdefault(klass, set()).add(target.id)
+    # An attribute declared on a base is held by everything under it, the way a method is.
+    parents = {node.name: [_dotted(base) for base in node.bases]
+               for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+    growing = True
+    while growing:
+        growing = False
+        for klass, bases in parents.items():
+            for base in bases:
+                gained = held.get(base, set()) - held.get(klass, set())
+                if gained:
+                    held.setdefault(klass, set()).update(gained)
+                    growing = True
     return held
 
 
@@ -1556,17 +1577,37 @@ def _hands_on(tree, spelled):
     # An alias is looked up first, so this only stops the search where the binding is something
     # this reader cannot follow -- carrier = str -- which is a name Python resolves locally and
     # never to the enclosing definition.
+    def binds(node):
+        """Every name this statement binds locally, whatever construct does the binding."""
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [node.target]
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            targets = [node.target]
+        elif isinstance(node, ast.withitem):
+            targets = [node.optional_vars] if node.optional_vars else []
+        elif isinstance(node, ast.ExceptHandler):
+            return {node.name} if node.name else set()
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            return {alias.asname or alias.name.split(".")[0] for alias in node.names}
+        found = set()
+        for target in targets:
+            # Only what the target BINDS. mapping[carrier] = value and carrier.attr = value read
+            # the name rather than binding it, and marking those local would stop the search
+            # before a definition the call really does reach.
+            found.update(inner.id for inner in ast.walk(target)
+                         if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store))
+        return found
+
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-            continue
         where = places.get(id(node), (MODULE_LEVEL, None))[0]
         if where == MODULE_LEVEL:
             continue
-        for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-            # Every name the target introduces, destructured ones included: carrier, other = ...
-            # makes carrier local exactly as carrier = ... does.
-            taken_names.setdefault(where, set()).update(
-                inner.id for inner in ast.walk(target) if isinstance(inner, ast.Name))
+        bound_here = binds(node)
+        if bound_here:
+            taken_names.setdefault(where, set()).update(bound_here)
 
     def outwards(caller, named, aliases=None):
         """Every place this name may reach, innermost scope first.
@@ -1634,10 +1675,13 @@ def _hands_on(tree, spelled):
         """Every place this call may reach."""
         if isinstance(node.func, ast.Name):
             return outwards(function, node.func.id, aliases)
-        if isinstance(node.func, ast.Attribute) and _dotted(node.func.value) in ("self", "cls"):
-            # cls.name in a classmethod names a method of this class exactly as self.name does.
+        if isinstance(node.func, ast.Attribute):
+            through = _dotted(node.func.value)
+            # cls.name in a classmethod names a method of this class exactly as self.name does,
+            # and Example.name names one of Example's just as statically.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-            reached = inherited(klass, node.func.attr)
+            reached = inherited(klass if through in ("self", "cls") else through,
+                                node.func.attr)
             return {reached} if reached else set()
         return set()
 
@@ -1903,6 +1947,27 @@ def _refusal_spelled(spellings, held):
     return spelled
 
 
+def _handle_names(tree, handles):
+    """Every name that reaches a source file, the module's own and the local ones bound to them.
+
+    path = HERE is an ordinary line, and a read taken on path reaches the same file.
+    """
+    known, growing = set(handles), True
+    while growing:
+        growing = False
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                continue
+            if _dotted(node.value) not in known:
+                continue
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                named = _dotted(target)
+                if named and named not in known:
+                    known.add(named)
+                    growing = True
+    return frozenset(known)
+
+
 def _source_spelled(handles, hands_source, held):
     """The matcher: which node reaches the text of a source file, spelled any of the derived ways."""
     def spelled(node, klass):
@@ -1919,10 +1984,16 @@ def _source_spelled(handles, hands_source, held):
             spelling = _dotted(node.func)
             if spelling in hands_source:
                 return spelling
-            # A read taken ON a handle hands source text back: a helper answering
+            # A READ taken on a handle hands source text back: a helper answering
             # HERE.read_text() gives its caller the text as surely as one answering ast.parse.
-            head, _, _attribute = (spelling or "").partition(".")
-            return spelling if head and head in handles and _attribute else None
+            # Only a read. HERE.exists() and HERE.with_suffix() answer about the file rather
+            # than with it, and counting those would put every filesystem question in the
+            # inventory. Which spellings mean a read is recognised by the name beginning with
+            # read, which is narrower than the class of ways to get a file's contents. The place
+            # itself is accounted either way, because the handle is named there; what a narrower
+            # rule costs is the CALLER of a helper that reads some other way.
+            head, _, attribute = (spelling or "").partition(".")
+            return spelling if head in handles and attribute.startswith("read") else None
         return None
 
     return spelled
@@ -1995,6 +2066,7 @@ def source_text_reached(source):
     """Every occurrence of a reach into source text, the spellings, the unread names and the calls."""
     tree = ast.parse(source)
     handles, hands_source, undecided, called = source_spellings(tree)
+    handles = _handle_names(tree, handles)
     held = _held_by_class(tree, _source_spelled(handles, hands_source, {}))
     return (_occurrences(tree, _source_spelled(handles, hands_source, held)),
             {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
@@ -3256,6 +3328,7 @@ HANDED = {
     "_occurrences": NOTHING,
     "_refusal_spelled": NOTHING,
     "_source_spelled": NOTHING,
+    "_handle_names": NOTHING,
     "refusal_spellings": NOTHING,
     "source_spellings": NOTHING,
     "refusals_reached": NOTHING,
