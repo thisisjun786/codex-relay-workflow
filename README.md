@@ -288,8 +288,10 @@ a particular reviewer or repository-management app. Full-project execution conti
 through the authorized batches; an explicit first-batch request remains bounded.
 Standalone audits and explicit read-only or report-only requests remain observational.
 
-Managed issue tasks use `ISSUE-ID · short task name`, such as
-`JUN-44 · 가격 조회 계약`. Keep workflow and PR metadata out of the title.
+Managed issue tasks use `ISSUE-ID · descriptive task title`, such as
+`JUN-44 · 가격 조회 결과를 검증한다`. Use up to 20 characters for the title text,
+including spaces, without over-abbreviating; exclude the issue code and separator
+from that count. Keep workflow and PR metadata out of the title.
 The coordinator verifies the actual app title. See [Child task titles](skills/crw-run/references/task-packet.md#child-task-titles).
 
 ## Contribute and report problems

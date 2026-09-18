@@ -279,7 +279,8 @@ contract cannot know. A packet carrying neither clause sends a child the previou
 workflow.
 
 Apply [Child task titles](references/task-packet.md#child-task-titles):
-`ISSUE-ID · short task name`. Supply the title through the supported
+`ISSUE-ID · descriptive task title` (title text up to 20 characters, including
+spaces; exclude the issue code and separator). Supply the title through the supported
 creation field, verify the actual title by task ID, and correct it on the same
 managed task when supported. The packet's title alone is not app-state evidence.
 
