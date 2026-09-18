@@ -288,9 +288,9 @@ a particular reviewer or repository-management app. Full-project execution conti
 through the authorized batches; an explicit first-batch request remains bounded.
 Standalone audits and explicit read-only or report-only requests remain observational.
 
-Managed child tasks use `ISSUE-ID · short task name · workflow`, such as
-`JUN-44 · 가격 조회 계약 · CXC Loop`. The coordinator verifies the actual app title;
-the workflow suffix does not prove execution. See [Child task titles](skills/crw-run/references/task-packet.md#child-task-titles).
+Managed issue tasks use `ISSUE-ID · short task name`, such as
+`JUN-44 · 가격 조회 계약`. Keep workflow and PR metadata out of the title.
+The coordinator verifies the actual app title. See [Child task titles](skills/crw-run/references/task-packet.md#child-task-titles).
 
 ## Contribute and report problems
 
