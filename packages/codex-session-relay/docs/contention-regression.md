@@ -45,6 +45,21 @@ binding, `test_supersession.py` already proves a superseded event opens no gener
 and makes no transport call, and `test_receipts.py` already refuses a stale
 generation at intake. Adding a fourth version of that would be volume, not coverage.
 
+Criterion 2's new evidence is narrower than its test name reads, and the difference was
+found in review rather than by the predicate above. `ATickInterruptedInsideItsOwnTransaction`
+kills the tick inside the FIRST write it makes, which is `_record_poll` during
+`_observe`, not the attempt claim in `_deliver`. Traced directly: the injected fault
+fires at `tick -> _observe -> _record_poll`, and no attempt transaction has begun. So
+what that test establishes is that a tick interrupted at its first write leaves the store
+consistent and a different daemon over a reopened store then completes the handoff exactly
+once - which is real, and is the shape a killed worker has. What it does NOT establish is
+that the delivery attempt's own transaction rolls back, because that transaction never ran;
+its empty-attempts assertion is true by construction. Rollback of a write transaction
+mid-body is covered by reused evidence in `test_wp1_regressions.py` TransactionRecovery
+and `test_ack_reconcile.py` VerdictAtomicity, named in this map's criterion 2 row.
+Tightening the injection to reach the attempt transaction is a test change, escalated
+rather than made, because the coordinator closed implementation on this PR.
+
 Criterion 5 is narrower than the issue's wording and the row now says so. Two of the four
 paths run from two threads: acknowledgement and `record_verdict`. Completion intake and
 the outbox claim and completion run sequentially, and the reused classes beside them are
