@@ -31,7 +31,7 @@ from codex_session_relay import identity
 from codex_session_relay.ack import AckService
 from codex_session_relay.clock import FakeClock
 from codex_session_relay.daemon import RelayDaemon, SingleInstance
-from codex_session_relay.delivery import DeliveryService
+from codex_session_relay.delivery import CLAIMABLE, DeliveryService
 from codex_session_relay.fakehost import FakeHostAdapter
 from codex_session_relay.models import Endpoint
 from codex_session_relay.receipts import ReceiptIntake
@@ -266,21 +266,48 @@ class ARealWorkerReadsTheHandoffBack(CrossingFixture):
         self.assertEqual(len(spawned), 1)
         self.assertNotEqual(spawned[0], os.getpid(), "that was not a separate process")
 
+        report = json.loads(log)
+        tick = report["ticks"][0]
+
+        # What the worker could only know by opening the store it inherited. The dispatch turn
+        # appears nowhere in the argv or the environment spawn_worker builds, and the deferral
+        # is a count of queued handoffs it actually selected.
+        self.assertIn(
+            "turn-dispatch-9", " ".join(tick["notes"]),
+            f"the worker never reached this assignment: {tick}",
+        )
+        self.assertEqual(
+            tick["deferred"], 1,
+            f"the worker did not find the queued handoff it inherited: {tick}",
+        )
+
         reopened = Store(Path(service.selection.path) / "relay.sqlite3")
         self.addCleanup(reopened.close)
         written = reopened.all(
-            "SELECT * FROM failed_operations WHERE relationship_id = ?", (rid,),
+            "SELECT * FROM poll_observations WHERE relationship_id = ?", (rid,),
         )
-        report = json.loads(log)
         self.assertTrue(
             written,
-            "the worker wrote nothing against this relationship, so nothing here shows it"
-            f" opened the inherited store: {report}",
+            "the worker read the assignment but wrote nothing back, so the inherited store is"
+            f" not the one it is recording against: {tick}",
         )
-        self.assertEqual(
-            reopened.one("SELECT * FROM deliveries WHERE event_id = ?", (queued,))["state"],
-            "queued",
-            "a worker with no reachable host still marked the handoff as sent",
+        self.assertTrue(
+            any(row["last_error"] for row in written),
+            "a read that failed was recorded as a healthy poll, which is how health stops"
+            " decaying",
+        )
+        # Still owed rather than sent. withheld_pre_send is the right answer here and queued
+        # would be too: the recipient could not be read, so the send was withheld before the
+        # transport was touched. What must never appear is a state that claims it went out.
+        state = reopened.one(
+            "SELECT * FROM deliveries WHERE event_id = ?", (queued,))["state"]
+        self.assertIn(
+            state, CLAIMABLE,
+            f"a worker with no reachable host left the handoff in {state!r}, which is not a"
+            " state it can still be delivered from",
+        )
+        self.assertNotEqual(
+            state, DISPATCHED, "a worker with no reachable host marked the handoff as sent",
         )
 
     def queue_a_second_event(self, store, rid):
@@ -429,4 +456,3 @@ class TheDeclaredLoad(DaemonTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
