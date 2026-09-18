@@ -146,6 +146,10 @@ def make_server(bridge: Bridge):
         A not_attempted receipt is the exception: nothing was reserved or sent, so reusing that
         id starts the launch rather than replaying it.
         Known artifacts and recovery requirements are retained even on failure/cancellation.
+        initialPrompt reports the prompt itself: not_requested when none was given, not_sent when
+        it was withheld or its turn never reached the socket, rejected when the host refused that
+        turn, accepted when the host took it, and outcome_unknown only when the turn went out and
+        no answer came back.
         """
         return await bridge.create_worktree_thread(
             request_id,
