@@ -776,10 +776,9 @@ this code, and it is left open rather than answered here.
 The obvious reading would compare the store's recorded schema version with the candidate's. It
 would also be worthless. The relay declares `SCHEMA_VERSION = 1`, has never raised it, writes it
 once with `INSERT OR IGNORE` when the database is created, and grows its schema through
-separate `CREATE ... IF NOT EXISTS` statements — thirty-seven tables and eight indexes at the
-time of writing. Every store therefore agrees with
-every candidate at version one, and the comparison would detect neither a downgrade nor an upgrade
-while looking exactly like a check.
+separate `CREATE ... IF NOT EXISTS` statements, tables and indexes alike. Every store therefore
+agrees with every candidate at version one, and the comparison would detect neither a downgrade
+nor an upgrade while looking exactly like a check.
 
 So the cell compares what actually differs: each object's `CREATE` statement in the store's
 `sqlite_master` against the statements the candidate relay declares. Statements and not names,
