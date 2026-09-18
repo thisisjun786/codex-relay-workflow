@@ -23,7 +23,9 @@ import json
 from . import cxc, restoration
 from .errors import DeliveryRefused, ReceiptRefused, RefusalReason
 from .identity import request_id as derive_request_id
-from .transport import INBOX_ONLY
+from .transport import (
+    DEFERRED_BUSY, INBOX_ONLY, QUEUED, WITHHELD_PRE_SEND,
+)
 
 NEWLINE = chr(10)
 VERSION = "relay-report/1"
@@ -273,17 +275,21 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
     return row
 
 
-def _next_attempt(store, event_id) -> int:
-    """The attempt number the next delivery would render under.
+# The delivery states from which another attempt can still be claimed. A report recorded
+# against a delivery that has left them will never be rendered into a message by anybody, so
+# what its composition would have done to a restoration block is not a delivery question.
+_STILL_ATTEMPTABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
 
-    Measuring against attempt one while the next send is attempt ten compares a different
-    number of bytes: the request id sits on a line of the message and `a10` is longer than
-    `a1`. A report resting on the budget boundary would be measured as fitting and then not
-    fit. Retries are ordinary here - a busy or archived recipient defers before anything is
-    sent - so the first attempt and the next one are different often enough to matter.
+
+def _delivery_of(store, event_id):
+    """The delivery row this report would be rendered for, or None.
+
+    Read for both the state and the attempt count, in one statement, because the two are
+    answers about the same row and reading them apart invites them to disagree.
     """
-    row = store.one("SELECT attempt_count FROM deliveries WHERE event_id = ?", (event_id,))
-    return (row["attempt_count"] if row else 0) + 1
+    return store.one(
+        "SELECT state, attempt_count FROM deliveries WHERE event_id = ?", (event_id,)
+    )
 
 
 def _project_restoration(store, event, row):
@@ -307,7 +313,25 @@ def _project_restoration(store, event, row):
             basis=restoration.COMPOSED_BASIS,
             detail="no finding declared a restoration block",
         )
-    attempt = _next_attempt(store, event["event_id"])
+    delivery = _delivery_of(store, event["event_id"])
+    if delivery is None or delivery["state"] not in _STILL_ATTEMPTABLE:
+        # Nothing will render this report, so what its composition would have done to the
+        # block is not a delivery question and refusing it would reject a supported update on
+        # the strength of a message that will never be built. The correction has already gone
+        # out, or has stopped being sendable for a reason this layer does not own; either way
+        # the bytes that went are recorded against the attempt that froze them. Unmeasured in
+        # its own sense: a fact that was never established, and here never arises.
+        return restoration.unmeasured(
+            "no further attempt will render this report"
+            + (f"; the delivery is {delivery['state']!r}" if delivery is not None
+               else " and no delivery is queued for it"),
+            basis=restoration.COMPOSED_BASIS,
+        )
+    # The request id sits on a line of the message and a10 is longer than a1, so a report
+    # resting on the byte budget would be measured against a length the next send does not
+    # have. Retries are ordinary here: a busy or archived recipient defers before anything is
+    # sent.
+    attempt = delivery["attempt_count"] + 1
     try:
         composed = compose_revision(
             {"event_id": event["event_id"], "relationship_id": event["relationship_id"]},

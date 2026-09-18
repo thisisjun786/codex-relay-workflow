@@ -703,11 +703,14 @@ def cmd_show(services, args) -> dict:
     # Every submission, because an earlier message may have elided part of its report and
     # sent its recipient here for the rest.
     payload["workReportSubmissions"] = read_work_reports(services.store, args.event)
-    # What became of this event's restoration block, if one was declared. Two kinds live here
-    # and they answer different questions: restoration_projected is what the ruling
+    # What became of this event's restoration block, if one was declared. Three kinds live
+    # here and they answer different questions. restoration_projected is what the ruling
     # established BEFORE it opened the next generation, recorded against the event that was
-    # ruled on; restoration_rendered is what a later work report did to the message, recorded
-    # against the revision event that report reshaped.
+    # ruled on. restoration_rendered is what a later work report did to the message, recorded
+    # against the revision event that report reshaped. Both are preflight. Only
+    # restoration_attempted is about bytes that exist: it is written in the transaction that
+    # froze one attempt's message, so it says what that attempt carried rather than what the
+    # next one was expected to.
     payload["restoration"] = _restoration_entries(services.store, args.event)
     if delivery is not None and args.message:
         # The bytes each attempt actually froze, with how far they got. A preview is offered
@@ -722,11 +725,17 @@ def cmd_show(services, args) -> dict:
 
 
 def _restoration_entries(store, event_id) -> list:
-    """Every recorded outcome for one event's restoration block, oldest first."""
+    """Every recorded outcome for one event's restoration block, oldest first.
+
+    All three kinds, because the per-attempt one is the only measurement about bytes that
+    were actually frozen, and leaving it out of the documented inspection command would
+    return exactly the preflight projections while withholding the evidence.
+    """
     rows = store.all(
-        "SELECT kind, at, detail FROM journal WHERE subject = ? AND kind IN (?,?)"
+        "SELECT kind, at, detail FROM journal WHERE subject = ? AND kind IN (?,?,?)"
         " ORDER BY seq",
-        (event_id, "restoration_projected", "restoration_rendered"),
+        (event_id, "restoration_projected", "restoration_rendered",
+         "restoration_attempted"),
     )
     return [
         dict(json.loads(row["detail"]), kind=row["kind"], at=row["at"])

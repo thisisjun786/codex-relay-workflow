@@ -449,6 +449,67 @@ class RestorationDelivery(DeliveryTestCase):
             [("truncated", 1)],
         )
 
+    def test_show_returns_the_outcome_measured_against_the_sent_bytes(self):
+        """The documented inspection command is where a reader goes for this.
+
+        Returning only the preflight projections while withholding the one measurement about
+        bytes that exist would be the most misleading arrangement of the three.
+        """
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-show",
+            findings=_findings(4, carries=1),
+        )
+        revision = self._revision_of(relationship, event_id, "v-show")
+        self.attempt(revision)
+        payload = cli.cmd_show(
+            SimpleNamespace(intake=self.intake, delivery=self.delivery, store=self.store),
+            SimpleNamespace(event=revision, message=False),
+        )
+        self.assertEqual(
+            [(entry.get("kind"), entry.get("outcome"), entry.get("attempt"))
+             for entry in payload.get("restoration") or []
+             if entry.get("kind") == "restoration_attempted"],
+            [("restoration_attempted", "carried", 1)],
+        )
+
+    def test_a_report_no_attempt_will_render_is_not_refused(self):
+        """A correction that already went out is not made undeliverable by a later report.
+
+        The projection sizes a message for the next attempt. Once there is no next attempt,
+        refusing a supported update on the strength of a rendering nobody will build takes
+        away a record and protects nothing: the bytes that went are already accounted for
+        against the attempt that froze them.
+        """
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-sent",
+            findings=_findings(20, carries=10, note_size=900),
+        )
+        revision = self._revision_of(relationship, event_id, "v-sent")
+        self.attempt(revision)
+        self.assertEqual(
+            [entry.get("outcome")
+             for entry in self._projections(revision, kind="restoration_attempted")],
+            ["carried"],
+            "the legacy renderer carried it, which is what the child received",
+        )
+        # Submission 2, because a pre-contract message has already been delivered for this
+        # event and _assert_resubmission requires it. That is the arrangement the review
+        # named: a supported later submission, against a delivery nothing will render again.
+        recorded = report.record(
+            self.store, self.clock, event_id=revision,
+            repository="thisisjun786/codex-relay-workflow",
+            cxc_status=cxc.BLOCKED,
+            cxc_reason="the correction is larger than one message can hold",
+            summary="twenty findings, one of which carries the restoration block",
+            next_action="answer every finding above",
+            submission_no=2,
+        )
+        reported = recorded.get("restoration") or {"outcome": "nothing was recorded"}
+        self.assertEqual(reported.get("outcome"), "unmeasured")
+        self.assertIn("no further attempt", reported.get("detail", ""))
+
     def test_two_findings_cannot_both_declare_the_block(self):
         """Two candidates is a block nobody can locate, which is the silence again."""
         _relationship, event_id = self._acknowledged()
