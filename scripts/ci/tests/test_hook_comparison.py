@@ -1050,6 +1050,161 @@ class DerivationTests(unittest.TestCase):
                       TEXT_EVIDENCE, "the one text reading has to stay declared")
 
 
+class VerdictGuardTests(unittest.TestCase):
+    """No verdict can be computed without the guard, and the guard does what it says.
+
+    The rule was stated and each verdict applied it separately, until one did not. The standing
+    check that was meant to catch that only fired when a not-taken count was already nonzero,
+    which never happens in a healthy run, so it watched the property without exercising it. Both
+    halves are here now: the guard is the only way to compute a verdict, and the guard is driven
+    with a nonzero count rather than observed on a run where the count is zero.
+    """
+
+    def test_the_guard_refuses_a_verdict_while_a_reading_was_not_taken(self):
+        self.assertTrue(harness.judged(True, 0))
+        self.assertTrue(harness.judged(True, []))
+        self.assertFalse(harness.judged(True, 1))
+        self.assertFalse(harness.judged(True, ["a/cell"]))
+        self.assertFalse(harness.judged(False, 0))
+        self.assertFalse(harness.judged(False, 2))
+
+    def test_every_verdict_in_the_harness_is_computed_by_that_guard(self):
+        """Derived over every met in the file, not over the ones a healthy run happens to show."""
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        verdicts = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if isinstance(key, ast.Constant) and key.value == "met":
+                    verdicts.append((getattr(value, "lineno", None), value))
+        self.assertGreaterEqual(len(verdicts), 7,
+                                "almost nothing computes a verdict, so this derivation is"
+                                " watching a file that stopped judging")
+        for line, value in verdicts:
+            self.assertTrue(isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                            and value.func.id == "judged",
+                            "the verdict at line " + str(line) + " is computed without the guard,"
+                            " so it can be true while a reading under it was not taken")
+
+    def test_the_standing_check_reaches_every_verdict_the_document_carries(self):
+        """The check's reach and the set of verdicts have to be the same set.
+
+        A check whose set is narrower than the property leaks exactly where it is not looking,
+        which is how one verdict passed while the rule was already written down. Compared as sets
+        of places rather than as counts: the source computes seven verdicts and the document
+        carries nine, because one function produces three of them, and a count would have been
+        satisfied by the wrong nine.
+        """
+        if not HAVE_RELAY:
+            self.skipTest("the document side of this needs a run")
+        answer = run_once()
+        carried = set()
+
+        def walk(payload, path=()):
+            if isinstance(payload, dict):
+                for key, value in payload.items():
+                    here = path + (key,)
+                    if key == "met":
+                        carried.add("/".join(str(one) for one in path))
+                    walk(value, here)
+            elif isinstance(payload, list):
+                for index, value in enumerate(payload):
+                    walk(value, path + (index,))
+
+        walk(dict((key, value) for key, value in answer.items() if key != "passed"))
+        reached = set()
+        for name, measure in answer["measures"].items():
+            if "met" in measure:
+                reached.add("measures/" + name)
+        for name in answer["supplemental"]:
+            reached.add("supplemental/" + name)
+        for name in ("wroteOnlyInsideItsRoot", "sourceIdentity"):
+            reached.add(name)
+        self.assertEqual(sorted(carried - reached), [],
+                         "the document carries a verdict in a place the checks never look")
+        self.assertEqual(sorted(reached - carried), [],
+                         "the checks look for a verdict the document does not carry")
+        self.assertGreaterEqual(len(carried), 9)
+
+
+class BoundaryTests(unittest.TestCase):
+    """Every failure mode executed, rather than inferred from a handler being present.
+
+    Reading the source for an except clause says a handler exists; it does not say the path
+    reaches it and answers with the document this command promises. These drive each mode for
+    real. The mode that was missing from the derived list is the last one: valid JSON whose shape
+    is not an object, where the parse succeeds and there is still nothing to read.
+    """
+
+    MODES = ("timeout", "not startable", "nonzero exit", "unparseable output",
+             "valid JSON that is not an object", "empty output")
+
+    def launcher(self, body):
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-boundary-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        path = root / "codex-session-relay"
+        path.write_text("#!" + sys.executable + chr(10) + body, encoding="utf-8")
+        path.chmod(0o755)
+        arm = type("Arm", (object,), {
+            "launcher": path, "state": root / "state", "root": root,
+            "codex_home": root / "codex",
+            "environment": harness.environment(
+                type("A", (object,), {"root": root, "codex_home": root / "codex"})()),
+        })()
+        return arm
+
+    def refusal_for(self, body):
+        arm = self.launcher(body)
+        with self.assertRaises(harness.RelayError) as caught:
+            harness.relay(arm, "intent-declare", "--marker-root", str(arm.root))
+        return str(caught.exception)
+
+    def test_every_relay_failure_mode_answers_with_a_named_refusal(self):
+        answered = {}
+        answered["nonzero exit"] = self.refusal_for("raise SystemExit(3)\n")
+        answered["unparseable output"] = self.refusal_for("print('<>')\n")
+        answered["valid JSON that is not an object"] = self.refusal_for("print('[1, 2]')\n")
+        answered["empty output"] = None
+        arm = self.launcher("pass\n")
+        self.assertEqual(harness.relay(arm, "intent-declare"), {},
+                         "empty output is an empty answer, not a failure")
+        missing = self.launcher("pass\n")
+        missing.launcher = Path(str(missing.launcher) + "-does-not-exist")
+        with self.assertRaises(harness.RelayError) as caught:
+            harness.relay(missing, "intent-declare")
+        answered["not startable"] = str(caught.exception)
+        self.assertIn("could not be started", answered["not startable"])
+        self.assertIn("exited 3", answered["nonzero exit"])
+        self.assertIn("not JSON", answered["unparseable output"])
+        self.assertIn("not an object", answered["valid JSON that is not an object"])
+        for mode in ("nonzero exit", "unparseable output", "valid JSON that is not an object",
+                     "not startable"):
+            self.assertTrue(answered[mode], mode + " produced no named refusal")
+
+    def test_stdout_that_is_valid_json_but_not_an_object_is_not_a_block(self):
+        """The mode the derived list did not have: the parse succeeds and nothing can be read."""
+        for raw in ("[1, 2]", "null", "3", '"a string"'):
+            self.assertEqual(
+                harness.stdout_payload({"stdout": raw, "exitCode": 0, "wallMs": 1})["printed"],
+                "printed_something_else",
+                raw + " was read as something other than output nobody can act on")
+
+    def test_a_journal_record_that_is_not_an_object_is_not_correlated(self):
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-journal-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        day = root / "journal" / "20260918"
+        day.mkdir(parents=True)
+        (day / ("a" * 32 + ".json")).write_text("[1, 2]", encoding="utf-8")
+        (day / ("b" * 32 + ".json")).write_text("not json", encoding="utf-8")
+        (day / ("c" * 32 + ".json")).write_text(
+            json.dumps({"sessionId": "s", "turnId": "t", "observation": "x"}), encoding="utf-8")
+        arm = type("Arm", (object,), {"journal": root / "journal"})()
+        found = harness.journal_records(arm, "s", "t")
+        self.assertEqual(len(found), 1, "a record that is not an object was correlated as one")
+
+
 class RefusalTests(unittest.TestCase):
     """An interpreter the relay cannot run on gets a refusal, not rows nobody took."""
 

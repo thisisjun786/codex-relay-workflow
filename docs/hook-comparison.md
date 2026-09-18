@@ -165,6 +165,13 @@ continuation, which the host reports as a failed run. A reading that could not b
 never consumed as a value, at any site: the sentinel is a non-empty string and slips past exactly
 the tests that look like they exclude it.
 
+A verdict is computed in one place and nowhere else, so it cannot be computed without the guard
+that refuses it while a reading under it was not taken. Stating that rule and leaving each
+verdict to apply it is how one of them came not to, and the check meant to catch that only fired
+when a reading had already failed, which never happens in a healthy run. Every failure mode is
+executed rather than inferred from a handler being present, because a handler existing is not
+evidence that the path reaches it.
+
 Every judgment that carries a verdict can also say that a reading under it could not be taken,
 and none of them is met while it is saying so. A criterion that dropped an unreadable reading and
 concluded from what was left would report a bound as kept on evidence nobody has, which is the

@@ -262,6 +262,19 @@ def unreadable_among(values):
     """Which of these readings could not be taken."""
     return [str(value) for value in values if value == reading.UNREADABLE]
 
+
+def judged(met, not_taken):
+    """A verdict, which cannot be true while a reading under it was not taken.
+
+    Every met in this file is this call. Stating the rule and leaving each verdict to apply it
+    separately is how one of them came not to: the standing check that was supposed to catch that
+    only fires when a not-taken count is already nonzero, which never happens in a healthy run, so
+    it watched the property without ever exercising it. Here the guard cannot be left out, because
+    there is nowhere else to compute the answer.
+    """
+    count = not_taken if isinstance(not_taken, int) else len(not_taken or ())
+    return bool(met) and not count
+
 # The contract fixes these at skills/crw-run/references/hook-contract.md, "Decision criteria, fixed
 # before implementation". They are neither restated nor extended: where this arrangement cannot
 # reach one it says so rather than reaching for something it can measure instead.
@@ -475,6 +488,8 @@ class Arm(object):
                     "detail": "the install could not be started: " + str(error)}
         try:
             payload = json.loads(done.stdout) if done.stdout.strip() else {}
+            if not isinstance(payload, dict):
+                raise ValueError("the install printed JSON that is not an object")
         except ValueError:
             return {"source": INSTALL, "exitCode": done.returncode,
                     "detail": "the install printed something that is not JSON"}
@@ -570,9 +585,13 @@ def relay(arm, *args):
     if not done.stdout.strip():
         return {}
     try:
-        return json.loads(done.stdout)
+        answered = json.loads(done.stdout)
     except ValueError:
         raise RelayError(" ".join(args[:2]) + " printed something that is not JSON")
+    if not isinstance(answered, dict):
+        raise RelayError(" ".join(args[:2]) + " printed valid JSON that is not an object, so"
+                         " nothing can be read out of it")
+    return answered
 
 
 def build(arm, declared):
@@ -720,6 +739,11 @@ def journal_records(arm, session, turn):
                 payload = json.loads(record.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
+            if not isinstance(payload, dict):
+                # A record that is valid JSON and not an object is not this turn's record and is
+                # not readable as one either; skipping it here would silently lose a firing, so it
+                # is left out of the correlation and the arriving-record count reports the gap.
+                continue
             if payload.get("sessionId") == session and payload.get("turnId") == turn:
                 found[str(record)] = payload
     return found
@@ -795,6 +819,9 @@ def stdout_payload(fired):
     try:
         answer = json.loads(raw)
     except ValueError:
+        return {"source": STDOUT, "printed": PRINTED_OTHER, "raw": raw[:400]}
+    if not isinstance(answer, dict):
+        # Valid JSON and not an object: the parse succeeded and there is still nothing to read.
         return {"source": STDOUT, "printed": PRINTED_OTHER, "raw": raw[:400]}
     # Asked of the adapter's own validator rather than decided here. completion.verdict_complaints
     # is what refuses output the host reports as a failed run, and a second copy of that rule in
@@ -972,7 +999,7 @@ def _detection(scenarios, observation, injected_names):
                   or fired["cells"]["adapterOutcome"]["value"] == reading.UNREADABLE]
     return {"answer": MEASURED, "injected": len(injected), "reported": len(reported),
             "unreadable": unreadable,
-            "met": len(injected) > 0 and len(injected) == len(reported) and not unreadable,
+            "met": judged(len(injected) > 0 and len(injected) == len(reported), unreadable),
             "rows": [declared["name"] + "#" + str(index) for declared, index, _f in injected]}
 
 
@@ -1037,7 +1064,7 @@ def measures(scenarios):
         "criterion": "zero holds on unmarked sessions, on blocked_needs_input and on interrupted",
         "watched": list(watched), "reserved": reserved, "printedABlock": printed,
         "unreadable": unreadable,
-        "met": not reserved and not printed and not unreadable,
+        "met": judged(not reserved and not printed, unreadable),
         "narrowing": "the holds counted are this hook's own, which is what the contract makes it"
                      " responsible for. Whether a host would honour a printed block is not"
                      " observed here, and a default installation is observe mode and prints none.",
@@ -1067,8 +1094,8 @@ def measures(scenarios):
                            "median": median, "p95": p95,
                            "maximum": max(latencies) if latencies else None},
         "firings": len(timings), "timingsNotTaken": missing,
-        "met": (bool(latencies) and not missing and median <= LATENCY_MEDIAN_MS
-                and p95 <= LATENCY_P95_MS),
+        "met": judged(bool(latencies) and median <= LATENCY_MEDIAN_MS
+                      and p95 <= LATENCY_P95_MS, missing),
         "narrowing": "the interval measured is the hook process alone, started by this harness."
                      " The contract's budget is per Stop as the host sees it, so meeting it here"
                      " is necessary and not sufficient.",
@@ -1085,6 +1112,8 @@ def supplemental(scenarios):
     reservations = [fired["cells"]["heldFile"]["value"] for fired in firings]
     published = [fired["cells"]["recordedAs"]["value"] for fired in firings]
     not_taken = unreadable_among(reservations + published)
+    foreign_not_taken = unreadable_among(
+        [scenarios["_arms"][arm]["foreignRegistration"]["value"] for arm in ARMS])
     return {
         "oneReservationPerTurn": {
             "what": "one turn, the registered command fired twice",
@@ -1095,9 +1124,9 @@ def supplemental(scenarios):
             # create-once file is there after both firings, and the two firings published two
             # distinct observations rather than one record read twice. Counting only the
             # observations would have reported success for a turn that reserved nothing at all.
-            "met": (not not_taken and len(firings) == 2 and reservations == [RESERVED, RESERVED]
-                    and len([one for one in published if one]) == 2
-                    and len(set(one for one in published if one)) == 2),
+            "met": judged(len(firings) == 2 and reservations == [RESERVED, RESERVED]
+                          and len([one for one in published if one]) == 2
+                          and len(set(one for one in published if one)) == 2, not_taken),
             "isNot": "the duplicate execution measure. It is the hold leg of it and none of the"
                      " rest, because nothing here verifies, corrects, or restarts a daemon.",
         },
@@ -1105,9 +1134,9 @@ def supplemental(scenarios):
             "what": "a Stop entry belonging to another owner was in both hook files first",
             "off": scenarios["_arms"][OFF]["foreignRegistration"]["value"],
             "on": scenarios["_arms"][ON]["foreignRegistration"]["value"],
-            "notTaken": len(unreadable_among(
-                [scenarios["_arms"][arm]["foreignRegistration"]["value"] for arm in ARMS])),
-            "met": scenarios["_arms"][ON]["foreignRegistration"]["value"] == "present",
+            "notTaken": len(foreign_not_taken),
+            "met": judged(scenarios["_arms"][ON]["foreignRegistration"]["value"] == "present",
+                          foreign_not_taken),
             "isNot": "evidence that the two hooks interact at run time. The foreign command is"
                      " never executed here; this reads the file, not a decision.",
         },
@@ -1248,7 +1277,7 @@ def containment(root, places):
     not_taken = sorted(place for place, answer in answers.items()
                        if answer == reading.UNREADABLE)
     return {"checked": len(places), "outside": outside, "notTaken": not_taken,
-            "met": not outside and not not_taken,
+            "met": judged(not outside, not_taken),
             "what": "every place this run creates resolves inside the directory it made for"
                     " itself, by where the path leads rather than by how it is spelled",
             "doesNotCover": "a write a subprocess made somewhere this run never named. Seeing"
@@ -1300,9 +1329,8 @@ def stability(earlier, later):
     # so an unreadable source would compare equal to itself and report the bytes as identified.
     unread = unreadable_among(digests)
     return {"before": earlier, "after": later, "digestsNotTaken": len(unread),
-            "met": (not unread
-                    and earlier.get("sourceDigests") == later.get("sourceDigests")
-                    and bool(earlier.get("sourceDigests"))),
+            "met": judged(earlier.get("sourceDigests") == later.get("sourceDigests")
+                          and bool(earlier.get("sourceDigests")), unread),
             "what": "every source whose contents decide a run was readable and had the same digest"
                     " before the first subprocess and after the last"}
 
