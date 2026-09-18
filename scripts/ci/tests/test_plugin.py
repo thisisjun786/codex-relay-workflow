@@ -341,6 +341,33 @@ class SyntheticRepositoryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("working tree", result.stderr)
 
+    def test_working_tree_must_ship_the_committed_skill_set(self):
+        files = dict(GOOD)
+        files["skills/crw-plan/SKILL.md"] = "---\nname: crw-plan\ndescription: d\n---\n"
+        files["skills/crw-plan/agents/openai.yaml"] = "interface:\n"
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.build(folder, files)
+            shutil.rmtree(root / "plugins/crw/skills/crw-plan")
+            result = self.run_in(root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("crw-plan", result.stderr)
+
+    def test_root_link_target_is_compared_exactly(self):
+        # A committed link target with trailing whitespace is a broken link.
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.build(folder, link="plugins/crw/skills ")
+            result = self.run_in(root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("root link points at", result.stderr)
+
+    def test_declared_license_must_match_the_repository_license(self):
+        with tempfile.TemporaryDirectory() as folder:
+            files = dict(GOOD, **{".codex-plugin/plugin.json":
+                                  json.dumps(manifest(license="Apache-2.0"))})
+            result = self.run_in(self.build(folder, files))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("license", result.stderr)
+
 
 class CommandTests(unittest.TestCase):
     def run_script(self, *args):

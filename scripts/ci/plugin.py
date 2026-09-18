@@ -25,6 +25,7 @@ MARKETPLACE = ".agents/plugins/marketplace.json"
 MANIFEST = ".codex-plugin/plugin.json"
 TOP_LEVEL = {".codex-plugin", "skills", "LICENSE"}
 REQUIRED_FILES = (MANIFEST, "LICENSE")
+LICENSE_ID = "MIT"
 IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 SEMVER = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
                     r"(?:-" + IDENTIFIER + r"(?:\." + IDENTIFIER + r")*)?"
@@ -151,6 +152,9 @@ def manifest_errors(manifest, plugin_root_name, label):
         errors.append(label + " manifest: keywords must be a nonempty list")
     elif not all(isinstance(word, str) and word for word in manifest["keywords"]):
         errors.append(label + " manifest: keywords must be nonempty strings")
+    if manifest.get("license") != LICENSE_ID:
+        errors.append(label + " manifest: license " + repr(manifest.get("license"))
+                      + " must be " + repr(LICENSE_ID) + ", the license this repository ships")
     author = manifest.get("author")
     if not isinstance(author, dict) or not isinstance(author.get("name"), str) or not author["name"]:
         errors.append(label + " manifest: author.name is required")
@@ -193,7 +197,8 @@ def marketplace_errors(catalog, manifest, plugin_relative):
         errors.append("marketplace: name " + repr(catalog.get("name"))
                       + " must match the plugin name " + repr(manifest.get("name")))
     interface = catalog.get("interface")
-    expected = (manifest.get("interface") or {}).get("displayName")
+    declared = manifest.get("interface")
+    expected = declared.get("displayName") if isinstance(declared, dict) else None
     if not isinstance(interface, dict) or interface.get("displayName") != expected:
         errors.append("marketplace: interface.displayName must match the manifest display name "
                       + repr(expected))
@@ -285,10 +290,11 @@ def compatibility_link_errors(revision, manifest, plugin_relative):
     mode, kind, sha = meta.split(" ", 2)
     if mode != "120000" or kind != "blob":
         return ["skills: the repository root entry must be a symlink to the packaged skills"]
-    target = git("cat-file", "blob", sha).strip()
-    expected = plugin_relative + "/" + declared_skills_path(manifest)
+    target = git("cat-file", "blob", sha, binary=True)
+    expected = (plugin_relative + "/" + declared_skills_path(manifest)).encode()
     if target != expected:
-        return ["skills: the root link points at " + repr(target) + " instead of " + repr(expected)
+        return ["skills: the root link points at " + repr(target.decode(errors="replace"))
+                + " instead of " + repr(expected.decode())
                 + "; both installation paths must read one source"]
     return []
 
@@ -343,7 +349,14 @@ def check_revision(revision):
     errors += manifest_read_errors
     if working_manifest is not None:
         errors += manifest_errors(working_manifest, PLUGIN_ROOT.name, "working tree")
-        errors += skills(working, working_manifest, "working tree")[0]
+        working_skill_errors, working_found = skills(working, working_manifest, "working tree")
+        errors += working_skill_errors
+        # A local marketplace installs this tree, so a skill deleted or added here
+        # would be published even though the committed revision is complete.
+        for name in sorted(set(found) - set(working_found)):
+            errors.append("working tree: " + name + " ships in the revision but is missing here")
+        for name in sorted(set(working_found) - set(found)):
+            errors.append("working tree: " + name + " is not part of the revision payload")
         try:
             catalog_now = json.loads((ROOT / MARKETPLACE).read_text(encoding="utf-8"))
             if not isinstance(catalog_now, dict):
