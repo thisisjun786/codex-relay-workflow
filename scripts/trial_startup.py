@@ -366,10 +366,17 @@ def anchored_launcher(record, environment=None):
     """The launcher, accepted only where the host record already names it."""
     declared = absolute(field(record, "relay", "launcher"), "relay.launcher")
     named = entry_point(environment)
-    if not any(resolve(pointer) == resolve(declared) for pointer in named["pointers"]):
+    # Lexically, against the pointer as the host record spells it, and the pointer is what runs.
+    # A resolved comparison accepted a symlink that resolved to the pointer, and the probes then
+    # executed that symlink: replacing it after the digest check, during the witness delay for
+    # instance, would have run another program under this command's guarantee.
+    matched = next((pointer for pointer in named["pointers"]
+                    if os.path.normpath(str(declared)) == os.path.normpath(pointer)), None)
+    if matched is None:
         raise Refused("the launcher is not the entry point the host record names",
                       launcher=str(declared), named=named["pointers"],
                       hostRecord=named["hostRecord"])
+    declared = Path(matched)
     if not declared.is_file():
         raise Refused("the launcher is not a regular file", launcher=str(declared))
     if within(declared, field(record, "trialRoot")):
@@ -387,7 +394,7 @@ def anchored_launcher(record, environment=None):
             "namedBy": named["pointers"]}
 
 
-def load_start(path, *, environment=None):
+def load_start(path, *, environment=None, mode="preflight"):
     """Read the record, or refuse. Nothing after this is reached on a record that cannot be used."""
     start = absolute(path, "--start")
     found = reading.read_json(start, "the start record")
@@ -414,6 +421,14 @@ def load_start(path, *, environment=None):
     if not within(start, trial_root):
         raise Refused("the start record itself is outside the trial root", path=str(start),
                       trialRoot=str(trial_root))
+
+    if mode == "ledger":
+        # Grading a ledger uses the trial root, the window and nothing else. Requiring the
+        # installed relay and every capture here made a finished trial ungradable as soon as the
+        # installation it ran against changed, which is a fact about afterwards.
+        record["_start"] = str(start)
+        record["_relay"] = None
+        return record
 
     age = number(record.get("captureMaxAgeSeconds"), "captureMaxAgeSeconds",
                  minimum=1, maximum=CAPTURE_AGE_CEILING)
@@ -1082,32 +1097,19 @@ def reading_assignment(record, relay):
 
 
 def names_exactly(text, value):
-    """Whether the message names this exact value rather than something beginning with it.
+    """Whether the message names this exact value as a word of its own.
 
-    A substring test agreed that a message naming /repo/artifact.py.bak carried /repo/artifact.py,
-    so the gate reported an identity the child would never receive. An occurrence counts when the
-    whole path-like run around it is this value, allowing for the sentence punctuation that follows
-    a path in prose: the message is prose, and a path at the end of a sentence carries a full stop
-    that belongs to the sentence rather than to the path.
+    A POSIX filename may hold any byte but a separator and a NUL, so no rule can tell a trailing
+    bracket or full stop that belongs to prose from one that belongs to the path. Two attempts
+    proved it: a substring test read /repo/artifact.py.bak as naming /repo/artifact.py, and
+    stripping punctuation afterwards read /repo/file! as naming /repo/file while refusing a real
+    artifact ending in a bracket.
 
-    The run is delimited by whitespace, because a POSIX filename may hold anything except a
-    separator and a NUL: a token set listing the ordinary path characters stopped at a per cent
-    sign, and /repo/file%backup was read as naming /repo/file.
+    So the requirement moves to the message instead of to the guessing: the dispatch message names
+    each identity as a whitespace-delimited word. That is a rule an operator can follow exactly,
+    and this comparison has nothing left to get wrong.
     """
-    if not value:
-        return False
-    wrappers = "()[]{}<>\"'" + chr(96)
-    start = text.find(value)
-    while start != -1:
-        left, right = start, start + len(value)
-        while left > 0 and not text[left - 1].isspace():
-            left -= 1
-        while right < len(text) and not text[right].isspace():
-            right += 1
-        if text[left:right].strip(wrappers).rstrip(".,;:!?").lstrip(wrappers) == value:
-            return True
-        start = text.find(value, start + 1)
-    return False
+    return bool(value) and value in text.split()
 
 
 def order_gate(record, store_payload, entry):
@@ -1537,7 +1539,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     try:
-        record = load_start(args.start)
+        record = load_start(args.start, mode=args.command)
         # The clock is this process's own. A pinned one was offered for tests, and an old capture
         # replayed beside an equally old pinned time was fresh by construction, which is the one
         # thing capture freshness exists to refuse.

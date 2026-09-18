@@ -358,7 +358,7 @@ class World:
 
     def run_ledger(self):
         record = startup.load_start(str(self.trial / "start.json"),
-                                    environment=self.environment())
+                                    environment=self.environment(), mode="ledger")
         record["_now"] = startup.datetime.datetime.now(startup.datetime.timezone.utc)
         return startup.ledger(record)
 
@@ -1553,8 +1553,10 @@ class ThirdHostedRound(TrialCase):
                          if c["field"] == "messageCarriesRelationship" and c["agrees"] is False])
 
     def test_exact_naming_still_accepts_ordinary_prose(self):
-        for around in ("relationship {id} and artifact {path}.",
-                       "({id}) [{path}]", "{id}\n{path}\n"):
+        # The identities are named as words of their own; the prose around them is free.
+        for around in ("relationship {id} and artifact {path} when ready",
+                       "{id}\t{path}\n", "{id}\n{path}\n",
+                       "emit\n  {path}\nunder\n  {id}\n"):
             self.world.message_file.write_text(
                 around.format(id=World.RELATIONSHIP, path=str(self.world.artifact)),
                 encoding="utf-8")
@@ -1721,6 +1723,76 @@ class FifthHostedRound(TrialCase):
         self.assertIsNotNone(refused)
         self.assertIn("exactly one child", refused.reason)
         self.assertEqual(refused.detail["boundary"], "B")
+
+
+class SixthHostedRound(TrialCase):
+    """The launcher that could be swapped, the ledger that needed the relay, and the matching rule."""
+
+    def test_the_declared_launcher_must_be_the_pointer_itself(self):
+        link = self.world.root / "launcher-link"
+        link.symlink_to(self.world.launcher)
+        self.world.record["relay"]["launcher"] = str(link)
+        self.world.record["relay"]["launcherSha256"] = startup.digest_of(link)
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("host record names", refused.reason)
+
+    def test_the_pointer_the_host_record_names_is_what_runs(self):
+        record = startup.load_start(str(self.world.trial / "start.json"),
+                                    environment=self.world.environment())
+        self.assertEqual(record["_relay"]["launcher"], str(self.world.launcher))
+        self.assertIn(str(self.world.launcher), record["_relay"]["namedBy"])
+
+    def test_a_finished_trial_stays_gradable_when_the_installation_changes(self):
+        now = time.time()
+        opened, closed = now - 60, now - 5
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window"},
+        ])
+        # The relay is upgraded away after the window closed. Grading uses none of it.
+        self.world.launcher.unlink()
+        document = self.world.run_ledger()
+        self.assertTrue(document["window"]["windowIsClean"])
+        self.assertEqual(document["judgmentsThatFailed"], [])
+        code, payload, stderr = self.world.run_cli("ledger")
+        self.assertEqual(code, 0, stderr)
+
+    def test_the_preflight_still_needs_the_installation(self):
+        self.world.launcher.unlink()
+        code, payload, stderr = self.world.run_cli()
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("launcher", payload["refused"])
+
+    def test_a_path_the_message_only_contains_is_not_named(self):
+        for suffix in ("!", "%backup", ".bak", ")", "x"):
+            self.world.message_file.write_text(
+                "relationship " + World.RELATIONSHIP + " artifact "
+                + str(self.world.artifact) + suffix + "\n", encoding="utf-8")
+            gate = self.world.preflight()["orderGate"]
+            self.assertTrue([c for c in gate["comparisons"]
+                             if c["field"] == "messageCarriesArtifact" and c["agrees"] is False],
+                            suffix + " was read as naming the artifact")
+
+    def test_an_artifact_whose_name_ends_in_a_bracket_is_named_when_written_as_a_word(self):
+        odd = self.world.repos["A"] / "result)"
+        odd.write_text("# odd\n", encoding="utf-8")
+        self.world.assignment_file.write_text(json.dumps({
+            "relationshipId": World.RELATIONSHIP, "childTaskId": World.CHILD_A,
+            "executionGeneration": 1, "artifacts": [str(odd)]}), encoding="utf-8")
+        self.world.record["assignment"]["artifacts"] = [str(odd)]
+        self.world.message_file.write_text(
+            "relationship " + World.RELATIONSHIP + " artifact " + str(odd) + "\n",
+            encoding="utf-8")
+        self.world.flush()
+        gate = self.world.preflight()["orderGate"]
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "messageCarriesArtifact" and c["agrees"] is True],
+                        json.dumps(gate["comparisons"]))
 
 
 if __name__ == "__main__":                                           # pragma: no cover

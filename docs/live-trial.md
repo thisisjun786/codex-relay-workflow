@@ -120,11 +120,13 @@ its string reads, which the gate checks by looking at the components that exist.
 refused for the same reason the relay refuses it. Private trial records are the opposite case and keep the resolved
 comparison, where following the link is exactly the escape worth catching: a relative one is resolved against whichever directory a reader happens to be in, and an
 unnormalised, trailing-slashed or tilde-bearing one is refused at emit, so a gate that accepted it
-would report a dispatch as ready that the relay then refuses. The message is prose, so it is
-searched for the exact identifier rather than for a prefix of one: a message naming
-`/repo/artifact.py.bak` does not carry `/repo/artifact.py`, and neither does one naming
-`/repo/artifact.py%backup`: a POSIX filename may hold anything but a separator and a NUL, so the run is
-delimited by whitespace rather than by a list of the characters paths usually use. The artifact roots come from the captured registration receipt, because
+would report a dispatch as ready that the relay then refuses. The message is prose, and the identities inside it are
+named as words of their own: each appears delimited by whitespace, nothing else. A POSIX filename
+may hold any byte but a separator and a NUL, so no rule could tell a trailing bracket or full stop
+that belongs to the sentence from one that belongs to the path, and two attempts proved it: a
+substring test read `/repo/artifact.py.bak` as naming `/repo/artifact.py`, and stripping punctuation
+afterwards read `/repo/file!` as naming `/repo/file` while refusing a real artifact ending in a bracket.
+The requirement therefore sits on the message, where an operator can meet it exactly. The artifact roots come from the captured registration receipt, because
 no read-only command returns them; what actually enforces them is the manifest `emit` builds, which
 is where it belongs.
 
@@ -230,8 +232,14 @@ The start record is one JSON object under the trial root, with absolute paths th
 The record names parameters, never command lines. The checker composes every command it runs, and
 the only programs it can start are `git` and the relay entry point that the runtime host record
 under the state home names through its owned pointer. The record cannot nominate another program:
-the host record's location comes from the environment, and the launcher it names is compared with
-the one the record declares.
+the host record's location comes from the environment, the declared launcher has to be that pointer
+as the host record spells it rather than something that resolves to it, and the pointer is the path
+that runs. A link accepted because it resolved to the pointer could be replaced afterwards, and the
+probes would have run whatever replaced it.
+
+The ledger command reads the trial root and the window and nothing else, so it does not ask for the
+installation at all: a trial that finished stays gradable after the relay it ran against is upgraded
+or removed.
 
 The nonce is not written by the checker. During preparation one participant writes a challenge into
 the store and the rest read it back, which is what turns an agreeing store id and inode into proof.
