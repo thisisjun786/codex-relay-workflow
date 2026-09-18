@@ -1199,6 +1199,25 @@ class ScopeTests(unittest.TestCase):
         on_displaced = harness.supplemental(self.scenarios_with("present", "displaced"))
         self.assertFalse(on_displaced["foreignRegistrationSurvives"]["met"])
 
+    def test_an_entry_rewritten_in_place_has_not_survived(self):
+        """The claim is that another owner's registration survived, not that a string is present.
+
+        An entry whose command still reads the same while its type, timeout or matcher changed has
+        been rewritten, and the owner would find a registration it did not make.
+        """
+        seeded = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+        self.assertEqual(harness._foreign(seeded), "present")
+        for field, value in (("timeout", 99), ("type", "something-else")):
+            altered = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+            altered["hooks"][harness.completion.EVENT][0]["hooks"][0][field] = value
+            self.assertEqual(harness._foreign(altered), "altered",
+                             "an entry rewritten in " + field + " was reported as surviving")
+        with_matcher = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+        with_matcher["hooks"][harness.completion.EVENT][0]["matcher"] = "something"
+        self.assertEqual(harness._foreign(with_matcher), "altered")
+        gone = {"version": 1, "hooks": {harness.completion.EVENT: []}}
+        self.assertEqual(harness._foreign(gone), "displaced")
+
     def test_a_predicate_over_a_scope_fails_when_any_arm_in_it_fails(self):
         """The helper itself, driven with an arm that fails, rather than watched on a clean run."""
         passing = {"off": "present", "on": "present"}

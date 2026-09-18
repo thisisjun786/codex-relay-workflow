@@ -76,14 +76,21 @@ RELAY_PYTHON = (3, 11)
 OFF, ON = "off", "on"
 ARMS = (OFF, ON)
 
+# What became of another owner's registration: still the entry it was, rewritten in place, or
+# gone. Three answers, because an entry whose command survived while its shape changed is neither
+# of the other two.
+FOREIGN_PRESENT = "present"
+FOREIGN_ALTERED = "altered"
+FOREIGN_DISPLACED = "displaced"
+
 # What each arm's install must report before anything it left behind is believed. An installer that
 # fails before writing leaves exactly the empty Codex home a successful dry run leaves, so without
 # this the off arm would pass on a run that never happened.
 ARM_INSTALL = {
     OFF: {"installExit": 0, "installResult": "MISSING", "installSettings": "config_would_create",
-          "registration": 0, "foreignRegistration": "present"},
+          "registration": 0, "foreignRegistration": FOREIGN_PRESENT},
     ON: {"installExit": 0, "installResult": "CREATED", "installSettings": "config_created",
-         "registration": 1, "foreignRegistration": "present"},
+         "registration": 1, "foreignRegistration": FOREIGN_PRESENT},
 }
 
 # The one reason the off arm has nothing to read. Written once, because it is one fact about one
@@ -558,13 +565,26 @@ def hooks_file(codex_home):
 
 
 def _foreign(document):
-    """Whether the entry that was in the file before the install is still in it."""
+    """Whether the entry that was in the file before the install is still the entry it was.
+
+    The whole entry, not its command. The claim is that another owner's registration survived, and
+    an entry whose command still reads /opt/cxc/stop while its type, timeout or matcher changed
+    has not survived: it has been rewritten, and the owner would find a registration it did not
+    make. Matching on the command alone made the predicate narrower than the claim, which is the
+    same shape as a judgment reading one arm while speaking for two.
+    """
+    seeded = FOREIGN_HOOKS["hooks"][completion.EVENT][0]
     groups = ((document.get("hooks") or {}).get(completion.EVENT) or [])
     for group in groups:
         for entry in (group or {}).get("hooks") or []:
-            if isinstance(entry, dict) and entry.get("command") == FOREIGN_COMMAND:
-                return "present"
-    return "displaced"
+            if not isinstance(entry, dict) or entry.get("command") != FOREIGN_COMMAND:
+                continue
+            if entry != seeded["hooks"][0]:
+                return FOREIGN_ALTERED
+            if (group or {}).get("matcher") != seeded.get("matcher"):
+                return FOREIGN_ALTERED
+            return FOREIGN_PRESENT
+    return FOREIGN_DISPLACED
 
 
 
@@ -1173,7 +1193,8 @@ def supplemental(scenarios):
             "arms": list(ARMS),
             "values": foreign_values,
             "notTaken": len(foreign_not_taken),
-            "met": judged(across(ARMS, foreign_values, lambda value: value == "present"),
+            "met": judged(across(ARMS, foreign_values,
+                                 lambda value: value == FOREIGN_PRESENT),
                           foreign_not_taken),
             "isNot": "evidence that the two hooks interact at run time. The foreign command is"
                      " never executed here; this reads the file, not a decision.",
