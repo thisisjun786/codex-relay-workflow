@@ -16,6 +16,23 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 LINK = re.compile(r"\[[^\]\n]*\]\((<[^>\n]+>|[^\s)]+)(?:\s+\"[^\"]*\")?\)")
+MANIFEST = ROOT / "plugins/crw/.codex-plugin/plugin.json"
+
+
+def skills_root():
+    """The manifest's declared component path is where the skills live."""
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    declared = manifest.get("skills") if isinstance(manifest, dict) else None
+    if not isinstance(declared, str) or not declared.startswith("./"):
+        raise ValueError("skills must be declared as a ./ relative path")
+    relative = Path(declared[2:].strip("/"))
+    if not relative.name or relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("the declared skills path must stay inside the plugin")
+    plugin_root = MANIFEST.parent.parent.resolve()
+    root = (plugin_root / relative).resolve()
+    if not root.is_relative_to(plugin_root):
+        raise ValueError(f"the declared skills path resolves outside {plugin_root}")
+    return root
 
 
 def scalar(text):
@@ -98,6 +115,11 @@ def main():
     ).decode().split("\0")
     errors = []
     skills = 0
+    try:
+        root = skills_root()
+    except (OSError, ValueError) as exc:
+        print(f"{MANIFEST}: {exc}", file=sys.stderr)
+        return 1
     for name in sorted(set(files) - {""}):
         path = ROOT / name
         try:
@@ -105,7 +127,7 @@ def main():
                 ast.parse(path.read_text(encoding="utf-8"), filename=name)
             if path.suffix == ".md":
                 errors.extend(link_errors(path, ROOT))
-            if path.name == "SKILL.md" and path.parent.parent == ROOT / "skills":
+            if path.name == "SKILL.md" and path.parent.parent.resolve() == root:
                 metadata(path)
                 skills += 1
         except (OSError, SyntaxError, ValueError) as exc:

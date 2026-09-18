@@ -440,7 +440,8 @@ ready receipt has a nonempty manifest; a document URL alone cannot be relayed.
 For a mutable linked result, include its stable ID/link, delivered revision or
 updated-at evidence and verified output snapshot. Keep the input baseline separate.
 
-An implementation task works in `/home/jun/code-worktrees/<original-project>/<task>`, where the
+An implementation task works in `<worktree-root>/<original-project>/<task>`, where `<worktree-root>`
+is the worktree root the operator's applicable working instructions name, the
 project segment comes from the original repository's project name rather than the directory name of
 whatever checkout is currently open, and the task segment is short kebab-case. The branch is
 `codex/<task>`. An existing checkout belonging to the same task is reused rather than duplicated,
@@ -648,7 +649,7 @@ updates a trusted hook; re-trust is a separate, visible act.
 An installation records the identity, the trusted hash, the hook file path with its SHA-256, and
 the issue that installed it, then reads the registration back. Installed, enabled, and observed to
 have fired are three separate claims and the check reports them separately. The surface is the user
-hook file, since this repository ships skills only and does not package a plugin manifest; a
+hook file, since the plugin this repository packages declares skills only and no hook file; a
 plugin-owned hook file is the alternative and is `proposed` rather than chosen. What the hook
 decides is owned by the managed-marking contract and is deliberately not defined here.
 
