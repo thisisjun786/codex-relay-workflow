@@ -2305,8 +2305,10 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             register(temporary)
             first, second = second_registration(temporary, "journal-two")
             document = json.loads(second.read_text(encoding="utf-8"))
-            # The same journal as the first registration, with a trailing separator.
-            document["journalRoot"] = str(Path(temporary) / "journal") + os.sep
+            # The same journal as the first registration, spelled with a redundant './'. NOT a
+            # trailing separator: that one requires a directory, so it is not interchangeable
+            # to the kernel and this key deliberately keeps it distinct.
+            document["journalRoot"] = str(Path(temporary) / "." / "journal")
             second.write_text(json.dumps(document), encoding="utf-8")
             path = Path(temporary) / "hooks.json"
             hooks_file = json.loads(path.read_text(encoding="utf-8"))
@@ -2338,6 +2340,23 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          "one journal directory, two spellings, two listings: " + repr(journals))
         self.assertEqual(len(adapters), len(set(adapters)),
                          "one program, two spellings, two probes: " + repr(adapters))
+
+    def test_a_key_never_merges_two_spellings_the_kernel_keeps_apart(self):
+        """The direction that matters. Sharing a reading between two spellings of ONE file
+        costs a syscall; sharing it between spellings of TWO files reports another resource's
+        answer. normpath cancels 'X/..', and the kernel follows X first when X is a symlink, so
+        that cancellation is not this function's to make."""
+        keys = completion.resource_key
+        # Same file, so one key: '.' components and duplicate separators name the same path.
+        self.assertEqual(keys("/tmp/./hook.py"), keys("/tmp/hook.py"))
+        self.assertEqual(keys("/tmp//hook.py"), keys("/tmp/hook.py"))
+        # Not provably the same file, so never one key.
+        self.assertNotEqual(keys("/srv/link/../hook.py"), keys("/srv/hook.py"),
+                            "'..' was cancelled, which merges two files whenever the segment"
+                            " before it is a symlink")
+        self.assertNotEqual(keys("/tmp/hook.py/"), keys("/tmp/hook.py"),
+                            "a trailing separator requires a directory, so the two are not"
+                            " interchangeable to lstat")
 
 
 class TheCausePartitionItself(unittest.TestCase):

@@ -1141,20 +1141,40 @@ def _cell(value, evidence, **extra):
 
 
 def resource_key(path):
-    """One key for one resource, however a registration spelled it.
+    """One key for one resource, for the spellings that are provably one resource.
 
-    Caching a reading by the raw string still read the same file twice when two registrations
-    wrote it differently -- /tmp/journal and /tmp/journal/, or /opt/crw/completion_hook.py and
-    /opt/crw/./completion_hook.py. The host opens one file; two readings of it in one status
-    call can disagree, and the payload then gives two registrations different answers about the
-    same thing.
+    Caching a reading by the raw string read the same file twice when two registrations wrote
+    it differently, and the host opens one file: two readings of it in one status call can
+    disagree, and the payload then gives two registrations different answers about the same
+    thing. So equivalent spellings share a key.
 
-    Expanded and lexically normalised, and deliberately NOT resolved: resolve() walks symlinks,
-    so it would fail on a loop and would make this key depend on what a link points at. Two
-    spellings that only the kernel can equate stay two keys, which costs a second reading and
-    never a wrong one.
+    But only the transformations that PRESERVE what the kernel does. normpath() does two very
+    different jobs, and the second one is not sound here:
+
+      - dropping '.' components and duplicate separators names the same file, always;
+      - cancelling 'X/..' does not, because the kernel follows X first when X is a symlink, so
+        /srv/link/../hook.py and /srv/hook.py are two different files that normpath calls one.
+        Sharing a cached reading between them would report another resource's answer -- a wrong
+        reading rather than a missing one, which is the failure this whole module exists to
+        avoid.
+
+    A trailing separator is left alone for the same reason: it requires a directory, so
+    /tmp/hook.py/ and /tmp/hook.py are not interchangeable to lstat.
+
+    So a spelling carrying '..' keys only to itself, and resolve() is not used at all: it walks
+    symlinks, which would make the key depend on what a link points at and fail on a loop. What
+    this costs is a second reading of one file. What it refuses to cost is a reading of the
+    wrong one.
     """
-    return os.path.normpath(os.path.expanduser(str(path)))
+    expanded = os.path.expanduser(str(path))
+    parts = expanded.split(os.sep)
+    if os.pardir in parts:
+        return expanded
+    trailing = len(parts) > 1 and parts[-1] == ""
+    kept = [part for index, part in enumerate(parts)
+            if part != os.curdir and (part != "" or index == 0)]
+    key = os.sep.join(kept) or os.sep
+    return key + os.sep if trailing else key
 
 
 def presence(path, what, *, directory=False):
