@@ -5586,6 +5586,105 @@ def component_of_for_test(data, name):
     return next(c for c in data["components"] if c["component"] == name)
 
 
+# Only the two build commands are simulated below, and which one an argv is has to be read from
+# the command it runs -- the module the interpreter is told to run, and the operation handed to
+# that module -- never from the text of the paths in it. A temporary destination is named by the
+# host and is free to spell `pip` or `venv`; searching the joined argv for those words then made
+# the environment command answer to the package injection and stubbed out
+# `scripts/install.py --check` instead of running it, on the hosts whose temporary name happened
+# to spell it and nowhere else (CRW-107).
+def module_invocation(argv):
+    """Return `(module, operands)` for `<interpreter> [options] -m <module> [operands]`.
+
+    `-m` counts only inside the leading option block, where the interpreter reads it: a `-c`, a
+    bare `--` and the first operand all end option processing, so a `-m` after any of them is an
+    argument to the program rather than a module selector. An interpreter option that takes a
+    SEPARATE operand -- `-X dev`, `-W error` -- ends the walk early and reads as no module at
+    all. Neither the installer nor this file emits one, and that is the safe direction to be
+    wrong in: a command this cannot name runs for real instead of being silently simulated.
+    """
+    parts = [str(a) for a in argv]
+    for index in range(1, len(parts)):
+        token = parts[index]
+        if token == "-m":
+            return (parts[index + 1] if index + 1 < len(parts) else None), parts[index + 2:]
+        if token in ("-c", "--") or not token.startswith("-"):
+            break
+    return None, []
+
+
+def build_step(argv):
+    """Name the installer build step an argv performs, or None when it performs neither.
+
+    The shapes are the installer's own: `<interpreter> -m venv <environment>` creates the
+    environment and `<python> -m pip install --quiet <package>...` installs the packages. Git,
+    the `-c` import probes and `scripts/install.py --check` are not build steps and must run.
+    """
+    module, operands = module_invocation(argv)
+    if module == "venv":
+        return "create environment"
+    if module == "pip":
+        operation = next((o for o in operands if not o.startswith("-")), None)
+        if operation == "install":
+            return "install packages"
+    return None
+
+
+# What each simulated build step says when it is made to fail. The wording is this fixture's;
+# what the assertions read is which step carries it.
+BUILD_REFUSALS = {
+    "create environment": "venv refused to build",
+    "install packages": "no matching distribution",
+}
+
+
+class BuildStepNamingTests(unittest.TestCase):
+    """The naming the failure injection rests on, checked against the commands themselves.
+
+    A destination directory is named by the host, so a name that happens to contain `pip` or
+    `venv` must not turn an unrelated command into a build step, and must not stop one of the
+    two real build commands from being recognised as itself.
+    """
+
+    CONTAMINATED = "/var/tmp/crw107-pip-venv-42"
+
+    def test_the_two_build_commands_are_named_from_module_and_operation(self):
+        environment = Path(self.CONTAMINATED) / "dest" / "env-1-a8ffcbfd23f0"
+        cases = (
+            ([sys.executable, "-m", "venv", str(environment)], "create environment"),
+            ([str(environment / "bin" / "python"), "-m", "pip", "install", "--quiet",
+              str(ROOT / "packages" / "codex-thread-bridge"),
+              str(ROOT / "packages" / "codex-session-relay")], "install packages"),
+        )
+        for argv, expected in cases:
+            with self.subTest(expected):
+                self.assertEqual(build_step(argv), expected)
+
+    def test_a_command_whose_path_spells_a_build_tool_is_not_a_build_step(self):
+        environment = Path(self.CONTAMINATED) / "dest" / "env-1-a8ffcbfd23f0"
+        cases = {
+            # The one the joined-argv match stubbed out: a real check that quietly stopped
+            # running in any destination whose name spelled a build tool.
+            "the installed-skill check": [sys.executable, str(ROOT / "scripts" / "install.py"),
+                                          "--check", "--dest", self.CONTAMINATED + "/skills"],
+            "an import probe": [str(environment / "bin" / "python"), "-c",
+                                "import codex_session_relay"],
+            "the settings probe": [str(environment / "bin" / "python"), "-B", "-c",
+                                   "import json, codex_session_relay"],
+            "a git read": ["git", "-C", self.CONTAMINATED, "rev-parse", "HEAD"],
+            "an argument that only looks like one": [sys.executable, "--", "-m", "pip",
+                                                     "install"],
+        }
+        for label, argv in cases.items():
+            with self.subTest(label):
+                self.assertIsNone(build_step(argv), label + " is not a build step")
+
+    def test_pip_names_the_install_step_only_when_it_installs(self):
+        self.assertIsNone(build_step([sys.executable, "-m", "pip", "--version"]))
+        self.assertEqual(build_step([sys.executable, "-m", "pip", "--quiet", "install", "/pkg"]),
+                         "install packages")
+
+
 class UpdateRecoveryTests(unittest.TestCase):
     """Failure injected at each boundary an update crosses.
 
@@ -5593,6 +5692,16 @@ class UpdateRecoveryTests(unittest.TestCase):
     selected, the pointer still reaches it, the registration is byte-identical, and the store is
     the same file with the same rows in it.
     """
+
+    # Every failure this fixture injects, with the step the result has to name. The boundary
+    # case and the destination-name contrast both read it, so an injection added here is
+    # covered by both rather than by whichever one was remembered.
+    BOUNDARY_STEPS = {
+        "create environment": "create environment",
+        "install packages": "install packages",
+        "replace the owned pointer": "replace the owned pointer",
+        "read the owned pointer back": "read the owned pointer back",
+    }
 
     def _run(self, host, *, breaking=None, gate=None, interpose=None, probes=None,
              clean_store=False):
@@ -5611,14 +5720,11 @@ class UpdateRecoveryTests(unittest.TestCase):
         real_run = runtime_install.subprocess.run
 
         def fake_run(argv, **kwargs):
-            joined = " ".join(str(a) for a in argv)
-            building = "venv" in joined or "pip" in joined
-            if not building:
+            step = build_step(argv)
+            if step is None:
                 return real_run(argv, **kwargs)
-            if breaking == "create environment" and "venv" in joined:
-                return subprocess.CompletedProcess(argv, 1, "", "venv refused to build")
-            if breaking == "install packages" and "pip" in joined:
-                return subprocess.CompletedProcess(argv, 1, "", "no matching distribution")
+            if step == breaking:
+                return subprocess.CompletedProcess(argv, 1, "", BUILD_REFUSALS[step])
             return subprocess.CompletedProcess(argv, 0, "", "")
 
         def fake_location(python, module):
@@ -5773,13 +5879,7 @@ class UpdateRecoveryTests(unittest.TestCase):
                                  label + ": the pointer still names the previous runtime")
 
     def test_each_failure_names_the_boundary_it_stopped_at(self):
-        expected = {
-            "create environment": "create environment",
-            "install packages": "install packages",
-            "replace the owned pointer": "replace the owned pointer",
-            "read the owned pointer back": "read the owned pointer back",
-        }
-        for breaking, step in expected.items():
+        for breaking, step in self.BOUNDARY_STEPS.items():
             with self.subTest(breaking):
                 with tempfile.TemporaryDirectory() as temporary:
                     host = _Host(temporary)
@@ -5787,6 +5887,45 @@ class UpdateRecoveryTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertEqual(payload["failedStep"], step,
                                  "a reader must not have to infer where it stopped")
+
+    def test_the_boundary_is_read_from_the_command_and_not_the_path_it_ran_in(self):
+        """The same injections again, in destinations that spell the build tools.
+
+        A temporary directory is named by the host. When that name contained `pip`, the
+        joined-argv match made the environment command answer to the package injection: the run
+        stopped at the first boundary and reported the second one. Both spellings exit 1 either
+        way, so only an assertion that names the step sees it, and only on the hosts whose
+        temporary name happens to spell it -- which is why it surfaced as an unrelated PR's CI
+        failing and not as a failure here.
+        """
+        parent = Path(tempfile.mkdtemp(prefix="crw107-contrast-"))
+        try:
+            self.assertFalse(
+                [t for t in ("pip", "venv") if t in str(parent)],
+                "the system temporary directory " + str(parent) + " spells a build tool, so the"
+                " neutral destination here would not be neutral: point TMPDIR at one that does"
+                " not, because this contrast means nothing without a baseline")
+            for name in ("plain", "pip", "venv", "pip-venv"):
+                destination = parent / ("crw107-" + name)
+                for token in ("pip", "venv"):
+                    self.assertEqual(
+                        token in str(destination), token in name,
+                        "a case only means something if its destination really does or does"
+                        " not spell " + token)
+                for breaking, step in self.BOUNDARY_STEPS.items():
+                    with self.subTest(destination=name, breaking=breaking):
+                        destination.mkdir()
+                        try:
+                            code, payload = self._run(_Host(str(destination)), breaking=breaking)
+                        finally:
+                            shutil.rmtree(destination, ignore_errors=True)
+                        self.assertEqual(code, 1)
+                        self.assertEqual(
+                            payload["failedStep"], step,
+                            "a destination named " + destination.name + " must not move the"
+                            " boundary the run stopped at")
+        finally:
+            shutil.rmtree(parent, ignore_errors=True)
 
     def test_a_gate_refusal_reports_the_gate_that_refused(self):
         for gate in ("running daemon", "handover in flight", "store would be downgraded"):
