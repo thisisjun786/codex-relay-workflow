@@ -232,6 +232,13 @@ never from arrival order: knowing a digest shows acquaintance with a revision, n
 where the declared graph has a fork, a cycle, an unknown predecessor or a gap, the answer is
 ambiguous and completion is withheld.
 
+A `needs_changes` ruling opens a new generation and names the exact result to correct.
+That result is the new generation's only permitted predecessor outside its own revisions:
+the relay-owned request, ruling and generation must agree on the same relationship and
+immediately preceding result. It is a lineage root, never a candidate for the new head.
+Opening a generation manually does not grant this link. Unknown predecessors and competing
+corrections remain ambiguous; the child can extend a correction with another declared revision.
+
 The criteria must be the set the review was actually made against. `claim` binds the review to the
 set in force at that moment, and a managed assignment refuses a verdict that is bound to nothing.
 Editing a criterion's text afterwards, even keeping its id, invalidates that review rather than
