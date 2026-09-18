@@ -205,6 +205,13 @@ class HygieneTests(unittest.TestCase):
                 errors = plugin.hygiene(payload({**GOOD, name: "x"}), "t")
                 self.assertTrue(any("may not ship" in e for e in errors), errors)
 
+    def test_ordinary_words_are_not_mistaken_for_credentials(self):
+        # The rule matches a credential name, not any word containing one.
+        for name in ("skills/crw-run/secretary.md", "skills/crw-run/credentialing.md",
+                     "skills/crw-run/keyboard.md", "skills/crw-run/database.md"):
+            with self.subTest(name=name):
+                self.assertEqual(plugin.hygiene(payload({**GOOD, name: "x"}), "t"), [])
+
     def test_personal_paths_are_refused_and_placeholders_are_not(self):
         bad = plugin.hygiene(payload({**GOOD, "skills/crw-run/SKILL.md":
                                       "put it in /home/someone/code/x"}), "t")
