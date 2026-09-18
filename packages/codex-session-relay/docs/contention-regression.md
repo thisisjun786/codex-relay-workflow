@@ -60,9 +60,16 @@ What those modules use real time for, and why two criteria are therefore *mixed*
   the one thing an injected clock cannot produce. That is why criterion 3 is mixed.
 - \`test_operational_scale.py\` runs one real replacement worker in a real process.
 
-The same test also checks the other inventory this map kept getting wrong: every
+That test also binds each row's Clock cell to the modules the row names, so a
+criterion cannot be relabelled \`injected\` while still naming a module that waits on
+a real clock. And it checks the other inventory this map kept getting wrong: every
 reused class named in the table above must exist in the module it is attributed to,
 so a stale citation fails the suite instead of surviving review.
+
+What none of that closes: whether a new test asserts something an existing test
+already asserts. No scan can answer that, and claiming otherwise would be the same
+kind of overstatement this section exists to prevent. The reuse column is where that
+judgement is recorded, not where it is enforced.
 
 \`FourHourBoundary\` already drives the supervisor past four hours of scripted
 monotonic time and asserts the store identity, the generations, the launch count,
