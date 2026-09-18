@@ -9104,6 +9104,29 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
                             " clearable")
         self.assertNotIn(str(host.candidate), found["residualPaths"])
 
+    def test_a_relative_destination_with_no_recorded_pointer_still_reads_its_own_pointer(self):
+        """A legacy or foreign-pointer host records no pointer, so the fallback derives one
+        from --dest. Built from the raw spelling while the survey root was absolute, the two
+        boundary operands compared unequal and a pointer sitting inside the very destination
+        being surveyed was reported as another installation's and never inspected."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record.pop("pointer", None)
+            hostrecord.save(host.record_path, record)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            here = os.getcwd()
+            try:
+                os.chdir(str(host.destination.parent))
+                found = _diagnose(host, dest=host.destination.name)
+            finally:
+                os.chdir(here)
+        self.assertNotEqual(found["residue"]["pointer"]["finding"],
+                            residue.POINTER_OUTSIDE_DESTINATION,
+                            "the pointer inside this destination was disowned over a spelling")
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.FOREIGN_POINTER,
+                         "the record claims no pointer, so the link is reported and kept")
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here

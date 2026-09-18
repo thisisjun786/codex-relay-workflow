@@ -1040,11 +1040,18 @@ def cmd_diagnose(args):
     # scope to read, and the caller says so by passing None rather than by omitting the
     # keyword: no conflict found and nobody looked are different answers.
     destination = getattr(args, "dest", None)
+    # Settled once, here, and used by everything below that compares paths. A --dest spelled
+    # relatively is a different string from the absolute path an install records, and two
+    # readings of the same destination in two spellings compare unequal: the fallback pointer
+    # was built from the raw spelling while the survey root was absolute, so a pointer sitting
+    # inside the surveyed destination was reported as belonging to another one and never
+    # inspected at all.
+    settled_destination = (Path(destination).expanduser().absolute() if destination else None)
     # The recorded pointer first: that is the link this host actually reaches a runtime
     # through, and a --dest supplied here only names where to look when nothing is recorded.
     owned_pointer = ((record or {}).get("pointer") or {}).get("path")
-    if not owned_pointer and destination:
-        owned_pointer = str(pointer.pointer_path(destination))
+    if not owned_pointer and settled_destination:
+        owned_pointer = str(pointer.pointer_path(settled_destination))
     pointer_read = pointer_state(owned_pointer, record, data) if owned_pointer else None
     # What a run left behind on this destination. Asked here because `residualPaths` used to
     # live only on a failed install's own result, so an operator who wanted the cleanup warning
@@ -1056,8 +1063,8 @@ def cmd_diagnose(args):
     # compares this with a pointer parent. A --dest spelled relatively kept that spelling here
     # while the record holds an absolute path, so an owned dangling pointer under the very
     # destination being surveyed compared unequal and was reported as another installation's.
-    residue_root = (Path(destination).expanduser().absolute() if destination
-                    else Path(owned_pointer).parent if owned_pointer else None)
+    residue_root = (settled_destination
+                    or (Path(owned_pointer).parent if owned_pointer else None))
     # Which directory the protection reading asks about. The pointer the HOST reaches a runtime
     # through is the recorded one, and it does not have to sit under the destination this run
     # was invoked with.
