@@ -205,6 +205,7 @@ that file; link-only completion has no manifest and is not a valid ready receipt
 
 ```text
 Task: [one stable issue ID, bounded result, existing owner]
+Title: [issue ID · short task name, following Child task titles]
 Coordinator: [actual task/host IDs if delegated; project ID only if one exists]
 Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
@@ -213,6 +214,7 @@ Working location: [permitted cwd/artifact roots; no invented Git repository]
 Verification: [observable acceptance criteria and independent evidence needed]
 Return: [actual task ID, result link plus delivered revision/updated-at evidence,
   or durable artifact locator plus digest; verified output snapshot if needed;
+  requested/observed title or title-verification limitation;
   criterion evidence, unresolved limitations and next handoff]
 Recovery: [issue-linked record or private receipt, dispatch/turn IDs and actual owner]
 Relay, if used: [exact issue identity, scope reference, real coordinator/child IDs,
