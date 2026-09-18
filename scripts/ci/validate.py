@@ -28,7 +28,11 @@ def skills_root():
     relative = Path(declared[2:].strip("/"))
     if not relative.name or relative.is_absolute() or ".." in relative.parts:
         raise ValueError("the declared skills path must stay inside the plugin")
-    return (MANIFEST.parent.parent / relative).resolve()
+    plugin_root = MANIFEST.parent.parent.resolve()
+    root = (plugin_root / relative).resolve()
+    if not root.is_relative_to(plugin_root):
+        raise ValueError(f"the declared skills path resolves outside {plugin_root}")
+    return root
 
 
 def scalar(text):

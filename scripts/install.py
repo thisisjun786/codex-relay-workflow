@@ -27,6 +27,10 @@ def declared_skills(manifest_path):
     if not relative.name or relative.is_absolute() or ".." in relative.parts:
         raise ValueError(f"{manifest_path}: the declared skills path must stay inside the plugin")
     root = (manifest_path.parent.parent / relative).resolve()
+    plugin_root = manifest_path.parent.parent.resolve()
+    if not root.is_relative_to(plugin_root):
+        # A symlinked component would resolve outside the package the installer links from.
+        raise ValueError(f"{root}: the declared skills path resolves outside {plugin_root}")
     if not root.is_dir():
         raise ValueError(f"{root}: the declared skills directory does not exist")
     return root

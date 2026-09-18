@@ -25,8 +25,10 @@ MARKETPLACE = ".agents/plugins/marketplace.json"
 MANIFEST = ".codex-plugin/plugin.json"
 TOP_LEVEL = {".codex-plugin", "skills", "LICENSE"}
 REQUIRED_FILES = (MANIFEST, "LICENSE")
-SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-                    r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+SEMVER = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+                    r"(?:-" + IDENTIFIER + r"(?:\." + IDENTIFIER + r")*)?"
+                    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$")
 TEXT_FIELDS = ("name", "version", "description", "license", "repository", "skills")
 INTERFACE_FIELDS = ("displayName", "shortDescription", "longDescription", "developerName",
                     "category", "capabilities", "defaultPrompt")
@@ -120,6 +122,14 @@ def read_manifest(payload, label):
     return manifest
 
 
+def safe_manifest(payload, label):
+    """Read a manifest without ending the run, so both trees can be reported."""
+    try:
+        return read_manifest(payload, label), []
+    except PackageError as exc:
+        return None, [str(exc)]
+
+
 def declared_skills_path(manifest):
     """One rule for where skills live, shared by every consumer of the manifest."""
     declared = manifest.get("skills")
@@ -139,8 +149,10 @@ def manifest_errors(manifest, plugin_root_name, label):
             errors.append(label + " manifest: " + field + " must be a nonempty string")
     if not isinstance(manifest.get("keywords"), list) or not manifest.get("keywords"):
         errors.append(label + " manifest: keywords must be a nonempty list")
+    elif not all(isinstance(word, str) and word for word in manifest["keywords"]):
+        errors.append(label + " manifest: keywords must be nonempty strings")
     author = manifest.get("author")
-    if not isinstance(author, dict) or not author.get("name"):
+    if not isinstance(author, dict) or not isinstance(author.get("name"), str) or not author["name"]:
         errors.append(label + " manifest: author.name is required")
     if plugin_root_name is not None and manifest.get("name") != plugin_root_name:
         errors.append(label + " manifest: name " + repr(manifest.get("name"))
@@ -158,8 +170,15 @@ def manifest_errors(manifest, plugin_root_name, label):
     else:
         for field in INTERFACE_FIELDS:
             value = interface.get(field)
-            if not value or (field in ("capabilities", "defaultPrompt") and not isinstance(value, list)):
-                errors.append(label + " manifest: interface." + field + " is required")
+            if field in ("capabilities", "defaultPrompt"):
+                valid = (isinstance(value, list) and value
+                         and all(isinstance(item, str) and item for item in value))
+            else:
+                valid = isinstance(value, str) and value
+            if not valid:
+                errors.append(label + " manifest: interface." + field
+                              + " must be a nonempty string" + (" list" if field in
+                              ("capabilities", "defaultPrompt") else ""))
     for field in ("hooks", "mcpServers", "apps"):
         if field in manifest:
             errors.append(label + " manifest: " + field + " is not declared by this package; "
@@ -184,14 +203,21 @@ def marketplace_errors(catalog, manifest, plugin_relative):
         return errors + ["marketplace: expected exactly one entry named "
                          + repr(manifest.get("name"))]
     entry = entries[0]
-    source = entry.get("source") or {}
+    source = entry.get("source")
+    if not isinstance(source, dict):
+        errors.append("marketplace: entry source must be an object")
+        source = {}
     if source.get("source") != "local":
         errors.append("marketplace: entry source.source must be local")
     path = source.get("path")
-    if not isinstance(path, str) or PurePosixPath(path.lstrip("./")).as_posix() != plugin_relative:
+    # Compared exactly: a traversal or absolute spelling would install another directory.
+    if path != "./" + plugin_relative:
         errors.append("marketplace: entry source.path " + repr(path)
-                      + " does not point at " + plugin_relative)
-    policy = entry.get("policy") or {}
+                      + " must be " + repr("./" + plugin_relative))
+    policy = entry.get("policy")
+    if not isinstance(policy, dict):
+        errors.append("marketplace: entry policy must be an object")
+        policy = {}
     if policy.get("installation") != "AVAILABLE":
         errors.append("marketplace: entry policy.installation must be AVAILABLE")
     if policy.get("authentication") != "ON_USE":
@@ -310,10 +336,31 @@ def check_revision(revision):
     if release.get("LICENSE", ("", b""))[1] != license_blob:
         errors.append("release LICENSE: the package copy must match the repository license")
     errors += compatibility_link_errors(resolved, manifest, plugin_relative)
-    # A local marketplace installs the working tree, so it is checked with the same rules.
+    # A local marketplace installs the working tree, so it gets the same checks.
     working, working_errors = directory_payload(PLUGIN_ROOT)
     errors += working_errors + hygiene(working, "working tree")
-    errors += skills(working, manifest, "working tree")[0]
+    working_manifest, manifest_read_errors = safe_manifest(working, "working tree")
+    errors += manifest_read_errors
+    if working_manifest is not None:
+        errors += manifest_errors(working_manifest, PLUGIN_ROOT.name, "working tree")
+        errors += skills(working, working_manifest, "working tree")[0]
+        try:
+            catalog_now = json.loads((ROOT / MARKETPLACE).read_text(encoding="utf-8"))
+            if not isinstance(catalog_now, dict):
+                raise ValueError("the marketplace file must be a JSON object")
+            errors += marketplace_errors(catalog_now, working_manifest, plugin_relative)
+        except (OSError, ValueError) as exc:
+            errors.append("working tree marketplace: " + str(exc))
+        if working.get("LICENSE", ("", b""))[1] != (ROOT / "LICENSE").read_bytes():
+            errors.append("working tree LICENSE: the package copy must match the repository license")
+        link = ROOT / "skills"
+        try:
+            expected_link = plugin_relative + "/" + declared_skills_path(working_manifest)
+            if not link.is_symlink() or str(link.readlink()) != expected_link:
+                errors.append("working tree skills: the repository root link must be a symlink to "
+                              + expected_link)
+        except ValueError:
+            pass
     for line in git("status", "--porcelain", "--ignored", "--", plugin_relative).splitlines():
         if line[:2] in ("??", "!!"):
             errors.append("working tree " + line[3:].strip() + ": untracked or ignored files "

@@ -1,6 +1,7 @@
 """Check the package validator against the shapes that install silently wrong."""
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -58,6 +59,14 @@ def payload(files):
 
 
 SKILL = "---\nname: crw-run\ndescription: d\n---\n"
+
+
+def unframed(payload):
+    """The serialisation this digest used before length framing, kept as the counterexample."""
+    lines = [mode + " " + hashlib.sha256(data).hexdigest() + " " + name
+             for name, (mode, data) in sorted(payload.items())]
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
 GOOD = {
     ".codex-plugin/plugin.json": json.dumps(manifest()),
     "skills/crw-run/SKILL.md": SKILL,
@@ -82,6 +91,25 @@ class ManifestTests(unittest.TestCase):
     def test_name_must_match_the_plugin_directory(self):
         errors = plugin.manifest_errors(manifest(), "other", "t")
         self.assertTrue(any("must match the plugin directory" in e for e in errors), errors)
+
+    def test_field_types_are_checked_not_just_presence(self):
+        broken = manifest(author={"name": 1}, keywords=[1])
+        broken["interface"]["displayName"] = 1
+        broken["interface"]["capabilities"] = [1]
+        broken["interface"]["defaultPrompt"] = [""]
+        errors = plugin.manifest_errors(broken, "crw", "t")
+        for expected in ("author.name", "keywords", "interface.displayName",
+                         "interface.capabilities", "interface.defaultPrompt"):
+            self.assertTrue(any(expected in e for e in errors), (expected, errors))
+
+    def test_prerelease_identifiers_follow_the_specification(self):
+        for good in ("1.0.0", "0.1.0-alpha.1", "1.2.3+build.5", "1.0.0-rc.1+exp.sha.5114f85"):
+            with self.subTest(good=good):
+                self.assertEqual(plugin.manifest_errors(manifest(version=good), "crw", "t"), [])
+        for bad in ("1.0.0-01", "1.0.0-..", "1.0.0-", "1.0", "01.0.0", "1.0.0+"):
+            with self.subTest(bad=bad):
+                errors = plugin.manifest_errors(manifest(version=bad), "crw", "t")
+                self.assertTrue(any("semantic version" in e for e in errors), (bad, errors))
 
     def test_installed_tree_is_not_checked_against_its_version_directory(self):
         # An installed payload lives in a directory named by version, not by plugin.
@@ -133,6 +161,24 @@ class MarketplaceTests(unittest.TestCase):
                 mutate(broken["plugins"][0])
                 errors = plugin.marketplace_errors(broken, manifest(), "plugins/crw")
                 self.assertTrue(any(expected in e for e in errors), errors)
+
+    def test_source_path_is_compared_exactly(self):
+        # A traversal or absolute spelling would install a different directory.
+        for spelling in ("../../plugins/crw", "/plugins/crw", "plugins/crw",
+                         "./plugins/crw/", "./plugins/./crw"):
+            with self.subTest(spelling=spelling):
+                broken = catalog()
+                broken["plugins"][0]["source"]["path"] = spelling
+                errors = plugin.marketplace_errors(broken, manifest(), "plugins/crw")
+                self.assertTrue(any("source.path" in e for e in errors), (spelling, errors))
+
+    def test_malformed_entry_objects_report_instead_of_raising(self):
+        for field in ("source", "policy"):
+            with self.subTest(field=field):
+                broken = catalog()
+                broken["plugins"][0][field] = "string"
+                errors = plugin.marketplace_errors(broken, manifest(), "plugins/crw")
+                self.assertTrue(any("must be an object" in e for e in errors), errors)
 
 
 class HygieneTests(unittest.TestCase):
@@ -198,8 +244,11 @@ class DigestTests(unittest.TestCase):
     def test_names_cannot_be_smuggled_across_the_field_boundary(self):
         # Without length framing a newline in a file name lets two different
         # payloads serialise identically, and the digest stops being evidence.
-        left = {"a\n100644 x": ("100644", b"one"), "b": ("100644", b"two")}
+        third = hashlib.sha256(b"three").hexdigest()
+        smuggled = "b\n100644 " + third + " x"
+        left = {"a": ("100644", b"one"), smuggled: ("100644", b"two")}
         right = {"a": ("100644", b"one"), "b": ("100644", b"two"), "x": ("100644", b"three")}
+        self.assertEqual(unframed(left), unframed(right))
         self.assertNotEqual(plugin.digest(left), plugin.digest(right))
 
 
@@ -281,6 +330,16 @@ class SyntheticRepositoryTests(unittest.TestCase):
             result = self.run_in(root)
             self.assertEqual(result.returncode, 1)
             self.assertIn("untracked", result.stderr)
+
+    def test_working_tree_manifest_is_checked_too(self):
+        # A local marketplace installs the working tree, so a broken uncommitted
+        # manifest would be copied into the cache even though the revision is clean.
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.build(folder)
+            (root / "plugins/crw/.codex-plugin/plugin.json").write_text("not-json", encoding="utf-8")
+            result = self.run_in(root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("working tree", result.stderr)
 
 
 class CommandTests(unittest.TestCase):
