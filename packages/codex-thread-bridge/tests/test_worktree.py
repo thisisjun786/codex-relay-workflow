@@ -425,6 +425,113 @@ async def test_known_thread_failure_retains_worktree_and_prevents_retry(
     assert (await bridge.create_worktree_thread(**repository, prompt="WITHHOLD"))["replayed"]
 
 
+async def test_a_lost_project_read_leaves_no_worktree_and_keeps_the_id(
+    bridge, fake_server, repository
+):
+    """The launch asks about the project before it reserves anything, so a lost answer costs
+    nothing: no directory, no thread, and no demand to go looking for either."""
+    from pathlib import Path
+
+    fake, _ = fake_server
+    launch = {**repository, "app_server_project_id": "project-1", "prompt": "hello"}
+    fake.drop_after = "project/read"
+    lost = await bridge.create_worktree_thread(**launch)
+    assert lost["status"] == "not_attempted" and lost["attemptedEffects"] == []
+    assert "recoveryRequired" not in lost
+    assert not Path(launch["destination"]).exists()
+
+    fake.drop_after = None
+    retried = await bridge.create_worktree_thread(**launch)
+    assert retried["status"] == "accepted" and retried["attempt"] == 2
+    assert Path(retried["worktree"]["checkout"]).is_dir()
+    assert retried["recoveryRequired"] is False
+
+
+async def test_a_reserved_destination_is_an_attempt_even_with_no_request_sent(
+    bridge, fake_server, repository
+):
+    """A worktree is an effect the host never hears about, and it spends the request id anyway."""
+    from pathlib import Path
+
+    from codex_thread_bridge.rpc import TransportError
+
+    fake, _ = fake_server
+    original = bridge.rpc.call
+
+    async def unreachable(method, params):
+        if method == "thread/start":
+            raise TransportError("App Server is not connected")
+        return await original(method, params)
+
+    bridge.rpc.call = unreachable
+    receipt = await bridge.create_worktree_thread(**repository, prompt="hello")
+    assert receipt["status"] == "outcome_unknown" and not receipt["retrySafe"]
+    assert receipt["attemptedEffects"] == [
+        "worktree/reserve",
+        "worktree/create",
+        "worktree/checkout",
+    ]
+    assert Path(receipt["worktree"]["checkout"]).is_dir() and receipt["recoveryRequired"]
+
+    bridge.rpc.call = original
+    replay = await bridge.create_worktree_thread(**repository, prompt="hello")
+    assert replay["replayed"] and not fake.threads
+
+
+async def test_a_known_validation_failure_keeps_its_request_id(bridge, fake_server, repository):
+    """The boundary of the retry: a receipt that answers the question still spends its id.
+
+    Nothing was begun here either, but the caller was told what happened. outcome_unknown and
+    not_attempted are both the absence of an answer; a refusal is an answer, and replaying it
+    returns that answer instead of asking again.
+    """
+    from pathlib import Path
+
+    Path(repository["destination"]).mkdir()
+    first = await bridge.create_worktree_thread(**repository)
+    assert first["status"] == "failed" and first["attemptedEffects"] == []
+    assert "must be absent" in first["error"]
+
+    repeat = await bridge.create_worktree_thread(**repository)
+    assert repeat["replayed"] and repeat["status"] == "failed"
+    assert not fake_server[0].threads
+
+
+async def test_a_prompt_whose_frame_never_went_out_is_not_left_unknown(
+    bridge, fake_server, repository
+):
+    """The dispatching checkpoint guesses pessimistically so a crash cannot hide the prompt.
+
+    Once the operation ends the guess is checkable, and here it is wrong: the connection failed
+    before turn/start was written, so the prompt was not sent rather than possibly delivered.
+    """
+    from codex_thread_bridge.rpc import TransportError
+
+    original = bridge.rpc.call
+
+    async def unreachable(method, params):
+        if method == "turn/start":
+            raise TransportError("App Server is not connected")
+        return await original(method, params)
+
+    bridge.rpc.call = unreachable
+    receipt = await bridge.create_worktree_thread(**repository, prompt="WITHHOLD")
+    assert receipt["status"] == "outcome_unknown"
+    assert "thread/start" in receipt["attemptedEffects"]
+    assert "turn/start" not in receipt["attemptedEffects"]
+    assert receipt["initialPrompt"] == {"state": "not_sent"}
+
+
+async def test_a_prompt_the_host_refused_is_recorded_as_refused(bridge, fake_server, repository):
+    """The host answered, so the one thing the receipt must not say is that nobody knows."""
+    fake, _ = fake_server
+    fake.reject["turn/start"] = {"code": -32602, "message": "turn rejected"}
+    receipt = await bridge.create_worktree_thread(**repository, prompt="WITHHOLD")
+    assert receipt["status"] == "failed"
+    assert receipt["attemptedEffects"][-1] == "turn/start"
+    assert receipt["initialPrompt"] == {"state": "rejected"}
+    assert receipt["recoveryRequired"]
+
 async def test_replay_survives_removed_checkout_and_source_paths(
     bridge, fake_server, repository, tmp_path
 ):

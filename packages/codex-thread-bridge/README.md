@@ -205,7 +205,9 @@ the setting had been enforced.
 
 Replaying a `request_id` returns its retained receipt from the ledger and makes
 no host call, so recovery works against a server that is offline and a stored
-observation is never overwritten by a later one.
+observation is never overwritten by a later one. The exception is a receipt that
+records that nothing was begun: a `not_attempted` request has no outcome to
+return, so replaying it makes the attempt it never made.
 
 Four outcomes are kept apart, because each needs a different response:
 
@@ -216,9 +218,9 @@ Four outcomes are kept apart, because each needs a different response:
 - `setting_unobservable` — the host reported no value, so nothing says whether the
   setting was applied. This withholds the prompt or message; it is never a warning
   attached to a success.
-- A transport or RPC failure stays on the delivery path and lands as `failed` or
-  `outcome_unknown`: the request may not have arrived, which is a different
-  question from what the host did with one that did.
+- A transport or RPC failure stays on the delivery path and lands as `failed`,
+  `outcome_unknown` or `not_attempted`: whether the request arrived at all is a
+  different question from what the host did with one that did.
 
 Two limits are real and are reported rather than worked around. `turn/start`
 returns only the turn, so the bridge binds no setting there and instead verifies
@@ -249,6 +251,7 @@ creations; an intentional new action needs its own request ID.
 | `accepted` | Requested API steps returned successfully; a turn may still be running |
 | `failed` | A known Git/API rejection or environment mismatch; inspect retained artifacts and IDs |
 | `outcome_unknown` | Transport/client failure; some or all effects may have happened |
+| `not_attempted` | No state-changing request and no local effect began, so nothing can have happened; the same request ID may be used again |
 | `in_progress_or_unknown` | Operation is running, or the process stopped before recording its outcome |
 
 `retrySafe: false` means **do not issue a new request ID to repeat the action**.
@@ -257,6 +260,46 @@ a sent mutation or automatically continues a partially completed create. If the
 server created a thread but its response was lost, even its ID may be unknown.
 This is conservative deduplication, not an exactly-once guarantee across the
 server and the local ledger.
+
+`retrySafe: true` appears only on `not_attempted`, and it reports something
+narrower than it sounds: this request began nothing, so repeating it cannot
+repeat an effect.
+
+### What counts as an attempt
+
+Every receipt carries `attemptedEffects`, the state-changing steps this process
+actually began, in order. It is recorded where those steps happen rather than
+where the code that asks for them sits: immediately before a frame is written to
+the socket, and immediately before a worktree directory is reserved, created or
+checked out. A frame that was begun counts even if `send` then raised, because a
+partial write cannot be proven not to have arrived. A method that only asks a
+question — `thread/read`, `thread/list`, `thread/turns/list`, `thread/goal/get`,
+`project/read`, `initialize` — is not an attempt; anything else is, including a
+method this bridge has not classified, so a mutation added later cannot read as
+nothing having happened. `thread/resume` is deliberately treated as a change: it
+transmits `cwd`, `model`, sandbox and config, and that the tested host adopts
+none of them is an observation rather than a protocol guarantee.
+
+Three limits come with this and are reported rather than worked around.
+
+- A row left behind by a killed process stays `in_progress_or_unknown` and is
+  never retried. What a request began is held in memory and dies with it, so the
+  row cannot say which side of the send it stopped on.
+- A rejection is an answer, so it keeps its request ID. A `failed` receipt that
+  began nothing — a preliminary read the host refused, a checkout the Git
+  contract rejected — still replays that refusal rather than asking again. Only
+  the absence of an answer refunds the ID.
+- A state written before it could be known is corrected once it can be.
+  `create_worktree_thread` records `initialPrompt: outcome_unknown` before
+  dispatching the first turn, so that a process killed mid-dispatch cannot leave a
+  receipt claiming the prompt was withheld. When the operation ends, that guess is
+  replaced by what actually happened: `not_sent` when `turn/start` never reached
+  the socket, `rejected` when the host refused it, and `outcome_unknown` only when
+  the frame went out and the answer did not come back.
+
+A re-armed request keeps its history. `attempt` counts the tries and
+`priorAttempts` retains the last five, each with the status and error that ended
+it.
 
 Receipts persist in `$XDG_STATE_HOME/codex-thread-bridge` (default
 `~/.local/state/codex-thread-bridge`), in an endpoint-scoped SQLite database. Use

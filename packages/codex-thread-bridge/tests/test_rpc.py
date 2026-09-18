@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from websockets.asyncio.server import unix_serve
 
+from codex_thread_bridge.effects import recording
 from codex_thread_bridge.rpc import AppServer, RpcError, TransportError
 
 
@@ -66,3 +67,36 @@ async def test_timeout_does_not_retry_request():
             finally:
                 stop.set()
                 await client.close()
+
+
+async def test_only_a_state_changing_frame_that_was_written_counts_as_an_attempt(fake_server):
+    """What was begun is recorded where the frame is written and classified by the method itself.
+
+    A method nobody has classified counts as a change, so a mutation added later cannot be read
+    as nothing having happened because a set somewhere was not updated.
+    """
+    _, path = fake_server
+    client = AppServer(path, timeout=1)
+    try:
+        with recording() as effects:
+            await client.call("thread/list", {"limit": 1, "useStateDbOnly": True})
+        assert effects.attempted == []
+        assert effects.observed == ["initialize", "thread/list"]
+
+        with recording() as effects:
+            with pytest.raises(RpcError):
+                await client.call("thread/archive", {"threadId": "thread-1"})
+        assert effects.attempted == ["thread/archive"]
+    finally:
+        await client.close()
+
+
+async def test_a_socket_that_cannot_be_reached_records_nothing(tmp_path):
+    client = AppServer(tmp_path / "absent.sock", timeout=1)
+    try:
+        with recording() as effects:
+            with pytest.raises(OSError):
+                await client.call("turn/start", {"threadId": "thread-1"})
+        assert effects.attempted == [] and effects.observed == []
+    finally:
+        await client.close()
