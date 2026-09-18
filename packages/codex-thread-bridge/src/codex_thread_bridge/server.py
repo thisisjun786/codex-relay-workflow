@@ -225,11 +225,13 @@ def make_server(bridge: Bridge):
 
         The host bounds no response by size, so this asks cheaply and widens. Turn items are its
         summary view — each turn's user and agent messages, not its tool calls or their output —
-        and the newest turn additionally gets its real items read in a bounded page. Read
+        and the newest turn additionally gets its most recent real items read in a bounded page,
+        returned in the order they happened. Read
         "observation" before trusting the page for anything: it names the view the turns actually
         carry and is present on every call, including a completely healthy one. Turns arrive with
         "itemsDetailStatus": not_requested (outside the newest turn), complete, partial (more
-        items exist that this tool cannot page to), narrowed (a smaller page after an oversized
+        items exist EARLIER in the turn that this tool cannot page to), narrowed (a smaller page
+        after an oversized
         frame closed the connection), not_observed (they would not arrive even one at a time),
         method_unavailable (this host has no item read), or refused. None of those fail the read
         and none of them is a statement about the thread: a page this bridge could not receive

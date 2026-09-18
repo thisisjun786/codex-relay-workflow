@@ -1202,7 +1202,17 @@ class Bridge:
             try:
                 items = await self.rpc.call(
                     "thread/items/list",
-                    {"threadId": thread_id, "turnId": turn_id, "limit": size},
+                    {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "limit": size,
+                        # Newest first, and put back in order below. This tool returns no item
+                        # cursor, so an ascending page would leave the END of a long turn — its
+                        # final message and its last tool output, which is what an observer is
+                        # usually asking about — unreachable rather than merely absent from this
+                        # page. The relay asks the same method the same way.
+                        "sortDirection": "desc",
+                    },
                 )
             except ResponseTooLarge as refused:
                 attempts.append(refusal(refused, method="thread/items/list", limit=size))
@@ -1233,7 +1243,9 @@ class Bridge:
                     "unaffected, and none of this is a statement about the thread.",
                 }
                 return
-            data = items.get("data") or []
+            # Back into the order the turn happened in, so a partial page reads as the tail of
+            # the turn rather than as a reversed fragment of it.
+            data = list(reversed(items.get("data") or []))
             more = bool(items.get("nextCursor"))
             note = {}
             if attempts:
@@ -1245,8 +1257,9 @@ class Bridge:
                 note["observed"] = len(data)
                 note["more"] = True
                 note["note"] = (
-                    "This turn has more items than were read. read_thread pages turns rather "
-                    "than items, so the rest cannot be reached through this tool."
+                    "These are the most recent items of the turn, in order; earlier ones are "
+                    "not here. read_thread pages turns rather than items, so they cannot be "
+                    "reached through this tool."
                 )
             turn["itemsDetail"] = data
             if note:

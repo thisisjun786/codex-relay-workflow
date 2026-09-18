@@ -75,7 +75,9 @@ it, and one page of ten turns in its full item view measured 754 MB on a real th
 host 96.7 seconds whether or not the client accepts a byte of it. Reducing the turn limit does
 not help, because one turn's full view was 82 MB on its own. So `read_thread` never asks for
 that view. It reads metadata without turns, then a page of turns in the host's summary view —
-each turn's user and agent messages — and then the newest turn's real items in a bounded page.
+each turn's user and agent messages — and then the newest turn's most recent real items in a
+bounded page, asked for newest-first and returned in the order they happened, so that a turn
+larger than one page keeps its latest activity readable rather than its oldest.
 When an oversized frame closes the connection anyway, it narrows and asks again, and it reports
 what it ended up with rather than raising.
 

@@ -212,6 +212,8 @@ class FakeServer:
                 for turn in self.threads[params["threadId"]]["turns"]:
                     if params.get("turnId") in (None, turn["id"]):
                         items.extend(turn["items"])
+                if params.get("sortDirection") == "desc":
+                    items = list(reversed(items))
                 start = self.offset(params.get("cursor"))
                 end = start + (params.get("limit") or len(items))
                 result = {

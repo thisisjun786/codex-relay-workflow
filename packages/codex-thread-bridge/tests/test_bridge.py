@@ -432,7 +432,18 @@ async def test_a_turn_with_more_items_than_one_page_says_so(
     assert len(turn["itemsDetail"]) == 3
     assert turn["itemsDetailNote"]["more"] is True
     assert turn["itemsDetailNote"]["observed"] == 3
-    assert "cannot be reached through this tool" in turn["itemsDetailNote"]["note"]
+    # The END of the turn, in the order it happened. An ascending page would have returned
+    # "line 0", "line 1", "line 2" and left the turn's latest activity unreachable, because
+    # this tool returns no item cursor to page forward with.
+    assert [item["aggregatedOutput"] for item in turn["itemsDetail"]] == [
+        "line 4",
+        "line 5",
+        "line 6",
+    ]
+    assert next(p for name, p in fake.calls if name == "thread/items/list")["sortDirection"] == (
+        "desc"
+    )
+    assert "most recent items of the turn" in turn["itemsDetailNote"]["note"]
     # A turn of pure tool output has no summary items at all, which is honest rather than empty.
     assert turn["items"] == []
 
