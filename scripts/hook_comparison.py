@@ -263,6 +263,18 @@ def unreadable_among(values):
     return [str(value) for value in values if value == reading.UNREADABLE]
 
 
+def across(scope, values, predicate):
+    """Apply a predicate over exactly the arms a judgment declares it speaks for.
+
+    A claim about both arms and a predicate that reads one is how this went wrong twice in the
+    same judgment: the first time by folding an unreadable reading, the second by checking the on
+    arm while the evidence it cited was the pair. The scope is declared, the values are recorded
+    per arm, and a check requires the two to be the same set, so a predicate cannot quietly speak
+    for fewer arms than its claim does.
+    """
+    return all(predicate(values[arm]) for arm in scope)
+
+
 def judged(met, not_taken):
     """A verdict, which cannot be true while a reading under it was not taken.
 
@@ -563,6 +575,17 @@ class RelayError(RuntimeError):
     pass
 
 
+# What a relay command has to answer with before anything is taken out of its response. Declared
+# per command rather than checked at each site, because this is the third member of one family: a
+# parse that failed was covered, then valid JSON that is not an object, and then an object missing
+# the field the caller was about to read. Each time the boundary was a layer narrower than the
+# thing that could go wrong, so the contract lives with the command and relay() is the only door.
+RESPONSE_FIELDS = {
+    "intent-declare": ("assignmentId", "assignmentDir"),
+    "register": ("relationshipId",),
+}
+
+
 def relay(arm, *args):
     """One relay command, run as the operator would run it, against this arm's own state.
 
@@ -583,7 +606,14 @@ def relay(arm, *args):
         raise RelayError(" ".join(args[:2]) + " exited " + str(done.returncode) + ": "
                          + (done.stdout or done.stderr)[-400:])
     if not done.stdout.strip():
-        return {}
+        # An empty answer is fine for a command nothing is read out of, and is a refusal for one
+        # this run takes fields from. Returning {} to both is how the field check was skipped for
+        # exactly the case that motivated it.
+        answered = {}
+        if RESPONSE_FIELDS.get(args[0] if args else ""):
+            raise RelayError(" ".join(args[:2]) + " answered with nothing, and this run reads "
+                             + ", ".join(RESPONSE_FIELDS[args[0]]) + " out of it")
+        return answered
     try:
         answered = json.loads(done.stdout)
     except ValueError:
@@ -591,6 +621,13 @@ def relay(arm, *args):
     if not isinstance(answered, dict):
         raise RelayError(" ".join(args[:2]) + " printed valid JSON that is not an object, so"
                          " nothing can be read out of it")
+    missing = [field for field in RESPONSE_FIELDS.get(args[0] if args else "", ())
+               if field not in answered]
+    if missing:
+        # Exit zero and a readable object still is not an answer this run can use. Reported here
+        # rather than as the KeyError a caller would raise, because that ends the command with a
+        # traceback in place of the one document it promises.
+        raise RelayError(" ".join(args[:2]) + " answered without " + ", ".join(missing))
     return answered
 
 
@@ -998,7 +1035,7 @@ def _detection(scenarios, observation, injected_names):
                   if fired["cells"]["observation"]["value"] == reading.UNREADABLE
                   or fired["cells"]["adapterOutcome"]["value"] == reading.UNREADABLE]
     return {"answer": MEASURED, "injected": len(injected), "reported": len(reported),
-            "unreadable": unreadable,
+            "unreadable": unreadable, "arms": [ON],
             "met": judged(len(injected) > 0 and len(injected) == len(reported), unreadable),
             "rows": [declared["name"] + "#" + str(index) for declared, index, _f in injected]}
 
@@ -1063,7 +1100,7 @@ def measures(scenarios):
         "answer": MEASURED,
         "criterion": "zero holds on unmarked sessions, on blocked_needs_input and on interrupted",
         "watched": list(watched), "reserved": reserved, "printedABlock": printed,
-        "unreadable": unreadable,
+        "unreadable": unreadable, "arms": [ON],
         "met": judged(not reserved and not printed, unreadable),
         "narrowing": "the holds counted are this hook's own, which is what the contract makes it"
                      " responsible for. Whether a host would honour a printed block is not"
@@ -1093,7 +1130,7 @@ def measures(scenarios):
         "distributionMs": {"count": len(latencies), "minimum": min(latencies) if latencies else None,
                            "median": median, "p95": p95,
                            "maximum": max(latencies) if latencies else None},
-        "firings": len(timings), "timingsNotTaken": missing,
+        "firings": len(timings), "timingsNotTaken": missing, "arms": [ON],
         "met": judged(bool(latencies) and median <= LATENCY_MEDIAN_MS
                       and p95 <= LATENCY_P95_MS, missing),
         "narrowing": "the interval measured is the hook process alone, started by this harness."
@@ -1112,14 +1149,15 @@ def supplemental(scenarios):
     reservations = [fired["cells"]["heldFile"]["value"] for fired in firings]
     published = [fired["cells"]["recordedAs"]["value"] for fired in firings]
     not_taken = unreadable_among(reservations + published)
-    foreign_not_taken = unreadable_among(
-        [scenarios["_arms"][arm]["foreignRegistration"]["value"] for arm in ARMS])
+    foreign_values = dict((arm, scenarios["_arms"][arm]["foreignRegistration"]["value"])
+                          for arm in ARMS)
+    foreign_not_taken = unreadable_among(list(foreign_values.values()))
     return {
         "oneReservationPerTurn": {
             "what": "one turn, the registered command fired twice",
             "reservations": reservations,
             "observationsPublished": published,
-            "notTaken": len(not_taken),
+            "notTaken": len(not_taken), "arms": [ON],
             # The claim is about the reservation, so the reservation is what is checked: the
             # create-once file is there after both firings, and the two firings published two
             # distinct observations rather than one record read twice. Counting only the
@@ -1132,10 +1170,10 @@ def supplemental(scenarios):
         },
         "foreignRegistrationSurvives": {
             "what": "a Stop entry belonging to another owner was in both hook files first",
-            "off": scenarios["_arms"][OFF]["foreignRegistration"]["value"],
-            "on": scenarios["_arms"][ON]["foreignRegistration"]["value"],
+            "arms": list(ARMS),
+            "values": foreign_values,
             "notTaken": len(foreign_not_taken),
-            "met": judged(scenarios["_arms"][ON]["foreignRegistration"]["value"] == "present",
+            "met": judged(across(ARMS, foreign_values, lambda value: value == "present"),
                           foreign_not_taken),
             "isNot": "evidence that the two hooks interact at run time. The foreign command is"
                      " never executed here; this reads the file, not a decision.",

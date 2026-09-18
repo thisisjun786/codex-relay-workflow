@@ -1129,6 +1129,152 @@ class VerdictGuardTests(unittest.TestCase):
         self.assertGreaterEqual(len(carried), 9)
 
 
+class ScopeTests(unittest.TestCase):
+    """A judgment speaks for the arms it declares, and its predicate reads exactly those.
+
+    The same judgment had two holes in a row: it folded an unreadable reading, and then it read
+    one arm while the evidence it cited was the pair. Matching claim to predicate by eye is what
+    produced the second, so the scope is declared and this derives the agreement.
+    """
+
+    @unittest.skipUnless(HAVE_RELAY, "this reads a run")
+    def test_every_judgment_reads_exactly_the_arms_it_claims(self):
+        answer = run_once()
+        scoped = []
+        for name, measure in sorted(answer["measures"].items()):
+            if "arms" in measure:
+                scoped.append(("measures/" + name, measure))
+        for name, measure in sorted(answer["supplemental"].items()):
+            if "arms" in measure:
+                scoped.append(("supplemental/" + name, measure))
+        self.assertGreaterEqual(len(scoped), 6,
+                                "almost no judgment declares which arms it speaks for")
+        for where, measure in scoped:
+            declared = measure["arms"]
+            self.assertTrue(declared, where + " declares an empty scope")
+            for arm in declared:
+                self.assertIn(arm, ARMS, where + " claims an arm that does not exist")
+            values = measure.get("values")
+            if values is not None:
+                self.assertEqual(sorted(values), sorted(declared),
+                                 where + " records values for a different set of arms from the"
+                                         " one it claims to speak for")
+
+    @unittest.skipUnless(HAVE_RELAY, "this reads a run")
+    def test_the_judgment_about_both_arms_reads_both(self):
+        answer = run_once()
+        survives = answer["supplemental"]["foreignRegistrationSurvives"]
+        self.assertEqual(sorted(survives["arms"]), sorted(ARMS),
+                         "the claim is about the entry surviving in both hook files")
+        self.assertEqual(sorted(survives["values"]), sorted(ARMS))
+        for arm in ARMS:
+            self.assertEqual(survives["values"][arm], "present")
+
+    def cell(self, value):
+        return {"cell": "x", "value": value, "readable": True}
+
+    def scenarios_with(self, off, on):
+        """The smallest input the supplemental judgments read, with the arms set by hand."""
+        firing = {"cells": {"heldFile": self.cell("reserved"),
+                            "recordedAs": self.cell("hook/s/t/0")}}
+        second = {"cells": {"heldFile": self.cell("reserved"),
+                            "recordedAs": self.cell("hook/s/t/1")}}
+        return {"_arms": {"off": {"foreignRegistration": self.cell(off)},
+                          "on": {"foreignRegistration": self.cell(on)}},
+                "duplicate": {"on": {"firings": [firing, second]}}}
+
+    def test_the_both_arms_judgment_fails_when_the_arm_it_does_not_read_fails(self):
+        """Driven at the judgment, because comparing declared arms with recorded values is not it.
+
+        A predicate that reads the on arm while the claim covers both still records both values,
+        so a check comparing those two sets passes while the hole is open. The only thing that
+        closes it is making the arm the predicate might be skipping the one that fails.
+        """
+        both_present = harness.supplemental(self.scenarios_with("present", "present"))
+        self.assertTrue(both_present["foreignRegistrationSurvives"]["met"])
+        off_displaced = harness.supplemental(self.scenarios_with("displaced", "present"))
+        self.assertFalse(off_displaced["foreignRegistrationSurvives"]["met"],
+                         "the judgment claims both hook files and passed while the off arm had"
+                         " displaced the other owner's entry")
+        on_displaced = harness.supplemental(self.scenarios_with("present", "displaced"))
+        self.assertFalse(on_displaced["foreignRegistrationSurvives"]["met"])
+
+    def test_a_predicate_over_a_scope_fails_when_any_arm_in_it_fails(self):
+        """The helper itself, driven with an arm that fails, rather than watched on a clean run."""
+        passing = {"off": "present", "on": "present"}
+        self.assertTrue(harness.across(ARMS, passing, lambda value: value == "present"))
+        for broken in ({"off": "displaced", "on": "present"},
+                       {"off": "present", "on": "displaced"}):
+            self.assertFalse(harness.across(ARMS, broken, lambda value: value == "present"),
+                             "a scope covering both arms passed while one of them failed")
+
+
+class ResponseContractTests(unittest.TestCase):
+    """Nothing is taken out of a relay response that the command did not promise to answer with.
+
+    Three members of one family landed in a row: a parse that failed, valid JSON that is not an
+    object, and an object missing the field the caller was about to read. Each time the boundary
+    was a layer narrower than what could go wrong, so the contract now lives with the command and
+    relay() is the only door.
+    """
+
+    def launcher(self, body):
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-contract-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        path = root / "codex-session-relay"
+        path.write_text("#!" + sys.executable + chr(10) + body, encoding="utf-8")
+        path.chmod(0o755)
+        return type("Arm", (object,), {
+            "launcher": path, "state": root / "state", "root": root,
+            "codex_home": root / "codex",
+            "environment": harness.environment(
+                type("A", (object,), {"root": root, "codex_home": root / "codex"})()),
+        })()
+
+    def test_a_response_missing_a_field_the_caller_reads_is_refused(self):
+        for body, missing in (("pass", "assignmentId"),
+                              ("print('{}')", "assignmentId"),
+                              ("print('{\"assignmentId\": \"a\"}')", "assignmentDir")):
+            arm = self.launcher(body + chr(10))
+            with self.assertRaises(harness.RelayError) as caught:
+                harness.relay(arm, "intent-declare", "--workspace", "x")
+            self.assertIn(missing, str(caught.exception),
+                          "the refusal does not name the field that was not answered")
+
+    def test_a_complete_response_is_returned(self):
+        arm = self.launcher(
+            "print('{\"assignmentId\": \"a\", \"assignmentDir\": \"/d\"}')" + chr(10))
+        self.assertEqual(harness.relay(arm, "intent-declare")["assignmentId"], "a")
+
+    def test_every_field_taken_from_a_response_is_one_its_command_promises(self):
+        """Derived over the source, so a field read without a contract cannot be added quietly."""
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        taken = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Subscript):
+                continue
+            target = node.value
+            command = None
+            if isinstance(target, ast.Call) and isinstance(target.func, ast.Name) \
+                    and target.func.id == "relay" and len(target.args) >= 2 \
+                    and isinstance(target.args[1], ast.Constant):
+                command = target.args[1].value
+            if command is None:
+                continue
+            key = node.slice.value if isinstance(node.slice, ast.Constant) else None
+            taken.append((command, key, node.lineno))
+        self.assertTrue(taken, "nothing reads a field out of a response, so this derivation is"
+                               " watching a file that stopped reading them")
+        for command, key, line in taken:
+            self.assertIn(command, harness.RESPONSE_FIELDS,
+                          "line " + str(line) + " reads a field out of " + repr(command)
+                          + ", which declares no response contract")
+            self.assertIn(key, harness.RESPONSE_FIELDS[command],
+                          "line " + str(line) + " reads " + repr(key) + " out of "
+                          + repr(command) + ", which does not promise it")
+
+
 class BoundaryTests(unittest.TestCase):
     """Every failure mode executed, rather than inferred from a handler being present.
 
@@ -1163,14 +1309,17 @@ class BoundaryTests(unittest.TestCase):
 
     def test_every_relay_failure_mode_answers_with_a_named_refusal(self):
         answered = {}
-        answered["nonzero exit"] = self.refusal_for("raise SystemExit(3)\n")
-        answered["unparseable output"] = self.refusal_for("print('<>')\n")
-        answered["valid JSON that is not an object"] = self.refusal_for("print('[1, 2]')\n")
-        answered["empty output"] = None
-        arm = self.launcher("pass\n")
-        self.assertEqual(harness.relay(arm, "intent-declare"), {},
-                         "empty output is an empty answer, not a failure")
-        missing = self.launcher("pass\n")
+        answered["nonzero exit"] = self.refusal_for("raise SystemExit(3)" + chr(10))
+        answered["unparseable output"] = self.refusal_for("print('<>')" + chr(10))
+        answered["valid JSON that is not an object"] = self.refusal_for(
+            "print('[1, 2]')" + chr(10))
+        arm = self.launcher("pass" + chr(10))
+        self.assertEqual(harness.relay(arm, "intent-bind"), {},
+                         "empty output is an empty answer for a command nothing is read out of")
+        with self.assertRaises(harness.RelayError):
+            harness.relay(arm, "intent-declare")
+        answered["empty output"] = "refused where a field is read, accepted where none is"
+        missing = self.launcher("pass" + chr(10))
         missing.launcher = Path(str(missing.launcher) + "-does-not-exist")
         with self.assertRaises(harness.RelayError) as caught:
             harness.relay(missing, "intent-declare")

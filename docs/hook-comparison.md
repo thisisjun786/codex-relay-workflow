@@ -165,7 +165,9 @@ continuation, which the host reports as a failed run. A reading that could not b
 never consumed as a value, at any site: the sentinel is a non-empty string and slips past exactly
 the tests that look like they exclude it.
 
-A verdict is computed in one place and nowhere else, so it cannot be computed without the guard
+A judgment declares which arms it speaks for, and its predicate reads exactly those. Nothing is
+taken out of a relay response that the command did not promise to answer with, declared per
+command rather than checked at each site. A verdict is computed in one place and nowhere else, so it cannot be computed without the guard
 that refuses it while a reading under it was not taken. Stating that rule and leaving each
 verdict to apply it is how one of them came not to, and the check meant to catch that only fired
 when a reading had already failed, which never happens in a healthy run. Every failure mode is
@@ -284,6 +286,12 @@ connection or hook fault, needs the installed runtime and the daemon; this harne
 registration from firing on a temporary destination and stops there. Two parents in different
 repositories and Linear projects against one installed shared relay, with concurrent handover and
 per-parent separation, needs that shared service.
+
+What this harness measures is hook behaviour reached through a launcher backed by the source in
+this checkout. It does not measure the installed runtime: packaging, the pointer, and whether an
+installed entry point resolves and offers the subcommand are all untested here, and a failure in
+any of them would not appear in any row. That is the same boundary as criteria four, five and
+seven, and it opens behind CRW-90.
 
 No adoption or hold decision is written anywhere in this harness or this document, because the
 results that would support one are the three that were not performed.
