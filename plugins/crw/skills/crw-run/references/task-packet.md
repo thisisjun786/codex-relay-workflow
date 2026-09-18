@@ -302,8 +302,11 @@ stays forbidden. Record it as an undelivered correction on that assignment and h
 coordinator, whose decision it is: to let the child proceed on the context it has, or to
 change the relay. Do not invent a transport to close the gap, and do not describe that
 correction as delivered. Whether an installed relay recognises a declared restoration block
-at all is a property of that package and `unmeasured` for any version but the one relay.md
-names.
+at all is a property of that installation, and it is asked rather than assumed: the command
+either offers the declaration or rejects it as unknown, which is what
+[codex-session-relay](relay.md#the-parent-verifies) tells you to check before relying on it.
+A version cannot answer, since it stays the same while contents change, so `unmeasured`
+belongs to an installation nobody asked, not to every installation but one.
 
 ## Coordination record
 
