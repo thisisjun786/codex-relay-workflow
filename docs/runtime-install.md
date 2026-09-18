@@ -1405,14 +1405,33 @@ python3 scripts/runtime_install.py hook --codex-home <codex-home> --adapter comp
 #   ... then end a real turn, and only then:
 python3 scripts/runtime_install.py hook-status --codex-home <codex-home>
 
-# Afterwards: the other half of the preservation reading.
-diff <receipt>/config.before.toml <codex-home>/config.toml
+# Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
+# registration above deliberately appended a table, so a whole-file diff reports a change that
+# is this procedure's own doing and would report it whether or not anything was preserved.
+python3 -c 'import sys, tomllib
+keys = ("model", "approval_policy", "sandbox_mode")
+for path in sys.argv[1:]:
+    with open(path, "rb") as handle:
+        document = tomllib.load(handle)
+    print(path, {key: document.get(key) for key in keys})' \
+    <receipt>/config.before.toml <codex-home>/config.toml
 
-# Recovery: an update that failed has already restored what it found. Read it back rather than
-# assuming it, and look at residualPaths before retrying.
+# If an update has failed here, it has already restored what it found. Read that back rather
+# than assuming it, and look at residualPaths before retrying.
 python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state>
 ```
+
+What this block is, and what it is not. It installs, registers, takes the seven readings and
+reads the result back. It does not re-run the install, it does not present an arriving source,
+and it does not fail an update -- and this page will not tell an operator to break a runtime
+their host is using in order to watch it come back. Those three stages are exercised against a
+temporary destination by `scripts/ci/tests/test_install_acceptance.py`, at every one of the
+eight seams an update crosses.
+
+So a receipt from this block records the stages it actually performed, and it is not a receipt
+for the composed run. The last command above is there for the host that arrives at it having
+had an update fail on its own, which is the only way that stage is reached here.
 
 Name the relay too. Left out, the entry point is discovered on `PATH`, which finds whichever
 relay this host already has rather than the runtime just installed under the destination -- and
