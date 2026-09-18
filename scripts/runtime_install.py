@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
-                         ownership, pointer, reading, scope, staging, swapgate)
+from crw_runtime import (bridgerecord, check, codexconfig, completion, definition, hooks,
+                         hostrecord, ownership, pointer, reading, scope, staging, swapgate)
 from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -3680,6 +3680,47 @@ def cmd_measure(args):
 
 # ------------------------------------------------------------------------- register-mcp
 
+def _mcp_ownership(record_path, owner, configuration, name):
+    """Why this owner may not register the bridge, given what this host already holds.
+
+    Two registrations of one server is the failure this prevents, and it is prevented in both
+    directions because either can be installed first. The configuration entry is refused by a
+    record naming the plugin; the record is refused by an entry already in the configuration.
+
+    Each artifact is read as itself. A record or a configuration that could not be read refuses
+    rather than defaulting, because installing on an unanswered question is how a second bridge
+    arrives.
+    """
+    if owner not in bridgerecord.OWNERS:
+        return "owner must be one of " + ", ".join(bridgerecord.OWNERS) + ", found " + repr(owner)
+    found, outcome, detail = bridgerecord.read(record_path)
+    if outcome == bridgerecord.MALFORMED:
+        return ("the record at " + str(record_path) + " could not be acted on (" + str(detail)
+                + "), so who owns this server was not established")
+    if owner == bridgerecord.OWNER_USER:
+        if found is not None and bridgerecord.owner_of(found) == bridgerecord.OWNER_PLUGIN:
+            return ("the record at " + str(record_path) + " names the "
+                    + bridgerecord.OWNER_PLUGIN + " as the owner of this server, so the plugin"
+                    " package already declares it; a configuration entry beside it would run a"
+                    " second bridge. Register with --owner " + bridgerecord.OWNER_PLUGIN
+                    + ", or remove that record first")
+        return None
+    try:
+        with reading.region(record_path, "the Codex configuration"):
+            view = codexconfig.scan(configuration)
+    except reading.Refused as stop:
+        return ("the Codex configuration could not be scanned (" + str(stop.reading.detail)
+                + "), so whether this server is already registered was not established")
+    if not view.readable:
+        return ("the Codex configuration could not be read, so whether this server is already"
+                " registered was not established")
+    if name in view.servers:
+        return ("the Codex configuration already registers " + repr(name) + ", which is the "
+                + bridgerecord.OWNER_USER + "-owned registration; a plugin declaration beside"
+                " it would run a second bridge. Remove that entry first")
+    return None
+
+
 def cmd_register_mcp(args):
     """Register the bridge through the supported Codex configuration path.
 
@@ -3699,6 +3740,48 @@ def cmd_register_mcp(args):
                        otherTablesPreserved=True,
                        note="nothing was written: the file was not read")
     before_text = before.value
+    owner = getattr(args, "owner", bridgerecord.OWNER_USER)
+    record_path = bridgerecord.record_path(codex_home)
+    conflict = _mcp_ownership(record_path, owner, before_text, args.name)
+    if conflict:
+        emit({"command": "register-mcp", "owner": owner, "path": str(path),
+              "record": str(record_path), "outcome": codexconfig.CONFLICT,
+              "detail": conflict,
+              "applied": False, "wrote": False, "otherTablesPreserved": True,
+              "note": "nothing was written. One owner registers this server; the other is"
+                      " reported with its evidence rather than joined."})
+        return EXIT_REFUSED
+    if owner == bridgerecord.OWNER_PLUGIN:
+        # The declaration is the package's, so this command writes the one fact the package
+        # cannot carry and leaves the configuration alone. Reported as that: a record written
+        # and no registration made, because on this host there is none until the plugin is
+        # installed and its hooks and servers are trusted.
+        try:
+            wanted = bridgerecord.document(command=args.bridge_command,
+                                           arguments=args.bridge_arg or [], name=args.name,
+                                           issue=getattr(args, "issue", None))
+        except ValueError as error:
+            emit({"command": "register-mcp", "owner": owner, "record": str(record_path),
+                  "outcome": codexconfig.CONFLICT, "detail": str(error),
+                  "applied": False, "wrote": False, "otherTablesPreserved": True,
+                  "note": "nothing was written"})
+            return EXIT_USAGE
+        try:
+            written = bridgerecord.write(record_path, wanted, apply=args.apply)
+        except hostrecord.Busy as error:
+            emit({"command": "register-mcp", "owner": owner, "record": str(record_path),
+                  "outcome": BUSY, "detail": str(error), "applied": False, "wrote": False,
+                  "otherTablesPreserved": True})
+            return EXIT_REFUSED
+        emit({"command": "register-mcp", "owner": owner, "path": str(path),
+              "record": str(record_path), "outcome": written["outcome"],
+              "detail": written.get("detail"), "applied": written["applied"],
+              "wrote": written["wrote"], "otherTablesPreserved": True,
+              "preservedHow": "the Codex configuration was read and not written",
+              "note": "The record was written and no MCP server was registered. The plugin"
+                      " package declares the server, so install that package to register it."
+                      " Written, registered and a tool actually called stay three claims."})
+        return EXIT_OK if written["outcome"] in bridgerecord.SETTLED else EXIT_REFUSED
     try:
         with reading.region(path, "the Codex configuration"):
             new_text, outcome, detail = codexconfig.register(
@@ -3877,6 +3960,14 @@ def build_parser():
     register.add_argument("--name", default=MCP_NAME)
     register.add_argument("--bridge-command", required=True)
     register.add_argument("--bridge-arg", action="append")
+    register.add_argument("--owner", choices=bridgerecord.OWNERS,
+                          default=bridgerecord.OWNER_USER,
+                          help="who registers this server. user writes the Codex configuration"
+                               " entry, which is what this command has always done. plugin"
+                               " writes only the record the packaged launcher reads, because"
+                               " the CRW plugin declares the server itself; both together would"
+                               " run a second bridge")
+    register.add_argument("--issue", default="CRW-114")
     register.add_argument("--apply", action="store_true")
     register.set_defaults(handler=cmd_register_mcp)
 

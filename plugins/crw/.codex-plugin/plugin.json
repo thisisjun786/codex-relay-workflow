@@ -17,6 +17,10 @@
     "delivery"
   ],
   "skills": "./skills/",
+  "hooks": [
+    "./wiring/hooks/stop-recording-completion.json"
+  ],
+  "mcpServers": "./wiring/mcp.json",
   "interface": {
     "displayName": "CRW",
     "shortDescription": "Linear-driven planning and delivery workflow skills.",
@@ -25,6 +29,7 @@
     "category": "Developer Tools",
     "capabilities": [
       "Skills",
+      "Hooks",
       "Workflow"
     ],
     "defaultPrompt": [
