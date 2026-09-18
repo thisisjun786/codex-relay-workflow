@@ -1921,11 +1921,49 @@ class TenthHostedRound(TrialCase):
             # The pointer is meant to move on update; this is the moment an update would do it.
             self.world.launcher.write_text(LAUNCHER + "\n# a different build\n", encoding="utf-8")
             self.world.launcher.chmod(0o755)
+            # And the run's own pause still has to happen, or the witness would not advance and
+            # this case would fail for that instead.
+            time.sleep(min(seconds, 0.4))
 
         document = self.world.preflight_with(move)
         self.assertFalse(document["launcherStillTheSameBytes"]["passed"])
         self.assertIn("launcherStillTheSameBytes.passed", document["judgmentsThatFailed"])
+        for name in READINGS:
+            self.assertEqual(document["readings"][name]["value"], VERIFIED,
+                             name + " failed, so this case would not have shown what it claims")
+        self.assertTrue(document["orderGate"]["passed"])
         self.assertFalse(document["readyToStart"])
+
+
+class EleventhHostedRound(TrialCase):
+    """Readiness that outran its own judgment, and two more fields a receipt may not carry."""
+
+    def test_an_assigned_receipt_without_its_relationship_is_unknown(self):
+        for name in ("relationshipId", "executionGeneration"):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.captures["register-A.json"].pop(name)
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"],
+                             UNKNOWN, name + " was read as a disagreement")
+
+    def test_the_other_boundarys_receipt_needs_neither_of_them(self):
+        # Only the boundary owning the dispatched assignment is compared against a relationship.
+        self.world.captures["register-B.json"].pop("relationshipId")
+        self.world.captures["register-B.json"].pop("executionGeneration")
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "boundaries")["registration:B"]["value"], VERIFIED)
+
+    def test_readiness_includes_every_judgment_the_document_carries(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertTrue(document["readyToStart"])
+        self.assertEqual(document["judgmentsThatFailed"], [])
+        # Readiness and the judgment walk answer together: neither may say yes while the other
+        # says no, which is what readiness outrunning launcherStillTheSameBytes did.
+        self.assertEqual(document["readyToStart"], not document["judgmentsThatFailed"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover

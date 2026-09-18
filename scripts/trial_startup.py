@@ -689,6 +689,10 @@ def registration_identity(record, boundary, receipt):
         # disagrees, and the cell above has to be able to tell them apart.
         if field(receipt, *path) is MISSING:
             return MISSING, "it does not carry " + ".".join(path)
+    if this_one:
+        for name in ("relationshipId", "executionGeneration"):
+            if field(receipt, name) is MISSING:
+                return MISSING, "it does not carry " + name
     if not same(field(receipt, "issueKey"), boundary.get("issueKey")):
         return False, "it names issue " + str(shown(field(receipt, "issueKey")))
     if field(receipt, "status") != "active":
@@ -1576,6 +1580,7 @@ def preflight(record, *, sleeper=time.sleep):
         assembled[name] = {"value": value, "met": value == VERIFIED, "cells": cells}
 
     gate = order_gate(record, store_payload, entry)
+    launcher = launcher_unchanged(record)
     document = {
         "source": SOURCE,
         "checkerVersion": CHECKER_VERSION,
@@ -1584,10 +1589,11 @@ def preflight(record, *, sleeper=time.sleep):
         "pythonVersion": sys.version.split()[0],
         "startedAt": stamp(STARTED),
         "relay": record["_relay"],
-        "launcherStillTheSameBytes": launcher_unchanged(record),
+        "launcherStillTheSameBytes": launcher,
         "readings": assembled,
         "orderGate": gate,
-        "readyToStart": all(r["met"] for r in assembled.values()) and gate["passed"],
+        "readyToStart": (all(r["met"] for r in assembled.values()) and gate["passed"]
+                         and launcher["passed"]),
         "wroteNothing": "this process creates no file of its own. It is not a claim about the"
                         " commands it runs: every relay command opens the store on construction,"
                         " and doctor measures whether the state directory is writable by writing a"
