@@ -9140,6 +9140,26 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
                          "one destination written two ways read as two destinations")
         self.assertIn(str(host.pointer_path), found["residualPaths"])
 
+    def test_a_symlink_traversal_is_not_treated_as_the_same_directory(self):
+        """Lexical cancellation is not sound: the kernel follows a symlink before applying
+        '..', so /srv/link/../dest is not /srv/dest when link points elsewhere. A pointer that
+        passes only the lexical test must stay out of the cleanup list."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            elsewhere = Path(temporary) / "elsewhere"
+            (elsewhere / "child").mkdir(parents=True)
+            link = host.destination.parent / "link"
+            link.symlink_to(elsewhere / "child")
+            # Lexically this cancels to <root>/dest; through the kernel it names
+            # <root>/elsewhere/dest, which is not the directory the pointer sits in.
+            detour = host.destination.parent / "link" / ".." / host.destination.name
+            found = _diagnose(host, dest=str(detour))
+        self.assertEqual(found["residue"]["pointer"]["finding"],
+                         residue.POINTER_OUTSIDE_DESTINATION,
+                         "a pointer that only passes the lexical test reached the boundary")
+        self.assertNotIn(str(host.pointer_path), found["residualPaths"])
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here

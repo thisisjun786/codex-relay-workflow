@@ -2212,6 +2212,46 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          found["configuration"]["namedSettings"][0]["journal"],
                          "the cell and the reading the cause used are one reading")
 
+    def test_one_settings_read_serves_the_cell_and_the_cause(self):
+        """A file read twice in one call is a payload that can contradict itself: the
+        configuration cell reported PRESENT from the first read while namedSettings reported
+        ABSENT from the second, about one file, in one answer."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            settled = str(completion.configuration_path(Path(temporary)))
+            reads = []
+            real = completion.read_configuration
+
+            def counting(path):
+                reads.append(str(path))
+                return real(path)
+
+            with mock.patch.object(completion, "read_configuration", side_effect=counting):
+                found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual([one for one in reads if one == settled], [settled],
+                         "the settled settings file was read more than once in one status"
+                         " call, so its two reports can disagree: " + repr(reads))
+        self.assertEqual(found["configuration"]["namedSettings"][0]["settings"], settled)
+
+    def test_the_adapter_is_probed_once_for_the_cell_and_the_cause(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            probes = []
+            real = completion.presence
+
+            def counting(path, what, **kwargs):
+                if what == "the adapter script":
+                    probes.append(str(path))
+                return real(path, what, **kwargs)
+
+            with mock.patch.object(completion, "presence", side_effect=counting):
+                completion.status(codex_home=temporary, environ={})
+        self.assertEqual(len(probes), 1,
+                         "one adapter was probed twice in one status call, so the target cell"
+                         " and the cause can disagree about it: " + repr(probes))
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

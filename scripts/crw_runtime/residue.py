@@ -81,6 +81,28 @@ def _entry(path, **fields):
     return found
 
 
+def _same_directory(one, other):
+    """Whether two spellings name the same directory, answered conservatively.
+
+    Two spellings of one directory must compare equal -- Path.absolute() keeps '..', so
+    /tmp/detour/../dest and /tmp/dest were two destinations and an owned dangling pointer in
+    the surveyed one was disowned. But lexical cancellation is not sound either: the kernel
+    follows a symlink before applying '..', so /srv/link/../dest is /var/runtime/dest when
+    /srv/link points into /var/runtime, while normpath says /srv/dest.
+
+    So BOTH have to agree. The lexical form catches the spelling difference and the resolved
+    form catches the symlink traversal, and a pair that disagrees is treated as different --
+    which keeps an unverified pointer out of the cleanup list, the direction this whole module
+    fails in on purpose.
+    """
+    one, other = str(one), str(other)
+    if os.path.normpath(one) != os.path.normpath(other):
+        return False
+    # realpath answers best-effort and does not raise, including on a loop, so this cannot
+    # turn a comparison into a failure.
+    return os.path.realpath(one) == os.path.realpath(other)
+
+
 def _target_exists(path):
     """Whether the pointer's target is there. Three answers, because Path.exists() gives two.
 
@@ -221,13 +243,7 @@ def _pointer_finding(pointer_path, recorded_pointer, destination):
         return {"path": None, "finding": NOT_SCANNED, "residual": False,
                 "detail": "no pointer was named to read"}
     path = str(Path(pointer_path))
-    # Compared on a lexically normalised form. Path.absolute() keeps '..' components, so
-    # /tmp/detour/../dest and /tmp/dest are the same directory written two ways and compared
-    # unequal -- which disowned an owned dangling pointer sitting in the surveyed destination.
-    # Normalised lexically rather than resolved, because resolve() walks symlinks and this
-    # comparison must not depend on what a link along the way points at, or fail on a loop.
-    if destination is not None and (os.path.normpath(str(Path(path).parent))
-                                    != os.path.normpath(str(destination))):
+    if destination is not None and not _same_directory(Path(path).parent, destination):
         return {"path": path, "finding": POINTER_OUTSIDE_DESTINATION, "residual": False,
                 "destination": str(destination),
                 "detail": ("this pointer sits under " + str(Path(path).parent) + " and this"

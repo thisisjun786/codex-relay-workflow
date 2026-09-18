@@ -1339,7 +1339,7 @@ def _journal_cell(config):
                  journalRoot=str(directory), journalPolicy=policy, days=days)
 
 
-def journals_named(registrations):
+def journals_named(registrations, already_read=None):
     """Each REGISTRATION's own settings file, and what the journal under it holds.
 
     This exists because "no record" had several causes and the command answered none of them.
@@ -1355,6 +1355,12 @@ def journals_named(registrations):
 
     It writes nothing and opens only files a registration already named.
 
+    'already_read' carries readings this call's caller has already taken, keyed by path. A
+    settings file read twice in one status call is a payload that can contradict itself: the
+    configuration cell reported PRESENT from the first read while namedSettings reported ABSENT
+    from the second, about one file, in one answer. A reading is taken once and used wherever
+    it is needed.
+
     Each entry answers its own records question with one of three values, never with a
     stand-in. Settings that are absent, or that this hook's own reader rejects, keep no journal
     AT ALL: run() reads them before it looks at the payload, so every invocation releases
@@ -1369,7 +1375,8 @@ def journals_named(registrations):
             # record_path_unidentified is the cause that owns that state.
             continue
         path = _settled(registration["settings"])
-        config, refused, detail, read_back = read_configuration(path)
+        config, refused, detail, read_back = (already_read or {}).get(
+            str(path)) or read_configuration(path)
         entry = {"registration": registration.get("registration"),
                  "startable": registration.get("startable"),
                  "settings": str(path), "settingsState": read_back.state,
@@ -1462,6 +1469,7 @@ def status(codex_home=None, environ=None, event=EVENT):
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     interpreter = _cell(NOT_READ, "no registration for this adapter was found to check")
+    adapter_probes = {}
     if ours:
         # No expansion here, unlike the settings path. The settings path is expanded by this
         # adapter before it opens it; the adapter's own path is handed to the interpreter
@@ -1469,7 +1477,13 @@ def status(codex_home=None, environ=None, event=EVENT):
         # effect, and judging it with expanduser would report a file the host never runs.
         loose = [entry["target"] for entry in ours if not os.path.isabs(entry["target"])]
         firm = [entry for entry in ours if os.path.isabs(entry["target"])]
-        probes = [presence(entry["target"], "the adapter script") for entry in firm]
+        # Probed once, and kept against the registration each probe belongs to. Probing the
+        # same file again for the cause meant two readings of one path in one call: an adapter
+        # created or removed between them produced a payload whose target cell said PRESENT
+        # while the cause established adapter_cannot_run about the same registration.
+        adapter_probes = {entry["identity"]: presence(entry["target"], "the adapter script")
+                          for entry in firm}
+        probes = [adapter_probes[entry["identity"]] for entry in firm]
         worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
         if worst is not None:
             # An absolute target that is missing is reported even when another registration
@@ -1508,8 +1522,8 @@ def status(codex_home=None, environ=None, event=EVENT):
                           for one in (interpreter.get("probes") or [])}
     start_probes = [
         {"registration": entry["identity"],
-         "adapter": (presence(entry["target"], "the adapter script")["value"]
-                     if os.path.isabs(entry["target"]) else REGISTRATION_RELATIVE_TARGET),
+         "adapter": (adapter_probes[entry["identity"]]["value"]
+                     if entry["identity"] in adapter_probes else REGISTRATION_RELATIVE_TARGET),
          "interpreter": interpreter_probes.get(entry["identity"], NOT_READ)}
         for entry in (ours or [])
     ]
@@ -1522,13 +1536,17 @@ def status(codex_home=None, environ=None, event=EVENT):
     # electing one would make the answer depend on which path happened to sort first.
     startable = {probe["registration"]: {probe["adapter"], probe["interpreter"]}
                  == {reading.PRESENT} for probe in start_probes}
-    named_journals = journals_named([
+    named_journals = journals_named(
+        [
         {"registration": entry["identity"],
          "startable": startable.get(entry["identity"], False),
          "settings": (entry["settings"]
                       if entry.get("settings") and entry["settings"] not in relative else None)}
-         for entry in (ours or [])
-    ])
+            for entry in (ours or [])
+        ],
+        # The reading the configuration cell above is built from, so one file read once answers
+        # both. 'found' is None in the branches where no file was read at all.
+        already_read=({str(path): (config, failed, detail, found)} if found is not None else {}))
     if failed is not None:
         settings = _cell(failed, detail or "", configuration=str(path),
                          configurationSource=source)
