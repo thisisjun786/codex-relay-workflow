@@ -1491,6 +1491,15 @@ def main(argv=None):
         answer = document(compare(root), root, earlier)
     except RelayError as error:
         answer = refusal("a relay command a scenario needed refused: " + str(error))
+    except BaseException as error:
+        # Named rather than allowed to escape, which is the rule guard.evaluate states for itself:
+        # a detector that dies detects nothing and leaves no trace it ran, and that is worse than
+        # a wrong answer. Catching only the relay's own error left every other way a run can fail
+        # - a filesystem error after the root exists, an interrupted run - ending the command with
+        # a traceback in place of the one document it promises. The type and message are carried
+        # so a defect here is reported as a defect rather than as a data problem.
+        answer = refusal("the comparison did not finish: " + type(error).__name__ + ": "
+                         + str(error)[:400])
     finally:
         if not keep:
             shutil.rmtree(root, ignore_errors=True)

@@ -266,7 +266,7 @@ the run writes, so no installed runtime is read or changed.
 | Stand-in | What it replaces | What a row through it cannot prove |
 | -- | -- | -- |
 | the launcher | the console script an install places under the pointer at `<destination>/current/bin` | that the pointer resolves, or that an installed build offers `guard-evaluate` at all |
-| the temporary Codex home | a Codex home a host actually reads | that the host discovers this registration, trusts it, or invokes it |
+| the temporary Codex home | a Codex home a host actually reads | that the host discovers this registration, trusts it, invokes it, enforces the registered timeout, or accepts what it prints |
 | the composed Stop payload | a payload a host delivered | anything about what a host sends; it establishes classification given the fields it carries |
 | the supplied `stop_hook_active` | a host reporting a continuation in flight | that a host sets it when it continues a turn |
 | no daemon and no App Server | the running service | delivery, acknowledgement, parent verification, and recovery after a fault |

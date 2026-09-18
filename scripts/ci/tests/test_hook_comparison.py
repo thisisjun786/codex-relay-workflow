@@ -1332,6 +1332,43 @@ class BoundaryTests(unittest.TestCase):
                      "not startable"):
             self.assertTrue(answered[mode], mode + " produced no named refusal")
 
+    def test_a_failure_after_the_root_exists_still_answers_with_a_document(self):
+        """The promise is one JSON object, and only the relay's own error was turned into one.
+
+        Everything else a run can hit after the root exists - a filesystem error, an interrupted
+        run - ended the command with a traceback. Driven by running the real command with a
+        failure injected into its build, rather than by reading main for an except clause.
+
+        The copy is given a repository root of its own so its imports resolve where the original's
+        do; without that the process fails before reaching the injection and the case would pass
+        on an error that is not the one it means to cause.
+        """
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-fault-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        scripts = root / "scripts"
+        scripts.mkdir()
+        for name in ("crw_runtime", "completion_hook.py", "runtime_install.py"):
+            os.symlink(str(ROOT / "scripts" / name), str(scripts / name))
+        os.symlink(str(ROOT / "packages"), str(root / "packages"))
+        marker = "def launcher_for(root):"
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        self.assertIn(marker, source)
+        (scripts / "hook_comparison.py").write_text(
+            source.replace(marker, marker + chr(10)
+                           + '    raise OSError("injected filesystem failure")'),
+            encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(scripts / "hook_comparison.py"), "--root", str(root / "work")],
+            capture_output=True, text=True, timeout=300)
+        self.assertEqual(done.returncode, 2,
+                         "a run that could not finish must not exit 0 or 1: " + done.stderr[-400:])
+        answer = json.loads(done.stdout)
+        self.assertIn("injected filesystem failure", answer["refused"])
+        self.assertIn("OSError", answer["refused"],
+                      "the refusal does not name what went wrong, so a defect here would read as"
+                      " a data problem")
+        self.assertNotIn("scenarios", answer, "a refusal must carry no rows")
+
     def test_stdout_that_is_valid_json_but_not_an_object_is_not_a_block(self):
         """The mode the derived list did not have: the parse succeeds and nothing can be read."""
         for raw in ("[1, 2]", "null", "3", '"a string"'):
