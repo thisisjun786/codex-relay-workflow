@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -8,7 +9,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts/install.py"
 NAMES = ("crw-check", "crw-define", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run")
-SOURCES = [ROOT / "skills" / name for name in NAMES]
+MANIFEST = ROOT / "plugins/crw/.codex-plugin/plugin.json"
+SKILLS = (MANIFEST.parent.parent / json.loads(MANIFEST.read_text(encoding="utf-8"))["skills"]).resolve()
+SOURCES = [SKILLS / name for name in NAMES]
 
 
 class InstallerTests(unittest.TestCase):
@@ -79,6 +82,24 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.run_cli("--apply", explicit=False).returncode, 0)
         self.assert_links(Path(self.env["CODEX_HOME"]) / "skills")
         self.assertFalse(self.dest.exists())
+
+    def test_links_that_name_the_previous_skill_path_are_kept(self):
+        # Installations made before the skills moved under the plugin root point at
+        # ROOT/skills/<name>. The repository keeps that path as a link to the packaged
+        # location, so those installations must still read as installed and untouched.
+        legacy_root = ROOT / "skills"
+        self.assertTrue(legacy_root.is_symlink())
+        self.dest.mkdir(parents=True)
+        for name in NAMES:
+            (self.dest / name).symlink_to(legacy_root / name, target_is_directory=True)
+        before = {p.name: (p.lstat().st_ino, p.readlink()) for p in self.dest.iterdir()}
+        check = self.run_cli("--check")
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertIn("LINKED", check.stdout)
+        self.assertEqual(self.run_cli("--apply").returncode, 0)
+        self.assertEqual(before, {p.name: (p.lstat().st_ino, p.readlink()) for p in self.dest.iterdir()})
+        for name in NAMES:
+            self.assertTrue((self.dest / name / "SKILL.md").is_file())
 
     def assert_retired_entry_preserved(self, name):
         for kind in ("file", "directory", "live-link", "dangling-link", "other-checkout"):

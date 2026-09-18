@@ -2,6 +2,7 @@
 """Link this repository's skills into Codex without replacing existing work."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
@@ -20,7 +21,10 @@ def main() -> int:
     codex_dir = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     parser.add_argument("--dest", type=Path, default=codex_dir / "skills")
     args = parser.parse_args()
-    source_root = Path(__file__).resolve().parent.parent / "skills"
+    # The plugin manifest declares where the skills live, so the linked
+    # installation and the packaged installation cannot drift apart.
+    manifest = Path(__file__).resolve().parent.parent / "plugins/crw/.codex-plugin/plugin.json"
+    source_root = (manifest.parent.parent / json.loads(manifest.read_text(encoding="utf-8"))["skills"]).resolve()
     sources = sorted(p for p in source_root.iterdir() if (p / "SKILL.md").is_file())
     if not sources:
         parser.error(f"No skills found in {source_root}")

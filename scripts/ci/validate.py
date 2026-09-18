@@ -16,6 +16,13 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 LINK = re.compile(r"\[[^\]\n]*\]\((<[^>\n]+>|[^\s)]+)(?:\s+\"[^\"]*\")?\)")
+MANIFEST = ROOT / "plugins/crw/.codex-plugin/plugin.json"
+
+
+def skills_root():
+    """The manifest's declared component path is where the skills live."""
+    declared = json.loads(MANIFEST.read_text(encoding="utf-8"))["skills"]
+    return (MANIFEST.parent.parent / declared).resolve()
 
 
 def scalar(text):
@@ -98,6 +105,7 @@ def main():
     ).decode().split("\0")
     errors = []
     skills = 0
+    root = skills_root()
     for name in sorted(set(files) - {""}):
         path = ROOT / name
         try:
@@ -105,7 +113,7 @@ def main():
                 ast.parse(path.read_text(encoding="utf-8"), filename=name)
             if path.suffix == ".md":
                 errors.extend(link_errors(path, ROOT))
-            if path.name == "SKILL.md" and path.parent.parent == ROOT / "skills":
+            if path.name == "SKILL.md" and path.parent.parent.resolve() == root:
                 metadata(path)
                 skills += 1
         except (OSError, SyntaxError, ValueError) as exc:
