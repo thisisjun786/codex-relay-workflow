@@ -31,11 +31,22 @@ and the relay are stand-ins inherited from the update fixture, the diagnosis run
 XDG_STATE_HOME, CODEX_HOME and PATH pointed inside that directory, and PROVENANCE records that a
 row filled here is a fixture answer. What a real combination would have to record, and the
 procedure for running one, is in docs/runtime-install.md.
+
+A fourth rule arrived as three separate findings and is one rule. A row can reach its success
+answer, down the path it declared, on the host it declared, and still be answering about
+something this scenario never built: a helper called instead of the registered command, a second
+Codex home, a run told its store was absent while the fixture had populated one. What those share
+is that something handed to the thing under test was not what the scenario built, and the
+difference was nowhere in the claim. So HANDED declares, per function, whether what it hands is
+the built value or a stand-in -- and a stand-in says what the scenario has instead and what a row
+reading through it therefore does not prove. INJECTIONS does the same for the switches the update
+fixture accepts, and names the one this module must not hand.
 """
 
 import ast
 import copy
 import hashlib
+import inspect
 import json
 import os
 import shutil
@@ -44,6 +55,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -154,6 +166,11 @@ TEXT_EVIDENCE = {
         " that settle for a refusal is derived from this file the same way -- and it is derived"
         " by the answer required rather than by the shape of the call, because a shape sweep is"
         " what missed two of them.",
+    "test_no_call_site_hands_the_fixture_an_injection_this_module_refuses":
+        "the subject IS this file's own calls: which switch a call hands the fixture is a"
+        " property of the call site, and every call site is here. Observing them instead would"
+        " mean running every scenario inside one case, and one run can only speak for itself."
+        " The behavioural half is the agreement case, which reads what a run was actually told.",
 }
 
 # Rows whose reading is a check.field cell and therefore answers in check.VALUES. The others
@@ -434,19 +451,6 @@ def isolated(root, host=None):
     }
 
 
-def hook_settings(directory, **overrides):
-    """The completion hook own settings, written where the hook will look for them."""
-    document = completion.configuration(
-        relay=str(Path(directory) / "codex-session-relay"),
-        marker_root=str(Path(directory) / "marker"),
-        journal_root=str(Path(directory) / "journal"),
-        codex_home=str(directory), issue="CRW-69")
-    document.update(overrides)
-    completion.configuration_path(Path(directory)).write_text(
-        json.dumps(document), encoding="utf-8")
-    return document
-
-
 def answering_relay(directory):
     """A relay whose doctor reports a socket it reached, so the connection cell can move.
 
@@ -672,7 +676,7 @@ def succeeding(root):
     host.config.write_text("", encoding="utf-8")
     seed_settings(host)
     earlier = host.config.read_text(encoding="utf-8")
-    install(host, clean_store=True)
+    install(host)
     later = host.config.read_text(encoding="utf-8")
 
     linked_skills(host)
@@ -742,7 +746,7 @@ class ComposedLifecycleTests(unittest.TestCase):
 
                     # Stage one: a new install, onto a destination that has nothing in it.
                     empty = sorted(p.name for p in host.destination.iterdir())
-                    new, new_payload = install(host, clean_store=True)
+                    new, new_payload = install(host)
                     installed = host.candidate
                     settled = host.snapshot()
                     reached = pointer.read(host.pointer_path).get("target")
@@ -753,7 +757,7 @@ class ComposedLifecycleTests(unittest.TestCase):
                     after_new = sorted(p.name for p in host.destination.iterdir())
 
                     # Stage two: the same run again, which must build and write nothing.
-                    repeat, repeat_payload = install(host, clean_store=True)
+                    repeat, repeat_payload = install(host)
                     after_repeat = host.snapshot()
                     claim = (staging.read_claim(installed).value or {}).get("state")
                     after_again = sorted(p.name for p in host.destination.iterdir())
@@ -770,7 +774,7 @@ class ComposedLifecycleTests(unittest.TestCase):
                     # Stage four: the host is asked to install the source it already has.
                     host.data = definition.load()
                     host.candidate = installed
-                    usable, usable_payload = install(host, clean_store=True)
+                    usable, usable_payload = install(host)
                     settings_now = settings_bytes(host)
 
                 self.assertEqual(empty, [], label + ": the fixture was cleaned first")
@@ -832,7 +836,7 @@ class ComposedLifecycleTests(unittest.TestCase):
             host = base._Host(temporary)
             clean(host)
             opening = host.snapshot()
-            install(host, clean_store=True)
+            install(host)
             arriving_source(host)
             loaded, verified = updating(host)
             with loaded, verified:
@@ -843,6 +847,47 @@ class ComposedLifecycleTests(unittest.TestCase):
         self.assertEqual(closing["storeInode"], opening["storeInode"],
                          "the store was not moved or recreated")
         self.assertEqual(closing["storeBytes"], opening["storeBytes"])
+
+    def test_the_store_the_run_is_told_about_is_the_store_the_fixture_built(self):
+        """What the run was told, read back and compared with what this scenario put on disk.
+
+        Every install above used to hand the fixture a switch reporting the store absent and its
+        tables unknown, while the fixture had built a populated one at that same path. Nothing
+        failed: a run told there is no store settles the store cell as established absence and
+        moves on, so a regression that detected a store and then lost it stayed green underneath
+        -- the run under it had been told there was nothing to lose.
+
+        The switch is refused now. This is the reading that keeps it refused rather than merely
+        deleted: the cells the run took are read back out of its own payload and compared with
+        the store this scenario built, and the two of them answer from different readings -- the
+        schema comparison, and the doctor the in-flight count came from.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = base._Host(temporary)
+            clean(host)
+            code, payload = install(host)
+            built = host.snapshot()
+            where = str(host.store)
+            cells = (payload.get("swapGate") or {}).get("cells") or {}
+
+        self.assertEqual(code, 0, json.dumps(payload)[:800])
+        self.assertTrue(built["storeRows"],
+                        "the fixture built a store with nothing in it, so there is nothing here"
+                        " a run could have been told the wrong thing about")
+
+        tables = cells["storeTables"]
+        self.assertTrue(tables["readable"], str(tables.get("detail")))
+        self.assertEqual(tables["answer"], swapgate.AGREES,
+                         "the run read " + repr(tables["answer"]) + " about a store holding "
+                         + repr(built["storeRows"]) + ", so what it was handed and what this"
+                         " scenario built are two different stores")
+        self.assertEqual((tables["evidence"] or {}).get("dbPath"), where,
+                         "and the reading it took names a store somewhere else")
+
+        self.assertEqual(cells["inFlight"]["command"], ["doctor"],
+                         "the in-flight count came from the presence probe rather than from the"
+                         " doctor, which is what it answers with when it was told no store"
+                         " exists to have an open attempt in")
 
     def test_a_failed_update_that_never_reached_its_seam_is_not_a_recovery(self):
         """The guard on the guard.
@@ -855,7 +900,7 @@ class ComposedLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             host = base._Host(temporary)
             clean(host)
-            install(host, clean_store=True)
+            install(host)
             arriving = arriving_source(host)
             loaded, verified = updating(host)
             with loaded, verified:
@@ -880,7 +925,7 @@ class ComposedLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             host = base._Host(temporary)
             clean(host)
-            install(host, clean_store=True)
+            install(host)
             installed = host.candidate
             arriving_source(host)
             loaded, verified = updating(host)
@@ -1078,12 +1123,6 @@ def installed_components(host):
         shutil.copytree(ROOT / component["packageLocation"], target, dirs_exist_ok=True)
     return str(site)
 
-def component_sources():
-    """The two package roots of this checkout, which is what makes an import real here."""
-    return os.pathsep.join(
-        str(ROOT / Path(component["packageLocation"]).parent)
-        for component in definition.load()["components"])
-
 def observe_all(root):
     """Every reading the criterion asks for, each taken from the source that answers it.
 
@@ -1096,7 +1135,7 @@ def observe_all(root):
     clean(host)
     seed_settings(host)
     earlier = host.config.read_text(encoding="utf-8")
-    install(host, clean_store=True)
+    install(host)
     later = host.config.read_text(encoding="utf-8")
 
     stand_in_runtime(host)
@@ -1668,7 +1707,12 @@ class SevenReadingsTests(unittest.TestCase):
             tried = diagnose_for(root, host, "--relay-command",
                                  str(delivering_relay(root, doctor=False)),
                                  "--trial", *trial_inputs(root),
-                                 import_path=component_sources())
+                                 # The copy INSIDE the candidate, not the working tree. The
+                                 # preflight asks the relay's own reader and predicate, so it
+                                 # needs the package importable -- and handing it the checkout
+                                 # would answer a question about an installation with source
+                                 # that was never installed.
+                                 import_path=installed_components(host))
             reached = diagnose_for(root, host, "--relay-command",
                                    str(answering_relay(root)))
             # Last, because it rebuilds the supplied interpreter: the readings above are taken
@@ -1980,7 +2024,7 @@ class DaemonStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             host = base._Host(temporary)
             clean(host)
-            install(host, clean_store=True)
+            install(host)
             installed = host.candidate
             settled = host.snapshot()
             arriving_source(host)
@@ -2104,7 +2148,245 @@ def _stand_ins():
             # looking derived.
             loaded, verified = updating(host)
             with loaded, verified:
-                install(host, clean_store=True, breaking=breaking, interpose=sample)
+                install(host, breaking=breaking, interpose=sample)
+    return found
+
+
+# The switches the update fixture's run accepts, each with what handing it means here. DERIVED
+# from the fixture's own signature, so a switch added there arrives unclassified rather than
+# silently available.
+#
+# REFUSED_INJECTIONS names the one this module must never hand. clean_store tells the run the
+# store is absent and its tables unknown, and the fixture has built a populated one at the same
+# path -- so a regression that detects a store and then loses it passed, because the run under it
+# had been told there was no store to lose.
+REFUSED_INJECTIONS = ("clean_store",)
+INJECTIONS = {
+    "breaking": "a build step is made to fail at a named boundary, which is how every recovery"
+                " claim here is exercised. It stands in for a build that really failed, and"
+                " install's entry below says what that costs.",
+    "gate": "a swap-gate reading is made to refuse: a running daemon, an open handover, a"
+            " daemon nobody could read, or a schema the candidate would narrow.",
+    "interpose": "a callback the fixture runs inside the patched measurement. It reads what is"
+                 " patched at that moment and changes nothing.",
+    "probes": "a list the store probe appends the interpreter it was asked through to. It"
+              " records and changes nothing.",
+    "clean_store": "REFUSED: it reports the store absent and empty to the run while the fixture"
+                   " has built a populated one at that path, so what the run is told and what"
+                   " the scenario built disagree.",
+}
+
+# What a function of this module hands the thing under test, and whether it is what this scenario
+# built.
+#
+# Three findings were one finding wearing three faces -- a row read through a helper beside the
+# registered command, a row read against a second Codex home, a run told its store was absent
+# while the fixture had populated one. Each repair was the instance. The class is that something
+# handed to the thing under test was not what the scenario built and the difference was nowhere
+# in the claim, so the difference is written down here and the inventory is DERIVED by asking the
+# module for its functions.
+#
+# What the derivation sees: every function defined in this file, whether or not anything calls
+# it. That is how the one nothing called was found.
+#
+# What it does not see, and a reader should not believe it does: a value written inline inside a
+# function body -- the granularity is the function, so a function declared BUILT that later hands
+# a stand-in from its own body keeps a sentence that no longer fits; method names are flat, so
+# the same name in two classes would be one entry; and the imported fixture's own replacements
+# are not here at all, because FAKED_IN_FIXTURE covers those and observes them being applied.
+BUILT = "the value this scenario built"
+NOTHING = "nothing of its own: what it hands is classified elsewhere in this table"
+
+HANDED = {
+    # The composed scenarios, and the cases over them. Each hands what the helpers below hand
+    # and what INJECTIONS classifies, and nothing of its own.
+    "succeeding": NOTHING,
+    "observe_all": NOTHING,
+    "_stand_ins": NOTHING,
+    "_fired": NOTHING,
+    "_update_with": NOTHING,
+    "setUp": NOTHING,
+    "_functions_here": NOTHING,
+
+    # The accessor, and readings taken after the fact. None of these reaches the thing under
+    # test: they read a payload, a path or a file that already exists.
+    "read": NOTHING,
+    "table": NOTHING,
+    "_row": NOTHING,
+    "_unreadable": NOTHING,
+    "inside": NOTHING,
+    "hooks_path": NOTHING,
+    "settings_bytes": NOTHING,
+    "_configuration_keys": NOTHING,
+    "_model_permission_delta": NOTHING,
+
+    # State this scenario really builds, handed as itself.
+    "clean": BUILT,
+    "seed_settings": BUILT,
+    "isolated": BUILT,
+    "diagnose_for": BUILT,
+    "linked_skills": BUILT,
+    "installed_components": BUILT,
+
+    # Stand-ins: what the scenario has instead, and what a row reading through it cannot say.
+    "install": (
+        "the update fixture's run, in which the two build steps, the relay, the measurement, the"
+        " component classification and the store readings are replaced. FAKED_IN_FIXTURE names"
+        " all fifteen and _stand_ins observes them while they are applied; the store readings"
+        " now describe the store the fixture built, which the agreement case checks",
+        "that a venv builds, that pip installs, that a live daemon or a live store answers, or"
+        " that the interpreter version the record keeps is one a built environment reported"),
+    "arriving_source": (
+        "a source change, made by moving the digests on the fixture's own copy of the definition."
+        " The fixture derives its measured digests from that copy, so moving only what load()"
+        " returns makes the run refuse for a disagreement about the fixture instead of reaching"
+        " the boundary under test",
+        "that a real second checkout is what produces a different candidate directory, or that"
+        " the committed definition detects one"),
+    "updating": (
+        "the arriving definition, for the length of one run: definition.load and definition.verify"
+        " answer for it, because verify re-derives the component trees from git in THIS checkout"
+        " and would refuse the moved digests",
+        "that a real definition file and a real verification accept an arriving source"),
+    "stand_in_runtime": (
+        "the recorded interpreter, written here as a wrapper around this interpreter with -S -E."
+        " The build step is a stand-in, so no built environment has an interpreter of its own,"
+        " and a probe left to fall back would import and run whatever THIS machine has installed",
+        "that an interpreter a real build produced resolves these components; what it does"
+        " establish is asked of the process rather than read off the wrapper, in HERMETIC_FLAGS"),
+    "importable_runtime": (
+        "the same recorded interpreter rebuilt to keep -S and drop -E, so the import path this"
+        " suite chooses is the only place it can look. Called with paths=None it also writes"
+        " empty stub packages, which is a directory that can be imported and nothing more",
+        "that a real installation is what the import resolved, unless the caller hands it the"
+        " installed copy -- which succeeding() does and the stub direction does not"),
+    "standin_relay": (
+        "the relay the registered hook calls, written here to answer the guard. No relay is"
+        " installed in a destination whose build steps were stand-ins",
+        "that an installed relay answers the guard, or that its answer is this one"),
+    "answering_relay": (
+        "the relay whose doctor reports a socket it reached. No App Server runs here, and the"
+        " connection question has no input of its own on the command line",
+        "that a live App Server socket is reachable; READING_PATHS states the same narrowing"
+        " for the row itself"),
+    "delivering_relay": (
+        "the relay that answers every step of a trial, so a delivery can complete at all",
+        "that a live relay completes a delivery; READING_PATHS states the same narrowing for"
+        " the row"),
+    "trial_inputs": (
+        "the inputs a trial requires, written here in full. On a host an operator supplies these,"
+        " so there is nothing for a scenario to have built -- but they are supplied, and a row"
+        " reading through them is reading an answer to input this suite chose",
+        "that the values a host would supply are these, or that a delivery anybody else asked"
+        " for would be accepted"),
+    "fire_the_hook": (
+        "the registration and the command line are the ones cmd_hook wrote into this Codex home,"
+        " read back out of that file and executed as a program. What is supplied rather than"
+        " built is the Stop payload on its stdin, which is a recorded one replayed because no"
+        " Codex turn happens here, and the installer arguments an operator would choose",
+        "that a live turn produces this payload, or that an operator's own arguments register"
+        " this command line"),
+    "hermetic_answers": (
+        "a directory planted on PYTHONPATH that nothing ever creates, so the probe is whether an"
+        " inherited path reaches the interpreter at all",
+        "that a real importable package on an inherited path would be refused -- only that no"
+        " inherited entry arrives"),
+    "signals": (
+        "the ownership signals, written here rather than gathered from a host. The real gatherer"
+        " is classify_component, which the fixture replaces, so a scenario that built a foreign"
+        " entry point on disk still could not reach the classifier through a run",
+        "that a foreign installation on disk produces these signals; what the row establishes is"
+        " that the classifier answers the five conditions differently"),
+
+    # Cases that hand something themselves rather than through a helper.
+    "test_a_store_that_is_not_there_is_not_a_store_nobody_could_read": (
+        "the two presence readings, written here, because the distinction being drawn is between"
+        " a store that is absent and one that could not be opened -- and a scenario cannot build"
+        " the second without making a path unopenable for the whole run",
+        "that a real absent store and a real unopenable one produce these readings"),
+    "test_the_five_conditions_are_five_different_answers": (
+        "the same written signals and presence readings as the two cases it generalises",
+        "that five real host conditions produce these inputs; what it establishes is that the"
+        " five answers do not collapse into each other"),
+    "test_a_version_that_moved_is_not_a_source_that_moved": (
+        "a version moved in a loaded definition, rather than a component actually released at a"
+        " different version",
+        "that a released version change is reported this way; the verification it is read"
+        " through is the committed one, run against this checkout"),
+    "test_the_model_and_permission_row_is_not_taken_from_a_neighbouring_verdict": (
+        "two configuration texts handed straight to the producer, because the claim is that the"
+        " row moves when the posture moves. The two sides of a real install are read in the"
+        " success case instead",
+        "that an install produces these two texts"),
+    "test_without_a_reader_the_row_reports_itself_unread_rather_than_preserved": (
+        "the absence of a configuration reader, simulated, so the property is stated on both"
+        " supported interpreters rather than only on the one where it bites",
+        "that the floor interpreter behaves this way -- which is why the vocabulary and success"
+        " cases assert the same refusal unsimulated, and only on that job"),
+    "test_a_hook_installation_leaves_a_hook_that_was_already_there": (
+        "the foreign hook file is really written and cmd_hook really runs over it; what is"
+        " supplied is the argument namespace an operator would choose",
+        "that an operator's own arguments append beside a foreign hook the same way"),
+    "test_a_missing_registration_and_a_claimed_one_are_not_the_same_answer": BUILT,
+    "test_a_registration_that_writes_preserves_every_other_setting": BUILT,
+
+    # Cases that hand nothing of their own: they run a scenario above, or mutate a RESULT to show
+    # a reading was load-bearing, which is the opposite direction from handing a substitute in.
+    "test_a_new_install_a_rerun_a_failed_update_and_the_recovery_of_what_it_replaced": NOTHING,
+    "test_the_rows_seeded_before_the_first_install_survive_every_stage": NOTHING,
+    "test_a_failed_update_that_never_reached_its_seam_is_not_a_recovery": NOTHING,
+    "test_a_restoration_it_could_not_read_back_is_reported_rather_than_claimed": NOTHING,
+    "test_the_store_the_run_is_told_about_is_the_store_the_fixture_built": NOTHING,
+    "test_a_daemon_that_was_not_running_does_not_stop_the_update": NOTHING,
+    "test_a_daemon_that_was_running_stops_it_and_keeps_what_was_there": NOTHING,
+    "test_a_handover_in_flight_is_preserved_rather_than_swapped_under": NOTHING,
+    "test_a_daemon_that_could_not_be_read_is_neither_running_nor_stopped": NOTHING,
+    "test_an_install_that_succeeded_is_not_reported_as_an_activation": NOTHING,
+    "test_an_external_installation_and_a_fork_are_not_the_same_answer": NOTHING,
+    "test_every_question_has_exactly_one_declared_reading": NOTHING,
+    "test_no_two_cells_read_the_same_answer": NOTHING,
+    "test_every_declared_producer_exists_where_it_is_declared": NOTHING,
+    "test_every_text_reading_place_is_declared": NOTHING,
+    "test_every_declared_path_is_one_its_source_actually_writes": NOTHING,
+    "test_no_cell_is_filled_without_going_through_the_declared_reading": NOTHING,
+    "test_every_row_is_readable_and_answers_in_its_own_vocabulary": NOTHING,
+    "test_every_question_is_declared_to_answer_in_exactly_one_vocabulary": NOTHING,
+    "test_every_acceptance_row_reaches_its_success_answer": NOTHING,
+    "test_every_place_that_settles_for_a_refusal_is_declared": NOTHING,
+    "test_every_reading_declares_the_path_it_travels": NOTHING,
+    "test_a_row_that_cannot_require_success_says_why_absence_is_normal": NOTHING,
+    "test_each_row_reads_its_own_path_and_no_other": NOTHING,
+    "test_withholding_a_source_leaves_only_its_own_rows_unreadable": NOTHING,
+    "test_the_hook_row_counts_an_invocation_that_really_happened": NOTHING,
+    "test_changing_one_condition_moves_only_the_reading_that_asked_about_it": NOTHING,
+    "test_the_diagnosis_reads_nothing_outside_the_directory_it_was_given": NOTHING,
+    "test_the_diagnosis_does_not_import_or_run_what_the_host_has_installed": NOTHING,
+    "test_the_stand_ins_are_the_ones_the_fixture_actually_uses": NOTHING,
+    "test_no_row_this_suite_fills_can_claim_a_host": NOTHING,
+    "test_the_destination_this_suite_measured_is_recorded_as_temporary": NOTHING,
+    "test_every_function_here_says_what_it_hands": NOTHING,
+    "test_every_switch_the_fixture_accepts_is_classified": NOTHING,
+    "test_no_call_site_hands_the_fixture_an_injection_this_module_refuses": NOTHING,
+}
+
+
+def _functions_here():
+    """Every function defined in this module, asked of the module rather than read out of it.
+
+    Including the ones nothing calls: a helper left behind after its last caller went is still a
+    thing this file offers, and the one that had been left behind was found this way.
+    """
+    module = sys.modules[__name__]
+    found = set()
+
+    def mine(value):
+        return isinstance(value, types.FunctionType) and value.__module__ == __name__
+
+    for name, value in vars(module).items():
+        if mine(value):
+            found.add(name)
+        if isinstance(value, type) and value.__module__ == __name__:
+            found.update(inner for inner, member in vars(value).items() if mine(member))
     return found
 
 
@@ -2145,3 +2427,77 @@ class ProvenanceTests(unittest.TestCase):
         self.assertIn("definitionVersion", payloads["diagnose"])
         self.assertIn("repositoryCommit", payloads["diagnose"],
                       "the revision a reader would need to reproduce this is in the payload")
+
+    def test_every_function_here_says_what_it_hands(self):
+        """The inventory, derived from the module rather than remembered.
+
+        Asked of the module object, so a function nothing calls is still in it -- a stand-in
+        whose last caller went is still a stand-in this file offers, and the one that had been
+        left behind was found exactly this way.
+        """
+        self.assertEqual(_functions_here(), set(HANDED),
+                         "a function here does not say what it hands the thing under test, or a"
+                         " declaration outlived the function it described: "
+                         + json.dumps(sorted(_functions_here() ^ set(HANDED))))
+
+        for name, handed in sorted(HANDED.items()):
+            with self.subTest(name):
+                if handed in (BUILT, NOTHING):
+                    continue
+                self.assertIsInstance(handed, tuple,
+                                      name + ": a stand-in is declared as what the scenario has"
+                                      " instead and what a row through it cannot say")
+                self.assertEqual(len(handed), 2, name + ": both halves are required")
+                instead, cannot_say = handed
+                self.assertTrue(instead.strip(),
+                                name + " stands in for something without saying what the"
+                                " scenario has instead")
+                self.assertTrue(cannot_say.strip(),
+                                name + " stands in for something without saying what a row"
+                                " reading through it therefore does not prove")
+
+    def test_every_switch_the_fixture_accepts_is_classified(self):
+        """Asked of the fixture's own signature, so a switch added there arrives unclassified."""
+        parameters = inspect.signature(base.UpdateRecoveryTests._run).parameters
+        accepted = {name for name, parameter in parameters.items()
+                    if parameter.kind is inspect.Parameter.KEYWORD_ONLY}
+
+        self.assertEqual(accepted, set(INJECTIONS),
+                         "the fixture accepts a switch nothing here classifies, or a"
+                         " classification outlived the switch: "
+                         + json.dumps(sorted(accepted ^ set(INJECTIONS))))
+        for name in REFUSED_INJECTIONS:
+            with self.subTest(name):
+                self.assertIn(name, accepted, name + " is refused but nothing accepts it")
+                self.assertTrue(INJECTIONS[name].startswith("REFUSED"),
+                                name + " is refused without the table saying so")
+
+    def test_no_call_site_hands_the_fixture_an_injection_this_module_refuses(self):
+        """Every call in this file, because one green case cannot speak for the others.
+
+        The agreement case below reads what a run was actually told, which is the behavioural
+        half. It can only say that about its own run: the same switch handed at another call
+        site would leave it green. So the call sites are taken together, and the subject here IS
+        this file's own calls -- which is why reading it is the reading to take. Observing them
+        all instead would mean running every scenario inside one case.
+        """
+        tree = ast.parse(HERE.read_text(encoding="utf-8"))
+        refused = []
+        to_the_fixture = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            named = [keyword.arg for keyword in node.keywords if keyword.arg]
+            refused.extend(name for name in named if name in REFUSED_INJECTIONS)
+            if isinstance(node.func, ast.Name) and node.func.id == "install":
+                to_the_fixture.update(named)
+
+        self.assertEqual(refused, [],
+                         "a call here hands the fixture a switch this module refuses: "
+                         + repr(sorted(set(refused))))
+        self.assertEqual(to_the_fixture - set(INJECTIONS), set(),
+                         "a run is handed a switch nothing classifies: "
+                         + repr(sorted(to_the_fixture - set(INJECTIONS))))
+        self.assertTrue(to_the_fixture,
+                        "no call hands the fixture anything, so this check is watching a door"
+                        " nobody uses")

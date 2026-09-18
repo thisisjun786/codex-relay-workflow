@@ -1363,10 +1363,30 @@ reader wanting a version disagreement reads the refusal, not a classification.
 
 ### What the run exercised, and what it stood in for
 
-Every path is temporary, and the two build steps, the relay and the measurement are stand-ins
-inherited from the update fixture. The acceptance module says so in a declaration it derives from
-that fixture rather than from memory, so a stand-in added there fails this suite until the record
-acknowledges it. A provenance record a later change can silently outgrow is worse than none.
+Every path is temporary, and fifteen names are stand-ins inherited from the update fixture: the
+two build steps, the relay, the measurement, the component classification, the definition load
+and verification, the interpreter version, the pointer steps and the store readings. The
+acceptance module declares them in a record it derives by running the fixture and watching which
+attributes are replaced, rather than by reading how the fixture is written, so a stand-in added
+there fails this suite until the record acknowledges it. A provenance record a later change can
+silently outgrow is worse than none.
+
+A stand-in is only half of what a record has to say. A reading can reach its success answer, down
+the path it declared, on the host it declared, and still answer about something the scenario never
+built -- so the module also declares, function by function, whether what that function hands the
+command is the value the scenario built or a stand-in, and a stand-in names what the scenario has
+instead and what a row reading through it therefore does not prove. That inventory is derived by
+asking the module for its functions, so a helper added there arrives unclassified. What it does
+not reach is a value written inline inside a function body: the granularity is the function, and
+the imported fixture's own replacements are covered by the separate record above.
+
+The store is where that mattered. Every install in this suite used to tell the run its store was
+absent and its tables unknown while the fixture had built a populated one at the same path, and
+nothing failed, because a run told there is no store settles that cell as established absence and
+moves on. A regression that detected a store and then lost it stayed green underneath. The
+readings the run takes about the store now describe the store the fixture built, one case reads
+them back out of the run's own result and compares them with it, and no call site may hand that
+switch again.
 
 Rows this repository has exercised are `fixture`: a temporary destination whose build steps and
 relay are simulated. No committed row can say `host`, and a check enforces that. The diagnosis
