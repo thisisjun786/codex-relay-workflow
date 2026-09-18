@@ -1021,6 +1021,13 @@ class SevenReadingsTests(unittest.TestCase):
         tool takes exposure from not_verified to verified; asking for a trial takes delivery
         from not_applicable to not_verified. In each direction the answers that were not asked
         about must come back identical in value AND evidence, which a borrowed verdict cannot do.
+
+        The exposure direction needs a configuration reader, because reaching verified means
+        comparing the registered command, and the supported floor has none. That direction is
+        therefore taken only where it can be taken. The delivery direction needs no reader and
+        runs everywhere, so the orthogonality claim is exercised on both jobs rather than only
+        on the newer one -- and where exposure cannot rise, the case still requires it to hold
+        still while delivery moves.
         """
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -1032,7 +1039,17 @@ class SevenReadingsTests(unittest.TestCase):
                                    "--observed-tool", "get_capabilities")
             tried = diagnose_for(root, host, "--trial")
 
-        for moved_cell, varied in (("mcpToolExposure", exposed), ("deliveryAcceptance", tried)):
+        directions = [("deliveryAcceptance", tried)]
+        if HAS_READER:
+            directions.append(("mcpToolExposure", exposed))
+        else:
+            without = read("mcpToolExposure", {"diagnose": exposed})["value"]
+            self.assertEqual(without["value"], "not_verified",
+                             "with no reader for the configuration the registered command cannot"
+                             " be compared, so exposure stays unverified -- and it must stay so"
+                             " for that reason rather than rise on a tool list alone")
+
+        for moved_cell, varied in directions:
             with self.subTest(moved_cell):
                 before = read(moved_cell, {"diagnose": plain})["value"]
                 after = read(moved_cell, {"diagnose": varied})["value"]
