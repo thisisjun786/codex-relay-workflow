@@ -671,6 +671,18 @@ def cmd_verdict(services, args) -> dict:
                 EXIT_USAGE,
             )
         for item in marked:
+            # An entry that already disclaims the block is a contradiction with the option,
+            # and overwriting it here would settle that argument before normalise_findings
+            # could see there had been one: --criteria could carry restoration false while
+            # --restoration named the same criterion, and the verdict would open the next
+            # generation instead of refusing. Only an absent or agreeing declaration is
+            # marked; a disagreeing one is returned to the caller to say once.
+            if item.get(restoration.FIELD) is False:
+                raise SystemExit2(
+                    f"--restoration names {wanted!r}, whose finding declares the restoration "
+                    "block false. One correction carries one block and says so once",
+                    EXIT_USAGE,
+                )
             item[restoration.FIELD] = True
     record = services.ack.record_verdict(
         args.event, verdict=args.verdict, verdict_turn_id=args.verdict_turn,

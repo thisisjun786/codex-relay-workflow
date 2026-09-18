@@ -470,6 +470,34 @@ class RestorationDelivery(DeliveryTestCase):
             "no ruling may have been recorded",
         )
 
+    def test_the_option_does_not_overwrite_a_findings_own_disclaimer(self):
+        """Marking the entry would settle the argument before anyone could see there was one.
+
+        --criteria carries arbitrary JSON, so a finding can arrive already declaring the
+        block false while the option names that same criterion. Writing true over it hides
+        the contradiction from normalise_findings, and the verdict opens the next generation
+        instead of refusing.
+        """
+        _relationship, event_id = self._acknowledged()
+        with self.assertRaises(cli.SystemExit2) as caught:
+            cli.cmd_verdict(
+                SimpleNamespace(ack=self.ack),
+                SimpleNamespace(
+                    event=event_id, verdict="needs_changes", verdict_turn="v-disclaim",
+                    criterion=None, finding=None,
+                    criteria=json.dumps([{
+                        "id": "c1", "verdict": "needs_changes", "note": "resume",
+                        "restoration": False,
+                    }]),
+                    restoration="c1", reason=None, expect_criteria_digest=None,
+                ),
+            )
+        self.assertIn("says so once", str(caught.exception))
+        self.assertIsNone(
+            self.store.one("SELECT event_id FROM verdicts WHERE event_id = ?", (event_id,)),
+            "no ruling may have been recorded",
+        )
+
     # ------------------------------------------------- an unlocatable declaration
 
     def test_each_attempt_records_what_its_own_bytes_carried(self):
