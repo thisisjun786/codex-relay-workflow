@@ -40,7 +40,7 @@ HOME_PATHS = (re.compile(r"(?<![A-Za-z0-9._-])/home/[A-Za-z0-9._-]+/"),
               re.compile(r"(?<![A-Za-z0-9._-])/root/"),
               re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+"))
 FORBIDDEN_NAMES = re.compile(
-    r"^(\.git|\.codexclaw|\.env(\..*)?|id_rsa.*|.*credentials.*|.*secrets?"
+    r"^(\.git|\.codexclaw|\.env(\..*)?|id_rsa.*|.*credentials?.*|.*secrets?.*"
     r"|.*\.(sqlite3?|db|pem|key|p12|pfx))$", re.IGNORECASE)
 
 

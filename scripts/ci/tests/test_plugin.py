@@ -199,7 +199,8 @@ class HygieneTests(unittest.TestCase):
     def test_operational_state_and_credentials(self):
         for name in (".codexclaw/sessions/s.json", "skills/crw-run/relay.sqlite3",
                      ".env", ".env.local", "skills/id_rsa", "skills/aws-credentials",
-                     "skills/client.key"):
+                     "skills/client.key", "skills/crw-run/client-secrets.json",
+                     "skills/secret.yaml", "skills/service-credential.json"):
             with self.subTest(name=name):
                 errors = plugin.hygiene(payload({**GOOD, name: "x"}), "t")
                 self.assertTrue(any("may not ship" in e for e in errors), errors)
