@@ -348,7 +348,10 @@ def pointer_state(pointer_path, record, data):
         if not root.is_absolute():
             root = Path(path).parent / root
         root = root.resolve()
-    except (OSError, ValueError) as error:
+    except reading.RESOLVE_FAILURES as error:
+        # Below 3.11 a symlink loop comes out of pathlib as RuntimeError rather than
+        # OSError(ELOOP), so catching only OSError answered with a reading on 3.13 and let a
+        # traceback out of the whole diagnosis on this repository's own floor.
         read["detail"] = ("the pointer's target could not be resolved: "
                           + type(error).__name__ + ": " + str(error))
         return read
@@ -369,7 +372,7 @@ def pointer_state(pointer_path, record, data):
         try:
             if not within(Path(location).resolve(), root):
                 outside.append(str(location))
-        except (OSError, ValueError) as error:
+        except reading.RESOLVE_FAILURES as error:
             read["detail"] = ("a recorded selection could not be resolved: "
                               + type(error).__name__ + ": " + str(error))
             return read
@@ -394,7 +397,7 @@ def protected_environment(record, environment, destination, data):
             root = Path(environment).resolve()
             selects = any(within(Path(location).resolve(), root)
                           for location in selected if location)
-        except (OSError, ValueError):
+        except reading.RESOLVE_FAILURES:
             selects = None
     names = pointer.names(pointer.pointer_path(destination), environment)
     protected = selects is not False or names is not False

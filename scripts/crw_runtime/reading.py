@@ -72,6 +72,15 @@ OMISSION_DECLARED = {
 SHAPE_FAILURES = (TypeError, AttributeError, LookupError, ValueError)
 READ_FAILURES = SHAPE_FAILURES + (OSError,)
 
+# Resolving a path is the one read whose failure type depends on the interpreter. Below 3.11
+# pathlib raises RuntimeError("Symlink loop from ...") where 3.11 and later raise
+# OSError(ELOOP), so a caller that catches only OSError answers with a reading on one
+# interpreter and dies with a traceback on the other -- and this repository's floor is 3.10.
+# Declared here so both resolve sites ask for the same set rather than each remembering the
+# difference. RuntimeError is NOT in READ_FAILURES: swallowing it around ordinary logic would
+# hide real defects, and it belongs only where a path is being resolved.
+RESOLVE_FAILURES = READ_FAILURES + (RuntimeError,)
+
 
 class Reading:
     """A value and the state of the attempt that produced it."""
