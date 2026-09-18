@@ -213,6 +213,13 @@ def read(cell, payloads):
         if not isinstance(found, dict) or key not in found:
             return _unreadable(declared_cell, source, path, "the reading has no " + repr(key))
         found = found[key]
+    if found == reading.UNREADABLE:
+        # A producer that already said it could not read is not made readable by the fact that
+        # its answer was where this table expected it. The path being reachable answers "was
+        # there an answer here", which is a different question from "was the reading made", and
+        # collapsing the two is how an unread row passes a readability check.
+        return _unreadable(declared_cell, source, path,
+                           str(payload.get("detail") or "the reading reported itself unreadable"))
     return {"cell": declared_cell, "value": found, "answeredBy": source, "readingPath": path,
             "readable": True, "performedAgainst": COMMITTED_PROVENANCE}
 
@@ -370,6 +377,11 @@ def isolated(root):
         "CODEX_HOME": str(root / "codex"),
         # Enough to run the interpreter and git, and not enough to reach an installed relay.
         "PATH": "/usr/bin:/bin",
+        # An inherited import path is the other way in. Without these the child imports whatever
+        # the host has installed, and the resolved-location reading would then be about this
+        # machine rather than about the destination under test.
+        "PYTHONPATH": "",
+        "PYTHONNOUSERSITE": "1",
     }
 
 
@@ -521,11 +533,14 @@ class ComposedLifecycleTests(unittest.TestCase):
                     record = hostrecord.load(host.record_path,
                                              host.data["definitionVersion"]).value or {}
                     selected = record.get("selected") or {}
+                    claimed = (staging.read_claim(installed).value or {}).get("state")
+                    after_new = sorted(p.name for p in host.destination.iterdir())
 
                     # Stage two: the same run again, which must build and write nothing.
                     repeat, repeat_payload = install(host, clean_store=True)
                     after_repeat = host.snapshot()
                     claim = (staging.read_claim(installed).value or {}).get("state")
+                    after_again = sorted(p.name for p in host.destination.iterdir())
 
                     # Stage three: a source arrives and the update to it fails at this seam.
                     arriving = arriving_source(host)
@@ -550,6 +565,9 @@ class ComposedLifecycleTests(unittest.TestCase):
                 self.assertTrue(selected, label + ": a new install records what it selected")
                 self.assertTrue(all(str(installed) in str(where) for where in selected.values()),
                                 label + ": and what it selected is what it built")
+                self.assertEqual(claimed, staging.COMPLETE,
+                                 label + ": the claim is settled by the install that made it,"
+                                 " not first read after a later run")
 
                 self.assertEqual(repeat, 0, json.dumps(repeat_payload)[:1200])
                 self.assertTrue(repeat_payload["alreadyInstalled"],
@@ -558,6 +576,9 @@ class ComposedLifecycleTests(unittest.TestCase):
                 self.assertEqual(claim, staging.COMPLETE, label)
                 self.assertEqual(after_repeat, settled,
                                  label + ": and it changes nothing that was there")
+                self.assertEqual(after_again, after_new,
+                                 label + ": a repeat leaves no directory behind either, which"
+                                 " the state snapshot does not inventory")
 
                 self.assertNotEqual(arriving, installed,
                                     label + ": the arriving source must build somewhere else,"
@@ -663,6 +684,22 @@ class ComposedLifecycleTests(unittest.TestCase):
                         "nothing was left in the destination, so the destination can be retried")
 
 
+def diagnose_for(root, host, *extra):
+    """Ask this host for a diagnosis, with whatever extra input the case is varying."""
+    done = subprocess.run(
+        [sys.executable, str(RUNTIME), "diagnose",
+         "--codex-home", str(host.codex_home),
+         "--dest", str(host.destination),
+         "--record", str(host.record_path),
+         "--state", str(host.state),
+         "--socket", str(root / "no.sock"),
+         "--relay-command", str(root / "no-relay"),
+         "--temporary", *extra],
+        capture_output=True, text=True, timeout=180,
+        env=dict(os.environ, **isolated(root)))
+    return json.loads(done.stdout)
+
+
 def observe_all(root):
     """Every reading the criterion asks for, each taken from the source that answers it.
 
@@ -678,24 +715,12 @@ def observe_all(root):
     install(host, clean_store=True)
     later = host.config.read_text(encoding="utf-8")
 
-    done = subprocess.run(
-        [sys.executable, str(RUNTIME), "diagnose",
-         "--codex-home", str(host.codex_home),
-         "--dest", str(host.destination),
-         "--record", str(host.record_path),
-         "--state", str(host.state),
-         "--socket", str(root / "no.sock"),
-         "--relay-command", str(root / "no-relay"),
-         "--temporary"],
-        capture_output=True, text=True, timeout=180,
-        env=dict(os.environ, **isolated(root)))
-
     hook_directory = root / "hook"
     hook_directory.mkdir(exist_ok=True)
     _before, after = fire_the_hook(hook_directory)
 
     return {
-        "diagnose": json.loads(done.stdout),
+        "diagnose": diagnose_for(root, host),
         "hook-status": after,
         ACCEPTANCE: _model_permission_delta(earlier, later),
     }, host
@@ -791,6 +816,15 @@ class SevenReadingsTests(unittest.TestCase):
 
         for cell in SEVEN:
             with self.subTest(cell):
+                if cell == "modelPermissionPreservation" and not HAS_READER:
+                    # The one row this interpreter cannot take. It has to say so, and say why:
+                    # an unread row that reports itself readable is the failure this whole
+                    # arrangement is against, and it would be invisible on exactly one job.
+                    self.assertFalse(rows[cell]["readable"])
+                    self.assertEqual(rows[cell]["value"], reading.UNREADABLE)
+                    self.assertIn("tomllib", rows[cell]["detail"],
+                                  "the refusal names the reader it did not have")
+                    continue
                 self.assertTrue(rows[cell]["readable"],
                                 cell + ": " + str(rows[cell].get("detail")))
 
@@ -914,6 +948,60 @@ class SevenReadingsTests(unittest.TestCase):
         self.assertEqual(moved["value"], CHANGED,
                          "a permission posture that moved is not a preserved one")
 
+
+
+    def test_without_a_reader_the_row_reports_itself_unread_rather_than_preserved(self):
+        """Checked on both jobs rather than only on the one where it bites.
+
+        The supported floor has no TOML reader, so on that job this row cannot be taken. The
+        failure worth preventing is not the missing reader: it is a row that reports itself
+        readable anyway, which would be visible on exactly one interpreter and green on the
+        other. Simulating the absence here states the property on both.
+        """
+        with mock.patch.object(sys.modules[__name__], "HAS_READER", False):
+            row = read("modelPermissionPreservation",
+                       {ACCEPTANCE: _model_permission_delta(MODEL_PERMISSION_BLOCK,
+                                                            MODEL_PERMISSION_BLOCK)})
+
+        self.assertFalse(row["readable"])
+        self.assertEqual(row["value"], reading.UNREADABLE)
+        self.assertNotEqual(row["value"], PRESERVED,
+                            "two configurations that happen to be identical are still not a"
+                            " preservation anybody read")
+        self.assertIn("tomllib", row["detail"])
+    def test_changing_one_condition_moves_only_the_reading_that_asked_about_it(self):
+        """Independence at the input, which the accessor cases cannot reach.
+
+        Moving a value inside a payload proves this table reads the path it declared. It does
+        not prove the command computed those values separately: a diagnosis that derived tool
+        exposure from the import result would still write both keys, and every other case here
+        would stay green. So one input is varied instead -- the observed tool list, which only
+        the exposure question asks about -- and the answers that did not ask for it have to come
+        back the same.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            _payloads, host = observe_all(root)
+            plain = diagnose_for(root, host)
+            asked = diagnose_for(root, host, "--observed-tool", "get_capabilities")
+
+        exposure = "mcpToolExposure"
+        moved = read(exposure, {"diagnose": asked})["value"]
+        stayed = read(exposure, {"diagnose": plain})["value"]
+        self.assertNotEqual(moved["evidence"], stayed["evidence"],
+                            "the observed tool list never reached the question that asks about"
+                            " it, so this case is not varying anything")
+
+        for cell in CHECK_FIELD_ROWS:
+            if cell == exposure:
+                continue
+            with self.subTest(cell):
+                before = read(cell, {"diagnose": plain})["value"]
+                after = read(cell, {"diagnose": asked})["value"]
+                self.assertEqual((after["value"], after["evidence"]),
+                                 (before["value"], before["evidence"]),
+                                 cell + " moved when only the tool list changed, so it is not"
+                                 " answering on its own reading")
     def test_the_diagnosis_reads_nothing_outside_the_directory_it_was_given(self):
         """Pointing --state somewhere temporary is not isolation, so this checks the result.
 
@@ -936,6 +1024,31 @@ class SevenReadingsTests(unittest.TestCase):
             with self.subTest(where):
                 self.assertTrue(str(Path(where).resolve()).startswith(str(root)),
                                 where + " is outside the temporary directory")
+
+    def test_the_diagnosis_does_not_import_or_run_what_the_host_has_installed(self):
+        """The other way out, which redirecting paths does not close.
+
+        Resolving where a module lives imports it, under an interpreter this suite did not
+        choose, and the bridge smoke script starts a server. With the host import path inherited
+        that reaches whatever this machine has installed -- which is a runtime this task is only
+        allowed to read about, never to run. So the child gets no PYTHONPATH and no user site,
+        and the resolved location has to be either nothing or somewhere inside the temporary
+        directory. A location on this machine fails here rather than passing quietly.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            payloads, _host = observe_all(root)
+        components = payloads["diagnose"].get("components") or {}
+
+        self.assertTrue(components, "the diagnosis reported no component at all")
+        for name, component in components.items():
+            with self.subTest(name):
+                where = component.get("importedLocation")
+                if where is None:
+                    continue
+                self.assertTrue(str(Path(where).resolve()).startswith(str(root)),
+                                name + " was imported from " + where + ", which is installed on"
+                                " this host rather than in the destination under test")
 
 
 class DistinctionTests(unittest.TestCase):

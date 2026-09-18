@@ -1356,26 +1356,60 @@ not isolation: the survey runs discovery of its own, the filesystem side reads t
 an installed entry point on `PATH` would be resolved and run. The case then requires every path
 the diagnosis reported to be inside that directory.
 
+Paths are only half of it. Resolving where a component lives imports it, and the bridge's smoke
+script starts a server, so an inherited import path would have the suite running whatever this
+machine has installed -- a runtime a check is allowed to read about and not to run. The child
+therefore gets no `PYTHONPATH` and no user site directory, and a resolved location has to be
+either nothing or somewhere under the temporary root. A location on the host fails the case
+instead of passing quietly as a reading about the wrong machine.
+
 ### Running the combination against a real host
 
 A real combination is an operator action, not a check. It needs a destination, a Codex home, a
 host record and a state directory that are yours to change, and it establishes nothing until it
-is recorded.
+is recorded. Four of the seven need an input the command cannot supply for itself, so a bare
+`diagnose` produces four answers and three admissions that it did not look.
 
 ```sh
-# Start: install, then read the seven separately.
+# Before anything: the model and permission keys as they stand, because preservation is a
+# comparison and there is no cell that makes it for you.
+cp <codex-home>/config.toml <receipt>/config.before.toml
+
 python3 scripts/runtime_install.py install --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state> --apply
+
+# Registration is a separate operation from installing, and tool exposure compares the
+# registered command with the tools a session actually listed. Both halves or neither.
+python3 scripts/runtime_install.py register-mcp --codex-home <codex-home> \
+    --bridge-command <destination>/current/bin/<console-script> --apply
+
 python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state> --socket <socket> \
-    --observed-tool get_capabilities --trial
+    --bridge-command <destination>/current/bin/<console-script> \
+    --observed-tool get_capabilities \
+    --trial <the trial inputs, which "Trial mode" above lists>
+
+# The hook has to have fired. hook-status counts what the hook recorded about itself, so before
+# any Stop has reached it the honest answer is that the journal is absent.
+python3 scripts/runtime_install.py hook --codex-home <codex-home> --adapter completion \
+    --dest <destination> --apply
+#   ... then end a real turn, and only then:
 python3 scripts/runtime_install.py hook-status --codex-home <codex-home>
+
+# Afterwards: the other half of the preservation reading.
+diff <receipt>/config.before.toml <codex-home>/config.toml
 
 # Recovery: an update that failed has already restored what it found. Read it back rather than
 # assuming it, and look at residualPaths before retrying.
 python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state>
 ```
+
+Without `--observed-tool` the exposure answer is that no tool names were observed, without the
+trial inputs delivery is `not_applicable`, and before a Stop has reached the hook the callback
+row is an absence. Those are answers, and they are the right ones; what they are not is a
+failure of the thing they were asked about. Recording them as though the questions had been put
+is the one way this procedure can lie.
 
 Stopping is not on that list, because nothing here starts anything. The installer never starts or
 stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well
