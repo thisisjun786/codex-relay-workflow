@@ -1009,8 +1009,9 @@ class TheSweepDerivesItsOwnReachRatherThanClaimingIt(unittest.TestCase):
 # breaks things on purpose, which is the other way a case can assert nothing. The store's
 # fault hook is global and fires just before every COMMIT, so an arming reaches whichever
 # transaction runs first rather than the one the case is named for - and a case can then
-# pass in a situation its own name does not describe. Every arming is enumerated from
-# source and carries the interval it reaches and a reading.
+# pass in a situation its own name does not describe. Every arming this reader RECOGNISES
+# is enumerated from source and carries the interval it reaches and a reading, and the
+# next paragraph says how far recognition goes, because that word is doing real work.
 #
 # What this is, and what it does NOT claim. The claim was rewritten four times under review
 # and was wrong three of them, which is the best argument for stating it exactly.
@@ -1086,6 +1087,9 @@ FAULT_SITES = (
 UNACCOUNTED_FAULT_OCCURRENCES = (
     ("support.py", "killed_before_commit", "defines the helper"),
     ("test_regression_map.py", "<module>", "names the hook in a string"),
+    ("test_regression_map.py",
+     "test_the_names_this_reader_tracks_are_the_ones_written_down_here",
+     "names the hook in a string"),
 )
 
 
@@ -1114,7 +1118,7 @@ def _binds_a_tracked_name(node):
     resolver was pretending to do, a person now has to do: read the binding and write down
     what it is.
 
-    Shallow on purpose. The right-hand side is read one level - the value itself, or the
+    Shallow on purpose. The right-hand side is read one level: the value itself, or the
     elements of a tuple or list literal. A binding buried deeper is not seen, and the reach
     comment says so rather than implying otherwise.
     """
@@ -1131,7 +1135,6 @@ def _binds_a_tracked_name(node):
     for value in values:
         parts = value.elts if isinstance(value, (ast.Tuple, ast.List)) else [value]
         for part in parts:
-            part = part.value if isinstance(part, ast.Starred) else part
             if _referred(part) in TRACKED:
                 found.append(_referred(part))
     return found
@@ -1174,6 +1177,22 @@ def _injection_sites_in(tree, module):
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
     }
     accounted = set()
+    # Provenance for the helper name. A bare call to it is only the helper when this module
+    # imported it; a parameter, a class or a foreign import that happens to share the name is
+    # something else, and guessing which is how this reader answered wrongly twice before.
+    imported = any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and any(alias.name.split(".")[-1] == HELPER and not alias.asname
+                for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    shadowed = any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name == HELPER
+        for node in ast.walk(tree)
+    ) or any(
+        isinstance(node, ast.arg) and node.arg == HELPER for node in ast.walk(tree)
+    )
 
     for node in ast.walk(tree):
         for bound in _binds_a_tracked_name(node):
@@ -1187,10 +1206,24 @@ def _injection_sites_in(tree, module):
             targets = node.targets
         elif isinstance(node, ast.AnnAssign):
             targets = [node.target]
+        flat = []
         for target in targets:
+            # store.fault_hook, other = die, x is still an arming. Without flattening, the
+            # attribute fell through to the read pass and was reported as "reads the hook".
+            if isinstance(target, (ast.Tuple, ast.List)):
+                flat.extend(
+                    element.value if isinstance(element, ast.Starred) else element
+                    for element in target.elts
+                )
+            else:
+                flat.append(target)
+        for target in flat:
             if isinstance(target, ast.Attribute) and target.attr == HOOK:
                 accounted.add(id(target))
                 value = node.value
+                if value is None:
+                    # A bare annotation binds nothing, so it arms nothing.
+                    continue
                 if isinstance(value, ast.Constant) and value.value is None:
                     continue
                 sites.append((module, owner.get(node, "<module>"), "raw", None))
@@ -1200,7 +1233,14 @@ def _injection_sites_in(tree, module):
             callee = _referred(node.func)
             if isinstance(node.func, ast.Name) and callee == HELPER:
                 accounted.add(id(node.func))
-                sites.append((module, owner.get(node, "<module>"), "helper", _predicate_of(node)))
+                if imported and not shadowed:
+                    sites.append(
+                        (module, owner.get(node, "<module>"), "helper", _predicate_of(node))
+                    )
+                else:
+                    leftover.append(
+                        (module, owner.get(node, "<module>"), "calls a helper-named local")
+                    )
             elif callee == HELPER:
                 # obj.killed_before_commit(). Same final name, no reason to believe it is the
                 # same function, and guessing is how a raw arming got called a helper site.
@@ -1224,7 +1264,7 @@ def _injection_sites_in(tree, module):
 
 
 def fault_injection_sites():
-    """Every arming of the store's fault hook in this suite, and everything it cannot read.
+    """The armings this reader recognises across the suite, and the shapes it cannot read.
 
     Occurrence accounting, in the same spirit as producer_paths above: a shape that could
     hide an arming and is not one of the forms this reader knows becomes a leftover and
@@ -1366,18 +1406,21 @@ class TheWriteClassifierSaysWhatItCannotRead(unittest.TestCase):
 class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
     """Synthetic source, because this suite is not a test corpus for its own reader.
 
-    Review measured the gap that made this necessary: replacing the binding reader with one
-    that returns nothing left every other case in this module green. The reach was checked
-    by a scratch harness and by nothing that ships, which is the same shape as a fault hook
-    that fires before the interval a case is named for - right today, and right for a reason
-    nothing records.
+    Review measured why this exists: replacing the binding reader with one that returns
+    nothing left every other case in this module green. The reach was checked by a scratch
+    harness and by nothing that ships, which is the same shape as a fault firing before the
+    interval a case is named for - right today, and right for a reason nothing records.
 
-    Every fixture is built from HOOK and HELPER rather than repeating them, so a fixture
-    cannot drift from the names the rules use, and this module does not become an occurrence
-    of its own scan. The wrong-answer rows matter most: they are not gaps, they are the
-    reader saying "helper" about something that is not one, which hides the very thing the
-    inventory exists to surface.
+    The expectations here are written out rather than derived from the rules under test. An
+    earlier draft took its hiding name from HIDING_CALLS[0], and review measured that
+    deleting exec and eval from that tuple left every case green. A test whose oracle moves
+    with the code cannot fail when the code is wrong.
+
+    The wrong-answer rows matter most. They are not gaps; they are the reader saying
+    "helper" about something that is not one, which hides what the inventory exists to show.
     """
+
+    IMPORT = f"from .support import {HELPER}\n"
 
     def read(self, source):
         sites, leftover = _injection_sites_in(
@@ -1388,61 +1431,84 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
     def kinds(self, leftover):
         return sorted(reason for _module, _where, reason in leftover)
 
+    def test_the_names_this_reader_tracks_are_the_ones_written_down_here(self):
+        """The oracle below names these three. If the rules stop tracking one, the cases
+        that exercise it would silently stop exercising anything, so the sets are compared
+        rather than shared."""
+        self.assertEqual(HIDING_CALLS, ("setattr", "exec", "eval"))
+        self.assertEqual(HOOK, "fault_hook")
+        self.assertEqual(HELPER, "killed_before_commit")
+
     def test_a_direct_arming_is_a_site_however_it_is_spelled(self):
         for source in (
             f"def t(store, die):\n    store.{HOOK} = die\n",
             f"def t(store, die):\n    store.{HOOK}: object = die\n",
+            f"def t(store, die):\n    store.{HOOK}, other = die, 1\n",
         ):
             sites, _leftover = self.read(source)
             self.assertEqual(sites, [("probe.py", "t", "raw", None)], source)
 
-    def test_disarming_is_not_an_arming(self):
-        sites, leftover = self.read(f"def t(store):\n    store.{HOOK} = None\n")
-        self.assertEqual(sites, [])
-        self.assertEqual(leftover, [])
+    def test_binding_nothing_arms_nothing(self):
+        """Disarming, and a bare annotation. Neither assigns, so neither is an arming."""
+        for source in (
+            f"def t(store):\n    store.{HOOK} = None\n",
+            f"def t(store):\n    store.{HOOK}: object\n",
+        ):
+            sites, leftover = self.read(source)
+            self.assertEqual(sites, [], source)
+            self.assertEqual(leftover, [], source)
 
     def test_a_direct_helper_call_carries_the_predicate_it_passes(self):
         sites, _leftover = self.read(
-            f"def t(store):\n"
-            f"    with {HELPER}(store, writing='attempts'):\n"
-            f"        pass\n"
+            self.IMPORT
+            + "def t(store):\n"
+            + f"    with {HELPER}(store, writing='attempts'):\n"
+            + "        pass\n"
         )
         self.assertEqual(sites, [("probe.py", "t", "helper", "attempts")])
 
     def test_a_predicate_this_reader_cannot_see_says_so_rather_than_saying_none(self):
         """None means the case passes no predicate. That is a claim, and ** is not it."""
         sites, _leftover = self.read(
-            f"def t(store, options):\n"
-            f"    with {HELPER}(store, **options):\n"
-            f"        pass\n"
+            self.IMPORT
+            + "def t(store, options):\n"
+            + f"    with {HELPER}(store, **options):\n"
+            + "        pass\n"
         )
         self.assertEqual(sites, [("probe.py", "t", "helper", UNREADABLE)])
 
-    def test_a_reflective_arming_is_visible_in_every_spelling_review_proposed(self):
-        hide = HIDING_CALLS[0]
-        for label, source in (
-            ("direct call", f"def t(store, die):\n    {hide}(store, 'x', die)\n"),
+    def test_every_reflective_spelling_review_proposed_is_visible(self):
+        for label, source, expected in (
+            ("direct call", "def t(store, die):\n    setattr(store, 'x', die)\n",
+             "calls setattr"),
+            ("direct exec", "def t(store):\n    exec('x')\n", "calls exec"),
+            ("direct eval", "def t(store):\n    eval('x')\n", "calls eval"),
             ("object.__setattr__",
-             "def t(store, die):\n    object.__setattr__(store, 'x', die)\n"),
-            ("__dict__ subscript", "def t(store, die):\n    store.__dict__['x'] = die\n"),
-            ("assigned alias",
-             f"def t(store, die):\n    arm = {hide}\n    arm(store, 'x', die)\n"),
-            ("annotated alias",
-             f"def t(store, die):\n    arm: object = {hide}\n    arm(store, 'x', die)\n"),
-            ("tuple alias",
-             f"def t(store, die):\n    arm, spare = {hide}, None\n    arm(store, 'x', die)\n"),
-            ("starred tuple alias",
-             f"import builtins\ndef t(store, die):\n"
-             f"    arm, *spare = (builtins.{hide},)\n    arm(store, 'x', die)\n"),
-            ("walrus alias", f"def t(store, die):\n    (arm := {hide})(store, 'x', die)\n"),
-            ("import alias", f"from builtins import {hide} as arm\n"),
-            ("helper import alias", f"from support import {HELPER} as arm\n"),
+             "def t(store, die):\n    object.__setattr__(store, 'x', die)\n",
+             "calls __setattr__"),
+            ("__dict__ subscript", "def t(store, die):\n    store.__dict__['x'] = die\n",
+             "assigns through __dict__"),
+            ("assigned alias", "def t(store, die):\n    arm = setattr\n",
+             "binds setattr elsewhere"),
+            ("annotated alias", "def t(store, die):\n    arm: object = eval\n",
+             "binds eval elsewhere"),
+            ("tuple alias", "def t(store, die):\n    arm, spare = exec, None\n",
+             "binds exec elsewhere"),
+            ("list alias", "def t(store, die):\n    arm, spare = [setattr, None]\n",
+             "binds setattr elsewhere"),
+            ("starred target alias",
+             "import builtins\ndef t(store, die):\n    arm, *spare = (builtins.setattr,)\n",
+             "binds setattr elsewhere"),
+            ("walrus alias", "def t(store, die):\n    (arm := eval)('x')\n",
+             "binds eval elsewhere"),
+            ("import alias", "from builtins import setattr as arm\n",
+             "binds setattr elsewhere"),
+            ("helper import alias",
+             f"from support import {HELPER} as arm\n",
+             "binds " + HELPER + " elsewhere"),
         ):
             _sites, leftover = self.read(source)
-            self.assertTrue(
-                leftover,
-                f"{label} can arm the hook and this reader reported nothing at all",
-            )
+            self.assertIn(expected, self.kinds(leftover), label)
 
     def test_a_bound_name_never_produces_a_site(self):
         """The wrong answer that cost two review rounds, pinned so it cannot come back.
@@ -1451,28 +1517,39 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
         same local name was bound to the helper in another function. Nothing is inferred
         from a binding now, so a call through a bound name is not classified at all.
         """
-        source = (
-            f"def raw(store, die):\n"
-            f"    arm = {HIDING_CALLS[0]}\n"
-            f"    arm(store, 'x', die)\n"
-            f"def helper(store):\n"
-            f"    arm = {HELPER}\n"
-            f"    with arm(store):\n"
-            f"        pass\n"
+        sites, leftover = self.read(
+            self.IMPORT
+            + "def raw(store, die):\n"
+            + "    arm = setattr\n"
+            + "    arm(store, 'x', die)\n"
+            + "def helper(store):\n"
+            + f"    arm = {HELPER}\n"
+            + "    with arm(store):\n"
+            + "        pass\n"
         )
-        sites, leftover = self.read(source)
-        self.assertEqual(
-            [site for site in sites if site[2] == "helper"], [],
-            "a call through a bound name was reported as a helper site, which is how a raw"
-            " reflective arming walks past the rule that a raw arming must argue for itself",
-        )
-        self.assertIn("binds " + HIDING_CALLS[0] + " elsewhere", self.kinds(leftover))
+        self.assertEqual(sites, [])
+        self.assertIn("binds setattr elsewhere", self.kinds(leftover))
         self.assertIn("names the helper uncalled", self.kinds(leftover))
 
-    def test_a_helper_named_attribute_is_not_assumed_to_be_the_helper(self):
-        sites, leftover = self.read(f"def t(obj):\n    obj.{HELPER}()\n")
-        self.assertEqual([site for site in sites if site[2] == "helper"], [])
-        self.assertIn("calls a helper-named attribute", self.kinds(leftover))
+    def test_a_helper_name_this_module_did_not_import_is_not_the_helper(self):
+        """Provenance, because the name alone is not identity. A parameter, a class, a local
+        definition or a foreign import can all carry it."""
+        for label, source in (
+            ("no import at all",
+             f"def t(store):\n    {HELPER}(store)\n"),
+            ("parameter shadow",
+             self.IMPORT + f"def t(store, {HELPER}):\n    {HELPER}(store)\n"),
+            ("class shadow",
+             self.IMPORT + f"class {HELPER}:\n    pass\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("attribute of something else",
+             self.IMPORT + f"def t(obj):\n    obj.{HELPER}()\n"),
+        ):
+            sites, leftover = self.read(source)
+            self.assertEqual(
+                [site for site in sites if site[2] == "helper"], [], label,
+            )
+            self.assertTrue(leftover, label)
 
     def test_a_module_defining_the_helper_says_so_rather_than_trusting_the_name(self):
         _sites, leftover = self.read(
@@ -1487,6 +1564,13 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
         self.assertEqual(leftover, [])
         _sites, named = self.read(f'def t():\n    name = "{HOOK}"\n')
         self.assertIn("names the hook in a string", self.kinds(named))
+
+    def test_an_unrelated_receiver_is_over_reported_rather_than_missed(self):
+        """Deliberate, and the safe direction. This reader cannot know what config is, so a
+        hook-named attribute on anything is a site that somebody has to declare. Over-
+        reporting costs a declaration; under-reporting hides an arming."""
+        sites, _leftover = self.read(f"def t(config, value):\n    config.{HOOK} = value\n")
+        self.assertEqual(sites, [("probe.py", "t", "raw", None)])
 
 
 if __name__ == "__main__":
