@@ -1413,16 +1413,24 @@ python3 scripts/runtime_install.py hook-status --codex-home <codex-home> > <rece
 
 # hook-status names the journal it counted; the records in it name the turn they belong to.
 python3 - <receipt>/hook.json <session-id> <turn-id> <<'PY'
-import json, sys
+import json, re, sys
 from pathlib import Path
 status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
 root = Path(json.load(open(status))["firingJournal"]["journalRoot"]).expanduser()
-records = [json.loads(entry.read_text(encoding="utf-8"))
-           for day in sorted(root.glob("*")) if day.is_dir()
-           for entry in sorted(day.glob("*.json"))]
+# The same shapes hook-status counts, and one entry that cannot be decoded does not take the
+# reading with it: the hook creates a record before it finishes writing it, so a file being
+# written while you look is neither a match nor a failure of your turn.
+day, name = re.compile(r"^[0-9]{8}$"), re.compile(r"^[0-9a-f]{32}\.json$")
+records, unreadable = [], 0
+for directory in sorted(p for p in root.glob("*") if p.is_dir() and day.match(p.name)):
+    for entry in sorted(e for e in directory.glob("*.json") if name.match(e.name)):
+        try:
+            records.append(json.loads(entry.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            unreadable += 1
 mine = [r for r in records if r.get("sessionId") == session and r.get("turnId") == turn]
-print(json.dumps({"recordsInJournal": len(records), "recordsForThisTurn": len(mine),
-                  "record": mine[:1]}, indent=2))
+print(json.dumps({"recordsRead": len(records), "recordsUnreadable": unreadable,
+                  "recordsForThisTurn": len(mine), "record": mine[:1]}, indent=2))
 PY
 
 # Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
@@ -1475,9 +1483,14 @@ questions had been put is the one way this procedure can lie.
 
 `recordsForThisTurn` is the reading. One record naming the session and the turn that was ended
 is a callback this procedure can attribute; zero is not a smaller number of callbacks, it is a
-turn that did not reach the hook, and the row is unreadable for this run whatever
-`recordsInJournal` says. Do not record the count instead -- it is the answer to a question
-nobody asked here, and it is the one piece of this procedure that another session can move.
+turn that did not reach the hook, and the row is unreadable for this run whatever the totals
+say. Do not record a total instead -- it is the answer to a question nobody asked here, and it
+is the one piece of this procedure another session can move.
+
+Read `recordsUnreadable` before concluding. Zero matches beside a nonzero unreadable count is
+not an answer either: a record the hook had created but not finished writing is neither your
+turn nor evidence against it, and the honest move is to look again rather than to write down a
+callback that did not happen or rule out one that did.
 
 Stopping is not on that list, because nothing here starts anything. The installer never starts or
 stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well
