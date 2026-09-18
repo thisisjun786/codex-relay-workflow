@@ -659,18 +659,24 @@ def succeeding(root):
     """
     host = base._Host(root)
     clean(host)
+    bridge = base.component_of_for_test(host.data, runtime_install.MCP_NAME)
+    registered = str(host.pointer_path / "bin" / bridge["consoleScript"])
+    # The fixture arrives with the bridge already registered, which would let the exposure row
+    # read verified while register-mcp wrote nothing at all. The table is taken away so the
+    # registration this run performs is the one the diagnosis compares against.
+    host.config.write_text("", encoding="utf-8")
     seed_settings(host)
     earlier = host.config.read_text(encoding="utf-8")
     install(host, clean_store=True)
     later = host.config.read_text(encoding="utf-8")
 
     linked_skills(host)
-    bridge = base.component_of_for_test(host.data, runtime_install.MCP_NAME)
-    registered = str(host.pointer_path / "bin" / bridge["consoleScript"])
     # The supplied runtime first: it writes the console scripts the entry points resolve to and
     # records the interpreter, and only then is that interpreter given a path it can import from.
     stand_in_runtime(host)
     sources = importable_runtime(host, root, paths=installed_components(host))
+    registration = base.run("register-mcp", "--codex-home", str(host.codex_home),
+                            "--bridge-command", registered, "--apply")
 
     hook_directory = root / "hook"
     hook_directory.mkdir(exist_ok=True)
@@ -685,7 +691,7 @@ def succeeding(root):
             import_path=sources),
         "hook-status": after,
         ACCEPTANCE: _model_permission_delta(earlier, later),
-    }, host
+    }, host, registration
 
 class ComposedLifecycleTests(unittest.TestCase):
     """One destination, four stages, and the install that has to come back at the end of them.
@@ -1343,7 +1349,7 @@ class SevenReadingsTests(unittest.TestCase):
         a trial, and the hook has really fired.
         """
         with tempfile.TemporaryDirectory() as temporary:
-            payloads, host = succeeding(Path(temporary).resolve())
+            payloads, host, registration = succeeding(Path(temporary).resolve())
             # Where the import resolved, captured before the directory goes: a verified import
             # that resolved in the checkout would be source availability answering a question
             # about an installation.
@@ -1355,6 +1361,15 @@ class SevenReadingsTests(unittest.TestCase):
 
         self.assertEqual(sorted(SUCCESS_ANSWERS), sorted(SEVEN),
                          "every question declares the answer it reads when the thing worked")
+
+        if HAS_READER:
+            # The exposure row declares that it travels the registration this run wrote, so the
+            # writing is required here. Reconstructing the command and handing it to diagnose
+            # would read verified while register-mcp wrote nothing at all.
+            self.assertEqual(registration.returncode, 0, registration.stderr[-300:])
+            self.assertEqual(json.loads(registration.stdout)["outcome"], "CREATED",
+                             "the registration the exposure row compares against was not"
+                             " written by this run")
 
         self.assertTrue(resolved, "the diagnosis reported no component at all")
         for name, where in resolved.items():
