@@ -154,6 +154,29 @@ class ManifestTests(unittest.TestCase):
                 errors = plugin.manifest_errors(broken, "crw", "t")
                 self.assertTrue(any("not a usable value" in e for e in errors), errors)
 
+    def test_optional_interface_fields_follow_the_ingestion_rules(self):
+        good = manifest()
+        good["interface"].update({"websiteURL": "https://example.invalid", "brandColor": "#D7010F",
+                                  "logo": "./assets/logo.png"})
+        shipped = payload({**GOOD, "assets/logo.png": "png"})
+        self.assertEqual(plugin.manifest_errors(good, "crw", "t", shipped), [])
+        for field, value, expected in (("websiteURL", "http://insecure.invalid", "https URL"),
+                                       ("brandColor", "red", "#RRGGBB"),
+                                       ("logo", "./missing.png", "does not ship"),
+                                       ("logo", "assets/logo.png", "./ relative path")):
+            with self.subTest(field=field, value=value):
+                broken = manifest()
+                broken["interface"][field] = value
+                errors = plugin.manifest_errors(broken, "crw", "t", shipped)
+                self.assertTrue(any(expected in e for e in errors), (field, errors))
+
+    def test_ssh_keys_and_credential_dotfiles_are_refused(self):
+        for name in ("skills/id_ed25519", "skills/id_ecdsa", "skills/.netrc",
+                     "skills/.npmrc", "skills/authorized_keys"):
+            with self.subTest(name=name):
+                errors = plugin.hygiene(payload({**GOOD, name: "x"}), "t")
+                self.assertTrue(any("may not ship" in e for e in errors), errors)
+
     def test_declared_path_may_not_leave_the_plugin_root(self):
         for bad in ("../../skills/", "/abs/skills/", "skills/"):
             with self.subTest(bad=bad):
@@ -261,6 +284,17 @@ class SkillSetTests(unittest.TestCase):
         errors, found = plugin.skills(payload(files), manifest(skills="./skills/current/"), "t")
         self.assertEqual(errors, [])
         self.assertEqual(sorted(found), ["crw-run"])
+
+    def test_files_outside_the_declared_path_are_refused(self):
+        # Everything under the plugin root ships, so an undeclared tree would install
+        # without ever being validated.
+        files = {".codex-plugin/plugin.json": json.dumps(manifest(skills="./skills/current/")),
+                 "skills/current/crw-run/SKILL.md": SKILL,
+                 "skills/current/crw-run/agents/openai.yaml": "interface:\n",
+                 "skills/old/crw-check/SKILL.md": SKILL,
+                 "LICENSE": "MIT"}
+        errors, _ = plugin.skills(payload(files), manifest(skills="./skills/current/"), "t")
+        self.assertTrue(any("ships outside the declared skills path" in e for e in errors), errors)
 
     def test_interface_metadata_is_required_per_skill(self):
         files = {k: v for k, v in GOOD.items() if not k.endswith("openai.yaml")}

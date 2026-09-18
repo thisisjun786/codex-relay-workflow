@@ -48,8 +48,13 @@ HOME_PATHS = (re.compile(r"(?<![A-Za-z0-9._-])/home/[A-Za-z0-9._-]+/"),
               re.compile(r"(?<![A-Za-z0-9._-])/root/"),
               re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+"))
 FORBIDDEN_NAMES = re.compile(
-    r"^(\.git|\.codexclaw|\.env(\..*)?|id_rsa.*|.*credentials?(?:[._-].*)?|.*secrets?(?:[._-].*)?"
+    r"^(\.git|\.codexclaw|\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\..*)?"
+    r"|\.netrc|\.pgpass|\.htpasswd|\.npmrc|authorized_keys"
+    r"|.*credentials?(?:[._-].*)?|.*secrets?(?:[._-].*)?"
     r"|.*\.(sqlite3?|db|pem|key|p12|pfx))$", re.IGNORECASE)
+HTTPS_FIELDS = ("websiteURL", "privacyPolicyURL", "termsOfServiceURL")
+ASSET_FIELDS = ("composerIcon", "logo", "logoDark")
+BRAND_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class PackageError(Exception):
@@ -157,7 +162,33 @@ def declared_skills_path(manifest):
     return relative.as_posix()
 
 
-def manifest_errors(manifest, plugin_root_name, label):
+def interface_option_errors(interface, payload, label):
+    """Optional presentation fields follow the ingestion rules or they are refused."""
+    errors = []
+    for field in HTTPS_FIELDS:
+        value = interface.get(field)
+        if value is not None and (not isinstance(value, str) or not value.startswith("https://")):
+            errors.append(label + " manifest: interface." + field + " must be an https URL")
+    color = interface.get("brandColor")
+    if color is not None and (not isinstance(color, str) or not BRAND_COLOR.match(color)):
+        errors.append(label + " manifest: interface.brandColor must be #RRGGBB")
+    assets = [(field, interface.get(field)) for field in ASSET_FIELDS if field in interface]
+    screenshots = interface.get("screenshots")
+    if screenshots is not None:
+        if not isinstance(screenshots, list) or not screenshots:
+            errors.append(label + " manifest: interface.screenshots must be a nonempty list")
+        else:
+            assets += [("screenshots", shot) for shot in screenshots]
+    for field, value in assets:
+        if not isinstance(value, str) or not value.startswith("./"):
+            errors.append(label + " manifest: interface." + field + " must be a ./ relative path")
+        elif payload is not None and value[2:] not in payload:
+            errors.append(label + " manifest: interface." + field + " names " + repr(value)
+                          + ", which the package does not ship")
+    return errors
+
+
+def manifest_errors(manifest, plugin_root_name, label, payload=None):
     """plugin_root_name is None for an installed tree, whose directory is the version."""
     errors = []
     for field in TEXT_FIELDS:
@@ -204,6 +235,7 @@ def manifest_errors(manifest, plugin_root_name, label):
             if not valid:
                 errors.append(label + " manifest: interface." + optional
                               + " is present but not a usable value")
+        errors += interface_option_errors(interface, payload, label)
         for field in INTERFACE_FIELDS:
             value = interface.get(field)
             if field in ("capabilities", "defaultPrompt"):
@@ -310,6 +342,15 @@ def skills(payload, manifest, label):
             PurePosixPath(*parts[len(prefix_parts) + 1:]).as_posix())
     if not found:
         errors.append(label + ": the declared skills path ships no skill")
+    for name in sorted(payload):
+        parts = PurePosixPath(name).parts
+        if parts[0] == ".codex-plugin" or name == "LICENSE":
+            continue
+        if parts[:len(prefix_parts)] != prefix_parts:
+            # Everything under the plugin root ships, so an undeclared tree would be
+            # installed without ever being validated as a skill.
+            errors.append(label + " " + name + ": ships outside the declared skills path "
+                          + prefix)
     for skill, files in sorted(found.items()):
         for required in ("SKILL.md", "agents/openai.yaml"):
             if required not in files:
@@ -352,7 +393,7 @@ def check_installed(path):
     payload, errors = directory_payload(path)
     manifest = read_manifest(payload, "installed")
     # The installed directory is named by version, so only the packaged facts apply here.
-    errors += manifest_errors(manifest, None, "installed")
+    errors += manifest_errors(manifest, None, "installed", payload)
     errors += hygiene(payload, "installed")
     skill_errors, found = skills(payload, manifest, "installed")
     return errors + skill_errors, report_payload(payload, manifest, found,
@@ -364,7 +405,7 @@ def check_revision(revision):
     plugin_relative = PLUGIN_ROOT.relative_to(ROOT).as_posix()
     release, errors = revision_payload(resolved, plugin_relative)
     manifest = read_manifest(release, "release")
-    errors += manifest_errors(manifest, PLUGIN_ROOT.name, "release")
+    errors += manifest_errors(manifest, PLUGIN_ROOT.name, "release", release)
     errors += hygiene(release, "release")
     skill_errors, found = skills(release, manifest, "release")
     errors += skill_errors
@@ -385,7 +426,7 @@ def check_revision(revision):
     working_manifest, manifest_read_errors = safe_manifest(working, "working tree")
     errors += manifest_read_errors
     if working_manifest is not None:
-        errors += manifest_errors(working_manifest, PLUGIN_ROOT.name, "working tree")
+        errors += manifest_errors(working_manifest, PLUGIN_ROOT.name, "working tree", working)
         working_skill_errors, working_found = skills(working, working_manifest, "working tree")
         errors += working_skill_errors
         # A local marketplace installs this tree, so a skill deleted or added here
