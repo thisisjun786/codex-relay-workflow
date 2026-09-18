@@ -31,6 +31,7 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
+from . import restoration
 from .report import read as read_work_report, render_completion, render_revision
 
 COMPLETION = "completion_event"
@@ -45,6 +46,27 @@ CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
 SENDING = "sending"
 MANIFEST_LINES = 10
 NEWLINE = chr(10)
+
+
+def _overflow_line(items, event_id, *, shown=MANIFEST_LINES):
+    """What the cap removed, said out loud, or None when it removed nothing.
+
+    The deliverables block has always said this and the two findings blocks did not, so a
+    correction could lose its eleventh finding - and with it the restoration block a compacted
+    child needs in order to resume - leaving nothing at all behind to read. A recipient
+    holding nine findings and a recipient whose tenth was cut read the same message.
+
+    The count alone is not enough either, which is why the block is named when it is one of
+    the things that went: "5 more" and "5 more, one of which was the restoration block" ask
+    the reader for different decisions.
+    """
+    hidden = list(items)[shown:]
+    if not hidden:
+        return None
+    return (
+        f"  ... {len(hidden)} more{restoration.overflow_detail(hidden)}; see"
+        f" 'codex-session-relay show --event {event_id}'"
+    )
 
 
 class DeliveryService:
@@ -264,11 +286,9 @@ class DeliveryService:
                     f"  {entry['path']}  sha256={entry['sha256']}"
                     + (f"  bytes={size}" if size is not None else "")
                 )
-            if len(manifest) > MANIFEST_LINES:
-                lines.append(
-                    f"  ... {len(manifest) - MANIFEST_LINES} more; see"
-                    f" 'codex-session-relay show --event {row['event_id']}'"
-                )
+            overflow = _overflow_line(manifest, row["event_id"])
+            if overflow:
+                lines.append(overflow)
         else:
             lines.append("deliverables: none (execution-only outcome)")
         if record.get("manifestRef"):
@@ -277,7 +297,12 @@ class DeliveryService:
         if criteria:
             lines.append("criteria claimed by the child:")
             for item in criteria[:MANIFEST_LINES]:
-                lines.append(f"  {item.get('id')}: {item.get('verdict')}")
+                lines.append(
+                    f"  {item.get('id')}{restoration.label(item)}: {item.get('verdict')}"
+                )
+            overflow = _overflow_line(criteria, row["event_id"])
+            if overflow:
+                lines.append(overflow)
         lines += [
             "",
             "To respond, from inside your own turn:",
@@ -312,8 +337,12 @@ class DeliveryService:
             for item in findings[:MANIFEST_LINES]:
                 note = item.get("note")
                 lines.append(
-                    f"  {item.get('id')}: {item.get('verdict')}" + (f" — {note}" if note else "")
+                    f"  {item.get('id')}{restoration.label(item)}: {item.get('verdict')}"
+                    + (f" — {note}" if note else "")
                 )
+            overflow = _overflow_line(findings, row["event_id"])
+            if overflow:
+                lines.append(overflow)
         else:
             lines.append("what to change: no per-criterion findings were recorded")
         lines += [

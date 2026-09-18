@@ -15,6 +15,7 @@ managed assignment is precisely the case that must refuse.
 import hashlib
 import json
 
+from . import restoration
 from .errors import AckRefused, RefusalReason
 
 DISPOSITIONS = ("verified", "needs_changes", "unverified")
@@ -52,6 +53,10 @@ def normalise_findings(criteria=None, findings=None) -> list:
     criteria is the delivered core's simple form, [{"id", "verdict"}]. findings adds a note.
     Both end up here, and a disposition outside the frozen enum is refused before anything is
     written, because a record that would fail conformance must never reach the store.
+
+    A finding may also declare that it carries the correction's restoration block. That is the
+    one place the block can travel, so which finding holds it has to survive this
+    normalisation rather than being dropped with every other unrecognised key.
     """
     merged = []
     for source in (criteria or [], findings or []):
@@ -76,7 +81,23 @@ def normalise_findings(criteria=None, findings=None) -> list:
             note = str(item.get("note") or "").strip()
             if note:
                 entry["note"] = note
+            flag = item.get(restoration.FIELD)
+            if flag is not None and not isinstance(flag, bool):
+                raise AckRefused(
+                    RefusalReason.DISPOSITION_CONFLICT,
+                    f"a finding declares its restoration block with true or false, not "
+                    f"{type(flag).__name__}",
+                )
+            if flag:
+                entry[restoration.FIELD] = True
             merged = [e for e in merged if e["id"] != identifier] + [entry]
+    carriers = [e["id"] for e in merged if e.get(restoration.FIELD)]
+    if len(carriers) > 1:
+        raise AckRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            f"{carriers} each declare the restoration block. One correction carries one "
+            "block, and two candidates is a block nobody can locate",
+        )
     return merged
 
 

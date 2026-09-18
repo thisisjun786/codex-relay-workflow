@@ -13,7 +13,7 @@ completion receipt is the real answer.
 
 import json
 
-from . import NO_DELIVERABLE
+from . import NO_DELIVERABLE, restoration
 from .criteria import CriteriaService, normalise_findings
 from .currency import (
     AMBIGUOUS_REASON,
@@ -22,7 +22,7 @@ from .currency import (
     SUPERSEDED,
     currency_of,
 )
-from .delivery import COMPLETION, REVISION
+from .delivery import COMPLETION, MANIFEST_LINES, REVISION
 from .errors import AckRefused, RefusalReason, RelayError
 from .identity import (
     ack_proof as derive_ack_proof,
@@ -522,6 +522,33 @@ class AckService:
                         f"child {child!r} is not an allowed recipient, so a revision cannot be "
                         "routed to it",
                     )
+                # Decided HERE, before open_generation_in, because this is the last moment at
+                # which there is anything to go back to. A few statements below, the
+                # generation the child was working in has been superseded and the correction
+                # has been queued, and a block discovered missing after that has no channel
+                # left: the verdict does not resend and a parallel path is not allowed. So the
+                # question is asked while refusing still means something. Refusing rolls the
+                # whole transaction back - no generation opens, nothing is queued - and the
+                # parent moves the block and rules again.
+                projected = restoration.project_cap(findings, cap=MANIFEST_LINES)
+                if projected["outcome"] in restoration.UNDELIVERABLE:
+                    raise AckRefused(
+                        RefusalReason.RESTORATION_UNDELIVERABLE,
+                        f"this correction declares a restoration block on "
+                        f"{projected['criterion']!r} that the revision message would not "
+                        f"carry: {projected['detail']}. Move it within the first "
+                        f"{MANIFEST_LINES} findings and rule again. No execution generation "
+                        "has been opened",
+                    )
+            else:
+                # Named rather than left blank. A verdict that opens no correction has no
+                # message for a block to travel in, and a coordinator that attached one to a
+                # verified ruling learns it here instead of from its absence.
+                projected = restoration.not_carried(
+                    basis=restoration.LEGACY_BASIS,
+                    detail=f"a {verdict} verdict opens no correction, so no message carries a "
+                           "restoration block",
+                )
 
             record = {
                 "eventId": event_id,
@@ -589,6 +616,11 @@ class AckService:
                 ),
             )
             self.store.journal("verdict_recorded", event_id, {"verdict": verdict}, at=now)
+            # In the same transaction as the ruling it describes. The journal is where this
+            # persists: verdicts.record must stay exactly what verification-verdict.json
+            # allows, that schema freezes additionalProperties on the record, and this store
+            # has no migration path for a new verdict_context column.
+            self.store.journal("restoration_projected", event_id, projected, at=now)
             if re_review:
                 # The schema has one verdict row per event and this change adds no table, so
                 # the ruling being replaced is kept where an append-only record already exists.
@@ -658,6 +690,30 @@ class AckService:
     def _ack_evidence_tier(self, event_id: str) -> str:
         row = self.store.one("SELECT tier FROM ack_evidence WHERE event_id = ?", (event_id,))
         return row["tier"] if row else "unrecorded"
+
+    def restoration_of(self, event_id: str) -> dict:
+        """What the ruling of record established about its restoration block.
+
+        Deliberately NOT returned inside the verdict record. verification-verdict.json freezes
+        additionalProperties on that object, and the conformance suite validates the record
+        this method's caller returns, so a relay-owned annotation added there would be a
+        contract violation dressed as observability. The journal holds it, this reads it back,
+        and the command surface reports it beside the record rather than inside it.
+
+        A ruling made before this relay measured anything has no entry, and that is reported
+        as unmeasured rather than as a block that was fine. The two are not the same claim and
+        only one of them is evidence.
+        """
+        row = self.store.one(
+            "SELECT detail FROM journal WHERE kind = ? AND subject = ?"
+            " ORDER BY seq DESC LIMIT 1",
+            ("restoration_projected", event_id),
+        )
+        if row is None or not row["detail"]:
+            return restoration.unmeasured(
+                "this ruling was recorded before the relay measured restoration delivery"
+            )
+        return json.loads(row["detail"])
 
     def _pending_acks(self, *, limit, now) -> list:
         rows = self.store.all(

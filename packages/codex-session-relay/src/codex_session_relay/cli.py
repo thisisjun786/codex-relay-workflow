@@ -21,7 +21,7 @@ from .criteria import CriteriaService
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import guard, intent, marker
+from . import guard, intent, marker, restoration
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -634,11 +634,30 @@ def cmd_verdict(services, args) -> dict:
         })
     if args.criteria:
         findings.extend(_settings_json(args.criteria))
-    return services.ack.record_verdict(
+    if args.restoration:
+        # Declared against a finding, because a finding is the only thing the correction
+        # actually carries. Naming one that is not there is refused rather than ignored: a
+        # flag that silently attaches to nothing is the same silence this whole path removes.
+        marked = [
+            item for item in criteria + findings if item.get("id") == args.restoration
+        ]
+        if not marked:
+            raise SystemExit2(
+                f"--restoration names {args.restoration!r}, which is not one of the findings "
+                "this verdict carries. The block travels inside a finding, so it names one",
+                EXIT_USAGE,
+            )
+        for item in marked:
+            item[restoration.FIELD] = True
+    record = services.ack.record_verdict(
         args.event, verdict=args.verdict, verdict_turn_id=args.verdict_turn,
         criteria=criteria or None, findings=findings or None, reason=args.reason,
         expect_criteria_digest=args.expect_criteria_digest,
     )
+    # Beside the record, never inside it. The verdict record is a frozen contract instance
+    # with additionalProperties false; what became of the correction's restoration block is
+    # this relay's own finding about its own rendering, so it is reported as a sibling.
+    return dict(record, restoration=services.ack.restoration_of(args.event))
 
 
 def cmd_show(services, args) -> dict:
@@ -681,6 +700,12 @@ def cmd_show(services, args) -> dict:
     # Every submission, because an earlier message may have elided part of its report and
     # sent its recipient here for the rest.
     payload["workReportSubmissions"] = read_work_reports(services.store, args.event)
+    # What became of this event's restoration block, if one was declared. Two kinds live here
+    # and they answer different questions: restoration_projected is what the ruling
+    # established BEFORE it opened the next generation, recorded against the event that was
+    # ruled on; restoration_rendered is what a later work report did to the message, recorded
+    # against the revision event that report reshaped.
+    payload["restoration"] = _restoration_entries(services.store, args.event)
     if delivery is not None and args.message:
         # The bytes each attempt actually froze, with how far they got. A preview is offered
         # only when nothing has been prepared, and it is labelled a preview, because the old
@@ -691,6 +716,19 @@ def cmd_show(services, args) -> dict:
         if not prepared:
             payload["previewMessage"] = services.delivery.preview_message(args.event)
     return payload
+
+
+def _restoration_entries(store, event_id) -> list:
+    """Every recorded outcome for one event's restoration block, oldest first."""
+    rows = store.all(
+        "SELECT kind, at, detail FROM journal WHERE subject = ? AND kind IN (?,?)"
+        " ORDER BY seq",
+        (event_id, "restoration_projected", "restoration_rendered"),
+    )
+    return [
+        dict(json.loads(row["detail"]), kind=row["kind"], at=row["at"])
+        for row in rows if row["detail"]
+    ]
 
 
 def cmd_status(services, args) -> dict:
@@ -1754,6 +1792,11 @@ def build_parser() -> argparse.ArgumentParser:
              " unverified, which is the contract's frozen enum.",
     )
     verdict.add_argument("--criteria", help="a JSON array of findings, or @path to one")
+    verdict.add_argument(
+        "--restoration",
+        help="the criterion id whose finding carries this correction's restoration block."
+             " The verdict is refused if that finding would not reach the child.",
+    )
     verdict.add_argument("--reason", help="why an aborted or unverified verdict could not conclude")
     verdict.add_argument(
         "--expect-criteria-digest",
