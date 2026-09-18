@@ -468,7 +468,28 @@ class Contest(IntentTestCase):
             chosen_task_id=TASK, chosen_session_id=SESSION, reason="stale digest", at=T5,
             adjudicated=[{"factId": competing["factId"], "digest": "0" * 64}],
         )
+        # The quantity the name is about. identity_contested is true for several reasons - no
+        # resolution, one naming somebody else, an unidentified fact - so on its own it cannot
+        # say the digest is what refused coverage.
+        self.assertFalse(
+            intent.covered(competing, intent._resolutions(self.facts())),
+            "a resolution carrying the wrong digest covered the fact anyway",
+        )
         self.assertTrue(intent.identity_contested(self.facts()))
+
+        # The positive control, without which none of the above rejects a covered() that
+        # answers False to everything. The only difference between the two resolutions is the
+        # digest, so this is the comparison the name is about.
+        intent.publish_resolution(
+            self.root, workspace=self.workspace, assignment=self.assignment,
+            chosen_task_id=TASK, chosen_session_id=SESSION, reason="matching digest", at=T5,
+            adjudicated=self.adjudicated(competing),
+        )
+        self.assertTrue(
+            intent.covered(competing, intent._resolutions(self.facts())),
+            "a resolution carrying the recorded digest did not cover the fact",
+        )
+        self.assertFalse(intent.identity_contested(self.facts()))
 
     def test_pre_bind_ambiguity_survives_resolutions_that_disagree(self):
         self.declare()
