@@ -2954,6 +2954,10 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
             emit(dict(standing, refused="the host record no longer selects this environment, so"
                                         " there is no promotion here to finish"))
             return EXIT_REFUSED
+        # The ownership entry as this call found it, read before the write below merges over it
+        # and before either question about the link is asked of it. Two things depend on it: what
+        # this call's rollback may take away, and whether there is a link here it may replace.
+        owned_before = (current.value or {}).get("pointer")
         before = pointer.read(pointer_path)
         if not pointer.usable(before["state"]):
             emit(dict(standing, refused="the missing half of this promotion could not be"
@@ -2976,16 +2980,32 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
                               " interrupted promotion is not this run's to finish",
                       pointer={"path": str(pointer_path), "target": before.get("target")}))
             return EXIT_REFUSED
+        # There is one thing this record can say that settles the narrower question the other
+        # way. An entry holding the PATH and no placement is this command's own statement that
+        # no link IT placed is here -- written by a rollback that established the link was gone
+        # -- so a link that has turned up there since was put there by something else, and its
+        # target naming a runtime this record happens to account for does not make it this
+        # command's to replace. Without this the promotion refuses that link and the resume
+        # replaces it, which would be the record saying one thing and two readers answering
+        # differently.
+        #
+        # An installation older than claims has NO entry at all, which says nothing either way,
+        # and it keeps the adoption this path exists for.
+        if (before["state"] == pointer.LINK and owned_before
+                and not hostrecord.placement_recorded(owned_before)):
+            emit(dict(standing,
+                      refused="a symbolic link is at " + str(pointer_path) + " and this host"
+                              " record holds that path without recording that this command"
+                              " placed a link there, so it was placed by something else and is"
+                              " not this run's to replace",
+                      pointer={"path": str(pointer_path), "target": before.get("target")}))
+            return EXIT_REFUSED
         # A pointer this command owns is RECORDED when it is placed, and this path placed one
         # without recording it. An installation older than claims has no such record, so the
         # link written here was a link nobody recorded -- and the next update refuses to
         # replace one of those. Adopting a host once and then refusing it for ever is the
         # failure this command exists to remove, so the record is written with the link.
         #
-        # Read as found first, for the same reason the promotion does: this write is a merge,
-        # and afterwards there is no way to tell an entry this call introduced from one it
-        # refreshed. Only the first is its rollback's to take away.
-        owned_before = (current.value or {}).get("pointer")
         owning = hostrecord.update(record_path, data["definitionVersion"],
                                    pointer={"path": str(pointer_path), "recordedAt": now(),
                                             "recordedBy": issue})

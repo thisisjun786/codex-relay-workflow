@@ -8244,6 +8244,46 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
         self.assertEqual(payload["pointer"]["pointerRestored"]["ownership"],
                          runtime_install_module.OWNERSHIP_UNREADABLE)
 
+    def test_the_resume_path_refuses_a_stranger_link_after_a_withdrawal_too(self):
+        """The withdrawal has to mean the same thing to both readers of the record.
+
+        A path without placement is this command's own statement that no link IT placed is
+        here. The promotion refuses a link that turns up there afterwards. The resume asks a
+        narrower question -- does the link name a runtime this record accounts for -- and a
+        stranger's link aimed at the PREDECESSOR answers it yes, so without this the record
+        would say one thing and the two readers would answer differently.
+
+        Raised by an independent review of this pull request. The state it needs is one this
+        branch introduced, so at 33d139a the test fails for the absence of the evidence rather
+        than for ignoring it: there the rollback deleted the entry outright.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self._link_deleted_under_it(host)
+            # The resume fails and withdraws the placement, leaving the path behind.
+            UpdateRecoveryTests()._run(host, breaking="replace the owned pointer")
+            withdrawn = self._entry(host)
+            # Something else puts a link there, aimed at a runtime this record does account
+            # for, which is what defeats the narrower question on its own.
+            pointer.place(host.pointer_path, host.previous)
+
+            code, payload = UpdateRecoveryTests()._run(host)
+            still = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual((withdrawn or {}).get("path"), str(host.pointer_path))
+        self.assertFalse(hostrecord.placement_recorded(withdrawn))
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(still, str(host.previous),
+                         "a link this record does not say this command placed is left exactly"
+                         " as it is, by the resume as well as by the promotion")
+        self.assertIn("not this run's to replace", json.dumps(payload))
+
 
 class LegacyInstallTests(unittest.TestCase):
     """An installation older than claims is not somebody else's directory.
