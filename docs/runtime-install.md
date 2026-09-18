@@ -1357,11 +1357,15 @@ an installed entry point on `PATH` would be resolved and run. The case then requ
 the diagnosis reported to be inside that directory.
 
 Paths are only half of it. Resolving where a component lives imports it, and the bridge's smoke
-script starts a server, so an inherited import path would have the suite running whatever this
-machine has installed -- a runtime a check is allowed to read about and not to run. The child
-therefore gets no `PYTHONPATH` and no user site directory, and a resolved location has to be
-either nothing or somewhere under the temporary root. A location on the host fails the case
-instead of passing quietly as a reading about the wrong machine.
+script starts a server, both under whatever interpreter the record names -- so a fallback to the
+interpreter running the suite would reach whatever this machine has installed, which a check may
+read about and must not run. Clearing `PYTHONPATH` and the user site does not reach a system
+site directory, and checking the resolved location afterwards is too late, because by then the
+import has happened. The runtime is therefore supplied rather than discovered: a `-S -E`
+interpreter inside the destination, named by the record for every component and reached through
+the entry points on a `PATH` of the suite's own. The assertion is on the interpreter, which is
+settled before any probe runs; a component asked through this machine's interpreter fails the
+case whatever it happened to find.
 
 ### Running the combination against a real host
 
@@ -1387,7 +1391,11 @@ python3 scripts/runtime_install.py diagnose --dest <destination> --record <recor
     --codex-home <codex-home> --state <state> --socket <socket> \
     --bridge-command <destination>/current/bin/<console-script> \
     --observed-tool get_capabilities \
-    --trial <the trial inputs, which "Trial mode" above lists>
+    --trial --issue <issue> \
+    --parent-task <parent-task> --child-task <child-task> --recipient <recipient> \
+    --artifact-root <artifact-root> --artifact <artifact> \
+    --turn-thread <turn-thread> --turn-id <turn-id> --dispatch-turn-id <dispatch-turn-id> \
+    --recipient-settings <settings-or-@path>
 
 # The hook has to have fired. hook-status counts what the hook recorded about itself, so before
 # any Stop has reached it the honest answer is that the journal is absent.
@@ -1405,11 +1413,14 @@ python3 scripts/runtime_install.py diagnose --dest <destination> --record <recor
     --codex-home <codex-home> --state <state>
 ```
 
-Without `--observed-tool` the exposure answer is that no tool names were observed, without the
-trial inputs delivery is `not_applicable`, and before a Stop has reached the hook the callback
-row is an absence. Those are answers, and they are the right ones; what they are not is a
-failure of the thing they were asked about. Recording them as though the questions had been put
-is the one way this procedure can lie.
+Every flag after `--trial` is required, and a blank one is refused before anything is written:
+the set is declared once in the source as `TRIAL_REQUIRED_INPUTS` together with
+`--recipient-settings`, which is additionally asked of the relay's own settings reader. Without
+`--observed-tool` the exposure answer is that no tool names were observed; without the trial
+inputs delivery is `not_applicable`; before a Stop has reached the hook the callback row is an
+absence. Those are answers, and they are the right ones. What they are not is a failure of the
+thing they were asked about, and recording them as though the questions had been put is the one
+way this procedure can lie.
 
 Stopping is not on that list, because nothing here starts anything. The installer never starts or
 stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well

@@ -358,7 +358,7 @@ def install(host, **injected):
     return base.UpdateRecoveryTests()._run(host, **injected)
 
 
-def isolated(root):
+def isolated(root, host=None):
     """An environment whose homes, state roots and PATH all sit inside this directory.
 
     Pointing --state at a temporary path is not isolation. The survey runs its own discovery
@@ -375,8 +375,9 @@ def isolated(root):
         "HOME": str(home),
         "XDG_STATE_HOME": str(state_root),
         "CODEX_HOME": str(root / "codex"),
-        # Enough to run the interpreter and git, and not enough to reach an installed relay.
-        "PATH": "/usr/bin:/bin",
+        # The supplied runtime first, then enough to run git. Never enough to reach an
+        # installed entry point of this host's own.
+        "PATH": ((str(host.candidate / "bin") + ":") if host is not None else "") + "/usr/bin:/bin",
         # An inherited import path is the other way in. Without these the child imports whatever
         # the host has installed, and the resolved-location reading would then be about this
         # machine rather than about the destination under test.
@@ -403,7 +404,7 @@ def diagnosed(root):
          "--relay-command", str(root / "no-relay"),
          "--temporary"],
         capture_output=True, text=True, timeout=180,
-        env=dict(os.environ, **isolated(root)))
+        env=dict(os.environ, **isolated(root, host)))
     return json.loads(done.stdout)
 
 
@@ -684,6 +685,39 @@ class ComposedLifecycleTests(unittest.TestCase):
                         "nothing was left in the destination, so the destination can be retried")
 
 
+def stand_in_runtime(host):
+    """An interpreter with nothing of this machine in it, and the record pointing at it.
+
+    The probes resolve where a component lives by importing it, and the bridge exercise starts
+    a server, both under whatever interpreter the record names. Left to fall back, that is the
+    interpreter running this suite, and on a host with these packages installed the probe would
+    import and run them. Clearing PYTHONPATH and the user site does not reach a system site
+    directory, and detecting the host location afterwards is too late: the import already
+    happened.
+
+    So the runtime is supplied rather than discovered, the same way the relay cases hand the
+    preflight a runtime that HAS the relay in it. This one is the inverse: -S -E, so no site
+    directory and no inherited import path, and the record names it for every component. What
+    the probes can reach is then a decision this suite made rather than a property of the
+    machine it happened to run on.
+    """
+    binaries = host.candidate / "bin"
+    binaries.mkdir(parents=True, exist_ok=True)
+    interpreter = binaries / "python"
+    interpreter.write_text(
+        "#!/bin/sh\nexec \"" + sys.executable + "\" -S -E \"$@\"\n", encoding="utf-8")
+    interpreter.chmod(interpreter.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
+
+    record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value or {}
+    for component in host.data["components"]:
+        script = binaries / component["consoleScript"]
+        script.write_text("#!" + str(interpreter) + "\n", encoding="utf-8")
+        script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
+        for install in hostrecord.component(record, component["component"])["installs"]:
+            install["interpreterPath"] = str(interpreter)
+    hostrecord.save(host.record_path, record)
+    return binaries, interpreter
+
 def diagnose_for(root, host, *extra):
     """Ask this host for a diagnosis, with whatever extra input the case is varying."""
     done = subprocess.run(
@@ -693,10 +727,13 @@ def diagnose_for(root, host, *extra):
          "--record", str(host.record_path),
          "--state", str(host.state),
          "--socket", str(root / "no.sock"),
-         "--relay-command", str(root / "no-relay"),
+         # The supplied relay entry point, not a path that is missing: a console script that
+         # does not resolve sends the probe back to whatever interpreter is running this suite,
+         # which is the fallback this arrangement exists to avoid.
+         "--relay-command", str(host.candidate / "bin" / "codex-session-relay"),
          "--temporary", *extra],
         capture_output=True, text=True, timeout=180,
-        env=dict(os.environ, **isolated(root)))
+        env=dict(os.environ, **isolated(root, host)))
     return json.loads(done.stdout)
 
 
@@ -714,6 +751,8 @@ def observe_all(root):
     earlier = host.config.read_text(encoding="utf-8")
     install(host, clean_store=True)
     later = host.config.read_text(encoding="utf-8")
+
+    stand_in_runtime(host)
 
     hook_directory = root / "hook"
     hook_directory.mkdir(exist_ok=True)
@@ -973,35 +1012,43 @@ class SevenReadingsTests(unittest.TestCase):
         """Independence at the input, which the accessor cases cannot reach.
 
         Moving a value inside a payload proves this table reads the path it declared. It does
-        not prove the command computed those values separately: a diagnosis that derived tool
-        exposure from the import result would still write both keys, and every other case here
-        would stay green. So one input is varied instead -- the observed tool list, which only
-        the exposure question asks about -- and the answers that did not ask for it have to come
-        back the same.
+        not prove the command computed those values separately: a diagnosis deriving exposure
+        from the import result would still write both keys, and every accessor case would stay
+        green. Varying an input is not enough either if only the EVIDENCE moves -- a verdict
+        copied from a neighbour survives that too.
+
+        So each direction moves a judgement. Registering the bridge and observing its identity
+        tool takes exposure from not_verified to verified; asking for a trial takes delivery
+        from not_applicable to not_verified. In each direction the answers that were not asked
+        about must come back identical in value AND evidence, which a borrowed verdict cannot do.
         """
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             _payloads, host = observe_all(root)
+            bridge = base.component_of_for_test(host.data, runtime_install.MCP_NAME)
+            registered = str(host.pointer_path / "bin" / bridge["consoleScript"])
             plain = diagnose_for(root, host)
-            asked = diagnose_for(root, host, "--observed-tool", "get_capabilities")
+            exposed = diagnose_for(root, host, "--bridge-command", registered,
+                                   "--observed-tool", "get_capabilities")
+            tried = diagnose_for(root, host, "--trial")
 
-        exposure = "mcpToolExposure"
-        moved = read(exposure, {"diagnose": asked})["value"]
-        stayed = read(exposure, {"diagnose": plain})["value"]
-        self.assertNotEqual(moved["evidence"], stayed["evidence"],
-                            "the observed tool list never reached the question that asks about"
-                            " it, so this case is not varying anything")
-
-        for cell in CHECK_FIELD_ROWS:
-            if cell == exposure:
-                continue
-            with self.subTest(cell):
-                before = read(cell, {"diagnose": plain})["value"]
-                after = read(cell, {"diagnose": asked})["value"]
-                self.assertEqual((after["value"], after["evidence"]),
-                                 (before["value"], before["evidence"]),
-                                 cell + " moved when only the tool list changed, so it is not"
-                                 " answering on its own reading")
+        for moved_cell, varied in (("mcpToolExposure", exposed), ("deliveryAcceptance", tried)):
+            with self.subTest(moved_cell):
+                before = read(moved_cell, {"diagnose": plain})["value"]
+                after = read(moved_cell, {"diagnose": varied})["value"]
+                self.assertNotEqual(after["value"], before["value"],
+                                    moved_cell + ": the input never reached the question that"
+                                    " asks about it, so this direction varies nothing")
+                for other in CHECK_FIELD_ROWS:
+                    if other == moved_cell:
+                        continue
+                    with self.subTest(other):
+                        was = read(other, {"diagnose": plain})["value"]
+                        now = read(other, {"diagnose": varied})["value"]
+                        self.assertEqual((now["value"], now["evidence"]),
+                                         (was["value"], was["evidence"]),
+                                         other + " moved when only " + moved_cell + " was asked"
+                                         " about, so it is not answering on its own reading")
     def test_the_diagnosis_reads_nothing_outside_the_directory_it_was_given(self):
         """Pointing --state somewhere temporary is not isolation, so this checks the result.
 
@@ -1028,12 +1075,13 @@ class SevenReadingsTests(unittest.TestCase):
     def test_the_diagnosis_does_not_import_or_run_what_the_host_has_installed(self):
         """The other way out, which redirecting paths does not close.
 
-        Resolving where a module lives imports it, under an interpreter this suite did not
-        choose, and the bridge smoke script starts a server. With the host import path inherited
-        that reaches whatever this machine has installed -- which is a runtime this task is only
-        allowed to read about, never to run. So the child gets no PYTHONPATH and no user site,
-        and the resolved location has to be either nothing or somewhere inside the temporary
-        directory. A location on this machine fails here rather than passing quietly.
+        Resolving where a module lives imports it, and the bridge smoke script starts a server,
+        both under whatever interpreter the record names. Clearing PYTHONPATH and the user site
+        does not reach a system site directory, and checking the resolved location afterwards is
+        too late: by then the import has happened. So the assertion is on the interpreter, which
+        is decided before any of it runs. Every component has to be asked through the runtime
+        this suite supplied; if one is asked through the interpreter running these tests, the
+        probe could reach this machine and that fails here whatever it happened to find.
         """
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -1043,6 +1091,12 @@ class SevenReadingsTests(unittest.TestCase):
         self.assertTrue(components, "the diagnosis reported no component at all")
         for name, component in components.items():
             with self.subTest(name):
+                asked = component.get("interpreterPath")
+                self.assertIsNotNone(asked, name + ": no interpreter was named at all")
+                self.assertTrue(str(Path(asked).resolve()).startswith(str(root)),
+                                name + " was probed through " + str(asked) + ", which is this"
+                                " machine's interpreter rather than the supplied runtime")
+                self.assertNotEqual(str(Path(asked).resolve()), str(Path(sys.executable).resolve()))
                 where = component.get("importedLocation")
                 if where is None:
                     continue
