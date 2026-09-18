@@ -1713,10 +1713,17 @@ for path in sys.argv[1:]:
 # residualOwnership and recoveryRequires are read from the same result and for the same reason.
 # A rollback can put the LINK back and fail to put the RECORD back, and what that leaves is a
 # claim rather than a path: nothing is on disk to delete, so residualPaths is empty and correct
-# while the record still says something about that path. recoveryRequires carries the sentence
-# for the state this actually was -- a claim for a link that was taken away, a stamp on an entry
-# the run did not introduce, or an entry another run has since moved on -- because those need
-# different things done about them.
+# while the record still says something about that path. residualOwnership names the path whose
+# claim is outstanding, and recoveryRequires says which of the two states it is -- a claim for a
+# link that was taken away, or a stamp on an entry that run did not introduce -- because those
+# need different things done about them.
+#
+# Both are empty for a rollback that found the entry belonged to ANOTHER run by the time it
+# wrote. Nothing there is this run's to settle, so asking an operator to settle it would send
+# them after somebody else's record. That case is reported where it belongs, under
+# pointer.pointerRestored: 'ownership' reads "moved on", 'verified' is false because the
+# rollback did not do what it set out to, and 'detail' names the path the record holds now. The
+# command below prints 'pointer', so the receipt carries it.
 "$controller" -c 'import json, sys
 result = json.load(open(sys.argv[1]))
 print(json.dumps({key: result.get(key) for key in
