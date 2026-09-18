@@ -74,10 +74,10 @@ overstatement this map exists to avoid.
 | Module | Cases | Covers |
 |---|---|---|
 | `test_registration_contention.py` | 4 | 1 |
-| `test_failure_recovery.py` | 6 | 2, 3 |
-| `test_multi_parent_isolation.py` | 7 | 5, 6 |
+| `test_failure_recovery.py` | 13 | 2, 3 |
+| `test_multi_parent_isolation.py` | 8 | 5, 6 |
 | `test_operational_scale.py` | 8 | 7, 8 |
-| `test_regression_map.py` | 4 | 9 |
+| `test_regression_map.py` | 10 | 9, and the sweep's own reach |
 
 ## Clock provenance, derived rather than asserted
 
@@ -116,8 +116,21 @@ new work inherits the limit: nothing there observes four real hours, so nothing 
 speaks to process memory, write-ahead-log growth, descriptor or socket drift, or a host
 that answers differently after hours of uptime. A `FakeWorker` exits in microseconds
 and never opens the store, so the crossing shows the supervisor preserving records across
-replacements. Whether a replacement worker reads them back is a separate question,
-answered by a real process in `test_operational_scale.py` and reported separately.
+replacements.
+
+Whether a replacement worker reads those records back is a separate question, and this row
+used to answer it with one word for three different tables. `ARealWorkerReadsTheHandoffBack`
+in `test_operational_scale.py` settles two of them in a real process against a socket that
+does not exist: the relationship, which it names in a tick note and writes a poll observation
+for, and an acknowledgement left at `unverified_turn`, which `ack.verify_pending_acks` is
+the only reader of in a tick - it names that event and records why it could not promote it,
+and the `ack_evidence` row is asserted as a CHANGE because `acknowledge()` already wrote
+one when the intent was authored.
+
+The owed coordination write is not among them. No tick pass reads `sync_outbox`;
+`SyncOutbox.next` and `claim` are reached through their own commands and nothing in that
+module runs one. So the crossing shows the supervisor carrying that row, a real worker reads
+back the other two, and nobody here reads back the outbox job. That is the whole claim now.
 
 ## Scale, stated as a bound rather than a guarantee
 
@@ -139,12 +152,23 @@ that run and is not the baseline: it has no `codex_thread_bridge` on the path, a
 this filesystem does not honour the unreadable directory one of the scope tests depends
 on, so it reports failures that belong to the runner.
 
-## Two things every test here was swept for
+## Two things every test here was swept for, and how far the sweep actually reaches
 
 Three review rounds found the same shape three times: an assertion that passes in the
 situation its own name describes, and prose claiming more than the assertion establishes.
-Fixing the instances a fourth time would miss the point, so all five modules were checked
-against two rules derived from source rather than from memory.
+Fixing the instances a fourth time would miss the point, so the suite was checked against two
+rules derived from source rather than from memory.
+
+It did not work, and the way it failed is the reason this section is now written differently.
+The sweep said five modules had been checked, and two more instances of the same shape arrived
+after this work merged - one of them, `test_multi_parent_isolation.py`'s isolation case, exactly
+the kind the predicate below names. That was the third time in this project a sweep's stated
+reach was wider than the reach behind it: `ca9de94`'s sweep missed the `drain()` case, that
+map's sweep clause was an overstatement and corrected itself in `db6b132e`, and then these.
+
+A sentence saying how much was examined is the thing that keeps being wrong. So the reach is no
+longer written here. It is produced by `tests/test_regression_map.py`, and the numbers below
+are read back from that suite rather than asserted by this file.
 
 **An assertion must go red when the condition it is named for is violated, and the
 predicate for checking that is written here so the next reader knows what was examined.**
@@ -156,7 +180,7 @@ thing as the condition written above it, following into the helper that computes
 quantity*. Anywhere a helper narrows a state set, an id set or a count and the assertion
 only sees the result, the two can disagree silently.
 
-Re-derived under that predicate, five helpers across the five modules narrow something -
+Re-derived under that predicate by hand, five helpers across the five modules narrow something -
 by SQL filter, by comprehension filter, or by path glob. Four of them fail safe, and the
 reason is worth stating because it is what makes them acceptable rather than lucky: if
 `hold_files` or `observations` stopped matching the paths the source writes, they
@@ -174,9 +198,47 @@ the drain test separately asserts that every loaded event id reached `DISPATCHED
 named apart from the backlog because a count reaching zero is a statement about what is
 still claimable, and arrival is a different statement.
 
-What this predicate still does not cover: whether a test asserts something another test
-already asserts, and whether the condition a test names is the condition worth naming. Both
-are reading judgements. The reuse column records the first; nothing here records the second.
+### The part of that predicate the suite now derives
+
+One quantity in it is mechanical: a boolean the source folds out of several inputs, handed to a
+caller as one value. `TickReport.quiet` is `not (observed or reconciled or delivered or
+deferred or acksVerified or anchorsBound or requeued)`, so `assertFalse(report.quiet)` is
+satisfied by any one of seven counters moving and names none of them, while `assertTrue` pins
+all seven. Which side is cheap is read off the expression rather than judged, and a place that
+asserts the cheap side is a place to read again.
+
+`TheSweepDerivesItsOwnReachRatherThanClaimingIt` produces that reach. Every boolean this
+package declares is partitioned into one of three lists and the suite checks the partition is
+total: the ones whose fold reduces to a cheap side, the ones that fold where the rule cannot
+weigh them, and the ones that reach their value down a single path. Every place the suite
+measures something with either folded kind is listed, keyed by the assertion's own text, with
+a verdict written beside it. Today that reads 47 booleans as 10 / 28 / 9, and 66 measured
+places. Those counts, and the per-module case counts in the landed table above, are read back
+out of this file and compared against the suite, so a number here that went stale fails there.
+
+Its first run produced two findings, which is the answer to whether it is bookkeeping.
+It named the isolation case this work was opened for, and it named a second one review
+had not: `test_wp1_regressions.py` asserted an interrupted claim was suppressed using
+only `deliverable()`, which is equally false for a claim that was never recorded, and
+alone among its four siblings it asserted no stage beside it. Both are closed here.
+
+What the derivation does NOT do, said plainly because the alternative is the overstatement this
+section exists to end: it does not decide whether a place is a proxy. It supplies the reach and
+the polarity; the verdict beside each site is a reading judgement a person wrote. Its blind
+spots are declared as data rather than described - a read it cannot attribute a value to, an
+occurrence in a write context that is not a producer form it knows, a producer it cannot
+reduce - and each list is checked, so a blind spot that grows fails the suite.
+
+It also carries stated boundaries. This package only; `bool`-annotated fields and
+`bool`-returning functions only; matching by name; no following through an alias, a dict key
+or `**kwargs`; and the fold-free list is declared by key alone, so it can hide one constant
+producer being swapped for another. It cannot hide a fold, because a symbol that starts folding
+moves lists and breaks the partition.
+
+Two things stay outside all of it: whether a test asserts something another test already
+asserts, and whether the condition a test names is the condition worth naming. Both are reading
+judgements. The reuse column records the first; the site verdicts now record the second for the
+places this derivation reaches, and nothing records it anywhere else.
 
 **A test that depends on a configuration production cannot reach must say so.** This
 repository configures write-ahead logging and writes with `BEGIN IMMEDIATE`; nothing in
@@ -190,19 +252,15 @@ is that pair together rather than the timeout alone.
 
 ## Findings owned elsewhere, reported rather than fixed
 
-- `guard.SQLITE_TIMEOUT` documents the lock wait the readiness check may spend, and the
-  bound that actually applies is set elsewhere: `intent.read_only_connection` carries its
-  own literal of the same value, and `guard.lookup_receipt` calls that function without
-  passing a timeout at all. The wait is real and reachable - an exclusive writer makes the
-  guard's read raise after a measured 2.00 seconds - and it is that literal producing it.
-  What `test_failure_recovery.py` pins is only the deciding place: it asks
-  `read_only_connection` for its signature, so the day a timeout parameter appears there
-  the test fails and the change becomes a decision rather than a drift. It does NOT establish
-  that nothing anywhere reads the constant; a check over the whole import graph, and the
-  question of whether a second literal should survive at all, belong to CRW-96, whose
-  acceptance already states that leaving the second literal in place is not satisfaction.
-  Wiring or removing it would also move `intent.dispatch_generation_state`, which is why it
-  is reported here rather than fixed.
+- The two-literal lock wait is CLOSED, and this passage described it as open until CRW-96
+  landed. What it said: `guard.SQLITE_TIMEOUT` documented a bound that
+  `intent.read_only_connection` actually set from its own literal, so the constant a reader
+  found was not the one producing the measured 2.00-second wait. What is there now:
+  `intent.SQLITE_TIMEOUT` sits directly above `read_only_connection` and is the only
+  literal, `guard.py` declares no bound of its own and points at that one, and
+  `read_only_connection` still takes no timeout parameter, deliberately, so
+  `guard.lookup_receipt` and `intent.dispatch_generation_state` cannot be given different
+  waits. The signature check in `test_failure_recovery.py` still pins the deciding place.
 - `intent.register_relationship` reads the dispatch generation state and then publishes
   `relationship.json` as two operations with nothing held between them. An advance
   committing in that window returns success over a generation the store has already moved
@@ -211,6 +269,12 @@ is that pair together rather than the timeout alone.
   disagreement stays readable, so the next evaluation sees it - rather than asserting the
   absence of a race the source does not prevent. Closing the window needs the check and the
   publication under one hold, which is a source change this issue does not own.
+- `scope.is_within` answers two different ways and this suite exercised one of them. The
+  derived inventory lists `return: path.startswith('/')` as a producer path it cannot
+  reduce, and that path is the whole answer when the root is `/`, which the five cases in
+  `test_manifest_scope.py` never reached because they all use `/a/b`. A case now names
+  that branch, positive and negative. What stays open is a scope question rather than a test
+  one: whether an authorized root of `/` is reachable at all.
 - The workflow-restore section is the only non-essential block in the revision direction
   of `report.render_revision`, so a tight budget removes it first. CRW-94 owns that
   behaviour; nothing here changes it.

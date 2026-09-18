@@ -380,17 +380,60 @@ class OneParentCappedTheOtherProgresses(TwoParents):
             "an hourly allowance became a permanent refusal",
         )
 
-    def test_pausing_then_archiving_a_stops_neither_b_nor_the_shared_daemon(self):
+    def test_b_is_served_in_the_very_tick_where_a_is_paused(self):
+        """What B got, read in that tick, before anything else about A changes.
+
+        This was one case and it was wrong twice over. It asserted `not first.quiet` and
+        nothing else, and `quiet` is false the moment ANY of the seven counters the daemon
+        folds into it moves - so an observation or a reconciliation alone satisfied it with
+        nothing at all delivered to B. Then it archived A before looking at B, so the drain
+        underneath only ever spoke for the archived case and the paused one was never read.
+        A regression that starved one relationship whenever another was paused passed both.
+
+        What the name claims is that B is served WHILE A is paused, so that is what is read:
+        the sends this tick made, and the delivery rows they left.
+        """
+        alpha, alpha_ids = self.assignment("a")
+        _beta, beta_ids = self.assignment("b", events=2)
+
+        self.registry.set_status(
+            alpha["relationshipId"], "paused", actor="the owner of project alpha",
+        )
+        self.clock.advance(3600)
+        before = len(self.adapter.sends)
+        self.daemon.tick(now=self.clock.now())
+
+        sent = [thread for _r, thread, _m, _o in self.adapter.sends[before:]]
+        self.assertIn(
+            self.parent_of("b"), sent,
+            f"pausing one project cost the other its turn in that tick: {sent}",
+        )
+        self.assertNotIn(
+            self.parent_of("a"), sent, f"a paused assignment was sent to: {sent}",
+        )
+        arrived = {
+            event_id for event_id in beta_ids
+            if self.delivery.get(event_id)["state"] == DISPATCHED
+        }
+        self.assertTrue(
+            arrived,
+            "the tick did something, but none of B's events arrived - which is exactly what a"
+            " tick-level summary cannot tell apart from B being served",
+        )
+        self.assertNotEqual(
+            self.delivery.get(alpha_ids[0])["state"], DISPATCHED,
+            "a paused assignment was delivered anyway",
+        )
+
+    def test_archiving_a_stops_neither_b_nor_the_shared_daemon(self):
+        """The other half, named apart from the paused one because it is a different state."""
         alpha, alpha_ids = self.assignment("a")
         _beta, beta_ids = self.assignment("b", events=2)
         rid = alpha["relationshipId"]
 
         self.registry.set_status(rid, "paused", actor="the owner of project alpha")
-        self.clock.advance(3600)
-        first = self.daemon.tick(now=self.clock.now())
-        self.assertFalse(first.quiet, "the shared daemon went quiet when one project paused")
-
         self.registry.set_status(rid, "archived", actor="the owner of project alpha")
+
         self.assertEqual(
             self.drain(beta_ids), set(beta_ids),
             "archiving one project stopped the other from being served",
