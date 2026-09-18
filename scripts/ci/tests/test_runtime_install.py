@@ -8300,13 +8300,20 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                     record_path, 1, mine)
 
         self.assertEqual(moved_on["ownership"], runtime_install_module.OWNERSHIP_MOVED_ON)
-        self.assertIn("check which pointer this host is meant to use",
-                      moved_on["settleOwnership"])
-        self.assertNotIn("taken away", moved_on["settleOwnership"],
-                         "an entry another run owns is not one this run took a link away from")
+        self.assertFalse(moved_on["verified"],
+                         "the rollback did not do what it set out to")
+        self.assertIsNone(moved_on["residualOwnership"],
+                          "an entry another writer owns is not an outstanding claim of this"
+                          " run's, and naming it would send an operator after somebody else's"
+                          " record")
+        self.assertIsNone(moved_on["settleOwnership"],
+                          "so there is nothing for this run to ask them to settle")
+        self.assertIn("elsewhere", moved_on["detail"],
+                      "the concurrent move is reported for what it is")
 
         self.assertEqual(link_back["ownership"], runtime_install_module.OWNERSHIP_UNREADABLE)
         self.assertEqual(link_back["restoredTo"], str(previous))
+        self.assertEqual(link_back["residualOwnership"], str(here))
         self.assertIn("put back to", link_back["settleOwnership"])
         self.assertNotIn("taken away", link_back["settleOwnership"],
                          "the link is there; saying it was taken away would send an operator"

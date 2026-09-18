@@ -3335,20 +3335,17 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
             # 'restoredTo' still says what the LINK was put back to, because that part is true;
             # 'verified' is about the restoration as a whole, and this one did not finish.
             verified = False
+        if owned == OWNERSHIP_UNREADABLE:
+            # An ownership claim THIS RUN left outstanding, which is the only thing this cell
+            # means. The write did not happen, so the record still holds what this promotion put
+            # there and somebody has to settle it.
+            #
+            # Two states reach here and they need different things said, because the sentence
+            # is written where the readings that decide it were made. Composed by the caller it
+            # could name only one, and telling an operator the link was taken away when it is
+            # back sends them looking for something that did not happen.
             residual_claim = str(pointer_path)
-            # What is outstanding is not ONE state, so it does not get one sentence. Three
-            # different things end here: a record still claiming a placement for a link that
-            # was taken away, a record carrying this run's stamp for a link that is back, and a
-            # record another run has since moved on. Telling an operator to settle the first
-            # when it is the third sends them after somebody else's entry. The sentence is
-            # written HERE because this is where the readings that decide which one it is were
-            # made; composed by the caller it could only ever name one of them.
-            if owned == OWNERSHIP_MOVED_ON:
-                settle_claim = (
-                    "check which pointer this host is meant to use: the entry this run wrote at "
-                    + str(pointer_path) + " has been replaced by another run's, so there is"
-                    " nothing here for this run to put back and nothing of its own to settle")
-            elif restored_to == "absent":
+            if restored_to == "absent":
                 settle_claim = (
                     "settle the host record's pointer ownership for " + str(pointer_path)
                     + ": the link this run placed was taken away and the record still says this"
@@ -3360,6 +3357,14 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
                     + ": the link there was put back to " + str(restored_to or "what was found")
                     + " and the record still carries this run's stamp on an entry it did not"
                       " introduce, so the record and the link disagree about who placed it")
+        elif owned == OWNERSHIP_MOVED_ON:
+            # NOT a residual of this run's. Another writer owns the entry now, and the reading
+            # that established that also established there is nothing here for this run to put
+            # back -- so asking an operator to settle a claim at this path would send them after
+            # somebody else's record. The restoration is still unverified, because it did not do
+            # what it set out to, and the concurrent move is reported through the ownership cell
+            # and the detail, which is what actually happened.
+            pass
     return {"restoredTo": restored_to, "verified": verified, "residualPointer": residual,
             "residualOwnership": residual_claim, "settleOwnership": settle_claim,
             "ownership": owned, "detail": detail}
