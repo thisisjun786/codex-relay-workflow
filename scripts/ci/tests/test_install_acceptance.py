@@ -617,7 +617,7 @@ def succeeding(root):
     # The supplied runtime first: it writes the console scripts the entry points resolve to and
     # records the interpreter, and only then is that interpreter given a path it can import from.
     stand_in_runtime(host)
-    sources = importable_runtime(host, root, paths=component_sources())
+    sources = importable_runtime(host, root, paths=installed_components(host))
 
     hook_directory = root / "hook"
     hook_directory.mkdir(exist_ok=True)
@@ -992,6 +992,26 @@ def linked_skills(host):
     return done
 
 
+def installed_components(host):
+    """Put the real packages INSIDE the candidate, so an import resolves in the installation.
+
+    Pointing the import path at this checkout made the row read verified from source that was
+    never installed: the build steps are stand-ins, so the candidate held neither package while
+    the reading reported locations in the working tree. Source being available is not the
+    question the row asks, and answering it that way is the substitution this module refuses.
+
+    Copied rather than linked, and copied real rather than stubbed, because the trial preflight
+    asks the relay own reader and predicate and a stub has neither.
+    """
+    site = host.candidate / "site"
+    for component in definition.load()["components"]:
+        target = site / component["module"]
+        # Into the directory the build stand-in already made, not past it: it creates the module
+        # directory empty, so a copy that skipped an existing path left a package with no module
+        # in it and the import failed for a reason that had nothing to do with the question.
+        shutil.copytree(ROOT / component["packageLocation"], target, dirs_exist_ok=True)
+    return str(site)
+
 def component_sources():
     """The two package roots of this checkout, which is what makes an import real here."""
     return os.pathsep.join(
@@ -1268,11 +1288,27 @@ class SevenReadingsTests(unittest.TestCase):
         a trial, and the hook has really fired.
         """
         with tempfile.TemporaryDirectory() as temporary:
-            payloads, _host = succeeding(Path(temporary).resolve())
+            payloads, host = succeeding(Path(temporary).resolve())
+            # Where the import resolved, captured before the directory goes: a verified import
+            # that resolved in the checkout would be source availability answering a question
+            # about an installation.
+            resolved = {name: component.get("importedLocation")
+                        for name, component in
+                        (payloads["diagnose"].get("components") or {}).items()}
+            candidate = host.candidate
         rows = table(payloads)
 
         self.assertEqual(sorted(SUCCESS_ANSWERS), sorted(SEVEN),
                          "every question declares the answer it reads when the thing worked")
+
+        self.assertTrue(resolved, "the diagnosis reported no component at all")
+        for name, where in resolved.items():
+            with self.subTest(name):
+                self.assertIsNotNone(where, name + ": nothing was imported")
+                self.assertTrue(inside(where, candidate),
+                                name + " imported from " + str(where) + ", which is outside the"
+                                " environment this run installed, so the row is answering about"
+                                " available source rather than an installed runtime")
 
         for cell in SEVEN:
             wanted = SUCCESS_ANSWERS[cell]
@@ -1890,8 +1926,8 @@ class DaemonStateTests(unittest.TestCase):
 # it exercised. That is the whole purpose of the declaration -- a provenance record that a later
 # change can silently outgrow is worse than none.
 FAKED_IN_FIXTURE = ("candidate_tables", "classify_component", "emit", "interpreter_version",
-                    "measure_candidate", "module_location", "names", "ops12_digest", "place",
-                    "relay", "run", "store_presence", "store_tables")
+                    "load", "measure_candidate", "module_location", "names", "ops12_digest",
+                    "place", "relay", "run", "store_presence", "store_tables", "verify")
 
 
 def _stand_ins():
@@ -1925,7 +1961,13 @@ def _stand_ins():
         with tempfile.TemporaryDirectory() as temporary:
             host = base._Host(temporary)
             clean(host)
-            install(host, clean_store=True, breaking=breaking, interpose=sample)
+            # Inside the same context the composed lifecycle uses for its failed update. Run
+            # without it, the sampling never sees the definition replacements that stage makes,
+            # and the inventory would understate what stood in for a real thing while still
+            # looking derived.
+            loaded, verified = updating(host)
+            with loaded, verified:
+                install(host, clean_store=True, breaking=breaking, interpose=sample)
     return found
 
 
