@@ -2553,12 +2553,53 @@ class TwentyFifthHostedRound(TrialCase):
         self.assertEqual(cells_of(document, "processPersistence")["witnessAdvance"]["value"],
                          NOT_VERIFIED)
 
-    def test_the_documented_example_would_pass_its_own_validation(self):
-        # Every literal the document shows for a validated field has to be one the record accepts.
+    def test_the_documented_record_is_one_the_validator_accepts(self):
+        """The document's own example, substituted and run through load_start.
+
+        Searching the document for forbidden substrings is text matching, which this repository
+        does not accept as proof of behaviour: a malformed structure, a missing field or an
+        abbreviated boundary would all have kept such a test green. This builds the record the
+        document shows, replaces every placeholder with a real value, and hands it to the real
+        validator.
+        """
         text = (ROOT / "docs" / "live-trial.md").read_text(encoding="utf-8")
-        self.assertNotIn('"pid": 0', text)
-        self.assertNotIn('"device": 0', text)
-        self.assertNotIn('"inode": 0', text)
+        start = text.index("\n    {\n      \"source\": \"live-trial-start\"")
+        block = []
+        for line in text[start:].splitlines():
+            if line.strip() and not line.startswith("    "):
+                break
+            block.append(line[4:] if line.startswith("    ") else line)
+            if line.strip() == "}":
+                break
+        documented = json.loads("\n".join(block))
+
+        # The placeholders the document writes in angle brackets, each becoming the real thing.
+        world = self.world
+        documented["trialRoot"] = str(world.trial)
+        documented["relay"] = dict(world.record["relay"])
+        documented["store"] = dict(world.record["store"])
+        documented["supervisor"] = dict(documented["supervisor"], **{
+            "pid": os.getpid(), "witness": str(world.trial / "supervisor.jsonl"),
+            "launchedAt": startup.stamp(time.time() - 120)})
+        documented["assignment"] = dict(world.record["assignment"])
+        documented["boundaries"] = world.record["boundaries"]
+        documented["captures"] = world.record["captures"]
+        documented["window"] = dict(world.record["window"])
+        self.assertEqual(documented["source"], "live-trial-start")
+        self.assertEqual(documented["recordVersion"], 1)
+
+        written = world.trial / "documented-start.json"
+        written.write_text(json.dumps(documented), encoding="utf-8")
+        record = startup.load_start(str(written), environment=world.environment())
+        self.assertEqual(record["trialRoot"], str(world.trial))
+
+        # And the fields the document shows are the ones the validator requires, so a record
+        # missing any of them is refused rather than quietly accepted.
+        for path in startup.REQUIRED_FIELDS:
+            node = documented
+            for key in path[:-1]:
+                node = node[key]
+            self.assertIn(path[-1], node, ".".join(path) + " is required and undocumented")
 
 
 class TwentySixthHostedRound(TrialCase):
