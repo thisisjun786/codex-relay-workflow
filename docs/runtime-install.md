@@ -1466,6 +1466,10 @@ printf 'install exit=%s\n' "$?" > <receipt>/install.exit; cat <receipt>/install.
 "$controller" scripts/runtime_install.py register-mcp --codex-home <codex-home> \
     --bridge-command <destination>/current/bin/<console-script> --apply
 
+# This payload carries five of the seven rows, plus repositoryCommit and definitionVersion --
+# the revision a reader needs to reproduce any of it. Printed to a terminal it is gone, and the
+# receipt then cannot substantiate the readings this procedure says it recorded, so it goes to
+# the receipt with its exit status like the install did.
 "$controller" scripts/runtime_install.py diagnose --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state> --socket <socket> \
     --bridge-command <destination>/current/bin/<console-script> \
@@ -1475,7 +1479,8 @@ printf 'install exit=%s\n' "$?" > <receipt>/install.exit; cat <receipt>/install.
     --parent-task <parent-task> --child-task <child-task> --recipient <recipient> \
     --artifact-root <artifact-root> --artifact <artifact> \
     --turn-thread <turn-thread> --turn-id <turn-id> --dispatch-turn-id <dispatch-turn-id> \
-    --recipient-settings <settings-or-@path>
+    --recipient-settings <settings-or-@path> > <receipt>/diagnose.json
+printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.exit; cat <receipt>/diagnose.json
 
 # The hook has to have fired FOR THIS TURN, and no count can say that. hook-status reports what
 # this hook has recorded about itself cumulatively, so an old nonzero count reads as evidence
@@ -1557,8 +1562,12 @@ print(json.dumps({key: result.get(key) for key in
                   ("failedStep", "retriable", "residualPaths", "removedCandidate", "pointer")},
                  indent=2))' <receipt>/install.json
 
+# Kept the same way, and under its own name: this is the recovery read-back, a different
+# reading from the one above, and a receipt holding only one of them cannot say which.
 "$controller" scripts/runtime_install.py diagnose --dest <destination> --record <record> \
-    --codex-home <codex-home> --state <state>
+    --codex-home <codex-home> --state <state> > <receipt>/diagnose.after-failure.json
+printf 'diagnose exit=%s\n' "$?" > <receipt>/diagnose.after-failure.exit
+cat <receipt>/diagnose.after-failure.json
 ```
 
 What this block is, and what it is not. It installs, registers, takes the seven readings and
