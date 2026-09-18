@@ -1217,6 +1217,18 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(harness._foreign(with_matcher), "altered")
         gone = {"version": 1, "hooks": {harness.completion.EVENT: []}}
         self.assertEqual(harness._foreign(gone), "displaced")
+        # Position is identity: hooks.identity derives a hook's identity from the event, the
+        # matcher index and the hook index, so an entry appended ahead of this one moves it and
+        # invalidates the hash its owner trusted.
+        ahead = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+        ahead["hooks"][harness.completion.EVENT].insert(
+            0, {"hooks": [{"type": "command", "command": "/opt/other", "timeout": 1}]})
+        self.assertEqual(harness._foreign(ahead), "moved",
+                         "an entry pushed to a new index was reported as surviving in place")
+        within = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+        within["hooks"][harness.completion.EVENT][0]["hooks"].insert(
+            0, {"type": "command", "command": "/opt/other", "timeout": 1})
+        self.assertEqual(harness._foreign(within), "moved")
 
     def test_a_predicate_over_a_scope_fails_when_any_arm_in_it_fails(self):
         """The helper itself, driven with an arm that fails, rather than watched on a clean run."""

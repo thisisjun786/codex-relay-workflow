@@ -81,6 +81,7 @@ ARMS = (OFF, ON)
 # of the other two.
 FOREIGN_PRESENT = "present"
 FOREIGN_ALTERED = "altered"
+FOREIGN_MOVED = "moved"
 FOREIGN_DISPLACED = "displaced"
 
 # What each arm's install must report before anything it left behind is believed. An installer that
@@ -575,16 +576,26 @@ def _foreign(document):
     """
     seeded = FOREIGN_HOOKS["hooks"][completion.EVENT][0]
     groups = ((document.get("hooks") or {}).get(completion.EVENT) or [])
-    for group in groups:
-        for entry in (group or {}).get("hooks") or []:
-            if not isinstance(entry, dict) or entry.get("command") != FOREIGN_COMMAND:
-                continue
-            if entry != seeded["hooks"][0]:
-                return FOREIGN_ALTERED
-            if (group or {}).get("matcher") != seeded.get("matcher"):
-                return FOREIGN_ALTERED
-            return FOREIGN_PRESENT
-    return FOREIGN_DISPLACED
+    found = None
+    for matcher_index, group in enumerate(groups):
+        for hook_index, entry in enumerate((group or {}).get("hooks") or []):
+            if isinstance(entry, dict) and entry.get("command") == FOREIGN_COMMAND:
+                found = (matcher_index, hook_index, group, entry)
+                break
+        if found:
+            break
+    if found is None:
+        return FOREIGN_DISPLACED
+    matcher_index, hook_index, group, entry = found
+    if entry != seeded["hooks"][0] or (group or {}).get("matcher") != seeded.get("matcher"):
+        return FOREIGN_ALTERED
+    if (matcher_index, hook_index) != (0, 0):
+        # Position is part of identity here, not presentation: hooks.identity derives a hook's
+        # identity from the event, the matcher index and the hook index, so an entry appended
+        # ahead of this one moves it and invalidates the hash its owner trusted. Finding it
+        # anywhere in the file is a narrower question than whether it survived.
+        return FOREIGN_MOVED
+    return FOREIGN_PRESENT
 
 
 
