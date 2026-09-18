@@ -1592,6 +1592,15 @@ def _hands_on(tree, spelled):
             return {node.name} if node.name else set()
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             return {alias.asname or alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.NamedExpr):
+            targets = [node.target]
+        elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            # A class or a function defined in a scope takes that name in it.
+            return {node.name}
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            return {node.name} if node.name else set()
+        elif isinstance(node, ast.MatchMapping):
+            return {node.rest} if node.rest else set()
         found = set()
         for target in targets:
             # Only what the target BINDS. mapping[carrier] = value and carrier.attr = value read
@@ -1648,13 +1657,15 @@ def _hands_on(tree, spelled):
             function, _klass = places.get(id(node), (MODULE_LEVEL, None))
             if isinstance(node.value, ast.Name):
                 targets = outwards(function, node.value.id, aliases)
-            elif (isinstance(node.value, ast.Attribute)
-                    and _dotted(node.value.value) in ("self", "cls")):
+            elif isinstance(node.value, ast.Attribute):
                 # A bound method put behind a name reaches exactly what calling it directly
                 # would, and alias = self.carrier is as ordinary as alias = carrier. Resolved
-                # against this class, so a same-named method on another class is not dragged in.
+                # against this class, so a same-named method on another class is not dragged in,
+                # and alias = Example.carrier resolves through Example the same way.
+                through = _dotted(node.value.value)
                 _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-                reached = inherited(klass, node.value.attr)
+                reached = inherited(klass if through in ("self", "cls") else through,
+                                    node.value.attr)
                 targets = {reached} if reached else set()
             elif isinstance(node.value, ast.Lambda):
                 # A lambda given a name is a function given a name.
@@ -1677,6 +1688,16 @@ def _hands_on(tree, spelled):
             return outwards(function, node.func.id, aliases)
         if isinstance(node.func, ast.Attribute):
             through = _dotted(node.func.value)
+            if (through is None and isinstance(node.func.value, ast.Call)
+                    and _dotted(node.func.value.func) == "super"):
+                # super().name in a subclass starts the same lookup one class up, and which
+                # class that is, is written right here.
+                _where, klass = places.get(id(node), (MODULE_LEVEL, None))
+                for base in parents.get(klass, ()):
+                    reached = inherited(base, node.func.attr)
+                    if reached:
+                        return {reached}
+                return set()
             # cls.name in a classmethod names a method of this class exactly as self.name does,
             # and Example.name names one of Example's just as statically.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
@@ -1937,8 +1958,9 @@ def _refusal_spelled(spellings, held):
             return repr(node.value) if node.value in answers else None
         if isinstance(node, ast.Attribute):
             through = _dotted(node.value)
-            if through in ("self", "cls") and node.attr in held.get(klass, ()):
-                return through + "." + node.attr
+            reader = klass if through in ("self", "cls") else through
+            if reader is not None and node.attr in held.get(reader, ()):
+                return (through or "") + "." + node.attr
             return "." + node.attr if node.attr in attributes else None
         if isinstance(node, ast.Name) and node.id in names:
             return node.id
@@ -1975,8 +1997,9 @@ def _source_spelled(handles, hands_source, held):
             return node.id if node.id in handles else None
         if isinstance(node, ast.Attribute):
             through = _dotted(node.value)
-            if through in ("self", "cls") and node.attr in held.get(klass, ()):
-                return through + "." + node.attr
+            reader = klass if through in ("self", "cls") else through
+            if reader is not None and node.attr in held.get(reader, ()):
+                return (through or "") + "." + node.attr
             return "." + node.attr if node.attr == "__file__" else None
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return repr(node.value) if node.value.endswith(".py") else None
