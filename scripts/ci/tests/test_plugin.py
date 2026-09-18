@@ -368,6 +368,23 @@ class SyntheticRepositoryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("license", result.stderr)
 
+    def test_empty_directories_are_refused(self):
+        # Git cannot record one, but the installer copies it out of a working tree.
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.build(folder)
+            (root / "plugins/crw/extra-empty").mkdir()
+            result = self.run_in(root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("empty directory", result.stderr)
+
+    def test_version_may_not_carry_trailing_whitespace(self):
+        with tempfile.TemporaryDirectory() as folder:
+            files = dict(GOOD, **{".codex-plugin/plugin.json":
+                                  json.dumps(manifest(version="1.0.0\n"))})
+            result = self.run_in(self.build(folder, files))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("semantic version", result.stderr)
+
 
 class CommandTests(unittest.TestCase):
     def run_script(self, *args):
@@ -415,6 +432,15 @@ class CommandTests(unittest.TestCase):
             result = self.run_script("--payload", str(root))
             self.assertEqual(result.returncode, 1)
             self.assertIn("symlink", result.stderr)
+
+    def test_installed_payload_with_an_empty_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "crw"
+            self.write_payload(root, GOOD)
+            (root / "leftover").mkdir()
+            result = self.run_script("--payload", str(root))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("empty directory", result.stderr)
 
 
 if __name__ == "__main__":

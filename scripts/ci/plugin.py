@@ -95,6 +95,13 @@ def directory_payload(plugin_root):
                           "may not contain one")
             continue
         if path.is_dir():
+            # An empty directory holds no file to check, and the installer still
+            # copies it, so it would ship unseen by every payload rule.
+            if not any(path.iterdir()):
+                errors.append(name + ": an empty directory still ships; remove it")
+            elif PurePosixPath(name).parts[0] not in TOP_LEVEL:
+                errors.append(name + ": only " + ", ".join(sorted(TOP_LEVEL))
+                              + " may ship in the package")
             continue
         mode = "100755" if path.stat().st_mode & 0o111 else "100644"
         payload[name] = (mode, path.read_bytes())
@@ -161,7 +168,7 @@ def manifest_errors(manifest, plugin_root_name, label):
     if plugin_root_name is not None and manifest.get("name") != plugin_root_name:
         errors.append(label + " manifest: name " + repr(manifest.get("name"))
                       + " must match the plugin directory " + repr(plugin_root_name))
-    if not SEMVER.match(str(manifest.get("version", ""))):
+    if not SEMVER.fullmatch(str(manifest.get("version", ""))):
         errors.append(label + " manifest: version " + repr(manifest.get("version"))
                       + " is not a semantic version")
     try:
@@ -228,8 +235,10 @@ def marketplace_errors(catalog, manifest, plugin_relative):
     if policy.get("authentication") != "ON_USE":
         errors.append("marketplace: entry policy.authentication must be ON_USE; installation "
                       "does not create credentials")
-    if not entry.get("category"):
-        errors.append("marketplace: entry category is required")
+    category = (declared or {}).get("category") if isinstance(declared, dict) else None
+    if not isinstance(entry.get("category"), str) or entry.get("category") != category:
+        errors.append("marketplace: entry category must be the manifest category "
+                      + repr(category))
     return errors
 
 
