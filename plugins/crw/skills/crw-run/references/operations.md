@@ -440,7 +440,8 @@ ready receipt has a nonempty manifest; a document URL alone cannot be relayed.
 For a mutable linked result, include its stable ID/link, delivered revision or
 updated-at evidence and verified output snapshot. Keep the input baseline separate.
 
-An implementation task works in `/home/jun/code-worktrees/<original-project>/<task>`, where the
+An implementation task works in `<worktree-root>/<original-project>/<task>`, where `<worktree-root>`
+is the worktree root the operator's applicable working instructions name, the
 project segment comes from the original repository's project name rather than the directory name of
 whatever checkout is currently open, and the task segment is short kebab-case. The branch is
 `codex/<task>`. An existing checkout belonging to the same task is reused rather than duplicated,
