@@ -146,6 +146,8 @@ def run_once():
     """The one comparison run these cases read, kept so the suite pays for it once."""
     if "answer" not in _RUN:
         root = Path(tempfile.mkdtemp(prefix="hook-comparison-check-"))
+        # Placed before the run so the case above can show the run left it alone.
+        (root / "somebody-elses-file").write_text("not the harness's to touch", encoding="utf-8")
         done = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "hook_comparison.py"), "--root", str(root)],
             capture_output=True, text=True, timeout=900)
@@ -160,6 +162,18 @@ def tearDownModule():
     if root is not None:
         import shutil
         shutil.rmtree(str(root), ignore_errors=True)
+
+
+def run_root():
+    """The directory the run made for itself, found rather than taken from what it reported.
+
+    The check creates the parent and the run creates exactly one child inside it, so the child is
+    a filesystem fact. Reading the path out of the document would have let a run that wrote
+    somewhere else send every disk witness to the place that agrees with it.
+    """
+    children = sorted(path for path in _RUN["root"].iterdir() if path.is_dir())
+    assert len(children) == 1, "the run made " + str(len(children)) + " directories, not one"
+    return children[0]
 
 
 def firing(answer, scenario, arm, index):
@@ -180,6 +194,9 @@ class ComparisonRunTests(unittest.TestCase):
         self.assertEqual(answer.get("source"), "hook-comparison",
                          "a document without the stamp is not this command's answer")
         self.assertIsNone(answer.get("refused"), "the run refused rather than comparing anything")
+        self.assertTrue(answer.get("wroteOnlyInsideItsRoot", {}).get("met"),
+                        "the run wrote outside the directory it created for itself: "
+                        + json.dumps(answer.get("wroteOnlyInsideItsRoot")))
         self.assertTrue(answer.get("passed"),
                         "the run did not pass: rows "
                         + json.dumps(answer.get("rowsThatDisagreed")) + ", arms "
@@ -247,6 +264,21 @@ class ComparisonRunTests(unittest.TestCase):
                 self.assertEqual(cells["observationFile"]["value"], "resolved",
                                  scenario + " named a path that is not on disk")
 
+    def test_the_run_works_in_a_directory_of_its_own_and_leaves_the_rest_alone(self):
+        """A caller names a place to work in; the run does not work in it.
+
+        The harness writes a launcher and two Codex homes at fixed names, so using the named
+        directory itself would replace whatever was already using those names. A file placed in
+        the parent before the run is still there afterwards, unchanged.
+        """
+        run_once()
+        witness = _RUN["root"] / "somebody-elses-file"
+        self.assertTrue(witness.is_file(), "the file placed before the run is gone")
+        self.assertEqual(witness.read_text(encoding="utf-8"), "not the harness's to touch",
+                         "the run changed a file it did not create")
+        self.assertNotEqual(str(run_root()), str(_RUN["root"]),
+                            "the run used the directory it was given instead of one of its own")
+
     def test_the_off_arm_ran_nothing_and_gives_the_one_reason(self):
         """An absence with a reason, never a false, a zero, or a release."""
         answer = run_once()
@@ -289,7 +321,7 @@ class ComparisonRunTests(unittest.TestCase):
         answer = run_once()
         # Derived from the root this check made, so a run that reported a decoy home cannot
         # send this case to the file that agrees with it.
-        home = _RUN["root"] / "on" / "codex"
+        home = run_root() / "on" / "codex"
         self.assertEqual(answer["arms"]["on"]["codexHome"], str(home),
                          "the run reports a Codex home other than the one under its own root")
         document = hooks.read(home / "hooks.json")
@@ -318,7 +350,7 @@ class ComparisonRunTests(unittest.TestCase):
             self.assertEqual(answer["arms"][arm]["foreignRegistration"]["value"], "present",
                              "the install displaced a Stop entry belonging to another owner")
         entries = completion.adapter_entries(
-            hooks.read(_RUN["root"] / "on" / "codex" / "hooks.json").value or {},
+            hooks.read(run_root() / "on" / "codex" / "hooks.json").value or {},
             completion.EVENT)
         self.assertNotIn("/opt/cxc/stop", entries[0]["command"],
                          "the entry this adapter owns names the other owner's command")
@@ -628,7 +660,7 @@ class WitnessTests(unittest.TestCase):
 
     def records(self, arm):
         found = []
-        for path in sorted((_RUN["root"] / arm / "journal").rglob("*.json")):
+        for path in sorted((run_root() / arm / "journal").rglob("*.json")):
             found.append(json.loads(path.read_text(encoding="utf-8")))
         return found
 
@@ -637,7 +669,7 @@ class WitnessTests(unittest.TestCase):
         self.assertEqual(self.records("off"), [],
                          "the arm whose install was a dry run produced hook journal records, so"
                          " something ran there")
-        self.assertEqual(sorted((_RUN["root"] / "off" / "markers").rglob("hook")), [],
+        self.assertEqual(sorted((run_root() / "off" / "markers").rglob("hook")), [],
                          "the arm that ran nothing has published observations")
 
     def test_the_registered_command_left_one_record_for_every_firing(self):
@@ -667,13 +699,13 @@ class WitnessTests(unittest.TestCase):
         # The reservation lives in the same directory and is named rather than numbered, so it
         # is excluded here: counting it would have made this case agree with itself.
         published = sorted(path for path in
-                           (_RUN["root"] / "on" / "markers").rglob("hook/*/*/*.json")
+                           (run_root() / "on" / "markers").rglob("hook/*/*/*.json")
                            if path.name != "hold.json")
         # Every firing but the unmanaged one, which selects no assignment and so publishes nothing.
         self.assertEqual(len(published), sum(FIRINGS.values()) - 1,
                          "the relay published a different number of observations from the number"
                          " of managed firings")
-        reserved = sorted((_RUN["root"] / "on" / "markers").rglob("hook/*/*/hold.json"))
+        reserved = sorted((run_root() / "on" / "markers").rglob("hook/*/*/hold.json"))
         self.assertEqual(len(reserved), 4,
                          "the reservations on disk are not the three omissions plus the first"
                          " firing of the duplicate scenario")
@@ -775,6 +807,63 @@ class DerivationTests(unittest.TestCase):
                                          (cell, source, path),
                                          scenario + "/" + arm + "/" + cell
                                          + " was answered by something else")
+
+    def test_every_process_and_parse_boundary_is_guarded(self):
+        """Derived from source: a boundary that can raise must not be able to end the command.
+
+        The command promises one JSON object on stdout, so a timeout, an executable that could not
+        be started, or output that is not JSON has to become a refusal or an unreadable reading.
+        Two of these were found by deriving the set rather than reading the code: both git calls
+        caught a missing executable and not a timeout.
+        """
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        needed = {"run": ("TimeoutExpired", "OSError"), "loads": ("ValueError",),
+                  "read_text": ("OSError",)}
+        parents = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+
+        def named(node):
+            if isinstance(node, ast.Attribute):
+                return node.attr
+            if isinstance(node, ast.Name):
+                return node.id
+            return ""
+
+        def handlers_around(node):
+            seen, cur = [], parents.get(node)
+            while cur is not None:
+                if isinstance(cur, ast.Try):
+                    for handler in cur.handlers:
+                        if isinstance(handler.type, ast.Tuple):
+                            seen.extend(named(one) for one in handler.type.elts)
+                        elif handler.type is not None:
+                            seen.append(named(handler.type))
+                cur = parents.get(cur)
+            return seen
+
+        boundaries = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            call = named(node.func)
+            if call not in needed:
+                continue
+            if call == "run" and not isinstance(node.func, ast.Attribute):
+                continue
+            boundaries.append((call, node.lineno, handlers_around(node)))
+        self.assertGreaterEqual(len(boundaries), 8,
+                                "almost no boundary was found, so this derivation is watching a"
+                                " file that no longer crosses any")
+        unguarded = []
+        for call, line, seen in boundaries:
+            for wanted in needed[call]:
+                if not any(one == wanted or one in ("Exception", "BaseException") for one in seen):
+                    unguarded.append(call + " at line " + str(line) + " does not handle " + wanted)
+        self.assertEqual(unguarded, [],
+                         "a boundary can raise past the refusal document: " + "; ".join(unguarded))
 
     def test_every_cell_written_into_a_row_went_through_the_declared_reading(self):
         """No other line in the harness assembles a cell. Source, because the subject is absence.

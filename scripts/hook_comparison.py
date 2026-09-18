@@ -423,6 +423,8 @@ class Arm(object):
         self.environment = environment(self)
         hooks_file(self.codex_home).write_text(json.dumps(FOREIGN_HOOKS, indent=2),
                                                encoding="utf-8")
+        self.places = [self.codex_home, self.markers, self.state, self.journal, self.work,
+                       hooks_file(self.codex_home)]
         self.argv = self._install_argv()
         self.install = self._install()
         self.hook_file = self._hook_file()
@@ -444,8 +446,15 @@ class Arm(object):
 
     def _install(self):
         """Run the installer and keep its own report, which is what the arm is judged on."""
-        done = subprocess.run(self.argv, capture_output=True, text=True, timeout=300,
-                              env=self.environment)
+        try:
+            done = subprocess.run(self.argv, capture_output=True, text=True, timeout=300,
+                                  env=self.environment)
+        except subprocess.TimeoutExpired:
+            return {"source": INSTALL, "exitCode": reading.UNREADABLE,
+                    "detail": "the install did not finish within its timeout"}
+        except OSError as error:
+            return {"source": INSTALL, "exitCode": reading.UNREADABLE,
+                    "detail": "the install could not be started: " + str(error)}
         try:
             payload = json.loads(done.stdout) if done.stdout.strip() else {}
         except ValueError:
@@ -518,14 +527,30 @@ class RelayError(RuntimeError):
 
 
 def relay(arm, *args):
-    """One relay command, run as the operator would run it, against this arm's own state."""
-    done = subprocess.run([str(arm.launcher), "--state", str(arm.state), *args],
-                          capture_output=True, text=True, timeout=300,
-                          env=arm.environment)
+    """One relay command, run as the operator would run it, against this arm's own state.
+
+    Every way this can fail becomes a RelayError, which main() prints as a refusal. A timeout, an
+    executable that could not be started and output that is not JSON are all ordinary things at a
+    process boundary, and letting one escape ends the command with a traceback and no document at
+    all - which is the one output this command promises never to produce.
+    """
+    try:
+        done = subprocess.run([str(arm.launcher), "--state", str(arm.state), *args],
+                              capture_output=True, text=True, timeout=300,
+                              env=arm.environment)
+    except subprocess.TimeoutExpired:
+        raise RelayError(" ".join(args[:2]) + " did not finish within its timeout")
+    except OSError as error:
+        raise RelayError(" ".join(args[:2]) + " could not be started: " + str(error))
     if done.returncode != 0:
         raise RelayError(" ".join(args[:2]) + " exited " + str(done.returncode) + ": "
                          + (done.stdout or done.stderr)[-400:])
-    return json.loads(done.stdout) if done.stdout.strip() else {}
+    if not done.stdout.strip():
+        return {}
+    try:
+        return json.loads(done.stdout)
+    except ValueError:
+        raise RelayError(" ".join(args[:2]) + " printed something that is not JSON")
 
 
 def build(arm, declared):
@@ -634,9 +659,17 @@ def fire(arm, built, stop_hook_active):
     if not command:
         return None
     started = time.monotonic()
-    done = subprocess.run(shlex.split(command),
-                          input=json.dumps(stop_payload(built, stop_hook_active)).encode("utf-8"),
-                          capture_output=True, timeout=300, env=arm.environment)
+    try:
+        done = subprocess.run(
+            shlex.split(command),
+            input=json.dumps(stop_payload(built, stop_hook_active)).encode("utf-8"),
+            capture_output=True, timeout=300, env=arm.environment)
+    except subprocess.TimeoutExpired:
+        return {"faulted": "the registered command did not finish within its timeout",
+                "argv": shlex.split(command)}
+    except OSError as error:
+        return {"faulted": "the registered command could not be started: " + str(error),
+                "argv": shlex.split(command)}
     wall = int((time.monotonic() - started) * 1000)
     return {"stdout": done.stdout.decode("utf-8", "replace"),
             "stderr": done.stderr.decode("utf-8", "replace"),
@@ -715,6 +748,14 @@ def journal_payload(record, unidentifiable=None):
     return payload
 
 
+def _faulted(source, fired, keys):
+    """A firing that never completed. Its readings could not be taken, and say so."""
+    payload = {"source": source, "detail": fired["faulted"]}
+    for key in keys:
+        payload[key] = reading.UNREADABLE
+    return payload
+
+
 def stdout_payload(fired):
     """What the host would have seen on stdout, in the host's own vocabulary.
 
@@ -724,6 +765,8 @@ def stdout_payload(fired):
     """
     if fired is None:
         return {"source": STDOUT, "absent": NO_REGISTRATION}
+    if fired.get("faulted"):
+        return _faulted(STDOUT, fired, ("printed",))
     raw = (fired.get("stdout") or "").strip()
     if not raw:
         return {"source": STDOUT, "printed": PRINTED_NOTHING, "raw": ""}
@@ -746,6 +789,8 @@ def marker_payload(arm, built, fired, recorded_as):
     """
     if fired is None:
         return {"source": MARKER_ROOT, "absent": NO_REGISTRATION}
+    if fired.get("faulted"):
+        return _faulted(MARKER_ROOT, fired, ("observationFile", "heldFile"))
     directory = built.get("assignmentDir")
     if not directory:
         # No assignment was ever declared for this workspace, so there is nowhere for the guard to
@@ -783,6 +828,8 @@ def _there(path, present, missing):
 def harness_payload(fired):
     if fired is None:
         return {"source": HARNESS, "absent": NO_REGISTRATION}
+    if fired.get("faulted"):
+        return _faulted(HARNESS, fired, ("wallMs", "exitCode"))
     return {"source": HARNESS, "wallMs": fired["wallMs"], "exitCode": fired["exitCode"]}
 
 
@@ -1045,7 +1092,8 @@ def source_identity():
                               capture_output=True, text=True, timeout=60)
         if done.returncode == 0:
             identity["workingTree"] = "dirty" if done.stdout.strip() else "clean"
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # Left unreadable rather than guessed at: a tree nobody could look at is not a clean one.
         pass
     digests = {}
     for name, target in (("harness", Path(__file__).resolve()),
@@ -1078,9 +1126,54 @@ def repository_commit():
     try:
         done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(ROOT), capture_output=True,
                               text=True, timeout=60)
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # A timeout is as ordinary here as a missing git, and letting it escape would end the
+        # command with no document at all over a question about provenance.
         return reading.UNREADABLE
     return done.stdout.strip() if done.returncode == 0 else reading.UNREADABLE
+
+
+def own_directory(where):
+    """A directory of this run's own, created under the place the caller named.
+
+    The caller names a place to work in; the run does not work in it. It writes a launcher and two
+    Codex homes at fixed names, so using the named directory itself means replacing whatever was
+    already using those names - and a directory an operator points at is exactly where something
+    else already lives. mkdtemp creates a fresh child, atomically and uniquely, so nothing that
+    was there is touched and --root /tmp stays a reasonable thing to type.
+
+    Returned resolved, because every later containment question is asked against it and a root
+    reached through a symlink would make those answers about somewhere else.
+    """
+    where = Path(where).expanduser()
+    where.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="hook-comparison-", dir=str(where))).resolve()
+
+
+def owned(path, root):
+    """Whether this path is inside this run's own directory, by where it actually leads.
+
+    Resolved on both sides rather than compared as text. A path that starts with the root as a
+    string can still lead outside it through a symlink, and "everything is written inside the
+    root" is a claim about where the bytes land rather than about how the path is spelled.
+    """
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def containment(root, places):
+    """Every place this run writes, checked to actually be inside its own directory.
+
+    A judgment rather than an assumption, so it is collected with the others and a run that wrote
+    somewhere else cannot exit 0 while saying it did not.
+    """
+    outside = sorted(str(place) for place in places if not owned(place, root))
+    return {"checked": len(places), "outside": outside, "met": not outside,
+            "what": "every directory and file this run writes resolves inside the directory it"
+                    " created for itself"}
 
 
 def refusal(detail):
@@ -1116,7 +1209,8 @@ def compare(root):
     """Build both arms, drive every scenario at both, and read what each one has afterwards."""
     launcher = launcher_for(root)
     arms = {name: Arm(root, name, launcher) for name in ARMS}
-    scenarios = {"_arms": {}}
+    scenarios = {"_arms": {}, "_wrote": [launcher] + [place for arm in arms.values()
+                                                      for place in arm.places]}
     for name, arm in arms.items():
         cells = {cell: read(cell, {INSTALL: arm.install, HOOK_FILE: arm.hook_file})
                  for cell in ARM_CELLS}
@@ -1176,6 +1270,7 @@ def document(scenarios, root):
         "arms": scenarios["_arms"],
         "scenarios": dict((declared["name"], scenarios[declared["name"]])
                           for declared in SCENARIOS),
+        "wroteOnlyInsideItsRoot": containment(root, scenarios["_wrote"]),
         "absenceIsNormalAt": [dict(place, arm=arm, scenario=name, cell=cell)
                               for (arm, name, cell), place in sorted(places.items())],
         "measures": answers,
@@ -1214,9 +1309,14 @@ def main(argv=None):
         return 2
 
     keep = args.root is not None
-    root = (Path(args.root).expanduser().resolve() if keep
-            else Path(tempfile.mkdtemp(prefix="hook-comparison-")))
-    root.mkdir(parents=True, exist_ok=True)
+    try:
+        root = own_directory(args.root) if keep else Path(
+            tempfile.mkdtemp(prefix="hook-comparison-")).resolve()
+    except OSError as error:
+        json.dump(refusal("a directory for this run could not be created: " + str(error)),
+                  sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 2
     answer = None
     try:
         answer = document(compare(root), root)

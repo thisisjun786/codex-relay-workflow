@@ -185,6 +185,7 @@ One JSON object on stdout, and nothing else on stdout.
 | `scenarios` | per scenario, per arm, every cell as a value with the source that answered it, the path it was read from, whether it was readable, and the detail when it was not; beside the observation and decision the scenario declared in advance, and the provenance of what was handed to the command |
 | `measures` | the six, each with its answer, the rows it was computed from, and its narrowing sentence |
 | `supplemental` | observations reported under their own name because they are not one of the six |
+| `wroteOnlyInsideItsRoot` | every place the run wrote, and whether each resolves inside the directory it created for itself |
 | `judgmentsCounted` and `judgmentsThatFailed` | every field in this document named passed or met, and which of them said false. The exit status is taken from that list and from nothing else |
 | `measuresThatMissedTheirBound` | the measured criteria that were not met, kept as a readable summary of part of the list above |
 | `notPerformed` | what was not run and why, including the CRW-68 criteria this arrangement cannot reach |
@@ -216,10 +217,21 @@ python3 scripts/hook_comparison.py --root <a directory outside this checkout> > 
 ```
 
 The run needs Python 3.11 or newer, because the relay requires it; on an older interpreter the
-harness refuses and says so rather than reporting rows it could not take. It writes only under the
-directory given to `--root`, creates the destination it needs, and touches nothing in the caller's
-Codex home. With no `--root` it makes a temporary directory and removes it afterwards; with one it
-keeps everything, which is what an operator wants when a row has to be explained.
+harness refuses and says so rather than reporting rows it could not take.
+
+The place named by `--root` is where the run makes a directory of its own; it is not where the run
+works. The harness writes a launcher and two Codex homes at fixed names, so using the named
+directory itself would replace whatever was already using those names, and a directory an operator
+points at is exactly where something else already lives. Everything the run writes goes in the
+directory it created, and `wroteOnlyInsideItsRoot` in the result is that claim checked against
+the resolved path of every place written rather than against how the paths are spelled. With no
+`--root` the run makes a temporary directory and removes it afterwards; with one it keeps everything,
+which is what an operator wants when a row has to be explained.
+
+Every way a subprocess or a parse can fail ends in a document. A timeout, an executable that
+could not be started, a nonzero exit and output that is not JSON each produce a refusal naming
+the step, and the boundaries are derived from the source rather than listed, because two of them
+were found that way: both `git` calls handled a missing executable and not a timeout.
 
 It starts no daemon and no service, registers nothing outside its own temporary destination, and
 leaves no process behind. The relay it calls is the one in this checkout, reached through a launcher
