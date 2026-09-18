@@ -677,12 +677,19 @@ def cmd_verdict(services, args) -> dict:
             # --restoration named the same criterion, and the verdict would open the next
             # generation instead of refusing. Only an absent or agreeing declaration is
             # marked; a disagreeing one is returned to the caller to say once.
-            if item.get(restoration.FIELD) is False:
+            existing = item.get(restoration.FIELD)
+            if existing is False:
                 raise SystemExit2(
                     f"--restoration names {wanted!r}, whose finding declares the restoration "
                     "block false. One correction carries one block and says so once",
                     EXIT_USAGE,
                 )
+            if existing is not None and not isinstance(existing, bool):
+                # Left exactly as it arrived, so normalise_findings refuses it by type. That
+                # rule belongs to the normaliser, and writing True over a bad value here would
+                # turn an invalid declaration into a valid one and take the refusal away from
+                # the only place that words it.
+                continue
             item[restoration.FIELD] = True
     record = services.ack.record_verdict(
         args.event, verdict=args.verdict, verdict_turn_id=args.verdict_turn,

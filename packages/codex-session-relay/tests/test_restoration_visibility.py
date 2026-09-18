@@ -498,6 +498,30 @@ class RestorationDelivery(DeliveryTestCase):
             "no ruling may have been recorded",
         )
 
+    def test_the_option_does_not_make_an_invalid_declaration_valid(self):
+        """Writing true over a bad value would take the refusal away from the rule that owns it.
+
+        normalise_findings refuses a declaration that is not a boolean. Marking the matched
+        entry first replaced the bad value with a good one, so that refusal never fired and an
+        invalid declaration was recorded as a carrier.
+        """
+        _relationship, event_id = self._acknowledged()
+        with self.assertRaises(RelayError) as caught:
+            cli.cmd_verdict(
+                SimpleNamespace(ack=self.ack),
+                SimpleNamespace(
+                    event=event_id, verdict="needs_changes", verdict_turn="v-badflag",
+                    criterion=None, finding=None,
+                    criteria=json.dumps([{
+                        "id": "c1", "verdict": "needs_changes", "note": "resume",
+                        "restoration": "yes",
+                    }]),
+                    restoration="c1", reason=None, expect_criteria_digest=None,
+                ),
+            )
+        self.assertEqual(caught.exception.reason.value, "disposition_conflict")
+        self.assertIn("true or false", caught.exception.detail)
+
     # ------------------------------------------------- an unlocatable declaration
 
     def test_each_attempt_records_what_its_own_bytes_carried(self):
