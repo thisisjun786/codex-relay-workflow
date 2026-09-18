@@ -1186,6 +1186,10 @@ def _pairs(target, value):
 
 def _binds_the_helper_name(alias):
     """Does this import alias bind the helper's NAME, whatever it reads to get there."""
+    if alias.name == "*":
+        # A star import may or may not export the name; this reader cannot open the other
+        # module to find out, so it assumes the binding it cannot rule out.
+        return True
     return (alias.asname or alias.name.split(".")[-1]) == HELPER
 
 
@@ -1685,6 +1689,9 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
             ("a with-as target",
              self.IMPORT + f"def t(store, ctx):\n    with ctx as {HELPER}:\n"
              + f"        {HELPER}(store)\n"),
+            ("a star import that might export the name",
+             self.IMPORT + "from foreign import *\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
             ("parameter shadow",
              self.IMPORT + f"def t(store, {HELPER}):\n    {HELPER}(store)\n"),
             ("class shadow",
