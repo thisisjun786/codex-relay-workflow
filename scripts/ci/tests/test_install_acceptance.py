@@ -39,6 +39,7 @@ import hashlib
 import json
 import os
 import shutil
+import shlex
 import stat
 import subprocess
 import sys
@@ -53,8 +54,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 # composition is worth being able to run by itself while working on it.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crw_runtime import (check, codexconfig, completion, definition, hostrecord, ownership,
-                         pointer, reading, scope, staging, swapgate)
+from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
+                         ownership, pointer, reading, scope, staging, swapgate)
 
 import runtime_install
 import test_runtime_install as base
@@ -496,19 +497,39 @@ RELEASED = {"decision": "release", "state": "unmanaged", "observation": "unmanag
 
 
 def fire_the_hook(directory):
-    """Actually invoke the Stop hook once, and return what hook-status read before and after.
+    """Fire the hook the way the host does, through the command the registration names.
 
-    The point of the row this feeds. A journal count read from a directory somebody pre-populated
-    says nothing about a callback, because it counts files. So the hook is run, and the assertion
-    is the transition -- established absence before, exactly one invocation after -- which only
-    an invocation that really happened can produce.
+    Calling completion.run() here would have been a reading of this checkout. The row says an
+    installed hook fired, and the installed hook is a COMMAND LINE in hooks.json: an interpreter,
+    the entry point, and the settings path the install chose. Run the helper directly and that
+    whole registration is untested -- a broken entry point, a settings argument pointing
+    somewhere else, a stdin or stdout contract that changed, and the row still reaches "1".
+
+    So the hook is installed by the installer, the command is DERIVED from the file it wrote
+    rather than written out again here, and that command is executed as a program with the Stop
+    payload on its stdin. What the row then reads is a journal entry the registered command
+    produced.
     """
+    directory = Path(directory)
     standin_relay(directory, RELEASED)
-    hook_settings(directory)
+    arguments = base.argparse.Namespace(
+        codex_home=str(directory), event=None, hook_command=None, adapter="completion",
+        dest=None, relay_command=str(directory / "codex-session-relay"),
+        marker_root=str(directory / "marker"), db_path=None,
+        journal_root=str(directory / "journal"), python=sys.executable,
+        mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-69", apply=True)
+    with mock.patch.object(runtime_install, "emit"):
+        runtime_install.cmd_hook(arguments)
+
+    registered = completion.adapter_entries(
+        hooks.read(directory / "hooks.json").value or {}, completion.EVENT)
     before = completion.status(codex_home=str(directory), environ={})
-    completion.run(json.dumps(STOP).encode("utf-8"), codex_home=str(directory), environ={})
+    done = subprocess.run(
+        shlex.split(registered[0]["command"]) if registered else ["false"],
+        input=json.dumps(STOP).encode("utf-8"), capture_output=True, timeout=120,
+        env={**os.environ, "CODEX_HOME": str(directory)})
     after = completion.status(codex_home=str(directory), environ={})
-    return before, after
+    return before, after, registered, done
 
 
 # Every boundary an update crosses, as the update tests enumerate them: two build steps, four
@@ -583,6 +604,37 @@ ACCEPTS_A_REFUSAL = {
     "test_without_a_reader_the_row_reports_itself_unread_rather_than_preserved":
         "the property is that an unread row says so instead of reading as preserved.",
 }
+# Which path each reading actually travels: the thing this run installed or registered, or a
+# stand-in this suite supplied. Reaching a success answer and reaching it down the path the row
+# names are two questions, and the second is the one a source-level shortcut passes silently.
+# Declared per row so a reading that quietly moves onto a shortcut has to move a sentence too.
+READING_PATHS = {
+    "skillLink":
+        "installed: the links this run created under the temporary Codex home, listed by the"
+        " repository check the diagnosis itself runs.",
+    "runtimeImport":
+        "installed: the recorded interpreter imports the packages copied into the candidate,"
+        " and the success case requires the resolved locations to be inside it.",
+    "mcpToolExposure":
+        "installed: the registration register-mcp --apply wrote, compared with the tool names"
+        " supplied. The tool list is an input; on a host it comes from a session that listed"
+        " them, which the procedure says.",
+    "appServerConnection":
+        "stand-in: a relay executable this suite wrote answers the doctor. No App Server runs"
+        " here, and the claim is narrowed to match -- the row is fixture, and the procedure"
+        " states that a live socket is what a host reading needs.",
+    "hookCallback":
+        "registered: the command line in the hook file the installer wrote, read back out of"
+        " that file and executed as a program with the Stop payload on its stdin. Calling the"
+        " adapter helper directly would have left the entry point, the settings argument and"
+        " the stdin contract untested while the row still reached one.",
+    "modelPermissionPreservation":
+        "installed: the Codex configuration the install acted over, read on both sides of it.",
+    "deliveryAcceptance":
+        "stand-in: a relay executable this suite wrote carries the eight steps, while the"
+        " preflight asks the relay predicate imported from the copy inside the candidate. No"
+        " live relay completes a delivery here, and the row is fixture for that reason.",
+}
 # Rows whose success answer cannot be required on every supported interpreter, with the reason.
 # The exception exists because absence is a real state here and the answer set can say so; it
 # is not a place to file a row that simply never succeeds.
@@ -622,7 +674,7 @@ def succeeding(root):
 
     hook_directory = root / "hook"
     hook_directory.mkdir(exist_ok=True)
-    _before, after = fire_the_hook(hook_directory)
+    _before, after, _registered, _done = fire_the_hook(hook_directory)
 
     return {
         "diagnose": diagnose_for(
@@ -1041,7 +1093,7 @@ def observe_all(root):
 
     hook_directory = root / "hook"
     hook_directory.mkdir(exist_ok=True)
-    _before, after = fire_the_hook(hook_directory)
+    _before, after, _registered, _done = fire_the_hook(hook_directory)
 
     return {
         "diagnose": diagnose_for(root, host),
@@ -1377,6 +1429,31 @@ class SevenReadingsTests(unittest.TestCase):
         for place, why in ACCEPTS_A_REFUSAL.items():
             with self.subTest(place):
                 self.assertTrue(why.strip(), place + " settles for a refusal without a reason")
+
+    def test_every_reading_declares_the_path_it_travels(self):
+        """Reaching a success answer and reaching it down the right path are two questions.
+
+        A reading can pass through a source-level shortcut and answer exactly as it would have
+        through the installed thing -- that is what makes the substitution quiet. This issue
+        delivers an acceptance test for installation and hook REGISTRATION, so a row that skips
+        the registration is not a residual detail, it is the claim missing its subject.
+
+        The paths are not derivable from the source: what an executed command reaches is a fact
+        about the run, not about the call graph. So each is declared, and what this check holds
+        is that no row is silent about which one it travels.
+        """
+        self.assertEqual(sorted(READING_PATHS), sorted(SEVEN),
+                         "a reading that does not say which path it travels can move onto a"
+                         " shortcut without anything here changing")
+        for cell, path in READING_PATHS.items():
+            with self.subTest(cell):
+                self.assertTrue(path.strip(), cell + " declares no path")
+                self.assertTrue(path.startswith(("installed:", "registered:", "stand-in:")),
+                                cell + " names a path this suite has no word for: " + path[:40])
+                if path.startswith("stand-in:"):
+                    self.assertIn(cell, dict.fromkeys(SEVEN),
+                                  cell + " is a stand-in row and must still be one of the"
+                                  " seven, declared fixture rather than quietly host")
     def test_a_row_that_cannot_require_success_says_why_absence_is_normal(self):
         """The only exception, and it has to carry its reason.
 
@@ -1449,9 +1526,26 @@ class SevenReadingsTests(unittest.TestCase):
         same way, so the row is established by the transition: the journal is absent before, and
         names exactly one invocation after the Stop hook has actually run. Absent is an answer
         here, not a failure to look.
+
+        And the invocation goes through the registration, not through this checkout's helper.
+        The command is read out of the hook file the installer wrote and executed as a program,
+        so the entry point, the settings argument it carries and the stdin contract are all on
+        the path the row reports. Calling completion.run() here would have left every one of
+        them untested while the row still reached "1".
         """
         with tempfile.TemporaryDirectory() as temporary:
-            before, after = fire_the_hook(Path(temporary))
+            before, after, registered, done = fire_the_hook(Path(temporary))
+
+        self.assertEqual(len(registered), 1,
+                         "the installer registered " + str(len(registered)) + " commands for"
+                         " this adapter, so what fired is not settled")
+        self.assertIn(completion.ENTRY_POINT_NAME, registered[0]["command"],
+                      "the registered command names the adapter entry point")
+        self.assertIsNotNone(registered[0]["settings"],
+                             "the registration carries the settings path the install chose,"
+                             " rather than leaving it to be resolved again at every Stop")
+        self.assertEqual(done.returncode, 0, done.stderr[-400:])
+        self.assertEqual(done.stdout, b"", "an observing hook holds no turn")
 
         self.assertEqual(read("hookCallback", {"hook-status": before})["value"]["value"],
                          reading.ABSENT,

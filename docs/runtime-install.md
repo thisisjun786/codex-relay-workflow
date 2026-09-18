@@ -1322,6 +1322,20 @@ never `False`, and never the value of the cell beside it.
 | Model and permission preservation | the acceptance module | the model and permission keys, read before and again after | that anything else in the configuration survived |
 | Delivery acceptance | `diagnose` | `checks.results.deliveryAccepted` | that an accepted delivery was acted on |
 
+Reaching an answer and reaching it down the path the row names are two questions, and the
+second is the one a source-level shortcut passes silently. In the suite the link, import,
+registration, hook and preservation rows travel the thing the run installed: the links it
+created, the packages inside the candidate, the registration `register-mcp` wrote, the command
+line in the hook file executed as a program with a Stop payload on its stdin, and the
+configuration the install acted over. The connection and delivery rows travel a relay this
+suite wrote, because no App Server runs there -- which is why those two are the rows the table
+above says a host reading needs the live half for.
+
+The hook row is worth naming twice. Calling the adapter helper directly would answer exactly as
+the registered command does, while leaving the entry point, the settings argument the install
+chose and the stdin contract entirely untested. The registration is half of what this page
+documents, so the row reads it out of the hook file and runs it.
+
 The vocabularies are deliberately not merged. The result rows answer in `check.VALUES`, the hook
 row answers in the completion module's own words, and the listing row answers with a listing. A
 cell rewritten into a neighbour's vocabulary is the same borrowed answer with better manners.
