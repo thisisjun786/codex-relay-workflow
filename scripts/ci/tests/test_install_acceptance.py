@@ -1388,7 +1388,14 @@ def _places(tree):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 inner = chain + [child.name]
             elif isinstance(child, ast.Lambda):
-                inner = chain + ["<lambda>"]
+                # By line, because two lambdas in one class body are two places and a single
+                # name for both would make one of them answer for the other.
+                inner = chain + ["<lambda@" + str(child.lineno) + ">"]
+            elif isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp,
+                                    ast.GeneratorExp)):
+                # A comprehension has a scope of its own on Python 3: its target shadows an
+                # outer name INSIDE it and not after it.
+                inner = chain + ["<comprehension@" + str(child.lineno) + ">"]
             elif isinstance(child, ast.ClassDef):
                 owner = child.name
             found[id(child)] = (".".join(inner) if inner else MODULE_LEVEL, owner)
@@ -1462,14 +1469,14 @@ def _reachable(expression, spelled, klass, bound):
     return False
 
 
-def _held_by_class(tree, spelled):
+def _held_by_class(tree, spelled, over=None):
     """Attribute names a class binds the thing to, so the rest of that class can read one.
 
     A setUp binding self.unread to a refusal and a test asserting self.unread are one place
     spread over two methods, and the method that settles is the one with no spelling in it. The
     binding is derived rather than declared, so that shape arrives accounted.
     """
-    places, held = _places(tree), {}
+    places, held = _places(tree), dict(over or {})
 
     # A local name that holds the thing first, so setUp doing value = reading.UNREADABLE and then
     # self.unread = value is one binding in two steps rather than two unrelated lines.
@@ -1598,9 +1605,10 @@ def _hands_on(tree, spelled):
             targets = list(node.targets)
         elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
             targets = [node.target]
-        elif isinstance(node, (ast.For, ast.AsyncFor)):
-            # A for target binds in the function. A comprehension target does NOT, since
-            # Python 3 gives the comprehension a scope of its own, so it is not collected here.
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            # A for target binds in the function; a comprehension target binds in the
+            # comprehension, which is now a scope of its own, so both are collected here and
+            # each lands in the place it belongs to.
             targets = [node.target]
         elif isinstance(node, ast.withitem):
             targets = [node.optional_vars] if node.optional_vars else []
@@ -1675,6 +1683,8 @@ def _hands_on(tree, spelled):
                 """Every place an expression may name, both arms of a conditional included."""
                 if isinstance(expression, ast.IfExp):
                     return names(expression.body) | names(expression.orelse)
+                if isinstance(expression, ast.NamedExpr):
+                    return names(expression.value)
                 if isinstance(expression, ast.Name):
                     return outwards(function, expression.id, aliases)
                 if isinstance(expression, ast.Lambda):
@@ -1687,7 +1697,7 @@ def _hands_on(tree, spelled):
                     return {reached} if reached else set()
                 return set()
 
-            if isinstance(node.value, ast.IfExp):
+            if isinstance(node.value, (ast.IfExp, ast.NamedExpr)):
                 targets = names(node.value)
             elif isinstance(node.value, ast.Name):
                 targets = outwards(function, node.value.id, aliases)
@@ -1735,7 +1745,8 @@ def _hands_on(tree, spelled):
             # cls.name in a classmethod names a method of this class exactly as self.name does,
             # and Example.name names one of Example's just as statically.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-            reached = inherited(klass if through in ("self", "cls") else through,
+            reached = inherited(klass if through in ("self", "cls")
+                                else (through or "").rpartition(".")[2] or None,
                                 node.func.attr)
             return {reached} if reached else set()
         return set()
@@ -1895,7 +1906,19 @@ def source_spellings(tree):
     undecided and has to be written down, because a name nobody could read reported as a name
     that does not read source is a plausible default standing in for an answer nobody got.
     """
-    namespace = vars(sys.modules[__name__])
+    namespace = dict(vars(sys.modules[__name__]))
+    # An import written inside a function never reaches the module namespace, so the name it
+    # binds is read out of the import itself and resolved to what it actually imports.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        owner = sys.modules.get(node.module)
+        if owner is None:
+            continue
+        for alias in node.names:
+            value = getattr(owner, alias.name, None)
+            if value is not None:
+                namespace.setdefault(alias.asname or alias.name, value)
 
     def is_source_file(value):
         return isinstance(value, Path) and value.suffix == ".py" and value.exists()
@@ -2120,7 +2143,13 @@ def refusals_reached(source):
     """Every occurrence of a refusal in this source, and the spellings the derivation used."""
     tree = ast.parse(source)
     spellings = refusal_spellings()
-    held = _held_by_class(tree, _refusal_spelled(spellings, {}))
+    # To a fixpoint, because self.second = self.first holds the refusal only once the pass
+    # knows that self.first does.
+    held, growing = {}, True
+    while growing:
+        wider = _held_by_class(tree, _refusal_spelled(spellings, held), held)
+        growing = wider != held
+        held = wider
     return _occurrences(tree, _refusal_spelled(spellings, held)), spellings
 
 
@@ -2129,7 +2158,11 @@ def source_text_reached(source):
     tree = ast.parse(source)
     handles, hands_source, undecided, called = source_spellings(tree)
     handles = _handle_names(tree, handles)
-    held = _held_by_class(tree, _source_spelled(handles, hands_source, {}))
+    held, growing = {}, True
+    while growing:
+        wider = _held_by_class(tree, _source_spelled(handles, hands_source, held), held)
+        growing = wider != held
+        held = wider
     return (_occurrences(tree, _source_spelled(handles, hands_source, held)),
             {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
 
