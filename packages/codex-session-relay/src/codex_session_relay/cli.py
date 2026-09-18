@@ -654,10 +654,13 @@ def cmd_verdict(services, args) -> dict:
         criteria=criteria or None, findings=findings or None, reason=args.reason,
         expect_criteria_digest=args.expect_criteria_digest,
     )
-    # Beside the record, never inside it. The verdict record is a frozen contract instance
-    # with additionalProperties false; what became of the correction's restoration block is
-    # this relay's own finding about its own rendering, so it is reported as a sibling.
-    return dict(record, restoration=services.ack.restoration_of(args.event))
+    # Underscore-prefixed, which is this package's existing mark for a relay-owned annotation
+    # on a contract-shaped record: record_verdict already returns _replay the same way, and
+    # both the conformance suite and the ack tests strip exactly those keys before validating.
+    # verification-verdict.json closes additionalProperties on the record, so an unprefixed
+    # key here would be a contract violation dressed as observability - which is what the
+    # comment this replaces claimed not to be doing while doing it.
+    return dict(record, _restoration=services.ack.restoration_of(args.event))
 
 
 def cmd_show(services, args) -> dict:

@@ -12,8 +12,11 @@ strings they are stored and reported as, never as enum members the parent commit
 
 import json
 from unittest import mock
+from pathlib import Path
+from types import SimpleNamespace
 
-from codex_session_relay import cxc, report
+import codex_session_relay
+from codex_session_relay import cli, cxc, report
 from codex_session_relay.errors import RelayError
 from codex_session_relay.identity import ack_proof, revision_request_event_id
 
@@ -38,6 +41,11 @@ def _findings(count, *, carries=None, note_size=40):
             finding["restoration"] = True
         out.append(finding)
     return out
+
+
+def _verdict_schema():
+    path = Path(codex_session_relay.__file__).parent / "schema" / "verification-verdict.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 class RestorationDelivery(DeliveryTestCase):
@@ -334,6 +342,67 @@ class RestorationDelivery(DeliveryTestCase):
         )
         entries = self._projections(revision, kind="restoration_rendered")
         self.assertEqual([entry.get("attempt") for entry in entries], [5])
+
+    def test_the_projection_is_measured_inside_the_write_lock(self):
+        """The attempt this sizes itself against can move before the lock is held.
+
+        A delivery that claims and settles a retry-safe attempt between a preflight read and
+        this commit leaves the projection describing an attempt already consumed. At a
+        request-id digit boundary that is the difference between recording a block as carried
+        and the real message dropping it.
+        """
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-lock",
+            findings=_findings(4, carries=1),
+        )
+        revision = self._revision_of(relationship, event_id, "v-lock")
+        original = report._assert_resubmission
+
+        def settle_an_attempt_first(db, identifier, submission_no):
+            # Stands in for a delivery claiming an attempt just before this writer got the
+            # lock. A projection measured before the transaction cannot see it.
+            db.execute(
+                "UPDATE deliveries SET attempt_count = 8 WHERE event_id = ?", (revision,)
+            )
+            return original(db, identifier, submission_no)
+
+        with mock.patch.object(report, "_assert_resubmission", settle_an_attempt_first):
+            report.record(
+                self.store, self.clock, event_id=revision,
+                repository="thisisjun786/codex-relay-workflow",
+                cxc_status=cxc.BLOCKED, cxc_reason="changes are required on this head",
+                summary="four findings, the first of which carries the restoration block",
+                next_action="answer every finding above",
+            )
+        entries = self._projections(revision, kind="restoration_rendered")
+        self.assertEqual([entry.get("attempt") for entry in entries], [9])
+
+    def test_the_command_reports_the_outcome_without_breaking_the_frozen_record(self):
+        """The verdict record is closed, so the annotation may not become one of its fields.
+
+        _replay is already returned this way, and both the conformance suite and the ack tests
+        strip underscore-prefixed keys before validating, so that prefix is this package's
+        existing mark for a relay-owned annotation on a contract-shaped record.
+        """
+        _relationship, event_id = self._acknowledged()
+        payload = cli.cmd_verdict(
+            SimpleNamespace(ack=self.ack),
+            SimpleNamespace(
+                event=event_id, verdict="needs_changes", verdict_turn="v-cli",
+                criterion=None, finding=["c01=needs_changes:resume context"],
+                criteria=None, restoration="c01", reason=None,
+                expect_criteria_digest=None,
+            ),
+        )
+        reported = payload.get("_restoration") or {"outcome": "nothing was recorded"}
+        self.assertEqual(reported.get("outcome"), "carried")
+        allowed = set(_verdict_schema()["properties"])
+        self.assertEqual(
+            {key for key in payload if not key.startswith("_")} - allowed, set(),
+            "the contract-shaped half of this output may not gain a property the frozen "
+            "record forbids",
+        )
 
     # ------------------------------------------------- an unlocatable declaration
 

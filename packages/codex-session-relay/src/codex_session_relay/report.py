@@ -209,26 +209,34 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
         "restore": dict(restore or {}),
     }
     now = clock.iso()
-    # Measured BEFORE anything is stored, because recording a report is exactly what switches
-    # this event from the legacy renderer to the composer, and the composer has a byte budget
-    # the legacy renderer does not. A declared restoration block that survived the
-    # verdict-time projection can still be squeezed out here, and here is the last moment at
-    # which refusing costs nothing: no attempt has frozen any bytes and nothing has been sent.
-    projection = _project_restoration(store, event, row)
-    if projection is not None and projection["outcome"] in restoration.UNDELIVERABLE:
-        raise ReceiptRefused(
-            RefusalReason.RESTORATION_UNDELIVERABLE,
-            f"this report would push the restoration block on {projection['criterion']!r} out "
-            f"of the correction: {projection['detail']}. Shorten the report or move the block "
-            "and record it again. Afterwards there is no supported way to send the block: the "
-            "verdict does not resend and a second channel is not allowed",
-        )
     with store.transaction() as db:
         # Re-read inside the write lock. Two recorders can both pass a preflight check and
         # both claim the same next submission, and a delivery can open an attempt between a
         # preflight read and this commit. Everything this decides can move, which is why the
         # rest of this package reads inside the caller transaction rather than before it.
         _assert_resubmission(db, event_id, row["submissionNo"])
+        # Measured INSIDE the write lock, for the reason the comment above gives: the attempt
+        # count this projection sizes itself against can move. A delivery that claims and
+        # settles a retry-safe attempt between a preflight read and this commit leaves the
+        # projection describing an attempt already consumed, and at a request-id digit
+        # boundary - projecting a9 while the send renders a10 - a report resting on the byte
+        # budget is recorded as carrying a block the real message drops.
+        #
+        # This is also the last moment at which refusing costs nothing. Recording a report is
+        # exactly what switches this event from the plain renderer to the composer and its
+        # byte budget, so a block that survived the verdict-time projection can still be
+        # squeezed out here, and nothing has frozen any bytes yet. Raising rolls this
+        # transaction back with nothing written.
+        projection = _project_restoration(store, event, row)
+        if projection is not None and projection["outcome"] in restoration.UNDELIVERABLE:
+            raise ReceiptRefused(
+                RefusalReason.RESTORATION_UNDELIVERABLE,
+                f"this report would push the restoration block on "
+                f"{projection['criterion']!r} out of the correction: {projection['detail']}. "
+                "Shorten the report or move the block and record it again. Afterwards there "
+                "is no supported way to send the block: the verdict does not resend and a "
+                "second channel is not allowed",
+            )
         # Delete then insert, rather than an upsert with a conflict target. A conflict target
         # has to match a constraint in the schema the database was actually created with, and
         # CREATE TABLE IF NOT EXISTS never changes an existing one, so naming one here made
