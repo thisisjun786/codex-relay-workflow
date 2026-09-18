@@ -337,6 +337,10 @@ def structurally_same(left, right):
                 and all(structurally_same(a, b) for a, b in zip(left, right)))
     if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
         return False
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        # JSON has one number type and Python's decoder does not: 1 and 1.0 are the same value
+        # written twice, while False is still not zero because bools were settled above.
+        return left == right
     return type(left) is type(right) and left == right
 
 
@@ -929,6 +933,7 @@ def reading_process(record, relay, sleeper=time.sleep):
         # A bool is an int here, and False to True is not progress anybody made.
         advanced = (isinstance(before, (int, float)) and isinstance(after, (int, float))
                     and not isinstance(before, bool) and not isinstance(after, bool)
+                    and math.isfinite(before) and math.isfinite(after)
                     and after > before)
         cells.append(cell("witnessAdvance", VERIFIED if (named and advanced) else NOT_VERIFIED,
                           evidence=("the witness names pid " + str(first_witness.get("pid"))

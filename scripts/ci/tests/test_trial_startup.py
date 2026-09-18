@@ -2520,5 +2520,38 @@ class TwentyFourthHostedRound(TrialCase):
         self.assertFalse(startup.same_value({"a": 1}, {"a": 1, "b": 2}))
 
 
+class TwentyFifthHostedRound(TrialCase):
+    """One JSON number written two ways, a counter that is not a number, and the example itself."""
+
+    def test_one_json_number_written_two_ways_agrees(self):
+        self.assertTrue(startup.same_value({"n": 1}, {"n": 1.0}))
+        self.assertTrue(startup.same_value({"n": [2]}, {"n": [2.0]}))
+        self.assertFalse(startup.same_value({"n": False}, {"n": 0.0}))
+        self.assertFalse(startup.same_value({"n": 1}, {"n": "1"}))
+
+    def test_an_infinite_progress_counter_is_not_progress(self):
+        pid = self.world.start_supervisor()
+        self.world.supervisor.terminate()
+        self.world.supervisor.wait(timeout=5)
+        witness = self.world.trial / "supervisor.jsonl"
+
+        def write(lines):
+            witness.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+        write([{"pid": pid, "progress": 1}])
+        document = self.world.preflight_with(
+            lambda seconds: write([{"pid": pid, "progress": 1},
+                                   {"pid": pid, "progress": float("inf")}]))
+        self.assertEqual(cells_of(document, "processPersistence")["witnessAdvance"]["value"],
+                         NOT_VERIFIED)
+
+    def test_the_documented_example_would_pass_its_own_validation(self):
+        # Every literal the document shows for a validated field has to be one the record accepts.
+        text = (ROOT / "docs" / "live-trial.md").read_text(encoding="utf-8")
+        self.assertNotIn('"pid": 0', text)
+        self.assertNotIn('"device": 0', text)
+        self.assertNotIn('"inode": 0', text)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
