@@ -457,6 +457,15 @@ SUMMARY_SITES = (
     ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within", False,
      "self.assertFalse(is_within('/a/b', '/a'))",
      "containment in the wrong direction; an ancestor is not inside its own descendant"),
+    ("test_manifest_scope.py", "test_a_root_of_slash_answers_from_its_own_branch", "is_within",
+     True, "self.assertTrue(is_within('/', '/a/b'))",
+     "the producer path this inventory lists as unreduced, and until now no case reached it:"
+     " a root of slash answers before the component comparison runs, so this branch carried the"
+     " whole answer for one root with nothing naming it"),
+    ("test_manifest_scope.py", "test_a_root_of_slash_answers_from_its_own_branch", "is_within",
+     False, "self.assertFalse(is_within('/', 'a/b'))",
+     "the negative on the same branch, so the case pins the startswith rather than only"
+     " confirming that something absolute is inside everything"),
     ("test_manifest_scope.py", "test_a_broken_lease_refuses_the_read", "still_held", False,
      "self.assertFalse(handle._lease.still_held())",
      "false here is also what an unheld lease and an OSError answer, and the case does not"

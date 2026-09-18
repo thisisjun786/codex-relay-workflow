@@ -61,6 +61,17 @@ class Containment(unittest.TestCase):
         self.assertFalse(is_within("/a/b", "/a/bc/d"))
         self.assertFalse(is_within("/a/b", "/a"))
 
+    def test_a_root_of_slash_answers_from_its_own_branch(self):
+        """The branch the five cases above never reach.
+
+        is_within answers a root of '/' before the component comparison runs, and the summary
+        inventory in test_regression_map.py lists that return as a producer path it cannot
+        reduce. Nothing here exercised it, so the branch was carrying the whole answer for one
+        root with no case naming it. Whether a scope may declare '/' at all is a separate
+        question and still open; this is about the function's own contract.
+        """
+        self.assertTrue(is_within("/", "/a/b"))
+        self.assertFalse(is_within("/", "a/b"))
 
 class PinnedTraversal(RelayTestCase):
     def test_symlink_leaf_is_refused(self):

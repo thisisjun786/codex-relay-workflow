@@ -212,7 +212,7 @@ package declares is partitioned into one of three lists and the suite checks the
 total: the ones whose fold reduces to a cheap side, the ones that fold where the rule cannot
 weigh them, and the ones that reach their value down a single path. Every place the suite
 measures something with either folded kind is listed, keyed by the assertion's own text, with
-a verdict written beside it. Today that reads 47 booleans as 10 / 28 / 9, and 64 measured
+a verdict written beside it. Today that reads 47 booleans as 10 / 28 / 9, and 66 measured
 places. Those counts, and the per-module case counts in the landed table above, are read back
 out of this file and compared against the suite, so a number here that went stale fails there.
 
@@ -261,6 +261,20 @@ is that pair together rather than the timeout alone.
   `read_only_connection` still takes no timeout parameter, deliberately, so
   `guard.lookup_receipt` and `intent.dispatch_generation_state` cannot be given different
   waits. The signature check in `test_failure_recovery.py` still pins the deciding place.
+- `intent.register_relationship` reads the dispatch generation state and then publishes
+  `relationship.json` as two operations with nothing held between them. An advance
+  committing in that window returns success over a generation the store has already moved
+  past, leaving the marker naming a stale one. Found by
+  `test_registration_contention.py`, which therefore asserts what actually holds - the
+  disagreement stays readable, so the next evaluation sees it - rather than asserting the
+  absence of a race the source does not prevent. Closing the window needs the check and the
+  publication under one hold, which is a source change this issue does not own.
+- `scope.is_within` answers two different ways and this suite exercised one of them. The
+  derived inventory lists `return: path.startswith('/')` as a producer path it cannot
+  reduce, and that path is the whole answer when the root is `/`, which the five cases in
+  `test_manifest_scope.py` never reached because they all use `/a/b`. A case now names
+  that branch, positive and negative. What stays open is a scope question rather than a test
+  one: whether an authorized root of `/` is reachable at all.
 - `intent.register_relationship` reads the dispatch generation state and then publishes
   `relationship.json` as two operations with nothing held between them. An advance
   committing in that window returns success over a generation the store has already moved
