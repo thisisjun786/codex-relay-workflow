@@ -1408,6 +1408,9 @@ python3 scripts/runtime_install.py hook-status --codex-home <codex-home>
 # Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
 # registration above deliberately appended a table, so a whole-file diff reports a change that
 # is this procedure's own doing and would report it whether or not anything was preserved.
+# Needs 3.11 or later, because the reader does. On the 3.10 floor there is none, and the
+# honest outcome is the one the suite records: this reading was not made. Do not substitute a
+# pattern match -- a value guessed out of TOML is a value whose wrongness is invisible.
 python3 -c 'import sys, tomllib
 keys = ("model", "approval_policy", "sandbox_mode")
 for path in sys.argv[1:]:
