@@ -1090,7 +1090,7 @@ class PayloadContract(TrialCase):
                "window", "corroboration", "store", "actual", "findings", "error", "isError",
                "status", "threadId", "taskId", "stateDirectory", "socket", "launchedAt",
                "minimumAliveSeconds", "artifacts", "peerDoctor"}
-        own |= {"closesAt"}
+        own |= {"closesAt", "opensAt"}
         self.assertEqual(reads - declared - own, set(),
                          "a field is read without being declared in the payload contract")
 
@@ -1437,7 +1437,9 @@ class SecondHostedRound(TrialCase):
         ])
         with self.assertRaises(startup.Refused) as raised:
             self.world.run_ledger()
-        self.assertIn("has not closed yet", raised.exception.reason)
+        # A close still ahead is a line dated after the grading, which is refused first and says
+        # the same thing about the same ledger.
+        self.assertIn("dated after the time it is being graded", raised.exception.reason)
 
     def test_a_registration_naming_another_issue_or_a_closed_one_fails(self):
         for key, value in (("issueKey", "SOMETHING-ELSE"), ("status", "archived"),
@@ -2263,6 +2265,47 @@ class SeventeenthHostedRound(TrialCase):
             document = world.preflight()
             self.assertEqual(cells_of(document, "boundaries")["declaration"]["value"],
                              NOT_VERIFIED, "a blank " + key + " was read as an identity")
+
+
+class EighteenthHostedRound(TrialCase):
+    """A window that opened while the run was working, and a line dated after its own grading."""
+
+    def test_readiness_is_refused_when_the_window_opens_during_the_run(self):
+        # A window a moment ahead, and a witness observation longer than that moment.
+        self.world.start_supervisor()
+        self.world.record["window"] = {"opensAt": startup.stamp(time.time() + 1),
+                                       "closesAt": startup.stamp(time.time() + 600)}
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 2
+        self.world.flush()
+        document = startup.preflight(
+            startup.load_start(str(self.world.trial / "start.json"),
+                               environment=self.world.environment()),
+            sleeper=time.sleep)
+        self.assertFalse(document["windowStillAhead"]["passed"])
+        self.assertIn("windowStillAhead.passed", document["judgmentsThatFailed"])
+        self.assertFalse(document["readyToStart"])
+
+    def test_the_window_is_still_ahead_on_an_ordinary_run(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertTrue(document["windowStillAhead"]["passed"])
+        self.assertTrue(document["readyToStart"])
+
+    def test_a_ledger_line_dated_after_its_grading_is_refused(self):
+        now = time.time()
+        opened, closed = now - 600, now - 60
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window"},
+            {"at": "2099-01-01T00:00:00Z", "kind": "intervention", "segment": "window",
+             "actor": "operator", "target": "task", "action": "impossible"},
+        ])
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("dated after the time it is being graded", raised.exception.reason)
 
 
 if __name__ == "__main__":                                           # pragma: no cover

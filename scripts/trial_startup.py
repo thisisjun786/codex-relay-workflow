@@ -1425,6 +1425,12 @@ def ledger_report(record):
             raise Refused("a ledger line carries no known kind", line=number,
                           kind=entry.get("kind") if isinstance(entry, dict) else None)
         entry["_at"] = moment(entry.get("at"), "a ledger line's at")
+        if entry["_at"].timestamp() > time.time():
+            # The ledger is appended as things happen, so a line dated after the moment it is
+            # graded did not happen. Classified rather than refused, it fell outside the window
+            # and was counted as preparation.
+            raise Refused("a ledger line is dated after the time it is being graded",
+                          line=number, at=entry.get("at"), now=stamp())
         entry["_line"] = number
         entries.append(entry)
 
@@ -1692,6 +1698,13 @@ def preflight(record, *, sleeper=time.sleep):
 
     gate = order_gate(record, store_payload, entry)
     launcher = launcher_unchanged(record, relay)
+    # The window was ahead when the record was read; the witness delay and the probes take real
+    # time, so it is read again here. A run that publishes readiness after the window has opened
+    # sends the dispatch into an interval already being measured.
+    opens = moment(field(record, "window", "opensAt"), "window.opensAt")
+    window_ahead = {"passed": opens.timestamp() > time.time(), "opensAt": shown(field(record, "window", "opensAt")),
+                    "readAt": stamp(),
+                    "detail": "the dispatch this preflight precedes is what opens the window"}
     document = {
         "source": SOURCE,
         "checkerVersion": CHECKER_VERSION,
@@ -1703,6 +1716,7 @@ def preflight(record, *, sleeper=time.sleep):
         "launcherStillTheSameBytes": launcher,
         "readings": assembled,
         "orderGate": gate,
+        "windowStillAhead": window_ahead,
         # Filled from the judgment walk below, so a judgment added later cannot be left out of it.
         "readyToStart": None,
         "wroteNothing": "this process creates no file of its own. It is not a claim about the"
