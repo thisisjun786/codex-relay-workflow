@@ -230,6 +230,20 @@ def points_for(record, name, *, location, interpreter, install_digest,
 
 LOCK_SUFFIX = ".crw-lock"
 STALE_LOCK_SECONDS = 300
+
+
+class Busy(TimeoutError):
+    """A lock in this module is held by another run, and nothing else.
+
+    Its own type because `TimeoutError` is not specific to a lock: it is an `OSError`, and a
+    destination on a network mount raises it with ETIMEDOUT for an ordinary filesystem call.
+    A handler catching the built-in would answer "another run holds a lock" about a failure no
+    lock was involved in -- which is the same defect this family is made of, a cell filled by
+    something other than the reading its own question produced.
+
+    It subclasses `TimeoutError` so a caller that already answered the broader type keeps
+    working; what changes is that a caller can now ask the narrow question.
+    """
 # How long a run waits for another run's lock before it reports that it could not take it.
 # Declared rather than left as a default argument so a check can shrink it without reaching
 # into the constructor.
@@ -289,7 +303,7 @@ class Locked:
                     self.path.unlink(missing_ok=True)
                     continue
                 if time.time() > deadline:
-                    raise TimeoutError("another run holds " + str(self.path))
+                    raise Busy("another run holds " + str(self.path))
                 time.sleep(0.05)
 
     def __exit__(self, *exc):
@@ -332,8 +346,8 @@ class Exclusive:
 
     def __enter__(self):
         if fcntl is None:                                        # pragma: no cover - not POSIX
-            raise TimeoutError("this platform provides no advisory locking, so two promotions"
-                               " could not be kept apart")
+            raise Busy("this platform provides no advisory locking, so two promotions"
+                       " could not be kept apart")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         handle = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o644)
         deadline = time.time() + self.timeout
@@ -348,8 +362,8 @@ class Exclusive:
                     raise
                 if time.time() > deadline:
                     os.close(handle)
-                    raise TimeoutError("another run holds the promotion lock at "
-                                       + str(self.path))
+                    raise Busy("another run holds the promotion lock at "
+                               + str(self.path))
                 time.sleep(0.05)
 
     def __exit__(self, *exc):
@@ -498,7 +512,7 @@ def release_candidate(path, definition_version, environment, *, pointer_names=No
                 entry["installs"] = [i for i in entry.get("installs") or []
                                      if i.get("environment") != str(environment)]
             save(path, record)
-    except TimeoutError as error:
+    except Busy as error:
         return (reading.Reading(state=reading.ACCESS_ERROR, source=path,
                                 exception=type(error).__name__,
                                 detail="the host record lock could not be taken: " + str(error)),

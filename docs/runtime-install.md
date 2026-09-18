@@ -285,6 +285,24 @@ of a failed run. A lock another run holds establishes nothing about the selectio
 answer the same function already gives for a record it cannot read, so it takes that branch: the
 candidate is kept and the refusal says why.
 
+That was one sibling. `install` and `register-mcp` answered the same event properly and the hook
+path did not: with the hook file locked, `hook --apply` reported
+`internalError: TimeoutError` naming `hostrecord.py:292` - a claim that this command has a
+defect, which is about the code rather than about the host and sends whoever reads it somewhere
+that has nothing wrong with it. Answering it at the hook and stopping would be the repair that
+reopens at the next sibling, so `main()` answers a busy lock as well, ahead of the arm that files
+anything unmodelled as a defect. `cmd_hook` still answers for itself, because it is the one that
+knows the settings are written before the hook and a lock taken between them leaves them on disk.
+The check reads the lock reachers as a call graph rather than a list, and requires the busy arm to
+precede the catch-all, because an arm after it is unreachable.
+
+Review then found the other half of it. `TimeoutError` is an `OSError`, and a destination on a
+network mount raises it with `ETIMEDOUT` for an ordinary filesystem call, so answering the
+built-in would claim another run holds a lock that was never involved - the same defect, inside
+the contract that exists to prevent it. The lock raises `hostrecord.Busy`, its own type, which
+subclasses `TimeoutError` so a caller that already answered the broader question keeps working.
+The check requires the narrow type and forbids the broad one.
+
 ### One cell, one question
 
 Two readings that answer different questions are never joined into one value. `summarise`
@@ -347,6 +365,91 @@ interpreter to be resolvable before it writes anything, and says so instead of f
 this checkout's copy of a rule the installation owns. And a point recorded before `exerciseDigest`
 existed no longer qualifies: it cannot name the instrument that produced its claim, so a host that
 reached `own` on such a point measures again.
+
+### A pair fixes that there is a predicate, not which one
+
+Declaring a member as a pair closed the layer above and opened this one. A pair says a member HAS
+a predicate and a cell HAS a reading. It says nothing about whether that predicate is the
+strongest one the consumer applies, or whether the cell has more than one place that writes it.
+Both gaps produced a working, well-formed, wrong answer.
+
+`NON_BLANK` is this command's own minimum and nothing more, so a member left on it has every
+further question about its value answered here. The artifact root was that member: its real
+question is containment, and containment was decided by `base in path.parents`, a second copy of
+a rule the relay owns. The copy was not the safe approximation it looked like. It disagreed with
+the relay in **both** directions - it refused `<root>/../<root>`, which the relay accepts end to
+end, and where the relay does refuse a root it named the deliverable as the thing at fault. Driven
+directly, a relative root registers - the relationship row is written - and is refused at `emit`
+with `scope_escape`.
+
+So a member carries the predicate its consumer applies, and where that predicate is relational it
+names the member supplying the other operand. `--artifact-root` is asked of `scope.assert_within`
+after `normalize_declared_path`, which is the pair `AuthorizedFile` itself asks, in that order.
+`--recipient` is asked of `scope.check_recipient`. `--turn-thread` cannot be asked of anything:
+the relay holds that rule inside a method that needs a store. It is restated here and **declared**
+as restated, naming where the original lives, and a check reads that place back - which is how the
+commit introducing it was caught naming a class the relay does not have.
+
+A cell has the same shape one level down. `entry_point_recorded` declared one reading and had two
+assignments. The second filled the ownership cell from the interpreter a console script's first
+line names, which `interpreter_of` already calls the fallback rather than the answer. A wrapper
+this command never created, sitting outside every recorded root, whose author wrote a shebang
+naming an interpreter inside a recorded environment, classified as this installation. The second
+site now answers only from an interpreter the record names, and the cell declares both readings.
+
+Two scans hold these instead of the instances, and neither names a member, a rule or a cell. One
+follows a declared member's value through the preflight and reports any comparison this command
+makes about it that is neither its own minimum nor the consumer's answer; the count comes off the
+declared restatements, so a rule restated without being declared fails. The other reads which
+local feeds each judgment cell, out of the `Signals` call itself, and requires every assignment to
+it to name a reading that cell declares. Both carry a negative control.
+
+### A walk that skips is not a walk that failed
+
+The same class reached from underneath. A reading can also fill a cell wrongly because it never
+reported a failure at all. `ops12_digest` walked with `rglob`, which answers a subtree it cannot
+read by leaving it out. For a package with one unreadable subdirectory the digest that came back
+was not merely wrong: it was byte for byte the digest that smaller tree really has. Nothing raised,
+so the reading region around the call saw a value, the comparison saw a mismatch, and the component
+was reported a **fork** - a claim that somebody had modified an installation nobody could read.
+
+An incomplete reading is not a value. The walk is now explicit and fails on a directory it cannot
+open, so the boundary reports `ACCESS_ERROR` and the cell goes unread. The file set is unchanged:
+both committed package digests re-derive exactly, and `verify-definition` still reports no
+findings. `OMITTING_READERS` names the readers whose answer to an unreadable subtree is omission -
+`rglob`, `glob`, `iterdir` and `os.walk`, whose default `onerror` discards the error - and
+`OMISSION_DECLARED` names each place one is used with what omission means there. `os.scandir` is
+deliberately absent from that list: it raises, which is the behaviour the list exists to require.
+
+Pruning is not omission, and review found where the difference bites. The walk opened every
+directory, including the `__pycache__` the definition excludes, so a cache directory nobody can
+read turned a perfectly readable package into an unreadable one at every boundary that asks for
+its digest. An excluded directory cannot change the answer, so it must not be able to withhold
+it: it is pruned before it is opened, and every subtree that can affect the answer still raises.
+
+### What each of these answered before the fix
+
+Four instances of one class, each driven against the commit before the fix and against the commit
+after it, by the same probe. None of them asks whether a fix is present; each one exercises the
+defect and reports what the code answered.
+
+| Instance | Criterion it reopened | Before | After |
+| --- | --- | --- | --- |
+| a foreign wrapper's first line decides ownership | 3 | `entryPointInRecordedPath=True`, `interpreterFrom="the script's first line"`, class `fork` | `False`, class `foreign` |
+| an incomplete walk comes back as a value | 1, 3 | raised nothing and returned the smaller tree's own digest | raises `PermissionError`; classification refuses with `ACCESS_ERROR` |
+| a busy hook lock is reported as an internal defect | 6 | `internalError: TimeoutError` at `hostrecord.py:292` | `outcome: BUSY`, `internalError: null` |
+| the artifact-root question is answered by a rule written here | 5 | the relay holds `<root>/../<root>` and the preflight refuses it | the two verdicts agree on every form of the root |
+
+So the four criteria hold for the reasons they were written, rather than by assertion. Criterion 1
+and criterion 3 required a reading that cannot answer to stop the classification; a walk that
+omitted a subtree was answering, and it no longer is. Criterion 5 required the trial to write
+nothing it cannot complete; the root is now judged by the rule that will actually be applied to
+it. Criterion 6 required a failed run to report whether its destination is retriable rather than
+an internal error; the hook path was the sibling still doing the latter.
+
+One residue is recorded rather than fixed: `scripts/hook_comparison.py` also walks with `rglob`.
+It is outside this change's scope and fills no judgment cell, so it is named here instead of being
+swept in.
 
 ### An answer about a state that was found has to be able to say there was nothing there
 

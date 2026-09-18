@@ -855,9 +855,18 @@ class AuthorizedRepairTests(unittest.TestCase):
                 self.assertEqual(sent, [], "an incomplete trial must write nothing")
 
     def test_a_recipient_that_is_not_the_parent_is_refused_before_any_write(self):
+        """Refused before the first command, and refused by the CONSUMER's rule.
+
+        The gate used to compare the two values itself. Its own sentence read well and was a
+        second copy of scope.check_recipient, so the assertion is on the property that matters:
+        nothing was sent, and the refusal names the rule the relay would have applied.
+        """
+        import runtime_install
+
         result, sent = self.run_trial(self.trial_args(recipient="somebody-else"))
         self.assertEqual(result["value"], "not_verified")
-        self.assertIn("not the parent task", result["evidence"])
+        self.assertIn(runtime_install.RELAY_RECIPIENT[-1], result["evidence"])
+        self.assertIn("--recipient", result["evidence"])
         self.assertEqual(sent, [])
 
     def test_recorded_settings_stay_reusable_through_an_explicit_claim(self):
@@ -5049,6 +5058,19 @@ class PairedMemberTests(unittest.TestCase):
                 if predicate == runtime_install.NON_BLANK:
                     continue
                 self.assertIsInstance(predicate, tuple, name + " names a consumer's callable")
+                if predicate[0] == runtime_install.RESTATED_HERE:
+                    # A rule the consumer holds where nothing read-only can ask it. The pair
+                    # names where it lives and this reads that back, because a restatement
+                    # whose original has moved is a restatement of nothing -- which is the
+                    # shape every layer of this class has been made of.
+                    self.assertGreaterEqual(len(pair), 3,
+                                            name + " restates a relational rule and must name"
+                                            " the member it is judged with")
+                    self.assertTrue(
+                        _relay_defines(predicate[1:]),
+                        name + " restates " + str(predicate[1:]) + ", which the relay's own"
+                        " source no longer holds there")
+                    continue
                 self.assertTrue(
                     _relay_defines(predicate),
                     name + " is governed by " + str(predicate) + ", which the relay's own"
@@ -5586,6 +5608,139 @@ def component_of_for_test(data, name):
     return next(c for c in data["components"] if c["component"] == name)
 
 
+# Only the two build commands are simulated below, and which one an argv is has to be read from
+# the command it runs -- the module the interpreter is told to run, and the operation handed to
+# that module -- never from the text of the paths in it. A temporary destination is named by the
+# host and is free to spell `pip` or `venv`; searching the joined argv for those words then made
+# the environment command answer to the package injection and stubbed out
+# `scripts/install.py --check` instead of running it, on the hosts whose temporary name happened
+# to spell it and nowhere else (CRW-107).
+def module_invocation(argv):
+    """Return `(module, operands)` for `<interpreter> [options] -m <module> [operands]`.
+
+    `-m` counts only inside the leading option block, where the interpreter reads it: a `-c`, a
+    bare `--` and the first operand all end option processing, so a `-m` after any of them is an
+    argument to the program rather than a module selector. An interpreter option that takes a
+    SEPARATE operand -- `-X dev`, `-W error` -- ends the walk early and reads as no module at
+    all. Neither the installer nor this file emits one, and that is the safe direction to be
+    wrong in: a command this cannot name runs for real instead of being silently simulated.
+    """
+    parts = [str(a) for a in argv]
+    for index in range(1, len(parts)):
+        token = parts[index]
+        if token == "-m":
+            return (parts[index + 1] if index + 1 < len(parts) else None), parts[index + 2:]
+        if token in ("-c", "--") or not token.startswith("-"):
+            break
+    return None, []
+
+
+def build_step(argv):
+    """Name the installer build step an argv performs, or None when it performs neither.
+
+    The shapes are the installer's own: `<interpreter> -m venv <environment>` creates the
+    environment and `<python> -m pip install --quiet <package>...` installs the packages. Git,
+    the `-c` import probes and `scripts/install.py --check` are not build steps and must run.
+    """
+    module, operands = module_invocation(argv)
+    if module == "venv":
+        return "create environment"
+    if module == "pip":
+        operation = next((o for o in operands if not o.startswith("-")), None)
+        if operation == "install":
+            return "install packages"
+    return None
+
+
+# What each simulated build step says when it is made to fail. The wording is this fixture's;
+# what the assertions read is which step carries it.
+BUILD_REFUSALS = {
+    "create environment": "venv refused to build",
+    "install packages": "no matching distribution",
+}
+
+
+class BuildStepNamingTests(unittest.TestCase):
+    """The naming the failure injection rests on, checked against the commands themselves.
+
+    A destination directory is named by the host, so a name that happens to contain `pip` or
+    `venv` must not turn an unrelated command into a build step, and must not stop one of the
+    two real build commands from being recognised as itself.
+    """
+
+    CONTAMINATED = "/var/tmp/crw107-pip-venv-42"
+
+    def test_the_two_build_commands_are_named_from_module_and_operation(self):
+        environment = Path(self.CONTAMINATED) / "dest" / "env-1-a8ffcbfd23f0"
+        cases = (
+            ([sys.executable, "-m", "venv", str(environment)], "create environment"),
+            ([str(environment / "bin" / "python"), "-m", "pip", "install", "--quiet",
+              str(ROOT / "packages" / "codex-thread-bridge"),
+              str(ROOT / "packages" / "codex-session-relay")], "install packages"),
+        )
+        for argv, expected in cases:
+            with self.subTest(expected):
+                self.assertEqual(build_step(argv), expected)
+
+    def test_a_command_whose_path_spells_a_build_tool_is_not_a_build_step(self):
+        environment = Path(self.CONTAMINATED) / "dest" / "env-1-a8ffcbfd23f0"
+        cases = {
+            # The one the joined-argv match stubbed out: a real check that quietly stopped
+            # running in any destination whose name spelled a build tool.
+            "the installed-skill check": [sys.executable, str(ROOT / "scripts" / "install.py"),
+                                          "--check", "--dest", self.CONTAMINATED + "/skills"],
+            "an import probe": [str(environment / "bin" / "python"), "-c",
+                                "import codex_session_relay"],
+            "the settings probe": [str(environment / "bin" / "python"), "-B", "-c",
+                                   "import json, codex_session_relay"],
+            "a git read": ["git", "-C", self.CONTAMINATED, "rev-parse", "HEAD"],
+            "an argument that only looks like one": [sys.executable, "--", "-m", "pip",
+                                                     "install"],
+        }
+        for label, argv in cases.items():
+            with self.subTest(label):
+                self.assertIsNone(build_step(argv), label + " is not a build step")
+
+    def test_pip_names_the_install_step_only_when_it_installs(self):
+        self.assertIsNone(build_step([sys.executable, "-m", "pip", "--version"]))
+        self.assertEqual(build_step([sys.executable, "-m", "pip", "--quiet", "install", "/pkg"]),
+                         "install packages")
+
+    def test_the_naming_covers_every_build_command_the_installer_performs(self):
+        """Read the build commands back out of the installer and name them from here.
+
+        build_step mirrors argv that lives in another file. If the installer ever builds a
+        different way, or adds a third build step, a fixture that cannot name the new shape
+        stops simulating it: the injection passes straight through and the boundary case
+        reports a step nothing failed at. So the shapes are read from the source rather than
+        trusted to stay where they were, and every non-literal argument is substituted with a
+        path that spells both build tools, which is the one thing the naming may not read.
+        """
+        contaminated = self.CONTAMINATED + "/dest"
+        performed = {}
+        for node in ast.walk(ast.parse(RUNTIME.read_text(encoding="utf-8"))):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "perform" and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[1], ast.List)):
+                performed[node.args[0].value] = node.args[1].elts
+        self.assertEqual(sorted(performed), sorted(BUILD_REFUSALS),
+                         "the installer performs a build step this fixture cannot inject into")
+        for step, elements in performed.items():
+            argv = []
+            for element in elements:
+                if isinstance(element, ast.Constant):
+                    argv.append(element.value)
+                elif isinstance(element, ast.Starred):
+                    argv.append(contaminated + "/a-package")
+                else:
+                    argv.append(contaminated + "/bin/python")
+            with self.subTest(step):
+                self.assertEqual(build_step(argv), step,
+                                 "scripts/runtime_install.py performs " + step + " as "
+                                 + " ".join(argv) + ", which this fixture must recognise")
+
+
 class UpdateRecoveryTests(unittest.TestCase):
     """Failure injected at each boundary an update crosses.
 
@@ -5593,6 +5748,16 @@ class UpdateRecoveryTests(unittest.TestCase):
     selected, the pointer still reaches it, the registration is byte-identical, and the store is
     the same file with the same rows in it.
     """
+
+    # Every failure this fixture injects, with the step the result has to name. The boundary
+    # case and the destination-name contrast both read it, so an injection added here is
+    # covered by both rather than by whichever one was remembered.
+    BOUNDARY_STEPS = {
+        "create environment": "create environment",
+        "install packages": "install packages",
+        "replace the owned pointer": "replace the owned pointer",
+        "read the owned pointer back": "read the owned pointer back",
+    }
 
     def _run(self, host, *, breaking=None, gate=None, interpose=None, probes=None,
              clean_store=False):
@@ -5611,14 +5776,11 @@ class UpdateRecoveryTests(unittest.TestCase):
         real_run = runtime_install.subprocess.run
 
         def fake_run(argv, **kwargs):
-            joined = " ".join(str(a) for a in argv)
-            building = "venv" in joined or "pip" in joined
-            if not building:
+            step = build_step(argv)
+            if step is None:
                 return real_run(argv, **kwargs)
-            if breaking == "create environment" and "venv" in joined:
-                return subprocess.CompletedProcess(argv, 1, "", "venv refused to build")
-            if breaking == "install packages" and "pip" in joined:
-                return subprocess.CompletedProcess(argv, 1, "", "no matching distribution")
+            if step == breaking:
+                return subprocess.CompletedProcess(argv, 1, "", BUILD_REFUSALS[step])
             return subprocess.CompletedProcess(argv, 0, "", "")
 
         def fake_location(python, module):
@@ -5773,13 +5935,7 @@ class UpdateRecoveryTests(unittest.TestCase):
                                  label + ": the pointer still names the previous runtime")
 
     def test_each_failure_names_the_boundary_it_stopped_at(self):
-        expected = {
-            "create environment": "create environment",
-            "install packages": "install packages",
-            "replace the owned pointer": "replace the owned pointer",
-            "read the owned pointer back": "read the owned pointer back",
-        }
-        for breaking, step in expected.items():
+        for breaking, step in self.BOUNDARY_STEPS.items():
             with self.subTest(breaking):
                 with tempfile.TemporaryDirectory() as temporary:
                     host = _Host(temporary)
@@ -5787,6 +5943,47 @@ class UpdateRecoveryTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertEqual(payload["failedStep"], step,
                                  "a reader must not have to infer where it stopped")
+
+    def test_the_boundary_is_read_from_the_command_and_not_the_path_it_ran_in(self):
+        """The same injections again, in destinations that spell the build tools.
+
+        A temporary directory is named by the host. When that name contained `pip`, the
+        joined-argv match made the environment command answer to the package injection: the run
+        stopped at the first boundary and reported the second one. Both spellings exit 1 either
+        way, so only an assertion that names the step sees it, and only on the hosts whose
+        temporary name happens to spell it -- which is why it surfaced as an unrelated PR's CI
+        failing and not as a failure here.
+
+        Only the last path component is this test's to choose. The temporary root above it
+        belongs to the host -- `TMPDIR` may name one, and `mkdtemp` adds random characters that
+        can spell `pip` on their own -- so requiring it to be neutral would make this case fail
+        for the very reason it exists to remove. A contaminated root simply makes every case
+        here contaminated, including the one named plain, and every case still has to report
+        its own step, so the property holds either way.
+        """
+        parent = Path(tempfile.mkdtemp(prefix="crw107-contrast-"))
+        try:
+            for name in ("plain", "pip", "venv", "pip-venv"):
+                destination = parent / ("crw107-" + name)
+                for token in ("pip", "venv"):
+                    self.assertEqual(
+                        token in destination.name, token in name,
+                        "a case only means something if its destination really does or does"
+                        " not spell " + token)
+                for breaking, step in self.BOUNDARY_STEPS.items():
+                    with self.subTest(destination=name, breaking=breaking):
+                        destination.mkdir()
+                        try:
+                            code, payload = self._run(_Host(str(destination)), breaking=breaking)
+                        finally:
+                            shutil.rmtree(destination, ignore_errors=True)
+                        self.assertEqual(code, 1)
+                        self.assertEqual(
+                            payload["failedStep"], step,
+                            "a destination named " + destination.name + " must not move the"
+                            " boundary the run stopped at")
+        finally:
+            shutil.rmtree(parent, ignore_errors=True)
 
     def test_a_gate_refusal_reports_the_gate_that_refused(self):
         for gate in ("running daemon", "handover in flight", "store would be downgraded"):
@@ -7668,3 +7865,661 @@ class PromotionPointerPathTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# =========================================================================================
+# Check 19 - a member carries the STRONGEST predicate, and a cell is answered at EVERY site
+#
+# Layer 18 made a member a pair. A pair fixes that a member HAS a predicate and a cell HAS a
+# reading; it fixes neither which predicate nor how many places write the cell. So the same
+# defect arrived once more, one dimension up, in two shapes:
+#
+#   a member left on this command's own minimum, with the rest of its question answered here
+#   a cell declaring one reading while a second assignment fills it from another
+#
+# Both scans are derived. Neither names a member, a rule or a cell.
+# =========================================================================================
+
+
+def _bound(target):
+    return {node.id for node in ast.walk(target) if isinstance(node, ast.Name)}
+
+
+def _calls_in(node):
+    """Every callable name mentioned in an expression, bare or through a module."""
+    found = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            if isinstance(sub.func, ast.Name):
+                found.add(sub.func.id)
+            elif isinstance(sub.func, ast.Attribute):
+                found.add(sub.func.attr)
+    return found
+
+
+def _undeclared_member_rules(members, probes, minimum="_supplied"):
+    """Decisions this command makes ITSELF about a declared member's value.
+
+    A member's value may be read for two purposes: handed to this command's own minimum, or
+    handed to the consumer whose predicate governs it. Anything else is a rule written here,
+    and a rule written here is a rule that drifts from the one that will actually be applied.
+
+    A comparison against a CONSUMER's answer is not such a rule, which is why the taint is
+    two-coloured: looking a member's value up in what the relay said about it is reading the
+    relay's answer, not inventing one.
+    """
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    functions = {node.name: node for node in ast.walk(tree)
+                 if isinstance(node, ast.FunctionDef)}
+    offenders, seen = [], set()
+
+    def touches(node, member):
+        for sub in ast.walk(node):
+            if (isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name)
+                    and sub.value.id == "args" and sub.attr in members):
+                return True
+            if isinstance(sub, ast.Name) and sub.id in member:
+                return True
+            if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                    and sub.func.id == "getattr" and sub.args
+                    and isinstance(sub.args[0], ast.Name) and sub.args[0].id == "args"):
+                return True
+        return False
+
+    def preflight(function):
+        """The statements before the trial hands its steps over to be sent.
+
+        Everything after that binding decides on the RELAY's answers, not on a member's value,
+        and taint carried into it would report the trial reading its own results as a rule it
+        invented. The boundary is the one this whole class is about: what is decided before
+        anything is written.
+        """
+        for index, statement in enumerate(function.body):
+            if isinstance(statement, ast.Assign) and "steps" in set().union(
+                    *(_bound(t) for t in statement.targets)):
+                return function.body[:index]
+        return function.body
+
+    def visit(function, member):
+        key = (function.name, tuple(sorted(member)))
+        if key in seen or function.name in probes or function.name == minimum:
+            return
+        seen.add(key)
+        member, verdict = set(member), set()
+        body = preflight(function) if function.name == "_trial" else [function]
+        walked = [node for statement in body for node in ast.walk(statement)]
+        for node in walked:
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.For):
+                targets, value = [node.target], node.iter
+            else:
+                continue
+            bound = set().union(*(_bound(t) for t in targets)) if targets else set()
+            if _calls_in(value) & set(probes):
+                verdict |= bound
+            elif touches(value, member):
+                member |= bound
+        for node in walked:
+            if not isinstance(node, ast.Compare):
+                continue
+            operands = [node.left] + list(node.comparators)
+            if not any(touches(operand, member) for operand in operands):
+                continue
+            if any({n.id for n in ast.walk(operand) if isinstance(n, ast.Name)} & verdict
+                   for operand in operands):
+                continue
+            offenders.append(function.name + ":" + str(node.lineno) + " decides "
+                             + ast.unparse(node))
+        for node in walked:
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            callee = functions.get(node.func.id)
+            if callee is None:
+                continue
+            names = [argument.arg for argument in callee.args.args]
+            passed = {names[index] for index, argument in enumerate(node.args)
+                      if index < len(names) and touches(argument, member)}
+            if passed:
+                visit(callee, passed)
+
+    visit(functions["_trial"], set())
+    return sorted(offenders)
+
+
+def _cell_locals(cells):
+    """Which local name feeds each judgment cell, read from the Signals call itself."""
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "Signals"):
+            continue
+        found = {}
+        for keyword in node.keywords:
+            if keyword.arg not in cells:
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+                    and value.func.id == "bool" and len(value.args) == 1:
+                value = value.args[0]
+            if isinstance(value, ast.Name):
+                found[keyword.arg] = value.id
+        return found
+    return {}
+
+
+def _signals_owner(tree):
+    """The function that assembles the judgment, so a local of the same name elsewhere is not
+    mistaken for a cell."""
+    for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for node in ast.walk(function):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "Signals"):
+                return function
+    return None
+
+
+def _undeclared_write_sites(readings, cells):
+    """Assignments to a cell that reference no reading the cell declares.
+
+    An assignment of None or an empty container is an initialisation: it says the cell is
+    unanswered, which is the one thing every cell is allowed to say without a reading.
+
+    A value is traced one hop through the locals it was built from, because a reading's answer
+    is normally bound to a name first and the cell is written from that name.
+
+    A cell declared to be answered by no reading of this command is left alone here; whether
+    that claim is true is what the unclaimed-reading check already asks.
+    """
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    locals_for = _cell_locals(cells)
+    owner = {local: cell for cell, local in locals_for.items()
+             if readings.get(cell, (None, ()))[0] != "not-a-reading"}
+    offenders, covered = [], set()
+    for function in [f for f in [_signals_owner(tree)] if f is not None]:
+        produced, sites = {}, []
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Assign):
+                continue
+            calls = _calls_in(node.value)
+            for name in set().union(*(_bound(t) for t in node.targets)):
+                produced.setdefault(name, set())
+                produced[name] |= calls
+                for sub in ast.walk(node.value):
+                    if isinstance(sub, ast.Name) and sub.id in produced:
+                        produced[name] |= produced[sub.id]
+                if name in owner:
+                    sites.append((owner[name], node))
+        parameters = {a.arg for a in function.args.args} | {a.arg for a in function.args.kwonlyargs}
+        # The collector records a comparison; it does not make one. A call on it, and bool(),
+        # are transparent: the reading is what they were handed, not the recording of it.
+        collector = next(
+            (name for node in ast.walk(function) if isinstance(node, ast.Assign)
+             for name in set().union(*(_bound(t) for t in node.targets))
+             if isinstance(node.value, ast.Call)
+             and isinstance(node.value.func, ast.Attribute)
+             and node.value.func.attr == "Judgement"), None)
+
+        def unwrapped(value):
+            while isinstance(value, ast.Call):
+                if isinstance(value.func, ast.Name) and value.func.id == "bool" \
+                        and len(value.args) == 1:
+                    value = value.args[0]
+                    continue
+                if (collector and isinstance(value.func, ast.Attribute)
+                        and isinstance(value.func.value, ast.Name)
+                        and value.func.value.id == collector and value.args):
+                    value = value.args[0]
+                    continue
+                break
+            return value
+
+        def answered_by(value):
+            """The readings that produced what is written, not the ones that fed them.
+
+            A cell written from a CALL is answered by that call. A cell written from anything
+            else is answered by whatever produced the names it was built from, because a
+            reading's answer is normally bound to a name first.
+            """
+            value = unwrapped(value)
+            if isinstance(value, ast.Call):
+                return set(_calls_in(value)) - {"bool"}
+            reached = set(_calls_in(value))
+            for sub in ast.walk(value):
+                if isinstance(sub, ast.Name) and sub.id in produced:
+                    reached |= produced[sub.id]
+            return reached
+
+        for cell, node in sites:
+            value = node.value
+            if isinstance(value, ast.Constant) and value.value is None:
+                continue
+            if isinstance(value, (ast.List, ast.Tuple)) and not value.elts:
+                continue
+            declared = {name for _module, name, _only in readings.get(cell, ((),))[1]} \
+                if readings.get(cell) else set()
+            covered.add(cell)
+            reached = answered_by(value)
+            if reached & declared:
+                continue
+            if any(isinstance(sub, ast.Name) and sub.id in parameters
+                   for sub in ast.walk(value)):
+                # Answered by the CALLER's reading, which the caller-set check owns.
+                continue
+            offenders.append(cell + " at " + function.name + ":" + str(node.lineno)
+                             + " is written from " + ast.unparse(value)
+                             + ", which names none of its declared readings "
+                             + repr(sorted(declared)))
+    return sorted(offenders), covered
+
+
+class StrengthAndSiteTests(unittest.TestCase):
+    """The fourth layer: which predicate a member carries, and how many places write a cell."""
+
+    def test_the_inventories_are_not_empty(self):
+        import runtime_install
+
+        # Guards both readers. An empty members map or an empty cell map would make every
+        # claim below pass while seeing nothing at all.
+        self.assertIn("artifact_root", runtime_install.TRIAL_PREFLIGHT_INPUTS)
+        self.assertIn("entry_point_recorded", _cell_locals(_signal_cells()))
+        self.assertIn("_supplied", {node.name for node in ast.walk(
+            ast.parse(RUNTIME.read_text(encoding="utf-8"))) if isinstance(node, ast.FunctionDef)})
+
+    def test_no_member_is_judged_by_a_rule_this_command_wrote_and_did_not_declare(self):
+        """A member left on the supplied-minimum has the rest of its question answered here.
+
+        The artifact root was the instance: declared NON_BLANK, and then judged for containment
+        by a second copy of the relay's rule. That copy disagreed with the relay in BOTH
+        directions, so it was neither the safe approximation it looked like nor the relay's
+        answer. The count comes off the declarations, so a rule restated without being declared
+        fails here rather than at the relay once rows exist.
+        """
+        import runtime_install
+
+        offenders = _undeclared_member_rules(runtime_install.TRIAL_PREFLIGHT_INPUTS,
+                                             runtime_install.PREFLIGHT_PROBES)
+        restated = sorted(
+            name for name, pair in runtime_install.TRIAL_PREFLIGHT_INPUTS.items()
+            if isinstance(pair[1], tuple) and pair[1][0] == runtime_install.RESTATED_HERE)
+        self.assertEqual(
+            len(offenders), len(restated),
+            "every rule this command applies to a declared member's value must be the"
+            " consumer's, or be declared a restatement. Undeclared: " + repr(offenders)
+            + "; declared restatements: " + repr(restated))
+
+    def test_the_scan_sees_a_rule_written_here_again(self):
+        """The negative control: the scan is red on the shape it exists to catch."""
+        import runtime_install
+
+        source = RUNTIME.read_text(encoding="utf-8")
+        put_back = source.replace(
+            "        if raw in outside:",
+            "        base = Path(str(root))\n"
+            "        if not (path == base or base in path.parents):", 1)
+        self.assertNotEqual(put_back, source, "the scan's fixture no longer matches the source")
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary) / "runtime_install.py"
+            copy.write_text(put_back, encoding="utf-8")
+            with mock.patch.object(sys.modules[__name__], "RUNTIME", copy):
+                offenders = _undeclared_member_rules(
+                    runtime_install.TRIAL_PREFLIGHT_INPUTS, runtime_install.PREFLIGHT_PROBES)
+        self.assertTrue(any("path.parents" in offender for offender in offenders), offenders)
+
+    def test_every_write_site_of_a_cell_names_a_reading_that_cell_declares(self):
+        """A cell is answered by every reading written into it, not by the first one declared.
+
+        entry_point_recorded had two write sites and named one reading. The second filled the
+        ownership cell from the interpreter a console script's FIRST LINE names, which
+        interpreter_of already calls the fallback rather than the answer -- so a wrapper this
+        command never created classified as this installation.
+        """
+        import runtime_install
+
+        offenders, covered = _undeclared_write_sites(runtime_install.SIGNAL_READINGS,
+                                                     _signal_cells())
+        self.assertIn("entry_point_recorded", covered,
+                      "the scan saw no write site for the cell this layer is about")
+        self.assertEqual(offenders, [])
+
+    def test_the_write_site_scan_sees_a_site_that_declares_nothing(self):
+        import runtime_install
+
+        readings = dict(runtime_install.SIGNAL_READINGS)
+        outcome, observations = readings["entry_point_recorded"]
+        readings["entry_point_recorded"] = (
+            outcome, tuple(o for o in observations if o[1] != "interpreter_in_recorded_path"))
+        offenders, _covered = _undeclared_write_sites(readings, _signal_cells())
+        self.assertTrue(any("entry_point_recorded" in offender for offender in offenders),
+                        offenders)
+
+    @unittest.skipUnless(sys.version_info >= (3, 11), "the relay requires Python 3.11 or newer")
+    def test_the_preflight_answers_the_root_question_with_the_relays_own_verdict(self):
+        """Agreement, not one-sided safety.
+
+        A copy of a rule is wrong in whichever direction it happens to differ. This one refused
+        a root the relay accepts end to end, and for a root the relay refuses it named the
+        deliverable as the thing at fault. The corpus is written as forms of one root, so each
+        case differs from the canonical one only in the way the relay has a rule about.
+        """
+        import runtime_install
+
+        root = TRIAL_ROOT
+        corpus = (root, root + "/", str(Path(root).parent) + "/./" + Path(root).name,
+                  root + "/../" + Path(root).name, os.path.relpath(root, os.getcwd()),
+                  "~" + root)
+        for candidate in corpus:
+            with self.subTest(candidate):
+                refusals, reason = runtime_install._relay_contains(
+                    [TRIAL_ARTIFACT], candidate, RELAY_RUNTIME)
+                self.assertIsNone(reason, reason)
+                consumer_holds = TRIAL_ARTIFACT not in refusals
+                problems = runtime_install._unusable_artifacts(
+                    [TRIAL_ARTIFACT], candidate, RELAY_RUNTIME)
+                self.assertEqual(
+                    consumer_holds, not problems,
+                    "the relay " + ("holds" if consumer_holds else "refuses")
+                    + " this root and the preflight " + ("refuses" if problems else "accepts")
+                    + " it: " + repr(problems))
+
+
+# =========================================================================================
+# Check 20 - an incomplete reading is not a value, and a busy lock is not a defect
+#
+# The same class from underneath. A cell can also be filled wrongly because the READER never
+# reported a failure at all:
+#
+#   a walk that answers an unreadable subtree by leaving it out returns a well-formed value
+#   a refusal shape applied at one call site and not at its siblings
+#
+# Neither is about which predicate was declared. Both are about a boundary being handed
+# something it cannot tell from an answer.
+# =========================================================================================
+
+
+def _omitting_reader_uses(readers, declared):
+    """Every call to a reader whose answer to an unreadable subtree is to leave it out."""
+    offenders = []
+    for path in RUNTIME_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            if function.name in declared:
+                continue
+            for node in ast.walk(function):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in readers):
+                    offenders.append(
+                        path.stem + "." + function.name + ":" + str(node.lineno) + " uses "
+                        + node.func.attr + ", which answers a subtree it cannot read by"
+                        " leaving it out, and does not declare what that omission means")
+    return sorted(offenders)
+
+
+def _called_names(function):
+    names = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                names.add(node.func.attr)
+    return names
+
+
+def _lock_reachers():
+    """Every function in these modules that can reach an exclusive lock.
+
+    Read as a call graph rather than listed, so a sibling added later is in the set the moment
+    it can meet a busy lock, instead of the moment somebody remembers to add it.
+    """
+    functions = {}
+    for path in RUNTIME_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                functions[path.stem + "." + node.name] = _called_names(node)
+    takers = {key for key, names in functions.items() if "Locked" in names}
+    growing = True
+    while growing:
+        growing = False
+        leaves = {key.split(".")[-1] for key in takers}
+        for key, names in functions.items():
+            if key not in takers and names & leaves:
+                takers.add(key)
+                growing = True
+    return takers
+
+
+def _handler_arms(function_name):
+    """The exception names each except clause of a function catches, in source order."""
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == function_name):
+            continue
+        arms = []
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Try):
+                for handler in inner.handlers:
+                    arms.append((handler.lineno, ast.unparse(handler.type)
+                                 if handler.type else "bare"))
+        return [name for _line, name in sorted(arms)]
+    return []
+
+
+class IncompleteReadingTests(unittest.TestCase):
+    """A walk that skips is not a walk that failed."""
+
+    def test_the_reader_inventory_is_not_empty(self):
+        # Guards the scan: an empty reader set would find nothing and pass on every source.
+        self.assertIn("rglob", reading.OMITTING_READERS)
+        self.assertIn("store_places", reading.OMISSION_DECLARED)
+
+    def test_every_omitting_reader_in_these_modules_declares_what_omission_means(self):
+        self.assertEqual(
+            _omitting_reader_uses(reading.OMITTING_READERS, reading.OMISSION_DECLARED), [])
+
+    def test_the_scan_sees_an_omission_nobody_declared(self):
+        offenders = _omitting_reader_uses(reading.OMITTING_READERS, {})
+        self.assertTrue(offenders, "the scan finds nothing at all, so it proves nothing")
+        self.assertTrue(any("store_places" in offender for offender in offenders), offenders)
+
+    def test_a_subtree_that_cannot_be_read_is_a_refusal_rather_than_a_digest(self):
+        """The defect measured: the value that came back was not merely wrong, it was exactly
+        the digest the smaller tree really has. Nothing downstream could tell them apart."""
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "pkg"
+            (package / "sub").mkdir(parents=True)
+            (package / "a.py").write_text("a", encoding="utf-8")
+            (package / "sub" / "b.py").write_text("b", encoding="utf-8")
+            whole = definition.ops12_digest(package)
+            smaller = Path(temporary) / "smaller"
+            smaller.mkdir()
+            (smaller / "a.py").write_text("a", encoding="utf-8")
+            self.assertNotEqual(whole, definition.ops12_digest(smaller))
+            os.chmod(package / "sub", 0o000)
+            try:
+                if os.access(package / "sub", os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                with self.assertRaises(OSError):
+                    definition.ops12_digest(package)
+            finally:
+                os.chmod(package / "sub", 0o755)
+
+    def test_an_unreadable_excluded_directory_cannot_refuse_a_digest_it_cannot_affect(self):
+        """Pruning is not omission.
+
+        A directory the definition excludes cannot change the answer, so it must not be able to
+        withhold it. Opened before it was excluded, a root-owned __pycache__ turned a perfectly
+        readable package into an unreadable one at every boundary that asks for its digest.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "pkg"
+            (package / definition.EXCLUDED_DIRECTORY).mkdir(parents=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / definition.EXCLUDED_DIRECTORY / "x.pyc").write_bytes(b"cached")
+            expected = definition.ops12_digest(package)
+            os.chmod(package / definition.EXCLUDED_DIRECTORY, 0o000)
+            try:
+                if os.access(package / definition.EXCLUDED_DIRECTORY, os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                self.assertEqual(definition.ops12_digest(package), expected)
+            finally:
+                os.chmod(package / definition.EXCLUDED_DIRECTORY, 0o755)
+
+    def test_an_unreadable_subtree_stops_the_classification_rather_than_forking_it(self):
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment = root / "env"
+            (environment / "bin").mkdir(parents=True)
+            entry = environment / "bin" / component["consoleScript"]
+            entry.write_text("#!" + sys.executable + chr(10), encoding="utf-8")
+            entry.chmod(0o755)
+            installed = root / "site" / component["module"]
+            (installed / "inner").mkdir(parents=True)
+            (installed / "__init__.py").write_text("", encoding="utf-8")
+            (installed / "inner" / "x.py").write_text("x", encoding="utf-8")
+            record = hostrecord.empty(1)
+            hostrecord.put_install(record, component["component"], {
+                "location": str(installed), "environment": str(environment),
+                "entryPoint": str(entry), "interpreterPath": sys.executable})
+            os.chmod(installed / "inner", 0o000)
+            try:
+                if os.access(installed / "inner", os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                with mock.patch.dict(os.environ,
+                                     dict(os.environ, PYTHONPATH=str(root / "site")),
+                                     clear=True), \
+                     mock.patch.object(runtime_install, "codex_cli_version",
+                                       return_value="0.0.0-for-this-case"), \
+                     self.assertRaises(reading.Refused) as refused:
+                    runtime_install.classify_component(
+                        component, record=record, entry_override=str(entry), app_server="a")
+            finally:
+                os.chmod(installed / "inner", 0o755)
+        self.assertTrue(reading.unusable(refused.exception.reading.state),
+                        refused.exception.reading.refusal())
+
+
+class LockSiblingTests(unittest.TestCase):
+    """A run that holds a lock is a fact about the host, never a defect in this command."""
+
+    def test_the_lock_inventory_is_not_empty(self):
+        takers = _lock_reachers()
+        # Guards the reader, and names the sibling this layer was opened by.
+        self.assertIn("hooks.install", takers)
+        self.assertIn("runtime_install.cmd_hook", takers)
+        self.assertIn("runtime_install.cmd_install", takers)
+
+    def test_the_busy_answer_is_closed_at_the_boundary_and_not_only_at_the_siblings(self):
+        """Every command that can reach a lock is covered, without listing them.
+
+        The instance was one handler out of several. Answering it there and stopping would be
+        the same repair the previous four rounds made: correct, and open again at the next
+        sibling. main() answers a busy lock too, BEFORE the arm that files anything unmodelled
+        as a defect in this command, so a sibling added later cannot reopen it.
+        """
+        commands = sorted(key for key in _lock_reachers()
+                          if key.startswith("runtime_install.cmd_"))
+        self.assertTrue(commands, "no command reaches a lock, so this proves nothing")
+        arms = _handler_arms("main")
+        self.assertIn("hostrecord.Busy", arms,
+                      "main() files a busy lock as an unmodelled defect, or answers it from a"
+                      " type that is not specific to a lock")
+        self.assertNotIn("TimeoutError", arms,
+                         "TimeoutError is an OSError: a network destination raises it with"
+                         " ETIMEDOUT for an ordinary call, and answering that as BUSY claims a"
+                         " lock nobody took")
+        self.assertLess(arms.index("hostrecord.Busy"), arms.index("Exception"),
+                        "the catch-all runs first, so the busy arm is unreachable")
+
+    def test_the_hook_path_reports_a_busy_lock_rather_than_a_defect(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            hook_file = home / "hooks.json"
+            hook_file.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+            held = hostrecord.Locked(hook_file, timeout=0.2)
+            held.__enter__()
+            try:
+                done = run("hook", "--codex-home", str(home), "--hook-command", "/bin/true",
+                           "--issue", "CRW-87", "--apply")
+            finally:
+                held.__exit__()
+        payload = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 1)
+        self.assertIsNone(payload.get("internalError"),
+                          "a competing run was reported as a defect in this command")
+        self.assertEqual(payload["outcome"], runtime_install_module.BUSY)
+        self.assertIn(str(hook_file), payload["refused"])
+
+    def test_a_busy_lock_escaping_any_handler_is_never_an_internal_defect(self):
+        import runtime_install
+
+        emitted = []
+        with mock.patch.object(runtime_install, "cmd_verify_definition",
+                               side_effect=hostrecord.Busy("another run holds it")), \
+             mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            code = runtime_install.main(["verify-definition"])
+        self.assertEqual(code, 1)
+        self.assertIsNone(emitted[0].get("internalError"))
+        self.assertEqual(emitted[0]["outcome"], runtime_install.BUSY)
+
+    def test_a_timeout_no_lock_took_part_in_is_not_reported_as_a_busy_lock(self):
+        """The other half of the answer, and the reason the lock has its own type.
+
+        TimeoutError is an OSError. A destination on a network mount raises it with ETIMEDOUT
+        for an ordinary filesystem call, and reporting that as BUSY would claim another run
+        holds a lock that was never involved -- a receipt filled by something other than the
+        reading its own question produced, inside the contract that exists to prevent exactly
+        that.
+        """
+        import runtime_install
+
+        emitted = []
+        elsewhere = TimeoutError("the mount stopped answering")
+        elsewhere.errno = errno.ETIMEDOUT
+        with mock.patch.object(runtime_install, "cmd_verify_definition",
+                               side_effect=elsewhere), \
+             mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            code = runtime_install.main(["verify-definition"])
+        self.assertEqual(code, 1)
+        self.assertNotEqual(emitted[0].get("outcome"), runtime_install.BUSY)
+        self.assertEqual(emitted[0]["internalError"]["exception"], "TimeoutError")
+
+    def test_a_busy_settings_lock_still_names_the_hook_file_it_was_installing(self):
+        """The completion adapter takes TWO locks, on two different files.
+
+        The file being installed into and the file whose lock could not be taken are two facts.
+        Reporting the second as `hookFile` named the settings file as the hook being installed,
+        which is this change's own subject arriving one more time in the change itself: a field
+        filled by a value other than the reading its own question produced.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            configuration = Path(completion.configuration_path(home))
+            configuration.parent.mkdir(parents=True, exist_ok=True)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python="python3",
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-87",
+                apply=True)
+            emitted = []
+            held = hostrecord.Locked(configuration, timeout=0.2)
+            held.__enter__()
+            try:
+                with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                    code = runtime_install.cmd_hook(args)
+            finally:
+                held.__exit__()
+            self.assertEqual(code, runtime_install.EXIT_REFUSED)
+            self.assertEqual(emitted[-1]["outcome"], runtime_install.BUSY)
+            self.assertIsNone(emitted[-1].get("internalError"))
+            self.assertEqual(emitted[-1]["hookFile"], str(home / "hooks.json"))
+            self.assertEqual(emitted[-1]["lockedPath"], str(configuration))
+            self.assertIn(str(configuration), emitted[-1]["refused"])
