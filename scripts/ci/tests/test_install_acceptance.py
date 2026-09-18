@@ -756,8 +756,36 @@ def stand_in_runtime(host):
     hostrecord.save(host.record_path, record)
     return binaries, interpreter
 
-def diagnose_for(root, host, *extra):
+def importable_runtime(host, root):
+    """A supplied runtime that CAN import the components, from inside the temporary directory.
+
+    The import row is the one question whose answer nothing here was moving. A cell that holds
+    the same value in every direction cannot catch a neighbour answering with its value, and it
+    cannot tell a real reading from a command that stopped attempting one -- both look like
+    not_verified forever.
+
+    So the runtime is rebuilt to find two packages this test wrote, and nothing else. It keeps
+    -S, so no site directory of this machine is reachable, and the only import path it is given
+    is a directory under the temporary root. What moves is what can be imported, not where it
+    is allowed to look.
+    """
+    stubs = root / "importable"
+    for component in host.data["components"]:
+        package = stubs / component["module"]
+        package.mkdir(parents=True, exist_ok=True)
+        (package / "__init__.py").write_text("", encoding="utf-8")
+    interpreter = host.candidate / "bin" / "python"
+    interpreter.write_text(
+        "#!/bin/sh\nexec \"" + sys.executable + "\" -S \"$@\"\n", encoding="utf-8")
+    interpreter.chmod(interpreter.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
+    return stubs
+
+def diagnose_for(root, host, *extra, import_path=None):
     """Ask this host for a diagnosis, with whatever extra input the case is varying."""
+    environment = dict(os.environ, **isolated(root, host))
+    if import_path is not None:
+        # Replacing, never appending: what the probe may import stays a decision of this suite.
+        environment["PYTHONPATH"] = str(import_path)
     done = subprocess.run(
         [sys.executable, str(RUNTIME), "diagnose",
          "--codex-home", str(host.codex_home),
@@ -771,7 +799,7 @@ def diagnose_for(root, host, *extra):
          "--relay-command", str(host.candidate / "bin" / "codex-session-relay"),
          "--temporary", *extra],
         capture_output=True, text=True, timeout=180,
-        env=dict(os.environ, **isolated(root, host)))
+        env=environment)
     return json.loads(done.stdout)
 
 
@@ -1169,16 +1197,21 @@ class SevenReadingsTests(unittest.TestCase):
             tried = diagnose_for(root, host, "--trial")
             reached = diagnose_for(root, host, "--relay-command",
                                    str(answering_relay(root)))
+            # Last, because it rebuilds the supplied interpreter: the readings above are taken
+            # against the runtime that cannot import, which is what makes the move a move.
+            able = diagnose_for(root, host, import_path=importable_runtime(host, root))
 
         # The exact transition, not merely a different value: not_applicable becoming verified,
         # or a verdict falling to unknown, would satisfy "it moved" while meaning the opposite.
         #
-        # Three of the four move, so each of them is checked against neighbours that are moving
-        # in some other direction. A cell that never moves anywhere cannot catch a neighbour
-        # copying into it, which is the remaining way one reading stands in for another.
+        # All four move, each in a direction of its own, so every one of them is checked against
+        # neighbours that are moving elsewhere. A cell that never moves cannot catch a neighbour
+        # copying into it, and it cannot tell a live reading from a command that quietly stopped
+        # attempting one: both look like the same answer forever.
         directions = [
             ("deliveryAcceptance", tried, "not_applicable", "not_verified"),
             ("appServerConnection", reached, "unknown", "verified"),
+            ("runtimeImport", able, "not_verified", "verified"),
         ]
         if HAS_READER:
             directions.append(("mcpToolExposure", exposed, "not_verified", "verified"))
