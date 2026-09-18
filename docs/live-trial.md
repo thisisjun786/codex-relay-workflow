@@ -220,21 +220,32 @@ The start record is one JSON object under the trial root, with absolute paths th
                       "repositoryRoot": "<repository>",
                       "participants": [{"role": "parent", "taskId": "<task>", "cwd": "<directory>",
                                         "expect": {"model": "<model>", "reasoningEffort": "<effort>",
-                                                   "sandbox": "<mode>", "approvalPolicy": "<policy>"}}]}],
-      "captures": {"parentLifecycle": {"<task>": {"path": "<trial root>/lifecycle-parent.json",
-                                                  "capturedAt": "<ISO-8601 UTC>"}},
+                                                   "sandbox": "<mode>", "approvalPolicy": "<policy>"}},
+                                       {"role": "child", "taskId": "<task>", "cwd": "<directory>",
+                                        "expect": {"model": "<model>", "reasoningEffort": "<effort>",
+                                                   "sandbox": "<mode>", "approvalPolicy": "<policy>"}}]},
+                     {"name": "B", "issueKey": "<another issue>",
+                      "scopeRef": "<another scope reference>",
+                      "repositoryRoot": "<another repository>",
+                      "participants": ["<its own parent and child, as above>"]}],
+      "captures": {"parentLifecycle": {"<one entry per participant>": {
+                                          "path": "<trial root>/lifecycle-<task>.json",
+                                          "capturedAt": "<ISO-8601 UTC>"}},
                    "creationReceipt": {"<task>": {"path": "<trial root>/receipt-parent.json",
                                                   "capturedAt": "<ISO-8601 UTC>"}},
                    "registration": {"A": {"path": "<trial root>/register-A.json",
                                           "capturedAt": "<ISO-8601 UTC>"}},
-                   "peerDoctor": {"child-A": {"path": "<trial root>/doctor-child-A.json",
-                                              "capturedAt": "<ISO-8601 UTC>"}}},
+                   "peerDoctor": {"<one entry per participant, each its own file>": {
+                                      "path": "<trial root>/doctor-<task>.json",
+                                      "capturedAt": "<ISO-8601 UTC>"}}},
       "captureMaxAgeSeconds": 600,
       "window": {"opensAt": "<ISO-8601 UTC>", "closesAt": "<ISO-8601 UTC>"}
     }
 
 The record names parameters, never command lines. The checker composes every command it runs, and
-the only programs it can start are `git` and the relay entry point that the runtime host record
+every relay probe carries both the state flag and the state environment variable, because the flag
+moves the store and the variable moves the adapter ledger beside it, and the only programs it can
+start are `git` and the relay entry point that the runtime host record
 under the state home names through its owned pointer. The record cannot nominate another program:
 the host record's location comes from the environment, the declared launcher has to be that pointer
 as the host record spells it rather than something that resolves to it, and the pointer is the path

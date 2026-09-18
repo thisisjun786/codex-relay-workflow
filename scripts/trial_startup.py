@@ -454,6 +454,7 @@ def load_start(path, *, environment=None, mode="preflight"):
     # every relay probe: a store placed in this checkout would be constructed by the first command
     # that opened it.
     state = absolute(field(record, "relay", "stateDirectory"), "relay.stateDirectory")
+    absolute(field(record, "relay", "socket"), "relay.socket")
     state_worktree = git_worktree_of(state)
     if state_worktree is not None:
         raise Refused("the relay state directory is inside a git worktree",
@@ -567,12 +568,12 @@ def load_start(path, *, environment=None, mode="preflight"):
 # ------------------------------------------------------------------------ probes
 
 
-def run(argv, *, cwd, timeout=60):
+def run(argv, *, cwd, timeout=60, environment=None):
     """One subprocess, and every way it can fail becoming a field instead of an exception."""
     at = time.time()
     try:
         done = subprocess.run([str(a) for a in argv], cwd=str(cwd), capture_output=True,
-                              text=True, timeout=timeout)
+                              text=True, timeout=timeout, env=environment)
     except (OSError, subprocess.SubprocessError) as error:
         return {"argv": [str(a) for a in argv], "exitCode": None, "payload": None,
                 "stdout": "", "measuredAt": stamp(at),
@@ -601,6 +602,9 @@ class Relay:
         self.socket = field(record, "relay", "socket")
         self.cwd = field(record, "trialRoot")
         self.digests = set()
+        # OPS-3.3: the flag moves the store and the environment moves the adapter's ledger, so a
+        # participant sets both. Setting only the flag made a colocated ledger read as split.
+        self.environment = dict(os.environ, CODEX_SESSION_RELAY_STATE=str(self.state))
 
     def relay(self, subcommand, *arguments):
         if subcommand == "service":
@@ -615,7 +619,7 @@ class Relay:
         # The launcher's bytes are read immediately before each spawn, so a pointer moved between
         # two probes is caught at the next one rather than only at the end of the run.
         self.digests.add(digest_or_none(self.launcher))
-        return run(argv, cwd=self.cwd)
+        return run(argv, cwd=self.cwd, environment=self.environment)
 
     @staticmethod
     def git(cwd, *arguments):
@@ -803,9 +807,12 @@ def reading_process(record, relay, sleeper=time.sleep):
                           evidence="the witness at " + str(witness_path) + " could not be read as a"
                           " JSON line carrying a pid and a progress counter", provenance=READ))
     else:
-        named = str(first_witness.get("pid")) == str(pid) and str(second_witness.get("pid")) == str(pid)
+        named = same(first_witness.get("pid"), pid) and same(second_witness.get("pid"), pid)
         before, after = first_witness.get("progress"), second_witness.get("progress")
-        advanced = isinstance(before, (int, float)) and isinstance(after, (int, float)) and after > before
+        # A bool is an int here, and False to True is not progress anybody made.
+        advanced = (isinstance(before, (int, float)) and isinstance(after, (int, float))
+                    and not isinstance(before, bool) and not isinstance(after, bool)
+                    and after > before)
         cells.append(cell("witnessAdvance", VERIFIED if (named and advanced) else NOT_VERIFIED,
                           evidence=("the witness names pid " + str(first_witness.get("pid"))
                                     + " and its counter went " + str(before) + " to " + str(after)
@@ -924,12 +931,12 @@ def reading_capability(record, relay):
             ]
             # settings-show always reports missing, so an absent one is a payload this predicate
             # cannot read as complete rather than an empty list it may assume.
+            answered = (MISSING if (settings is MISSING or usable is MISSING
+                                    or field(payload, "missing") is MISSING
+                                    or field(payload, "task") is MISSING) else usable)
             ok = (usable is True and field(payload, "missing") == [] and not differs
                   and settings not in (MISSING, None)
                   and same(field(payload, "task"), task))
-            # The cell is answered only where BOTH fields its predicate reads are there. usable
-            # alone let a payload carrying no settings at all report agreement with every expect.
-            answered = usable if settings not in (MISSING,) else MISSING
             cells.append(graded("recordedSettings:" + str(task), answered, ok, probe=probe,
                                 provenance=EXECUTED,
                                 unreadable="settings-show did not report both whether the record is"
@@ -1002,6 +1009,20 @@ def reading_store(record, relay):
     # the captures made an empty peerDoctor object a storeIdentity that passed with no peer at all.
     for name in participants_of(record):
         found, why = capture(record, "peerDoctor", name)
+        entry = field(record, "captures", "peerDoctor", name)
+        twins = [other for other in participants_of(record)
+                 if other != name
+                 and field(record, "captures", "peerDoctor", other) is not MISSING
+                 and field(record, "captures", "peerDoctor", other, "path")
+                 == field(entry, "path")]
+        if twins:
+            # One file cannot be several participants' own reading: graded once per name it was
+            # listed under, it would report a shared store on the strength of a single peer.
+            cells.append(cell("peer:" + name, NOT_VERIFIED, provenance=CAPTURED,
+                              evidence=("this capture is also listed for " + ", ".join(twins)
+                                        + ", so it is one participant's reading counted as"
+                                          " several")))
+            continue
         if found is None:
             cells.append(cell("peer:" + name, UNKNOWN, evidence=why, provenance=CAPTURED))
             continue
@@ -1629,8 +1650,8 @@ def preflight(record, *, sleeper=time.sleep):
         "launcherStillTheSameBytes": launcher,
         "readings": assembled,
         "orderGate": gate,
-        "readyToStart": (all(r["met"] for r in assembled.values()) and gate["passed"]
-                         and launcher["passed"]),
+        # Filled from the judgment walk below, so a judgment added later cannot be left out of it.
+        "readyToStart": None,
         "wroteNothing": "this process creates no file of its own. It is not a claim about the"
                         " commands it runs: every relay command opens the store on construction,"
                         " and doctor measures whether the state directory is writable by writing a"
@@ -1651,6 +1672,9 @@ def preflight(record, *, sleeper=time.sleep):
     counted = judgments(document)
     document["judgmentsCounted"] = len(counted)
     document["judgmentsThatFailed"] = [j["at"] for j in counted if not j["value"]]
+    # Readiness is the walk's own answer rather than a second expression beside it: the two
+    # disagreed once, when readiness was computed before the launcher judgment existed.
+    document["readyToStart"] = not document["judgmentsThatFailed"]
     return document
 
 

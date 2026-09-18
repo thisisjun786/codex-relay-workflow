@@ -1087,7 +1087,7 @@ class PayloadContract(TrialCase):
                "captures", "path", "capturedAt", "components", "codex-session-relay", "installs",
                "window", "corroboration", "store", "actual", "findings", "error", "isError",
                "status", "threadId", "taskId", "stateDirectory", "socket", "launchedAt",
-               "minimumAliveSeconds", "artifacts"}
+               "minimumAliveSeconds", "artifacts", "peerDoctor"}
         self.assertEqual(reads - declared - own, set(),
                          "a field is read without being declared in the payload contract")
 
@@ -2052,6 +2052,75 @@ class TwelfthHostedRound(TrialCase):
         launcher = document["launcherStillTheSameBytes"]
         self.assertTrue(launcher["passed"])
         self.assertIn("CRW-102", launcher["detail"])
+
+
+class ThirteenthHostedRound(TrialCase):
+    """The last round: a shared capture, a relative socket, a boolean counter, a split ledger."""
+
+    def test_one_capture_listed_for_several_participants_is_not_several_readings(self):
+        shared = str(self.world.trial / ("doctor-" + World.PARENT_A + ".json"))
+        for task in (World.PARENT_A, World.CHILD_A):
+            self.world.record["captures"]["peerDoctor"][task]["path"] = shared
+        self.world.flush()
+        document = self.world.preflight()
+        for task in (World.PARENT_A, World.CHILD_A):
+            cell = cells_of(document, "storeIdentity")["peer:" + task]
+            self.assertEqual(cell["value"], NOT_VERIFIED)
+            self.assertIn("counted as", cell["evidence"])
+
+    def test_a_relative_socket_is_refused(self):
+        self.world.record["relay"]["socket"] = "sock"
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("absolute", refused.reason)
+
+    def test_a_boolean_counter_is_not_progress(self):
+        pid = self.world.start_supervisor()
+        self.world.supervisor.terminate()
+        self.world.supervisor.wait(timeout=5)
+        witness = self.world.trial / "supervisor.jsonl"
+
+        def write(lines):
+            witness.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+        write([{"pid": pid, "progress": False}])
+        document = self.world.preflight_with(
+            lambda seconds: write([{"pid": pid, "progress": False},
+                                   {"pid": pid, "progress": True}]))
+        self.assertEqual(cells_of(document, "processPersistence")["witnessAdvance"]["value"],
+                         NOT_VERIFIED)
+
+    def test_the_probes_carry_the_state_environment_as_well_as_the_flag(self):
+        self.world.preflight()
+        seen = json.loads(self.world.calls.read_text().splitlines()[0])
+        self.assertIn("--state", seen["argv"])
+        relay = startup.Relay(startup.load_start(str(self.world.trial / "start.json"),
+                                                 environment=self.world.environment()))
+        self.assertEqual(relay.environment["CODEX_SESSION_RELAY_STATE"], str(relay.state))
+
+    def test_a_settings_payload_missing_its_task_or_its_missing_list_is_unknown(self):
+        for key in ("task", "missing", "usable"):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.payloads["settings-show"]["payload"].pop(key, None)
+            world.payloads["settings-show"]["stdout"] = json.dumps(
+                world.payloads["settings-show"]["payload"])
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(
+                cells_of(document, "capability")["recordedSettings:" + World.PARENT_A]["value"],
+                UNKNOWN, key + " was read as a disagreement")
+
+    def test_readiness_is_the_judgment_walks_own_answer(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertTrue(document["readyToStart"])
+        self.world.payloads["doctor"]["payload"]["sameStore"] = "unproven"
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"])
+        self.assertEqual(document["readyToStart"], not document["judgmentsThatFailed"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover
