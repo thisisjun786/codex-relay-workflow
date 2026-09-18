@@ -48,12 +48,6 @@ MAX_HOLDS_PER_GENERATION = 2
 MAX_HOLDS_PER_SESSION_WINDOW = 3
 SESSION_WINDOW_MINUTES = 60
 
-# The hook contract gives this evaluation a five-second self-imposed wall clock. SQLite's timeout
-# bounds lock waiting only, and everything after it - the marker walk, the head computation, the
-# hold count, publishing the observation - is additional. Kept well under the budget so a database
-# a writer is holding cannot spend the whole of it before the rest of the work has started.
-SQLITE_TIMEOUT = 2.0
-
 # The only three classifications a hold may ever be issued for.
 OMISSIONS = ("managed_unregistered", "receipt_missing", "undeclared_turn_end")
 
@@ -196,6 +190,11 @@ def lookup_receipt(db_path, *, relationship_id, session_id, turn_id):
         # We were never told where the store is, so we cannot look. Reported as unreadable rather
         # than as an absent receipt, because the difference between those two answers is a hold.
         return None, False
+    # The one place this module opens the database, and every read below - including the ones
+    # currency.head_revision issues on the way - runs on this connection. The lock wait it may
+    # spend is decided inside read_only_connection by intent.SQLITE_TIMEOUT, which is where the
+    # relation to the hook contract's five-second budget is written down. Nothing here declares a
+    # bound of its own: a declaration beside the caller is one that nothing enforces.
     connection = intents.read_only_connection(db_path)
     if connection is None:
         return None, False
