@@ -53,7 +53,7 @@ command runs. Two absent values compare equal to each other, so a record that st
 have agreed with a payload that carried nothing, and the run would have reported a precondition
 nobody established.
 
-A boundary declares exactly one parent and exactly one child. The assignment being dispatched belongs to one of the declared boundaries, and its parent and child are that boundary's own; otherwise the readings would cover one set of tasks while the dispatch went to another. A captured registration is compared as a whole registration, because one agreeing on a scope and two task names while carrying another issue, relationship, generation or an archived status is a stale registration whose authorised roots belong to something else.
+Every boundary declares exactly one parent and exactly one child, the one being dispatched and the others alike. The assignment being dispatched belongs to one of the declared boundaries, and its parent and child are that boundary's own; otherwise the readings would cover one set of tasks while the dispatch went to another. A captured registration is compared as a whole registration, because one agreeing on a scope and two task names while carrying another issue, relationship, generation or an archived status is a stale registration whose authorised roots belong to something else.
 
 A reading that could not be taken answers `unknown` and refuses the start. It never answers false,
 and it never takes the value of the reading beside it. The distinction is the whole point: a
@@ -115,12 +115,16 @@ the record intended. Every artifact path is absolute and normalised, and its con
 decided on the path rather than on the place it resolves to, because that is the contract the
 relay's own manifest enforces: it compares normalised paths without following links and then opens
 every component refusing to follow one, so an absolute symlink outside a root whose target lands
-inside it is outside the root. Private trial records are the opposite case and keep the resolved
+inside it is outside the root, and an artifact under a symlinked directory is refused at emit however
+its string reads, which the gate checks by looking at the components that exist. A NUL byte is
+refused for the same reason the relay refuses it. Private trial records are the opposite case and keep the resolved
 comparison, where following the link is exactly the escape worth catching: a relative one is resolved against whichever directory a reader happens to be in, and an
 unnormalised, trailing-slashed or tilde-bearing one is refused at emit, so a gate that accepted it
 would report a dispatch as ready that the relay then refuses. The message is prose, so it is
 searched for the exact identifier rather than for a prefix of one: a message naming
-`/repo/artifact.py.bak` does not carry `/repo/artifact.py`. The artifact roots come from the captured registration receipt, because
+`/repo/artifact.py.bak` does not carry `/repo/artifact.py`, and neither does one naming
+`/repo/artifact.py%backup`: a POSIX filename may hold anything but a separator and a NUL, so the run is
+delimited by whitespace rather than by a list of the characters paths usually use. The artifact roots come from the captured registration receipt, because
 no read-only command returns them; what actually enforces them is the manifest `emit` builds, which
 is where it belongs.
 

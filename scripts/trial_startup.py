@@ -194,11 +194,31 @@ def canonical(value, what):
     """
     path = absolute(value, what)
     text = str(value)
-    if ("~" in text or text != os.path.normpath(text)
+    if ("\x00" in text or "~" in text or text != os.path.normpath(text)
             or (text.endswith("/") and text != "/") or "//" in text):
         raise Refused(what + " is not a normalised absolute path", value=text,
                       normalised=os.path.normpath(text))
     return path
+
+
+def symlink_component(path):
+    """The first component of this path that exists and is a symbolic link, or None.
+
+    Lexical containment says the declared string starts beneath an authorised root; it says nothing
+    about the components. The relay opens each of them refusing to follow a link, so an artifact
+    under a symlinked directory is refused at emit however the string reads. Components that do not
+    exist yet are not an answer either way: the artifact itself is usually written by the child
+    after this runs.
+    """
+    here = Path("/")
+    for part in Path(str(path)).parts[1:]:
+        here = here / part
+        try:
+            if os.path.islink(str(here)):
+                return str(here)
+        except OSError:
+            return None
+    return None
 
 
 def resolve(path):
@@ -435,15 +455,18 @@ def load_start(path, *, environment=None):
                       boundaries=[b.get("issueKey") for b in record["boundaries"]])
     # And its participants have to be that boundary's own, or the readings would cover one set of
     # tasks while the dispatch went to another.
-    participants = [p for p in (owning[0].get("participants") or []) if isinstance(p, dict)]
-    for role in ("parent", "child"):
-        named = [p.get("taskId") for p in participants if p.get("role") == role]
-        if len(named) != 1:
-            # One boundary is one parent and one child. A repeated role made this check read the
-            # last one while the boundary reading read the first.
-            raise Refused("a boundary declares exactly one " + role,
-                          boundary=owning[0].get("name"), found=shown(named))
-    roles = {p.get("role"): p.get("taskId") for p in participants}
+    # Every boundary, not only the one owning the dispatch: all of them are this trial's evidence,
+    # and a repeated role made this check read the last participant while the boundary reading read
+    # the first.
+    for boundary in record["boundaries"]:
+        people = [p for p in (boundary.get("participants") or []) if isinstance(p, dict)]
+        for role in ("parent", "child"):
+            named = [p.get("taskId") for p in people if p.get("role") == role]
+            if len(named) != 1:
+                raise Refused("a boundary declares exactly one " + role,
+                              boundary=boundary.get("name"), found=shown(named))
+    roles = {p.get("role"): p.get("taskId")
+             for p in (owning[0].get("participants") or []) if isinstance(p, dict)}
     for role, key in (("parent", "parentTaskId"), ("child", "childTaskId")):
         if not same(roles.get(role), field(record, "assignment", key)):
             raise Refused("the assignment's " + role + " is not the one its boundary declares",
@@ -1066,18 +1089,22 @@ def names_exactly(text, value):
     whole path-like run around it is this value, allowing for the sentence punctuation that follows
     a path in prose: the message is prose, and a path at the end of a sentence carries a full stop
     that belongs to the sentence rather than to the path.
+
+    The run is delimited by whitespace, because a POSIX filename may hold anything except a
+    separator and a NUL: a token set listing the ordinary path characters stopped at a per cent
+    sign, and /repo/file%backup was read as naming /repo/file.
     """
     if not value:
         return False
-    token = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/~+-")
+    wrappers = "()[]{}<>\"'" + chr(96)
     start = text.find(value)
     while start != -1:
         left, right = start, start + len(value)
-        while left > 0 and text[left - 1] in token:
+        while left > 0 and not text[left - 1].isspace():
             left -= 1
-        while right < len(text) and text[right] in token:
+        while right < len(text) and not text[right].isspace():
             right += 1
-        if text[left:right].rstrip(".,;:!?") == value:
+        if text[left:right].strip(wrappers).rstrip(".,;:!?").lstrip(wrappers) == value:
             return True
         start = text.find(value, start + 1)
     return False
@@ -1176,6 +1203,14 @@ def order_gate(record, store_payload, entry):
                                 "rightSource": "the relay's manifest refuses a path that is"
                                                " relative, unnormalised, trailing-slashed or"
                                                " holding a tilde: " + refused.reason})
+            continue
+        linked = symlink_component(artifact)
+        if linked is not None:
+            comparisons.append({"field": "artifactFollowsNoLink", "agrees": False,
+                                "left": shown(artifact), "right": linked,
+                                "leftSource": "the assignment file",
+                                "rightSource": "this component is a symbolic link, and the relay"
+                                               " opens every component refusing to follow one"})
     if roots is MISSING or not isinstance(roots, list):
         comparisons.append({"field": "artifactRoots", "agrees": None,
                             "left": shown(artifacts), "right": None,

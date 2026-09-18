@@ -1655,5 +1655,73 @@ class FourthHostedRound(TrialCase):
         self.assertIn("exactly one child", refused.reason)
 
 
+class FifthHostedRound(TrialCase):
+    """A NUL byte, a symlinked component, a per cent sign, and the boundary nobody checked."""
+
+    def test_a_nul_byte_in_an_artifact_path_is_refused(self):
+        self.world.record["assignment"]["artifacts"] = [str(self.world.artifact) + "\x00suffix"]
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("normalised absolute path", refused.reason)
+
+    def test_an_artifact_under_a_symlinked_directory_fails_the_gate(self):
+        # Lexical containment says the string starts beneath the root; the relay then opens every
+        # component refusing to follow a link, so this is refused at emit however the string reads.
+        real = self.world.repos["A"] / "real"
+        real.mkdir()
+        (real / "artifact.py").write_text("# real\n", encoding="utf-8")
+        linked = self.world.repos["A"] / "linked"
+        linked.symlink_to(real)
+        artifact = str(linked / "artifact.py")
+        self.world.assignment_file.write_text(json.dumps({
+            "relationshipId": World.RELATIONSHIP, "childTaskId": World.CHILD_A,
+            "executionGeneration": 1, "artifacts": [artifact]}), encoding="utf-8")
+        self.world.record["assignment"]["artifacts"] = [artifact]
+        self.world.message_file.write_text(
+            "relationship " + World.RELATIONSHIP + " artifact " + artifact + "\n", encoding="utf-8")
+        self.world.flush()
+        gate = self.world.preflight()["orderGate"]
+        self.assertFalse(gate["passed"])
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "artifactFollowsNoLink" and c["agrees"] is False])
+
+    def test_an_artifact_that_does_not_exist_yet_is_not_a_link_failure(self):
+        # The child writes the artifact after this runs, so a component that is not there yet is
+        # not an answer about links either way.
+        future = str(self.world.repos["A"] / "not-written-yet.py")
+        self.assertIsNone(startup.symlink_component(future))
+
+    def test_a_message_naming_a_path_with_another_suffix_does_not_carry_it(self):
+        for suffix in ("%backup", "@old", "=1", "\\\\copy", ".bak"):
+            self.world.message_file.write_text(
+                "relationship " + World.RELATIONSHIP + " artifact "
+                + str(self.world.artifact) + suffix + "\n", encoding="utf-8")
+            gate = self.world.preflight()["orderGate"]
+            self.assertTrue([c for c in gate["comparisons"]
+                             if c["field"] == "messageCarriesArtifact" and c["agrees"] is False],
+                            suffix + " was read as naming the artifact")
+
+    def test_a_secondary_boundary_with_two_parents_is_refused(self):
+        boundary = self.world.record["boundaries"][1]
+        boundary["participants"].append({
+            "role": "parent", "taskId": "a-second-parent-b", "cwd": str(self.world.repos["B"]),
+            "expect": dict(boundary["participants"][0]["expect"])})
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("exactly one parent", refused.reason)
+        self.assertEqual(refused.detail["boundary"], "B")
+
+    def test_a_secondary_boundary_with_no_child_is_refused(self):
+        boundary = self.world.record["boundaries"][1]
+        boundary["participants"] = [p for p in boundary["participants"] if p["role"] != "child"]
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("exactly one child", refused.reason)
+        self.assertEqual(refused.detail["boundary"], "B")
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
