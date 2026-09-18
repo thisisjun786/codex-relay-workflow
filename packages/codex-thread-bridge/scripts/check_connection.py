@@ -36,9 +36,15 @@ async def check(args):
                 )
                 if history.isError:
                     raise RuntimeError(history.content)
+                # The page is nullable on purpose: read_thread returns the thread and says the
+                # page was not observed rather than failing, and the thread most worth pointing
+                # this script at is exactly the one that provokes that. Reporting the observation
+                # is the diagnostic; crashing on it is not.
+                page = history.structuredContent.get("turnsPage")
                 report["readCheck"] = {
                     "status": history.structuredContent["thread"]["status"],
-                    "turnCount": len(history.structuredContent["turnsPage"]["data"]),
+                    "turnCount": None if page is None else len(page["data"]),
+                    "observation": history.structuredContent.get("observation"),
                 }
                 goal = await session.call_tool("get_goal", {"thread_id": args.thread_id})
                 if goal.isError:

@@ -9,9 +9,15 @@ the rest of the handoff. Here the store carries a dispatched delivery, its ackno
 and an owed coordination write before the crossing starts, and all three are compared
 afterwards. The limit that test wrote down applies unchanged and is repeated here because
 it is easy to lose: a FakeWorker exits in microseconds and never opens the store, so this
-shows the SUPERVISOR preserving those rows. Whether a replacement worker can read them
-back is a different question, and ARealWorkerReadsTheHandoffBack is the only thing here
-that answers it - in a real process, in real time, for one short segment.
+shows the SUPERVISOR preserving those rows.
+
+Whether a replacement worker reads them back is a different question, and it has a different
+answer for each row. ARealWorkerReadsTheHandoffBack settles two of them in a real process:
+the relationship, through a poll it records, and an acknowledgement, through the pass that is
+the only thing in a tick that opens the acks table. The owed coordination write it does not
+settle, because no tick pass reads sync_outbox at all - SyncOutbox.next and claim are reached
+through their own commands, and nothing here runs one. That row is carried across by the
+supervisor and read back by nobody in this module.
 
 The scale half declares its load as module constants so a report quotes a number read from
 source. What it establishes: at this size, selection stays inside the ceilings the policy
@@ -197,8 +203,9 @@ class TheCrossingPreservesWhatTheSupervisorHolds(CrossingFixture):
 
     WHAT IT DOES NOT: anything about four real hours, and anything about a worker. The
     FakeWorker below exits immediately and never opens this store, exactly as CRW-7 recorded
-    when it wrote the same caveat for the generations. ARealWorkerReadsTheHandoffBack is
-    where a real process reads the handoff back.
+    when it wrote the same caveat for the generations. ARealWorkerReadsTheHandoffBack is where
+    a real process reads part of the handoff back - the relationship and an acknowledgement.
+    The outbox job is read back nowhere here, because no tick pass opens that table.
     """
 
     def test_a_dispatched_delivery_its_acknowledgement_and_its_outbox_job_are_unchanged(self):
@@ -239,6 +246,12 @@ class ARealWorkerReadsTheHandoffBack(CrossingFixture):
 
     Real time, one short segment, and a socket path this test owns which does not exist - so
     the worker's only way to name this handoff is to have opened the inherited store.
+
+    Two tables, because reaching one of them is not reaching the store: the relationship and
+    its queued delivery through the observation and delivery passes, and an unverified
+    acknowledgement through the pass that is the only reader of the acks table in a tick. The
+    sync_outbox row the fixture also owes is NOT read back here and no wording in this module
+    says it is: no tick pass touches that table.
     """
 
     def test_a_real_replacement_worker_records_against_the_handoff_it_found(self):
@@ -248,6 +261,11 @@ class ARealWorkerReadsTheHandoffBack(CrossingFixture):
         store, rid, event_id = self.handoff(service)
         # A second handoff, left queued, so the worker has something it must try to send.
         queued = self.queue_a_second_event(store, rid)
+        # And an acknowledgement nobody could verify, because the acknowledgement pass is the
+        # only thing in a tick that opens the acks table at all.
+        unverified = self.an_acknowledgement_with_no_host_to_confirm_it(store, rid)
+        before = dict(store.one(
+            "SELECT * FROM ack_evidence WHERE event_id = ?", (unverified,)))
         store.close()
 
         self.assertFalse(os.path.exists(socket), "the worker would have reached a real endpoint")
@@ -282,9 +300,36 @@ class ARealWorkerReadsTheHandoffBack(CrossingFixture):
             tick["deferred"], 1,
             f"the worker did not find the queued handoff it inherited: {tick}",
         )
+        # And the acknowledgement, which is a different table and a different pass. The event
+        # id is derived from the store's own rows and appears nowhere in the worker's argv or
+        # environment, so naming it is a read of the inherited acks table rather than of
+        # anything the supervisor handed over.
+        self.assertIn(
+            unverified, " ".join(tick["notes"]),
+            f"the worker never opened the acknowledgement waiting in that store: {tick}",
+        )
 
         reopened = Store(Path(service.selection.path) / "relay.sqlite3")
         self.addCleanup(reopened.close)
+        # The authored intent is preserved exactly: an acknowledgement the worker could not
+        # complete stays recorded and stays unverified rather than being rewritten into a
+        # rejection its parent never wrote.
+        self.assertEqual(
+            reopened.one("SELECT * FROM acks WHERE event_id = ?", (unverified,))["verified"],
+            "unverified_turn", "the worker rewrote an intent it was only asked to confirm",
+        )
+        # Asserted as a change rather than as presence, because acknowledge() already wrote
+        # this row when the intent was authored; its existence afterwards would prove nothing.
+        after = reopened.one("SELECT * FROM ack_evidence WHERE event_id = ?", (unverified,))
+        self.assertGreater(
+            after["attempts"], before["attempts"],
+            "the acknowledgement was named in the tick but nothing was written back about it",
+        )
+        self.assertTrue(
+            after["last_reason"],
+            "the worker withheld a promotion without recording why, so the next process"
+            " cannot tell a considered refusal from a pass that never happened",
+        )
         written = reopened.all(
             "SELECT * FROM poll_observations WHERE relationship_id = ?", (rid,),
         )
@@ -313,6 +358,54 @@ class ARealWorkerReadsTheHandoffBack(CrossingFixture):
         )
 
     def queue_a_second_event(self, store, rid):
+        from codex_session_relay.registry import Registry
+
+        clock = FakeClock()
+        registry = Registry(store, clock)
+        intake = ReceiptIntake(store, registry, clock)
+        delivery = DeliveryService(store, registry, intake, clock)
+        event_id = self._event(store, rid, attempt=2, name="second.txt", body="still owed")
+        delivery.enqueue(event_id)
+        return event_id
+
+    def an_acknowledgement_with_no_host_to_confirm_it(self, store, rid):
+        """A delivered event whose parent authored its acknowledgement with no host present.
+
+        acks.verified stays at unverified_turn, and that value is the entire selection
+        ack.verify_pending_acks makes. So a replacement worker reaches this row only by opening
+        the store it inherited, and with no reachable host it has to write down why it could
+        not complete the promotion rather than making one.
+        """
+        from codex_session_relay.ack import AckService
+        from codex_session_relay.registry import Registry
+
+        clock = FakeClock()
+        registry = Registry(store, clock)
+        intake = ReceiptIntake(store, registry, clock)
+        delivery = DeliveryService(store, registry, intake, clock)
+        ack = AckService(store, registry, intake, delivery, clock)
+        adapter = FakeHostAdapter(clock)
+        parent = registry.get(rid)["parent"]["taskId"]
+        adapter.add_thread(parent)
+
+        event_id = self._event(store, rid, attempt=3, name="third.txt", body="awaiting a host")
+        delivery.enqueue(event_id)
+        # Past the per-recipient send interval the handoff above already spent, or this attempt
+        # is withheld before the transport and never reaches a state an acknowledgement can be
+        # written against.
+        clock.advance(3600)
+        delivery.attempt(event_id, adapter, now=clock.now())
+        clock.advance(5)
+        # adapter=None is the parent with no socket: it can author its own intent over its own
+        # turn id, and it cannot establish that the turn is real.
+        ack.acknowledge(
+            event_id, ack_turn_id="ack-turn-unverified",
+            ack_proof=identity.ack_proof(event_id, "ack-turn-unverified"), accepted=True,
+            adapter=None,
+        )
+        return event_id
+
+    def _event(self, store, rid, *, attempt, name, body):
         from codex_session_relay import manifest
         from codex_session_relay.models import TurnRef
 
@@ -322,23 +415,22 @@ class ARealWorkerReadsTheHandoffBack(CrossingFixture):
         delivery = DeliveryService(store, registry, intake, clock)
         relationship = registry.get(rid)
         root = relationship["authorizedScope"]["artifactRoots"][0]
-        path = os.path.join(root, "second.txt")
+        path = os.path.join(root, name)
         with open(path, "w", encoding="utf-8") as handle:
-            handle.write("still owed")
+            handle.write(body)
         entries, _bindings = manifest.build([path], relationship["authorizedScope"]["artifactRoots"])
         digest = manifest.revision_hash(entries)
         turn = TurnRef("01child-task", "turn-dispatch-9", "completed")
         payload = {
             "eventId": identity.event_id(
-                rid, 1, digest, "ready_for_review", turn_id=turn.turn_id, attempt=2,
+                rid, 1, digest, "ready_for_review", turn_id=turn.turn_id, attempt=attempt,
             ),
-            "relationshipId": rid, "executionGeneration": 1, "attempt": 2,
+            "relationshipId": rid, "executionGeneration": 1, "attempt": attempt,
             "revisionHash": digest, "outcome": "ready_for_review", "producer": "child",
             "turnRef": turn.to_record(), "manifest": [e.to_record() for e in entries],
             "emittedAt": clock.iso(),
         }
         intake.accept_child_receipt(payload, observation=turn)
-        delivery.enqueue(payload["eventId"])
         return payload["eventId"]
 
 

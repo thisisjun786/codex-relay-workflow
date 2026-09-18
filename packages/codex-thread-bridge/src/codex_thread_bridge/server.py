@@ -219,9 +219,24 @@ def make_server(bridge: Bridge):
     async def read_thread(
         thread_id: str, limit: int = 10, cursor: str = "", max_text_chars: int = 4000
     ) -> dict[str, Any]:
-        """Read metadata and one newest-first turn page, without resuming; truncation is marked.
+        """Read metadata and one newest-first turn page, without resuming; what is missing is named.
 
         Omit cursor for the first page; pass a returned cursor as its exact string, not null.
+
+        The host bounds no response by size, so this asks cheaply and widens. Turn items are its
+        summary view — each turn's user and agent messages, not its tool calls or their output —
+        and the newest turn additionally gets its most recent real items read in a bounded page,
+        returned in the order they happened. Read
+        "observation" before trusting the page for anything: it names the view the turns actually
+        carry and is present on every call, including a completely healthy one. Turns arrive with
+        "itemsDetailStatus": not_requested (outside the newest turn), complete, partial (more
+        items exist EARLIER in the turn that this tool cannot page to), narrowed (a smaller page
+        after an oversized
+        frame closed the connection), not_observed (they would not arrive even one at a time),
+        method_unavailable (this host has no item read), or refused. None of those fail the read
+        and none of them is a statement about the thread: a page this bridge could not receive
+        never means a task finished, stalled or must be run again. To see an older turn's items,
+        page with cursor until it is the newest turn on its page.
         """
         # FastMCP pre-parses JSON-shaped nullable strings. A plain str annotation
         # preserves opaque JSON cursor bytes; the empty default means first page.

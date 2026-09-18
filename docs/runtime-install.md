@@ -741,7 +741,7 @@ reconciled. Three readings answer that, each filling only its own cell:
 | --- | --- |
 | `daemon` | the relay's `service status`, whose `running` is decided by the lock a supervisor holds |
 | `inFlight` | whether a store is there at all, then the relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
-| `storeTables` | the store's own table inventory, read read-only through the relay's `read_only_rows` |
+| `storeTables` | the store's own schema inventory — every object the catalog reports, read read-only through the relay's `read_only_rows` |
 
 The in-flight cell reads twice, and the order is the point. The relay reports contents
 unavailable both for a store that is missing and for one it cannot read, and those are opposite
@@ -754,7 +754,7 @@ where absence is settled by looking before anything is opened. Two readings that
 still no answer.
 
 The swap proceeds only when the daemon is established stopped, the open attempts are established
-zero, and the store's tables are established compatible. Any cell that could not be read decides
+zero, and the store's schema is established compatible. Any cell that could not be read decides
 `UNESTABLISHED`, which keeps the existing installation exactly as a blocking answer does. A
 check that could not be made is not a check that passed, and a daemon is never reported stopped
 because nobody could ask it.
@@ -776,11 +776,11 @@ this code, and it is left open rather than answered here.
 The obvious reading would compare the store's recorded schema version with the candidate's. It
 would also be worthless. The relay declares `SCHEMA_VERSION = 1`, has never raised it, writes it
 once with `INSERT OR IGNORE` when the database is created, and grows its schema through
-thirty-nine separate `CREATE TABLE IF NOT EXISTS` statements. Every store therefore agrees with
-every candidate at version one, and the comparison would detect neither a downgrade nor an upgrade
-while looking exactly like a check.
+separate `CREATE ... IF NOT EXISTS` statements, tables and indexes alike. Every store therefore
+agrees with every candidate at version one, and the comparison would detect neither a downgrade
+nor an upgrade while looking exactly like a check.
 
-So the cell compares what actually differs: each table's `CREATE` statement in the store's
+So the cell compares what actually differs: each object's `CREATE` statement in the store's
 `sqlite_master` against the statements the candidate relay declares. Statements and not names,
 because names agree while a column, a constraint or a default differs, and that difference is a
 schema change the new runtime would apply the first time it opens the store for writing.
@@ -791,25 +791,45 @@ current DDL. Nothing else is. Going further is not free: lowercasing the stateme
 `'a  b'` and `'a b'` compare equal, and both are real schema differences reported as agreement.
 What remains is stated rather than implied: two statements that mean the same thing written
 differently are reported as a difference, which refuses an update and therefore keeps the
-previous installation. A reading that carries table names without their statements cannot answer
+previous installation. A reading that carries object names without their statements cannot answer
 this cell at all and says so, because names agree while a column differs.
+
+Every object, and not only the tables. Both readings ask the catalog one question that names no
+kind at all, so indexes, triggers and views are compared on the same terms tables are. Asking
+only for `type = 'table'` was the name comparison's mistake one level up: it agreed about
+everything it had not looked at, and the relay's own schema has carried indexes all along. A
+store that had lost one compared identical to a candidate that declares it, and the new daemon
+would have re-created it on its first write-open — a migration arrived at by not looking.
+
+What the catalog is asked for is every row it holds, less the objects SQLite maintains for
+itself: the autoindexes a `UNIQUE` or `PRIMARY KEY` constraint creates, whose definition is
+already inside the table statement being compared, and the bookkeeping tables `AUTOINCREMENT`
+and `ANALYZE` leave behind. The exclusion is an exact prefix rather than `NOT LIKE 'sqlite_%'`,
+because `LIKE` reads `_` as a one-character wildcard and that pattern also dropped a legal user
+object named `sqlitexfoo`.
+
+Each object is keyed by its kind **and** its name, so the evidence lists and the refusal text
+read `index sync_ready` rather than `sync_ready`. A trigger may share a name with a table, so
+names alone can collide, and an object whose kind changed would otherwise be reported as one
+redefinition when it is really one object lost and a different one gained. `onlyInStore`,
+`onlyInCandidate` and `definedDifferently` carry entries in that `<type> <name>` form.
 
 | Answer | Observed | Decision |
 | --- | --- | --- |
 | `NO_STORE` | no store exists at the resolved selection | allowed, and reported as absence rather than as agreement |
-| `AGREES` | the same tables, defined identically | allowed |
-| `EXTENDS` | the candidate declares tables the store does not hold | refused |
-| `DIFFERS` | a shared table is defined differently | refused |
-| `NARROWS` | the store holds tables the candidate does not declare | refused |
+| `AGREES` | the same schema objects, defined identically | allowed |
+| `EXTENDS` | the candidate declares schema objects the store does not hold | refused |
+| `DIFFERS` | a shared object is defined differently | refused |
+| `NARROWS` | the store holds schema objects the candidate does not declare | refused |
 
-`NARROWS` is the implicit downgrade the issue forbids: a runtime that does not know a table
+`NARROWS` is the implicit downgrade the issue forbids: a runtime that does not know an object
 cannot preserve what is in it. The other two refuse for the contract's reason rather than that
 one. The relay opens its store read-write and runs its whole DDL script on every open, so a
 candidate whose schema is not the store's schema **applies** the difference the moment the new
 daemon first starts. OPS-4.5 reserves that for its own decision, in its own issue, with a copied
 backup of the whole state directory taken first, so letting an update wave it through is exactly
 the implicit migration the clause forbids. An update is not the place either direction is decided,
-and the refusal names the tables so the next step is obvious.
+and the refusal names the objects so the next step is obvious.
 
 The reading is the relay's own, run under the relay's own interpreter. A second copy of the rule
 here would be a restatement of something the relay owns, and the next change would move only one
