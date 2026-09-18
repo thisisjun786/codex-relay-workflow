@@ -30,25 +30,39 @@ Reused evidence is named by class; new evidence is named by the module that adds
 |---|---|---|---|---|
 | 1 | Registration aborted before and after it completes, a lost creation response, duplicate and late binding, wrong owner or generation | \`test_intent.py\` DerivedState (t0, t3), Binding, Registration; \`test_guard.py\` UnmanagedAndUnclaimed, Declarations; \`test_registry.py\` Generations; \`test_assignment.py\` DuplicateAssignment | \`test_registration_contention.py\`: the late bind that folds a pending observation, and registration racing the generation it names | injected |
 | 2 | Daemon exit and restart, and connection loss, around emit, delivery and acknowledgement, recovered from the persisted waiting records | \`test_ack_reconcile.py\` RestartRecovery; \`test_delivery.py\` RestartPreservation; \`test_enqueue_durability.py\`; \`test_daemon.py\` ReconcileGate | \`test_failure_recovery.py\`: a tick aborted inside its own write transaction, then a new daemon over a reopened store | injected |
-| 3 | Guard timeout, guard error, and the block limit reached, with no infinite repetition and work processed after recovery | \`test_guard.py\` Bounds, FailureSeparation; \`test_guard_property.py\` FailureIsNotANormalState | \`test_failure_recovery.py\`: the hook reading while a writer holds the store, and the generation bound releasing into the next generation | injected |
+| 3 | Guard timeout, guard error, and the block limit reached, with no infinite repetition and work processed after recovery | \`test_guard.py\` Bounds, FailureSeparation; \`test_guard_property.py\` FailureIsNotANormalState | \`test_failure_recovery.py\`: the hook reading while a writer holds the store, a real bounded lock timeout and the recovery after it, and the generation bound releasing into the next generation | mixed |
 | 4 | needs_changes continuing into the next generation of the same accountable task, with duplicate, out-of-order and late events causing no additional execution | \`test_anchor_binding.py\` AnchorBinding; \`test_supersession.py\` PreSendSupersession; \`test_receipts.py\` GenerationAndScopeRefusals; \`test_rereview_deadlock.py\` ReReviewIsReachable | none; this criterion is met by reuse | injected |
 | 5 | Two parents from different repositories and Linear projects on one shared store, under simultaneous completion, acknowledgement, revision and outbox activity | \`test_delivery.py\` CrossAssignmentDelivery; \`test_fairness.py\` SharedChildTurns; \`test_sync_outbox.py\` Readback, ClaimFencing | \`test_multi_parent_isolation.py\` | injected |
-| 6 | One parent busy, failing or at its retry limit, and one paused, cancelled or archived, while the other keeps progressing | \`test_fairness.py\` DeliveryFairness; \`test_delivery.py\` Bounds, HostLifecycle | \`test_multi_parent_isolation.py\` | injected |
+| 6 | One parent busy, failing or at its retry limit, and one paused, cancelled or archived, while the other keeps progressing | \`test_fairness.py\` DeliveryFairness; \`test_delivery.py\` Bounds, HostLifecycle | \`test_multi_parent_isolation.py\`, for the capped and the paused-then-archived cases only | injected |
 | 7 | Daemon run-limit exit and restart, duplicate startup on the same and on a different store, and an assignment outliving four hours | \`test_daemon.py\` Bounds, Instance; \`test_service.py\` Ownership, FourHourBoundary; \`test_cli.py\` ContestedSocket | \`test_operational_scale.py\` | mixed, see below |
 | 8 | A declared parent and child count and event volume, measured for queue depth, ticks to drain and send ceilings | none; new ground | \`test_operational_scale.py\` | injected |
 
-## Clock provenance, stated exactly
+## Clock provenance, derived rather than asserted
 
-Most of this package moves time by hand. Three places do not, and criterion 7 reuses
-one of them, so the column above says *mixed* rather than *injected*:
+Most of this package moves time by hand. The modules that do not are listed in
+\`tests/test_regression_map.py\`, which derives the set by scanning every test module
+for \`time.sleep\`, \`time.monotonic\` and \`time.time\` and fails when the declared
+tuple and the derived set disagree. Prose in this file is checked by that test rather
+than trusted, because two review rounds caught this claim wrong when it was only
+asserted here.
+
+What those modules use real time for, and why two criteria are therefore *mixed*:
 
 - \`test_service.py\` \`ServiceTestCase.holder\` starts a real subprocess and polls
   \`time.monotonic\` until it holds the lock, so the Ownership evidence criterion 7
-  reuses is real-time.
-- \`test_service.py\` \`FourHourBoundary\` runs one real worker in a real process for a
-  single short segment, deliberately outside the scripted clock.
+  reuses is real-time; \`FourHourBoundary\` also runs one real worker for a single
+  short segment, deliberately outside the scripted clock.
 - \`test_bridge_adapter.py\` waits real elapsed time before asserting a transport
   worker is still alive.
+- \`test_daemon_cadence.py\` \`RealWallClockCadence\` measures a real run spending its
+  deadline polling.
+- \`test_failure_recovery.py\` waits a real SQLite busy timeout, because a timeout is
+  the one thing an injected clock cannot produce. That is why criterion 3 is mixed.
+- \`test_operational_scale.py\` runs one real replacement worker in a real process.
+
+The same test also checks the other inventory this map kept getting wrong: every
+reused class named in the table above must exist in the module it is attributed to,
+so a stale citation fails the suite instead of surviving review.
 
 \`FourHourBoundary\` already drives the supervisor past four hours of scripted
 monotonic time and asserts the store identity, the generations, the launch count,
@@ -84,17 +98,15 @@ scope tests depends on.
 
 ## Findings owned elsewhere, reported rather than fixed
 
-- \`guard.SQLITE_TIMEOUT\` documents a lock wait that nothing applies and, as the store
-  is configured, nothing needs. Its name occurs exactly once in the repository, its
-  own definition; \`intent.read_only_connection\` passes a separate literal, and
-  \`guard.lookup_receipt\` calls that function without a timeout at all. The store runs
-  in write-ahead-log mode with a 30-second busy timeout, and a read-only connection
-  opened while another connection holds \`BEGIN IMMEDIATE\` returns in milliseconds
-  rather than waiting. So the constant describes a bound that is neither wired nor
-  reachable on this path. Changing it would change nothing, which is the hazard.
-  Pinned by observation in \`test_failure_recovery.py\`; wiring or removing it is a
-  source decision this issue does not own.
+- \`guard.SQLITE_TIMEOUT\` documents the lock wait the readiness check may spend, and
+  nothing passes it anywhere. Its name occurs exactly once in the repository, its own
+  definition; \`intent.read_only_connection\` carries a separate literal of the same
+  value, and \`guard.lookup_receipt\` calls that function without a timeout at all.
+  The wait is real and reachable — an exclusive writer makes the guard's read raise
+  after a measured 2.00 seconds — but the number that produces it is the literal, not
+  the constant, so changing the constant would change nothing. That is the hazard, and
+  \`test_failure_recovery.py\` pins both halves. Wiring or removing it would also move
+  \`intent.dispatch_generation_state\`, so it is reported rather than fixed here.
 - The workflow-restore section is the only non-essential block in the revision
   direction of \`report.render_revision\`, so it is the first thing a tight budget
   removes. CRW-94 owns that behaviour; nothing here changes it.
-
