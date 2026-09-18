@@ -945,8 +945,15 @@ def _reported(fired, observation):
 def _detection(scenarios, observation, injected_names):
     injected = _firings(scenarios, ON, injected_names)
     reported = [one for one in injected if _reported(one[2], observation)]
+    # "It did not report this" and "nobody could read whether it reported this" are different
+    # answers, and counting them together would let an unreadable journal read as a detector that
+    # stayed silent. Neither concludes the criterion met; only one of them is about the hook.
+    unreadable = [declared["name"] + "#" + str(index) for declared, index, fired in injected
+                  if fired["cells"]["observation"]["value"] == reading.UNREADABLE
+                  or fired["cells"]["adapterOutcome"]["value"] == reading.UNREADABLE]
     return {"answer": MEASURED, "injected": len(injected), "reported": len(reported),
-            "met": len(injected) > 0 and len(injected) == len(reported),
+            "unreadable": unreadable,
+            "met": len(injected) > 0 and len(injected) == len(reported) and not unreadable,
             "rows": [declared["name"] + "#" + str(index) for declared, index, _f in injected]}
 
 
@@ -1058,16 +1065,18 @@ def supplemental(scenarios):
     firings = scenarios["duplicate"][ON]["firings"]
     reservations = [fired["cells"]["heldFile"]["value"] for fired in firings]
     published = [fired["cells"]["recordedAs"]["value"] for fired in firings]
+    not_taken = unreadable_among(reservations + published)
     return {
         "oneReservationPerTurn": {
             "what": "one turn, the registered command fired twice",
             "reservations": reservations,
             "observationsPublished": published,
+            "notTaken": len(not_taken),
             # The claim is about the reservation, so the reservation is what is checked: the
             # create-once file is there after both firings, and the two firings published two
             # distinct observations rather than one record read twice. Counting only the
             # observations would have reported success for a turn that reserved nothing at all.
-            "met": (len(firings) == 2 and reservations == [RESERVED, RESERVED]
+            "met": (not not_taken and len(firings) == 2 and reservations == [RESERVED, RESERVED]
                     and len([one for one in published if one]) == 2
                     and len(set(one for one in published if one)) == 2),
             "isNot": "the duplicate execution measure. It is the hold leg of it and none of the"
@@ -1077,6 +1086,8 @@ def supplemental(scenarios):
             "what": "a Stop entry belonging to another owner was in both hook files first",
             "off": scenarios["_arms"][OFF]["foreignRegistration"]["value"],
             "on": scenarios["_arms"][ON]["foreignRegistration"]["value"],
+            "notTaken": len(unreadable_among(
+                [scenarios["_arms"][arm]["foreignRegistration"]["value"] for arm in ARMS])),
             "met": scenarios["_arms"][ON]["foreignRegistration"]["value"] == "present",
             "isNot": "evidence that the two hooks interact at run time. The foreign command is"
                      " never executed here; this reads the file, not a decision.",
@@ -1187,14 +1198,21 @@ def own_directory(where):
 
 
 def owned(path, root):
-    """Whether this path is inside this run's own directory, by where it actually leads.
+    """Whether this path is inside this run's own directory: inside, outside, or unreadable.
 
     Resolved on both sides rather than compared as text. A path that starts with the root as a
     string can still lead outside it through a symlink, and "everything is written inside the
     root" is a claim about where the bytes land rather than about how the path is spelled.
+
+    Three answers rather than two, because a path that could not be resolved is not a path outside
+    the root: reporting it as outside names the wrong repair and claims to know where it led.
     """
     try:
-        Path(path).resolve().relative_to(Path(root).resolve())
+        resolved = Path(path).resolve()
+    except OSError:
+        return reading.UNREADABLE
+    try:
+        resolved.relative_to(Path(root).resolve())
     except (ValueError, OSError):
         return False
     return True
@@ -1206,8 +1224,12 @@ def containment(root, places):
     A judgment rather than an assumption, so it is collected with the others and a run that wrote
     somewhere else cannot exit 0 while saying it did not.
     """
-    outside = sorted(str(place) for place in places if not owned(place, root))
-    return {"checked": len(places), "outside": outside, "met": not outside,
+    answers = dict((str(place), owned(place, root)) for place in places)
+    outside = sorted(place for place, answer in answers.items() if answer is False)
+    not_taken = sorted(place for place, answer in answers.items()
+                       if answer == reading.UNREADABLE)
+    return {"checked": len(places), "outside": outside, "notTaken": not_taken,
+            "met": not outside and not not_taken,
             "what": "every place this run creates resolves inside the directory it made for"
                     " itself, by where the path leads rather than by how it is spelled",
             "doesNotCover": "a write a subprocess made somewhere this run never named. Seeing"

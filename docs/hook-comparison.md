@@ -157,6 +157,12 @@ something it can reach.
 | Duplicate execution | not performed | it is that no verification or correction runs twice for one event id across a hold, a daemon restart and a recovery. Nothing verifies or corrects here and no daemon runs |
 | Added latency | measured against the budget, for the hook process only | the distribution of `processWallMs` is reported as minimum, median, 95th percentile and maximum against the 2 s median and 5 s 95th percentile bounds. The contract's budget is per Stop as the host sees it, so meeting it here is necessary and not sufficient |
 
+Every judgment that carries a verdict can also say that a reading under it could not be taken,
+and none of them is met while it is saying so. A criterion that dropped an unreadable reading and
+concluded from what was left would report a bound as kept on evidence nobody has, which is the
+substitution the readings above exist to refuse; it was fixed one measure at a time until the
+property was asked of all of them at once.
+
 One supplemental observation is reported under its own name and is not offered as the duplicate
 execution measure: one turn fired twice reserves exactly one hold and publishes two numbered
 observations, which is the hold leg of that measure and none of the rest of it.

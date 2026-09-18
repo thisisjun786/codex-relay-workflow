@@ -421,6 +421,39 @@ class ComparisonRunTests(unittest.TestCase):
             self.assertTrue(any(where.startswith(kind) for where, _v in counted),
                             kind + " carries no judgment, so nothing there can fail")
 
+    def test_no_judgment_can_be_met_without_saying_what_it_could_not_read(self):
+        """Derived over every judgment, because this was fixed one measure at a time.
+
+        A criterion that drops an unreadable reading and concludes from what is left reports a
+        bound as kept on evidence nobody has. Each fix closed one place and left the next open, so
+        the property is now asked of every judgment carrying met: its answer set has to be able to
+        say that a reading could not be taken, and it must not be met while it is saying so.
+        """
+        answer = run_once()
+        judgments = []
+        for name, measure in sorted(answer["measures"].items()):
+            if measure.get("answer") == "measured":
+                judgments.append(("measures/" + name, measure))
+        for name, measure in sorted(answer["supplemental"].items()):
+            judgments.append(("supplemental/" + name, measure))
+        for name in ("wroteOnlyInsideItsRoot", "sourceIdentity"):
+            judgments.append((name, answer[name]))
+        self.assertGreaterEqual(len(judgments), 8,
+                                "almost nothing carries a judgment, so this derivation is"
+                                " watching a document that stopped judging")
+        for where, measure in judgments:
+            says = [key for key in measure
+                    if key.lower().endswith("nottaken") or key == "unreadable"]
+            self.assertTrue(says, where + " cannot say that a reading could not be taken, so an"
+                                          " unreadable one is indistinguishable from a negative")
+            for key in says:
+                found = measure[key]
+                count = found if isinstance(found, int) else len(found)
+                if count:
+                    self.assertFalse(measure.get("met"),
+                                     where + " is met while " + key + " says a reading could not"
+                                             " be taken")
+
     def test_a_measured_criterion_that_misses_its_bound_is_collected(self):
         """The overall answer covers the criteria, not only the rows.
 
