@@ -473,6 +473,24 @@ def _identity(value, what: str) -> str:
     return str(value)
 
 
+# The lock wait a read-only open of the relay store may spend, and the only place it is decided.
+#
+# The hook contract gives one guard evaluation a five-second self-imposed wall clock. SQLite's
+# timeout bounds lock waiting only, and everything after it - the marker walk, the head
+# computation, the hold count, publishing the observation - is additional. Kept well under the
+# budget so a database a writer is holding cannot spend the whole of it before the rest of the
+# work has started.
+#
+# It sits beside the connect call rather than in guard.py, where the reasoning used to sit with
+# nothing reading it, because a bound declared away from the call that enforces it is a bound
+# nobody is actually setting. read_only_connection takes no timeout parameter for the same
+# reason: both callers - guard.lookup_receipt and dispatch_generation_state below - receive this
+# value, and neither can quietly choose another one while still using this function. The hook's
+# five seconds is the only stated budget among them and it is the tightest, so a bound that fits
+# inside it is not too generous for a caller that has no stated budget at all.
+SQLITE_TIMEOUT = 2.0
+
+
 def read_only_connection(db_path):
     """Open the relay store for reading and never for creating. None when it cannot be opened.
 
@@ -493,7 +511,10 @@ def read_only_connection(db_path):
     except (OSError, ValueError, TypeError, AttributeError):
         return None
     try:
-        connection = sqlite3.connect(uri, uri=True, timeout=2.0)
+        # Read from the module at call time rather than captured as a default argument, so the
+        # constant above owns the bound every subsequent open uses instead of a value frozen
+        # when this module was first imported.
+        connection = sqlite3.connect(uri, uri=True, timeout=SQLITE_TIMEOUT)
     except (OSError, sqlite3.Error, ValueError, TypeError):
         return None
     connection.row_factory = sqlite3.Row
