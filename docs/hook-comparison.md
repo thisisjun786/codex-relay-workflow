@@ -228,6 +228,7 @@ the run writes, so no installed runtime is read or changed.
 | the supplied `stop_hook_active` | a host reporting a continuation in flight | that a host sets it when it continues a turn |
 | no daemon and no App Server | the running service | delivery, acknowledgement, parent verification, and recovery after a fault |
 | the harness as sole writer | a sandbox grant | that a real child under a real grant could not forge the facts the decision read |
+| the reported argv | a witness at the process boundary | which executable ran. The command is read back out of the hook file and compared, and the journal and the published observations are read from disk, so a hook process ran and reached the guard. A run that deliberately executed a different entry point, writing identical records while reporting the registered command, would not be caught |
 
 ## What this does not answer
 

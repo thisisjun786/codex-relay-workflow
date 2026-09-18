@@ -555,6 +555,13 @@ class WitnessTests(unittest.TestCase):
     without running anything leaves both of them empty.
     """
 
+    # What these cannot witness, stated where the claim is made rather than left to be assumed:
+    # they establish that a hook process ran, reached the guard and left the states below, and
+    # they do not establish WHICH executable ran. The argv is the harness's own report, checked
+    # against the registration on disk, so a harness that deliberately ran a different entry point
+    # writing byte-identical journals and markers while reporting the registered command would
+    # pass. Closing that needs a witness at the process boundary, which is not built here.
+
     def records(self, arm):
         found = []
         for path in sorted((_RUN["root"] / arm / "journal").rglob("*.json")):
@@ -740,17 +747,21 @@ class DerivationTests(unittest.TestCase):
                          " this rule cannot see through")
         # Binding the name to a mapping that already exists builds nothing and is left alone;
         # what this rule is about is the places that CONSTRUCT one.
-        constructed = [value for value in built
-                       if isinstance(value, (ast.DictComp, ast.Dict, ast.Call))]
+        # Only two ways of binding the name are left alone: a comprehension over the declared
+        # readings, and a subscript that reads a mapping built elsewhere in this file. Binding it
+        # to another name is rejected too, because the name could have been bound to a helper
+        # call a line earlier and the indirection is the evasion rather than a use of it.
+        constructed = [value for value in built if not isinstance(value, ast.Subscript)]
         self.assertTrue(constructed,
                         "nothing constructs a mapping of cells, so this check is watching a file"
                         " that no longer does what it describes")
         for value in constructed:
             self.assertIsInstance(value, ast.DictComp,
-                                  "a mapping of cells is built by a literal, a dict() or a helper"
-                                  " call rather than by a comprehension over the declared"
-                                  " readings, and a helper could stamp the right source onto a"
-                                  " value it took from somewhere else")
+                                  "a mapping of cells is bound to something other than a"
+                                  " comprehension over the declared readings or a subscript of a"
+                                  " mapping already built that way. A helper, directly or through"
+                                  " another name, could stamp the declared source onto a value it"
+                                  " took from somewhere else")
             self.assertTrue(isinstance(value.value, ast.Call)
                             and isinstance(value.value.func, ast.Name)
                             and value.value.func.id == "read",
