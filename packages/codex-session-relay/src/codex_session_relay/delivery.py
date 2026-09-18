@@ -24,6 +24,7 @@ from .transport import (
     HELD_UNCERTAIN,
     INBOX_ONLY,
     QUEUED,
+    SENDING,
     SUPERSEDED,
     WITHHELD_PRE_SEND,
     assert_attempt_invariants,
@@ -45,7 +46,6 @@ REVISION = "revision_request"
 # it IS answered by the child's reply.
 EXECUTION_ONLY_OUTCOMES = ("failed", "interrupted", "blocked_needs_input")
 CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
-SENDING = "sending"
 MANIFEST_LINES = 10
 NEWLINE = chr(10)
 

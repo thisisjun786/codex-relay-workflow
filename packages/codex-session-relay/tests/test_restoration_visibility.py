@@ -510,6 +510,66 @@ class RestorationDelivery(DeliveryTestCase):
         self.assertEqual(reported.get("outcome"), "unmeasured")
         self.assertIn("no further attempt", reported.get("detail", ""))
 
+    def _oversized_correction(self, turn):
+        """A declared block at finding 10, which the cap carries and the composer does not."""
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id=turn,
+            findings=_findings(20, carries=10, note_size=900),
+        )
+        return self._revision_of(relationship, event_id, turn)
+
+    def _record_oversized(self, revision, **extra):
+        return report.record(
+            self.store, self.clock, event_id=revision,
+            repository="thisisjun786/codex-relay-workflow",
+            cxc_status=cxc.BLOCKED,
+            cxc_reason="the correction is larger than one message can hold",
+            summary="twenty findings, one of which carries the restoration block",
+            next_action="answer every finding above", **extra,
+        )
+
+    def _assert_measured_in_state(self, state, turn):
+        revision = self._oversized_correction(turn)
+        self.store.db.execute(
+            "UPDATE deliveries SET state = ? WHERE event_id = ?", (state, revision),
+        )
+        with self.assertRaises(RelayError) as caught:
+            self._record_oversized(revision)
+        self.assertEqual(caught.exception.reason.value, "restoration_undeliverable")
+
+    def test_a_delivery_still_sending_is_measured(self):
+        """sending is unresolved, not finished.
+
+        The bytes of one attempt are frozen and the transport has not answered. A pre-send
+        rejection is retry-safe and reconciliation returns the delivery to a claimable state,
+        so a report committed during that interval becomes the input to the retry. Treating
+        the interval as terminal would skip the check and let the retry drop the block, after
+        the generation has opened and with no channel left to send it again.
+        """
+        self._assert_measured_in_state("sending", "v-sending")
+
+    def test_a_delivery_held_uncertain_is_measured(self):
+        """held_uncertain means reconciliation has not established whether anything arrived."""
+        self._assert_measured_in_state("held_uncertain", "v-uncertain")
+
+    def test_a_held_delivery_cannot_claim_again_so_its_report_is_not_refused(self):
+        """The claim predicate requires hold_reason IS NULL, whatever the state says.
+
+        A correction parked at its attempt cap keeps a claimable-looking state while being
+        unable to produce another message, so refusing its report rejects a supported update
+        over bytes nobody will build.
+        """
+        revision = self._oversized_correction("v-held")
+        self.store.db.execute(
+            "UPDATE deliveries SET hold_reason = ? WHERE event_id = ?",
+            ("presend_attempt_cap", revision),
+        )
+        recorded = self._record_oversized(revision)
+        reported = recorded.get("restoration") or {"outcome": "nothing was recorded"}
+        self.assertEqual(reported.get("outcome"), "unmeasured")
+        self.assertIn("presend_attempt_cap", reported.get("detail", ""))
+
     def test_two_findings_cannot_both_declare_the_block(self):
         """Two candidates is a block nobody can locate, which is the silence again."""
         _relationship, event_id = self._acknowledged()
