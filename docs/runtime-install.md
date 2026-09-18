@@ -1417,10 +1417,20 @@ is recorded. Four of the seven need an input the command cannot supply for itsel
 ```sh
 # Before anything: the model and permission keys as they stand, because preservation is a
 # comparison and there is no cell that makes it for you.
-cp <codex-home>/config.toml <receipt>/config.before.toml
+# A fresh Codex home legitimately has no config.toml at all -- the reader treats absence as an
+# empty configuration -- so record the absence rather than failing on it. And keep the two
+# apart: a baseline that was ABSENT makes the later comparison one between two absences, which
+# establishes that nothing was added and nothing about a posture anybody had set.
+if [ -f <codex-home>/config.toml ]; then
+    cp <codex-home>/config.toml <receipt>/config.before.toml
+else
+    printf 'no configuration existed before this run\n' > <receipt>/config.before.absent
+fi
 
 python3 scripts/runtime_install.py install --dest <destination> --record <record> \
-    --codex-home <codex-home> --state <state> --apply
+    --codex-home <codex-home> --state <state> --apply > <receipt>/install.json
+# Keep the exit code with the result: it is the install's own, and a pipeline would hide it.
+echo "install exit=$?"; cat <receipt>/install.json
 
 # The skill links are a layer of their own: install builds the runtime, and the diagnosis reads
 # the links by running scripts/install.py --check separately. Skip this and the link row answers
@@ -1430,7 +1440,12 @@ python3 scripts/install.py --apply --dest <codex-home>/skills
 
 # Registration is a separate operation from installing, and tool exposure compares the
 # registered command with the tools a session actually listed. Both halves or neither.
-python3 scripts/runtime_install.py register-mcp --codex-home <codex-home> \
+# Name a 3.11 or later interpreter here too. Registration reads back the content it proposes to
+# write, so it refuses without tomllib for an absent, an empty and a populated configuration
+# alike -- measured on the 3.10 floor: exit 1, outcome CONFLICT naming the interpreter, nothing
+# written. Run this on the floor and there is no registration for the exposure row to compare
+# against, and that row is unreadable rather than unverified.
+<python3.11-or-later> scripts/runtime_install.py register-mcp --codex-home <codex-home> \
     --bridge-command <destination>/current/bin/<console-script> --apply
 
 python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
@@ -1462,7 +1477,19 @@ python3 - <receipt>/hook.json <session-id> <turn-id> <<'PY'
 import json, re, sys
 from pathlib import Path
 status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
-root = Path(json.load(open(status))["firingJournal"]["journalRoot"]).expanduser()
+cell = json.load(open(status))["firingJournal"]
+# hook-status names the journal from the hook's own settings, so the key is there as soon as
+# the hook is registered -- and it is NOT there on a Codex home where it never was. That is a
+# real state and it is not this turn's answer either way, so say so rather than failing on a
+# missing key and leaving the operator with a traceback where a reading belongs.
+if "journalRoot" not in cell:
+    print(json.dumps({"firingJournal": cell.get("value"), "journalRoot": None,
+                      "recordsForThisTurn": None,
+                      "detail": "no hook is registered in this Codex home, so there is no"
+                                " journal to attribute a turn to: unreadable, not zero"},
+                     indent=2))
+    raise SystemExit(0)
+root = Path(cell["journalRoot"]).expanduser()
 # The same shapes hook-status counts, and one entry that cannot be decoded does not take the
 # reading with it: the hook creates a record before it finishes writing it, so a file being
 # written while you look is neither a match nor a failure of your turn.
@@ -1482,6 +1509,9 @@ PY
 # Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
 # registration above deliberately appended a table, so a whole-file diff reports a change that
 # is this procedure's own doing and would report it whether or not anything was preserved.
+# Run this only if there was a baseline to compare against. If <receipt>/config.before.absent
+# is what the step above wrote, there were no model or permission keys to preserve and the row
+# is recorded as that absence -- not as a preservation.
 # Name a 3.11 or later interpreter, because the reader arrives there. On a host whose python3
 # is the 3.10 floor this command exits before it reads anything, and the receipt then records
 # what the suite records on that interpreter: the reading was not made, and the row is
@@ -1496,7 +1526,16 @@ for path in sys.argv[1:]:
     <receipt>/config.before.toml <codex-home>/config.toml
 
 # If an update has failed here, it has already restored what it found. Read that back rather
-# than assuming it, and look at residualPaths before retrying.
+# than assuming it -- and read residualPaths out of the FAILED RUN'S OWN result, which is the
+# only place that field is written. diagnose reports the selection and the pointer as they now
+# stand and has no residualPaths to give, so an operator who looks for it there finds nothing
+# and concludes there was nothing to clear. That is why the install above is kept.
+python3 -c 'import json, sys
+result = json.load(open(sys.argv[1]))
+print(json.dumps({key: result.get(key) for key in
+                  ("failedStep", "retriable", "residualPaths", "removedCandidate", "pointer")},
+                 indent=2))' <receipt>/install.json
+
 python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state>
 ```
@@ -1511,6 +1550,31 @@ eight seams an update crosses.
 So a receipt from this block records the stages it actually performed, and it is not a receipt
 for the composed run. The last command above is there for the host that arrives at it having
 had an update fail on its own, which is the only way that stage is reached here.
+
+A receipt also has to record which interpreter took it, and the block is narrower than it looks
+on the 3.10 floor. Five of its steps read a Codex configuration -- `install`, `register-mcp`,
+both `diagnose` invocations and the preservation reader -- and they do not all behave the same
+way without `tomllib`. Measured on 3.10 rather than inferred: `register-mcp` refuses outright,
+exit 1 with outcome `CONFLICT` naming the interpreter and nothing written, for an absent, an
+empty and a populated configuration alike. `install` and `diagnose` do not refuse; they run and
+report the configuration `UNREADABLE`, which means the install still promotes and the exposure
+row cannot reach `verified` -- it reads `not_verified` there for want of a reader, not for want
+of a registration. The preservation reader exits before reading anything.
+
+So two of the three steps that name a 3.11-or-later interpreter above do so because they refuse
+without one, and the other three degrade into readings that have to be recorded as unreadable.
+Choose a 3.11-or-later controller for the whole block. The runtimes this command installs are
+3.11 or newer whatever interpreter started it, so an old controller is never a reason to
+postpone the install; it is only a reason two of the seven cannot be taken.
+
+Every field this section tells you to read is one the command it names actually emits, which is
+worth stating because it was not always true: the closing `diagnose` used to be where an
+operator was sent for `residualPaths`, and only an install failure result carries that field.
+`failedStep`, `retriable`, `residualPaths`, `removedCandidate` and `pointer` come from the
+install result kept above; `firingJournal` and `journalRoot` from `hook-status`;
+`skillLinks`, the `checks.results` cells, `scope.socketConnect`, `definitionVersion` and
+`repositoryCommit` from `diagnose`; `sessionId` and `turnId` from the journal records
+themselves, which is why the snippet reads the records rather than the count.
 
 Name the relay too. Left out, the entry point is discovered on `PATH`, which finds whichever
 relay this host already has rather than the runtime just installed under the destination -- and
