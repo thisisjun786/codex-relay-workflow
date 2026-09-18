@@ -1332,6 +1332,10 @@ class BoundaryTests(unittest.TestCase):
                      "not startable"):
             self.assertTrue(answered[mode], mode + " produced no named refusal")
 
+    @unittest.skipUnless(HAVE_RELAY, "below the relay floor the run refuses on the interpreter"
+                                     " before it reaches the build, so the injected failure is"
+                                     " never the one answered; the refusal itself is checked in"
+                                     " RefusalTests, which does run here")
     def test_a_failure_after_the_root_exists_still_answers_with_a_document(self):
         """The promise is one JSON object, and only the relay's own error was turned into one.
 
