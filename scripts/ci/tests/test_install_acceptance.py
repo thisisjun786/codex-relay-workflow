@@ -1342,7 +1342,16 @@ def observe_all(root):
 # form nobody anticipated is still an occurrence, so it arrives as a failure rather than as
 # another review round. What the derivation still cannot reach is not argued away in a sentence:
 # it is returned as data, declared, and each declared form carries a control that plants it and
-# requires the derivation not to see it. That is what keeps the declaration from rotting: widening
+# requires the derivation not to see it.
+#
+# Where the reader cannot tell, it errs in one direction on purpose. It follows names -- a handle,
+# a called name, a name bound to one, an attribute a class binds -- and it does NOT follow flow.
+# So a name that ever holds the thing is treated as holding it for that scope, even where a later
+# line rebinds it. That is wrong in the direction where somebody has to write a sentence, and it
+# is wrong that way so that it is never wrong in the direction where a place settles for a refusal
+# and nobody is ever asked about it. Being precise about which binding a particular line saw would
+# mean following flow, and a precise-looking answer this reader cannot actually justify is the
+# thing this whole module exists to refuse. That is what keeps the declaration from rotting: widening
 # the derivation later makes the control for the form it now covers fail, which is the prompt to
 # delete the entry rather than leave a limitation standing that stopped being true.
 
@@ -1483,36 +1492,49 @@ def _hands_on(tree, spelled):
                for node in ast.walk(tree)
                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
-    def outwards(caller, named, aliases=None):
-        if aliases and named in aliases.get(caller, {}):
-            return aliases[caller][named]
+    def scopes(caller):
+        """The scope this call sits in and every one enclosing it, innermost first."""
         chain = [] if caller == MODULE_LEVEL else caller.split(".")
         while chain:
-            candidate = ".".join(chain + [named])
+            yield ".".join(chain)
+            chain.pop()
+        yield MODULE_LEVEL
+
+    def outwards(caller, named, aliases=None):
+        for scope in scopes(caller):
+            if aliases and named in aliases.get(scope, {}):
+                return aliases[scope][named]
+            candidate = named if scope == MODULE_LEVEL else scope + "." + named
             if candidate in defined:
                 return candidate
-            chain.pop()
-        return named if named in defined else None
+        return None
 
-    # A name bound to a function, and cleared when it is bound to anything else. Without the
-    # clearing an alias would outlive what it named -- alias = carrier followed by
-    # alias = lambda: "ok" would still answer for the carrier -- and the call after it would be
-    # reported as reaching something it cannot reach.
-    aliases = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        function, _klass = places.get(id(node), (MODULE_LEVEL, None))
-        target = (outwards(function, node.value.id)
-                  if isinstance(node.value, ast.Name) else None)
-        for named in node.targets:
-            if not isinstance(named, ast.Name):
+    # A name bound to a function, kept for the whole scope that binds it and visible to the
+    # scopes inside it, the way a closure sees one. Chains are followed to a fixpoint, because
+    # second = first = helper is two hops and stopping at one loses the second.
+    #
+    # It is never cleared. A name can be rebound, and where that happens this reader cannot say
+    # which binding a given call reached without following flow it does not follow. So it answers
+    # that the name still holds what it once held: the cost of being wrong is a sentence somebody
+    # has to write, which is the direction this whole module errs in on purpose, rather than a
+    # place that settles for a refusal and is never asked about it.
+    aliases, growing = {}, True
+    while growing:
+        growing = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
                 continue
-            known = aliases.setdefault(function, {})
+            function, _klass = places.get(id(node), (MODULE_LEVEL, None))
+            target = outwards(function, node.value.id, aliases)
             if target is None:
-                known.pop(named.id, None)
-            else:
-                known[named.id] = target
+                continue
+            for named in node.targets:
+                if not isinstance(named, ast.Name):
+                    continue
+                known = aliases.setdefault(function, {})
+                if known.get(named.id) != target:
+                    known[named.id] = target
+                    growing = True
 
     def called(node, function):
         if isinstance(node.func, ast.Name):
@@ -1545,36 +1567,25 @@ def _hands_on(tree, spelled):
                 return spelled(expression, inner)
             return hands
 
-        # In source order, and a later assignment replaces an earlier one ONLY when the two sit
-        # in the same statement list. Two arms of an if are alternatives, not a sequence: reading
-        # them as one would let whichever was written second decide for both, and a function that
-        # returns the refusal down one arm would stop counting because the other arm came later.
-        # This reader does not follow flow; it refuses to pretend that it does.
-        under = {}
-        for parent in ast.walk(tree):
-            for field, value in ast.iter_fields(parent):
-                if isinstance(value, list):
-                    for item in value:
-                        if isinstance(item, ast.stmt):
-                            under[id(item)] = (id(parent), field)
-
-        settled = {}
-        for node in sorted((n for n in ast.walk(tree)
-                            if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None),
-                           key=lambda n: (n.lineno, n.col_offset)):
-            function, klass = places.get(id(node), (MODULE_LEVEL, None))
-            held = bound.setdefault(function, set())
-            takes = _reachable(node.value, reaching(function, klass), klass, held)
-            where = under.get(id(node))
-            for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-                if not isinstance(named, ast.Name):
+        # A name that ever holds the thing in a function holds it for that function. Which
+        # binding a particular return saw is a question about flow, and following flow is what
+        # this reader does not do: a conditional return before an overwrite, and two arms of an
+        # if, are both cases where a precise-looking answer would be a guess. Erring towards
+        # holding it costs a sentence; erring the other way costs a place nobody is asked about.
+        spreading = True
+        while spreading:
+            spreading = False
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
                     continue
-                if takes:
-                    held.add(named.id)
-                    settled[(function, named.id)] = where
-                elif settled.get((function, named.id)) == where:
-                    held.discard(named.id)
-                    settled.pop((function, named.id), None)
+                function, klass = places.get(id(node), (MODULE_LEVEL, None))
+                held = bound.setdefault(function, set())
+                if not _reachable(node.value, reaching(function, klass), klass, held):
+                    continue
+                for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                    if isinstance(named, ast.Name) and named.id not in held:
+                        held.add(named.id)
+                        spreading = True
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Return) or node.value is None:
@@ -1674,7 +1685,11 @@ def source_spellings(tree):
     where ast.parse comes from, so the one form the old check spelled out by hand is now derived
     from ast.parse's own signature. A string ending in .py names a source file.
 
-    A name bound to one of those callables answers for it as well, to a fixpoint.
+    A name bound to one of those callables answers for it as well, to a fixpoint. That binding is
+    never taken back and is not kept per function: where a name is rebound, or where another
+    function happens to use the same name for something else, this reader answers that it still
+    reads source. Being wrong that way costs a sentence somebody has to write; being wrong the
+    other way costs a place that concludes from source text and is never asked about it.
 
     A called name whose signature cannot be read is not assumed to be harmless. It comes back as
     undecided and has to be written down, because a name nobody could read reported as a name
