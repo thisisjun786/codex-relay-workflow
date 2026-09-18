@@ -249,6 +249,14 @@ SCENARIOS = (
 MEASURED = "measured"
 NOT_PERFORMED = "not_performed"
 
+# The rule every measure below obeys, written once because it was fixed one measure at a time and
+# each fix left the next one open: a criterion is not met while a reading it rests on could not be
+# taken. Dropping the unreadable sample and concluding from what is left reports a bound as kept on
+# evidence nobody has, which is the substitution the whole arrangement refuses.
+def unreadable_among(values):
+    """Which of these readings could not be taken."""
+    return [str(value) for value in values if value == reading.UNREADABLE]
+
 # The contract fixes these at skills/crw-run/references/hook-contract.md, "Decision criteria, fixed
 # before implementation". They are neither restated nor extended: where this arrangement cannot
 # reach one it says so rather than reaching for something it can measure instead.
@@ -783,7 +791,10 @@ def stdout_payload(fired):
         answer = json.loads(raw)
     except ValueError:
         return {"source": STDOUT, "printed": PRINTED_OTHER, "raw": raw[:400]}
-    printed = PRINTED_A_BLOCK if answer.get("decision") == "block" else PRINTED_OTHER
+    reason = answer.get("reason")
+    delivered = (answer.get("decision") == "block" and isinstance(reason, str)
+                 and bool(reason.strip()))
+    printed = PRINTED_A_BLOCK if delivered else PRINTED_OTHER
     return {"source": STDOUT, "printed": printed, "raw": raw[:400]}
 
 
@@ -1015,9 +1026,12 @@ def measures(scenarios):
                    " reported under its own name and is not this measure.",
     }
 
-    latencies = [fired["cells"]["processWallMs"]["value"]
-                 for _d, _i, fired in _firings(scenarios, ON)
-                 if isinstance(fired["cells"]["processWallMs"]["value"], int)]
+    timings = [fired["cells"]["processWallMs"]["value"]
+               for _d, _i, fired in _firings(scenarios, ON)]
+    latencies = [value for value in timings if isinstance(value, int)]
+    # A firing whose timing could not be taken is not a fast firing. Dropping it and reporting the
+    # median of what is left says the budget was kept over samples that exclude the slow one.
+    missing = len(timings) - len(latencies)
     median, p95 = _percentile(latencies, 0.5), _percentile(latencies, 0.95)
     answers["addedLatency"] = {
         "answer": MEASURED,
@@ -1026,7 +1040,9 @@ def measures(scenarios):
         "distributionMs": {"count": len(latencies), "minimum": min(latencies) if latencies else None,
                            "median": median, "p95": p95,
                            "maximum": max(latencies) if latencies else None},
-        "met": bool(latencies) and median <= LATENCY_MEDIAN_MS and p95 <= LATENCY_P95_MS,
+        "firings": len(timings), "timingsNotTaken": missing,
+        "met": (bool(latencies) and not missing and median <= LATENCY_MEDIAN_MS
+                and p95 <= LATENCY_P95_MS),
         "narrowing": "the interval measured is the hook process alone, started by this harness."
                      " The contract's budget is per Stop as the host sees it, so meeting it here"
                      " is necessary and not sufficient.",
@@ -1192,8 +1208,13 @@ def containment(root, places):
     """
     outside = sorted(str(place) for place in places if not owned(place, root))
     return {"checked": len(places), "outside": outside, "met": not outside,
-            "what": "every directory and file this run writes resolves inside the directory it"
-                    " created for itself"}
+            "what": "every place this run creates resolves inside the directory it made for"
+                    " itself, by where the path leads rather than by how it is spelled",
+            "doesNotCover": "a write a subprocess made somewhere this run never named. Seeing"
+                            " those needs a witness at the process boundary, which is not built"
+                            " here; what is built is that the constructed environment carries no"
+                            " pointer out of this directory and no bytecode is left beside the"
+                            " source the subprocesses import."}
 
 
 def refusal(detail):
@@ -1232,10 +1253,17 @@ def stability(earlier, later):
     going means earlier scenarios executed different bytes from later ones, and an identity
     recorded at either end would describe a source no single scenario ran.
     """
-    return {"before": earlier, "after": later,
-            "met": earlier.get("sourceDigests") == later.get("sourceDigests"),
-            "what": "every source whose contents decide a run had the same digest before the first"
-                    " subprocess and after the last"}
+    digests = list((earlier.get("sourceDigests") or {}).values())
+    digests += list((later.get("sourceDigests") or {}).values())
+    # Equality is not enough: a digest that could not be taken is the same sentinel at both ends,
+    # so an unreadable source would compare equal to itself and report the bytes as identified.
+    unread = unreadable_among(digests)
+    return {"before": earlier, "after": later, "digestsNotTaken": len(unread),
+            "met": (not unread
+                    and earlier.get("sourceDigests") == later.get("sourceDigests")
+                    and bool(earlier.get("sourceDigests"))),
+            "what": "every source whose contents decide a run was readable and had the same digest"
+                    " before the first subprocess and after the last"}
 
 
 def compare(root):

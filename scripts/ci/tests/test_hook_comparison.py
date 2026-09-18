@@ -527,6 +527,26 @@ class ReadingTests(unittest.TestCase):
                          "a key missing without a declared reason is a failed reading, not an"
                          " absence")
 
+    def test_stdout_that_the_host_would_discard_is_not_a_delivered_block(self):
+        """A block with no reason is a failed hook run that continues nothing.
+
+        The contract records that, so classifying it as a delivered block judges the row by a rule
+        the host does not use, and every blocking scenario would pass on output the host throws
+        away.
+        """
+        def printed(raw):
+            return harness.stdout_payload({"stdout": raw, "exitCode": 0, "wallMs": 1})["printed"]
+
+        self.assertEqual(printed(json.dumps({"decision": "block", "reason": "because",
+                                             "continue": True})), "printed_a_block")
+        self.assertEqual(printed(json.dumps({"decision": "block"})), "printed_something_else")
+        self.assertEqual(printed(json.dumps({"decision": "block", "reason": "  "})),
+                         "printed_something_else")
+        self.assertEqual(printed(json.dumps({"decision": "block", "reason": None})),
+                         "printed_something_else")
+        self.assertEqual(printed(""), "printed_nothing")
+        self.assertEqual(printed("not json at all"), "printed_something_else")
+
     def test_a_payload_from_another_source_cannot_fill_this_cell(self):
         every = self.payloads()
         every["journal"] = dict(every["journal"], source="stdout")
