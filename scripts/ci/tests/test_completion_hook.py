@@ -2111,6 +2111,48 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          " its neighbour recording somewhere else")
         self.assertIn(firing.ADAPTER_CANNOT_RUN, causes)
 
+    def test_a_relative_peer_does_not_suppress_a_known_path_s_own_cause(self):
+        """record_path_unidentified is established when ANY registration spells its settings
+        relatively. As a prerequisite it then blanked out every downstream cause for the
+        registrations whose paths ARE known, so a peer's readably-absent settings file went
+        unreported behind a spelling this command could not resolve."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            second.unlink()
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entries = document["hooks"][completion.EVENT][0]["hooks"]
+            # The FIRST registration now names its settings relatively; the second names an
+            # absolute path this command can read, and that file is gone.
+            entries[0]["command"] = entries[0]["command"].replace(
+                str(completion.configuration_path(Path(temporary))), "relative-settings.json")
+            path.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        causes = sorted(entry["cause"] for entry in cell.get("candidates") or []
+                        if entry["standing"] == firing.ESTABLISHED)
+        self.assertEqual(causes, sorted((firing.RECORD_PATH_UNIDENTIFIED,
+                                         firing.SETTINGS_ABSENT)),
+                         "a path this command could not identify hid a repair it could")
+
+    def test_registrations_that_name_nothing_readable_leave_the_settings_causes_unasked(self):
+        """SUPPORT, not evidence of the defect: this passes before the fix too. It holds the
+        direction the fix must not break — with no readable settings path at all there is no
+        question for the settings causes to answer, and dropping the prerequisite must not put
+        an unsupported candidate on the table."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entry = document["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(
+                str(completion.configuration_path(Path(temporary))), "relative-settings.json")
+            path.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.RECORD_PATH_UNIDENTIFIED)
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

@@ -162,7 +162,10 @@ def _settings_absent(observed):
     """
     entries = observed.get("namedJournals") or []
     if not entries:
-        return NOT_RULED_OUT, "no settings file was named to be read"
+        # Not "could not tell": no registration named a file for this question to be about.
+        # record_path_unidentified owns that state, and answering NOT_RULED_OUT here would put
+        # a candidate on the table that no reading ever pointed at.
+        return NOT_EVALUATED, "no registration named a settings file this command could read"
     gone = [entry["settings"] for entry in entries
             if entry.get("settingsState") == reading.ABSENT]
     if gone:
@@ -186,7 +189,7 @@ def _settings_unusable(observed):
     """
     entries = observed.get("namedJournals") or []
     if not entries:
-        return NOT_RULED_OUT, "no settings file was named to be read"
+        return NOT_EVALUATED, "no registration named a settings file this command could read"
     unusable = [entry["settings"] for entry in entries
                 if entry.get("settingsState") not in (reading.ABSENT, reading.ACCESS_ERROR)
                 and not entry.get("usable")]
@@ -334,8 +337,16 @@ CAUSE_REQUIRES = {
     NOT_REGISTERED: (),
     RECORD_PATH_UNIDENTIFIED: (NOT_REGISTERED,),
     ADAPTER_CANNOT_RUN: (NOT_REGISTERED,),
-    SETTINGS_ABSENT: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
-    SETTINGS_UNUSABLE: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
+    # Nor do they require RECORD_PATH_UNIDENTIFIED. That cause is established when ANY
+    # registration spells its settings relatively or names none, and as a prerequisite it then
+    # blanked out every downstream cause for the registrations whose paths ARE known --
+    # reporting only that one path could not be identified while a peer's settings file sat
+    # readably absent. The rules read namedJournals, which contains only the paths this command
+    # could name, so the scoping is already in the data and does not belong here too. Where
+    # nothing was named at all they answer NOT_EVALUATED rather than putting an unsupported
+    # candidate on the table.
+    SETTINGS_ABSENT: (NOT_REGISTERED,),
+    SETTINGS_UNUSABLE: (NOT_REGISTERED,),
     # The journal causes do NOT require the settings causes to be ruled out. Both sides are now
     # per-registration, so one registration with missing settings must not suppress what
     # another registration's journal says: the journal rules read only the entries whose
@@ -347,11 +358,11 @@ CAUSE_REQUIRES = {
     # journal readings carry their own registration's startability instead, so an unstartable
     # registration is simply not in the set those rules read -- which is both narrower and
     # exactly right, because its journal is empty BECAUSE it cannot start.
-    RECORDS_FOUND: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
-    RECORDED_ON_ANOTHER_PATH: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
-    JOURNALLING_OFF: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
-    POLICY_RECORDS_ONLY_FAULTS: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
-    NOTHING_RECORDED: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
+    RECORDS_FOUND: (NOT_REGISTERED,),
+    RECORDED_ON_ANOTHER_PATH: (NOT_REGISTERED,),
+    JOURNALLING_OFF: (NOT_REGISTERED,),
+    POLICY_RECORDS_ONLY_FAULTS: (NOT_REGISTERED,),
+    NOTHING_RECORDED: (NOT_REGISTERED,),
 }
 
 # The order causes are reported in. Their dependencies come from CAUSE_REQUIRES and not from

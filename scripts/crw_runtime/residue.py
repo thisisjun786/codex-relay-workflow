@@ -122,8 +122,11 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
     except OSError as error:
         answer["unreadable"].append("the destination could not be listed: "
                                     + type(error).__name__ + ": " + str(error))
-        answer["pointer"] = _pointer_finding(pointer_path, recorded_pointer, root)
-        return answer
+        # The pointer is read and PUBLISHED on this path too. Returning before the common
+        # assembly left a cell saying residual=true above an empty residualPaths, so a listing
+        # failure in the destination silently dropped a pointer repair that had been
+        # established independently of it.
+        return _with_pointer(answer, pointer_path, recorded_pointer, root)
     answer["read"] = True
     for path in found:
         entry = Path(path)
@@ -183,7 +186,13 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
         elif liveness == staging.UNKNOWN:
             answer["unreadable"].append(str(entry) + ": " + liveness_detail)
 
-    answer["pointer"] = _pointer_finding(pointer_path, recorded_pointer, root)
+    return _with_pointer(answer, pointer_path, recorded_pointer, root)
+
+
+def _with_pointer(answer, pointer_path, recorded_pointer, destination):
+    """Read the pointer and publish it. One place, because the two exits used to differ and the
+    difference was a dropped repair rather than a difference anybody intended."""
+    answer["pointer"] = _pointer_finding(pointer_path, recorded_pointer, destination)
     if answer["pointer"].get("residual"):
         answer["residualPaths"].append(answer["pointer"]["path"])
         answer["recoveryRequires"].append(

@@ -9054,6 +9054,29 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         self.assertIn(str(host.pointer_path), found["residualPaths"],
                       "the pointer under this very destination was disowned over a spelling")
 
+    def test_a_destination_that_could_not_be_listed_still_publishes_its_pointer_repair(self):
+        """The two exits used to differ: the listing-failure path returned before the pointer
+        was copied into residualPaths, so a cell saying residual=true sat above an empty
+        cleanup list and the repair was silently dropped."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            real_scandir = residue.os.scandir
+
+            def refusing(path, *args, **kwargs):
+                if str(path) == str(host.destination):
+                    raise OSError(errno.EACCES, "permission denied")
+                return real_scandir(path, *args, **kwargs)
+
+            with mock.patch.object(residue.os, "scandir", side_effect=refusing):
+                found = _diagnose(host)
+        self.assertFalse(found["residue"]["read"])
+        self.assertTrue(found["residue"]["unreadable"])
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER)
+        self.assertIn(str(host.pointer_path), found["residualPaths"],
+                      "an established pointer repair was dropped because a listing beside it"
+                      " could not be made")
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here
