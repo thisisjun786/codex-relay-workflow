@@ -1461,11 +1461,30 @@ def _held_by_class(tree, spelled):
     binding is derived rather than declared, so that shape arrives accounted.
     """
     places, held = _places(tree), {}
+
+    # A local name that holds the thing first, so setUp doing value = reading.UNREADABLE and then
+    # self.unread = value is one binding in two steps rather than two unrelated lines.
+    bound, spreading = {}, True
+    while spreading:
+        spreading = False
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                continue
+            function, klass = places.get(id(node), (MODULE_LEVEL, None))
+            local = bound.setdefault(function, set())
+            if not _reachable(node.value, spelled, klass, local):
+                continue
+            for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                if isinstance(named, ast.Name) and named.id not in local:
+                    local.add(named.id)
+                    spreading = True
+
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         function, klass = places.get(id(node), (MODULE_LEVEL, None))
-        if node.value is None or klass is None or not _reachable(node.value, spelled, klass, set()):
+        if node.value is None or klass is None or not _reachable(
+                node.value, spelled, klass, bound.get(function, set())):
             continue
         for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
             if isinstance(target, ast.Attribute) and _dotted(target.value) == "self":
@@ -1490,9 +1509,16 @@ def _hands_on(tree, spelled):
     because alias = helper is an ordinary refactor and not a place to lose one.
     """
     places = _places(tree)
-    defined = {places.get(id(node), (MODULE_LEVEL, None))[0]
-               for node in ast.walk(tree)
-               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    defined, methods = set(), {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        where, klass = places.get(id(node), (MODULE_LEVEL, None))
+        defined.add(where)
+        # Which class a method belongs to, because self.name reaches a method of THIS class and
+        # not a module-level function or another class's method that happens to share the name.
+        if klass is not None and "." not in where:
+            methods[(klass, where)] = where
 
     def scopes(caller):
         """The scope this call sits in and every one enclosing it, innermost first."""
@@ -1552,12 +1578,16 @@ def _hands_on(tree, spelled):
             function, _klass = places.get(id(node), (MODULE_LEVEL, None))
             if isinstance(node.value, ast.Name):
                 targets = outwards(function, node.value.id, aliases)
-            elif (isinstance(node.value, ast.Attribute)
-                    and _dotted(node.value.value) == "self"
-                    and node.value.attr in defined):
+            elif isinstance(node.value, ast.Attribute) and _dotted(node.value.value) == "self":
                 # A bound method put behind a name reaches exactly what calling it directly
-                # would, and alias = self.carrier is as ordinary as alias = carrier.
-                targets = {node.value.attr}
+                # would, and alias = self.carrier is as ordinary as alias = carrier. Resolved
+                # against this class, so a same-named method on another class is not dragged in.
+                _where, klass = places.get(id(node), (MODULE_LEVEL, None))
+                reached = methods.get((klass, node.value.attr))
+                targets = {reached} if reached else set()
+            elif isinstance(node.value, ast.Lambda):
+                # A lambda given a name is a function given a name.
+                targets = {places.get(id(node.value), (MODULE_LEVEL, None))[0]}
             else:
                 continue
             if not targets:
@@ -1575,7 +1605,9 @@ def _hands_on(tree, spelled):
         if isinstance(node.func, ast.Name):
             return outwards(function, node.func.id, aliases)
         if isinstance(node.func, ast.Attribute) and _dotted(node.func.value) == "self":
-            return {node.func.attr} if node.func.attr in defined else set()
+            _where, klass = places.get(id(node), (MODULE_LEVEL, None))
+            reached = methods.get((klass, node.func.attr))
+            return {reached} if reached else set()
         return set()
 
     # A function hands the thing back when its returned expression IS the thing, and it keeps
@@ -1623,13 +1655,17 @@ def _hands_on(tree, spelled):
                         spreading = True
 
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Return) or node.value is None:
+            if isinstance(node, ast.Return) and node.value is not None:
+                answer = node.value
+            elif isinstance(node, ast.Lambda):
+                # A lambda has no return statement; its body IS what it hands back.
+                answer = node.body
+            else:
                 continue
             function, klass = places.get(id(node), (MODULE_LEVEL, None))
             if function == MODULE_LEVEL or function in carriers:
                 continue
-            if _reachable(node.value, reaching(function, klass), klass,
-                          bound.get(function, set())):
+            if _reachable(answer, reaching(function, klass), klass, bound.get(function, set())):
                 carriers.add(function)
                 growing = True
 
@@ -1797,7 +1833,12 @@ def source_spellings(tree):
             if named not in hands_source:
                 # The name may hand source back without ever being called here: reader =
                 # inspect.getsource puts it behind a local name and the call names only that.
-                why, _unread, _resolved = asked(named)
+                why, unread, _resolved = asked(named)
+                if unread:
+                    # A name nobody could read stays unreadable when it is put behind another
+                    # name; treating the alias as harmless is the plausible default this module
+                    # refuses everywhere else.
+                    undecided.setdefault(named, unread)
                 if not why:
                     continue
                 hands_source[named] = why
