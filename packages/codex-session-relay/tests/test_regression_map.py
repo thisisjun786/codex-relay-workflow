@@ -1145,7 +1145,7 @@ def _binds_a_tracked_name(node):
 
 
 def _flatten(node):
-    """Every leaf of an assignment target or value, tuples and lists opened recursively."""
+    """Every leaf of an assignment target, tuples and lists opened recursively."""
     if isinstance(node, (ast.Tuple, ast.List)):
         leaves = []
         for element in node.elts:
@@ -1154,6 +1154,30 @@ def _flatten(node):
             )
         return leaves
     return [node]
+
+
+def _pairs(target, value):
+    """(leaf, the value reaching it) when the two shapes correspond, else None.
+
+    Flattening both sides and zipping was wrong: store.fault_hook, (a, b) = (None, cb), pair
+    assigns a tuple to the hook, and a flat zip handed it the inner None instead, so an
+    arming became invisible. Structures have to line up or this declines to say anything,
+    and the caller reports that it could not pair them.
+    """
+    if isinstance(target, (ast.Tuple, ast.List)):
+        if not isinstance(value, (ast.Tuple, ast.List)):
+            return None
+        if len(target.elts) != len(value.elts):
+            return None
+        found = []
+        for element, reaching in zip(target.elts, value.elts):
+            element = element.value if isinstance(element, ast.Starred) else element
+            inner = _pairs(element, reaching)
+            if inner is None:
+                return None
+            found.extend(inner)
+        return found
+    return [(target, value)]
 
 
 def _predicate_of(call):
@@ -1202,12 +1226,28 @@ def _injection_sites_in(tree, module):
         and any(alias.name == HELPER and not alias.asname for alias in node.names)
         for node in ast.walk(tree)
     )
+    # A competing binding of the same name defeats the import, wherever the import sits. An
+    # earlier draft only looked for the canonical import and stopped, so a second import of
+    # the name from somewhere else left every later call classified as the real helper.
     shadowed = any(
         isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
         and node.name == HELPER
         for node in ast.walk(tree)
     ) or any(
         isinstance(node, ast.arg) and node.arg == HELPER for node in ast.walk(tree)
+    ) or any(
+        isinstance(node, (ast.Import, ast.ImportFrom))
+        and any(alias.name.split(".")[-1] == HELPER and not alias.asname
+                for alias in node.names)
+        and not (isinstance(node, ast.ImportFrom) and node.level == 1
+                 and node.module == "support")
+        for node in ast.walk(tree)
+    ) or any(
+        isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
+        and any(isinstance(leaf, ast.Name) and leaf.id == HELPER
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+                for leaf in _flatten(target))
+        for node in ast.walk(tree)
     )
 
     for node in ast.walk(tree):
@@ -1228,8 +1268,7 @@ def _injection_sites_in(tree, module):
             # attribute fell through to the read pass and came back as "reads the hook", and
             # a tuple disarming was reported as an arming.
             leaves = _flatten(target)
-            values = _flatten(node.value) if node.value is not None else []
-            paired = dict(zip(leaves, values)) if len(leaves) == len(values) else {}
+            paired = dict(_pairs(target, node.value) or []) if node.value is not None else {}
             for leaf in leaves:
                 if isinstance(leaf, ast.Subscript) and _referred(leaf.value) == "__dict__":
                     leftover.append(
@@ -1240,7 +1279,7 @@ def _injection_sites_in(tree, module):
                 accounted.add(id(leaf))
                 if node.value is None:
                     continue           # a bare annotation binds nothing, so it arms nothing
-                if len(leaves) != len(values):
+                if leaf not in paired:
                     leftover.append(
                         (module, owner.get(node, "<module>"),
                          "assigns the hook from a value this reader cannot pair")
@@ -1485,11 +1524,18 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
     def test_a_value_this_reader_cannot_pair_is_a_leftover_not_a_site(self):
         """The target names the hook and the value cannot be matched to it, so the reader
         declines to say which it is rather than guessing arming or disarming."""
-        sites, leftover = self.read(f"def t(store, pair):\n    store.{HOOK}, other = pair\n")
-        self.assertEqual(sites, [])
-        self.assertIn(
-            "assigns the hook from a value this reader cannot pair", self.kinds(leftover),
-        )
+        for source in (
+            f"def t(store, pair):\n    store.{HOOK}, other = pair\n",
+            # The shapes differ one level in: Python hands the hook the whole (None, cb)
+            # tuple, and a flat zip used to hand it the inner None and see a disarming.
+            f"def t(store, cb, pair):\n    store.{HOOK}, (a, b) = (None, cb), pair\n",
+        ):
+            sites, leftover = self.read(source)
+            self.assertEqual(sites, [], source)
+            self.assertIn(
+                "assigns the hook from a value this reader cannot pair",
+                self.kinds(leftover), source,
+            )
 
     def test_a_direct_helper_call_carries_the_predicate_it_passes(self):
         sites, _leftover = self.read(
@@ -1574,6 +1620,11 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
              f"from other import {HELPER}\ndef t(store):\n    {HELPER}(store)\n"),
             ("a plain module import",
              f"import {HELPER}\ndef t(store):\n    {HELPER}(store)\n"),
+            ("a competing import beside the real one",
+             self.IMPORT + f"from other import {HELPER}\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("a later rebinding of the name",
+             self.IMPORT + f"{HELPER} = None\ndef t(store):\n    {HELPER}(store)\n"),
             ("parameter shadow",
              self.IMPORT + f"def t(store, {HELPER}):\n    {HELPER}(store)\n"),
             ("class shadow",
