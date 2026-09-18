@@ -15,6 +15,10 @@ completion hook keep their own installer and are not bundled here.
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
 
+Edit the skills at `plugins/crw/skills/`; the root `skills` link is a compatibility
+path, not a second copy, and it is a Git symlink, so a checkout without symlink
+support turns it into a plain text file. The supported platform is Linux x86_64.
+
 Only those three entries may sit in the plugin root. Installation copies that
 directory verbatim, including untracked and ignored files, so anything left there
 is published. `python3 scripts/ci/plugin.py` enforces the rule.
@@ -23,6 +27,12 @@ The manifest declares `skills` and nothing else. On this Codex version a declare
 component replaces default discovery rather than adding to it, so declaring
 `hooks` or `mcpServers` would change what loads; wiring those belongs to its own
 change.
+
+That replacement behavior was measured on codex-cli 0.154.0: a plugin declaring a
+non-default skills directory while also holding `./skills/` loaded only the declared
+one. The plugin specification bundled with Codex describes the opposite, saying
+declared components supplement default discovery. This package follows the measured
+behavior and keeps every shipped component under the declared path.
 
 ## Install
 

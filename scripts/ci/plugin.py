@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Validate the Codex plugin package this repository publishes.
 
-The installer copies a plugin root into its version cache verbatim, so what
-sits in that directory is what ships. This check reads the marketplace entry
-and the manifest, rebuilds the release payload from a Git revision rather than
-from the working tree, and refuses the shapes that would install silently
-wrong: a dropped symlink, an untracked file, a personal path, a skill the
-manifest does not declare.
+The installer copies a plugin root into its version cache verbatim, so what sits
+in that directory is what ships. This check rebuilds the release payload from a
+Git revision, reads every packaged fact from that same revision, and refuses the
+shapes that would install silently wrong: a symlink the copier drops, an
+untracked file it publishes, a personal path, a skill the manifest never declared.
 
-It validates structure and hygiene. It does not install anything, and it is not
-evidence that an installed plugin loaded on any host.
+It validates structure and hygiene. It installs nothing, and it is not evidence
+that an installed plugin loaded on any host.
 """
 
 import argparse
@@ -21,12 +20,14 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-MARKETPLACE = ROOT / ".agents/plugins/marketplace.json"
 PLUGIN_ROOT = ROOT / "plugins/crw"
-MANIFEST = "  .codex-plugin/plugin.json"
+MARKETPLACE = ".agents/plugins/marketplace.json"
+MANIFEST = ".codex-plugin/plugin.json"
 TOP_LEVEL = {".codex-plugin", "skills", "LICENSE"}
-SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*$")
-MANIFEST_FIELDS = ("name", "version", "description", "author", "license", "skills", "interface")
+REQUIRED_FILES = (MANIFEST, "LICENSE")
+SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+                    r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+TEXT_FIELDS = ("name", "version", "description", "license", "repository", "skills")
 INTERFACE_FIELDS = ("displayName", "shortDescription", "longDescription", "developerName",
                     "category", "capabilities", "defaultPrompt")
 # A personal home path names a real account; documentation placeholders such as
@@ -35,30 +36,37 @@ HOME_PATHS = (re.compile(r"(?<![A-Za-z0-9._-])/home/[A-Za-z0-9._-]+/"),
               re.compile(r"(?<![A-Za-z0-9._-])/Users/[A-Za-z0-9._-]+/"),
               re.compile(r"(?<![A-Za-z0-9._-])/root/"),
               re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+"))
-FORBIDDEN_NAMES = re.compile(r"^(\.git|\.codexclaw|\.env|id_rsa.*|.*\.(sqlite3?|pem|key))$")
+FORBIDDEN_NAMES = re.compile(
+    r"^(\.git|\.codexclaw|\.env(\..*)?|id_rsa.*|.*credentials.*|.*secrets?"
+    r"|.*\.(sqlite3?|db|pem|key|p12|pfx))$", re.IGNORECASE)
 
 
-def run(*args, cwd=ROOT):
-    return subprocess.run(args, cwd=cwd, capture_output=True, check=True).stdout
+class PackageError(Exception):
+    """A package fact could not be read at all, so no verdict is possible."""
 
 
-def revision_payload(revision, plugin_root):
-    """Release bytes come from the revision's tree, never from the working copy."""
-    relative = plugin_root.relative_to(ROOT).as_posix()
-    listing = run("git", "ls-tree", "-r", "-z", revision, "--", relative).decode()
-    payload, errors = {}, []
-    requests = []
-    for record in listing.split("\0"):
+def git(*args, binary=False):
+    result = subprocess.run(["git", *args], cwd=ROOT, capture_output=True)
+    if result.returncode != 0:
+        raise PackageError(result.stderr.decode(errors="replace").strip())
+    return result.stdout if binary else result.stdout.decode()
+
+
+def revision_payload(revision, relative):
+    """Release bytes come from the revision tree, never from the working copy."""
+    payload, errors, requests = {}, [], []
+    for record in git("ls-tree", "-r", "-z", revision, "--", relative).split("\0"):
         if not record:
             continue
         meta, _, path = record.partition("\t")
         mode, kind, sha = meta.split(" ", 2)
         name = PurePosixPath(path).relative_to(relative).as_posix()
         if kind != "blob":
-            errors.append(f"{path}: the package may not contain a {kind}")
+            errors.append("release " + path + ": the package may not contain a " + kind)
             continue
         if mode == "120000":
-            errors.append(f"{path}: the installer drops symlinks, so the package may not contain one")
+            errors.append("release " + path + ": the installer drops symlinks, so the package "
+                          "may not contain one")
             continue
         requests.append((name, mode, sha))
     if requests:
@@ -66,7 +74,7 @@ def revision_payload(revision, plugin_root):
                                input="\n".join(sha for _, _, sha in requests).encode(),
                                stdout=subprocess.PIPE).stdout
         offset = 0
-        for name, mode, sha in requests:
+        for name, mode, _ in requests:
             header_end = batch.index(b"\n", offset)
             size = int(batch[offset:header_end].split(b" ")[2])
             start = header_end + 1
@@ -75,34 +83,136 @@ def revision_payload(revision, plugin_root):
     return payload, errors
 
 
-def worktree_payload(plugin_root):
+def directory_payload(plugin_root):
     payload, errors = {}, []
     for path in sorted(plugin_root.rglob("*")):
+        name = path.relative_to(plugin_root).as_posix()
         if path.is_symlink():
-            errors.append(f"{path.relative_to(plugin_root)}: the installer drops symlinks, "
-                          "so the package may not contain one")
+            errors.append("installed " + name + ": the installer drops symlinks, so the package "
+                          "may not contain one")
             continue
         if path.is_dir():
             continue
         mode = "100755" if path.stat().st_mode & 0o111 else "100644"
-        payload[path.relative_to(plugin_root).as_posix()] = (mode, path.read_bytes())
+        payload[name] = (mode, path.read_bytes())
     return payload, errors
 
 
 def digest(payload):
-    lines = [f"{mode} {hashlib.sha256(data).hexdigest()} {name}"
-             for name, (mode, data) in sorted(payload.items())]
-    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+    """Length-prefixed framing, so no two distinct payloads share a digest."""
+    blocks = []
+    for name, (mode, data) in sorted(payload.items()):
+        encoded = name.encode()
+        blocks.append(b"%d:%s %s %s" % (len(encoded), encoded, mode.encode(),
+                                        hashlib.sha256(data).hexdigest().encode()))
+    return hashlib.sha256(b"\n".join(blocks)).hexdigest()
+
+
+def read_manifest(payload, label):
+    if MANIFEST not in payload:
+        raise PackageError(label + ": " + MANIFEST + " is missing from the package")
+    try:
+        manifest = json.loads(payload[MANIFEST][1].decode())
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise PackageError(label + " " + MANIFEST + ": " + str(exc)) from exc
+    if not isinstance(manifest, dict):
+        raise PackageError(label + " " + MANIFEST + ": the manifest must be a JSON object")
+    return manifest
+
+
+def declared_skills_path(manifest):
+    """One rule for where skills live, shared by every consumer of the manifest."""
+    declared = manifest.get("skills")
+    if not isinstance(declared, str) or not declared.startswith("./"):
+        raise ValueError("manifest must declare skills as a ./ relative path")
+    relative = PurePosixPath(declared[2:].strip("/"))
+    if not relative.name or relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("declared skills path must stay inside the plugin root")
+    return relative.as_posix()
+
+
+def manifest_errors(manifest, plugin_root_name, label):
+    errors = []
+    for field in TEXT_FIELDS:
+        if not isinstance(manifest.get(field), str) or not manifest.get(field):
+            errors.append(label + " manifest: " + field + " must be a nonempty string")
+    if not isinstance(manifest.get("keywords"), list) or not manifest.get("keywords"):
+        errors.append(label + " manifest: keywords must be a nonempty list")
+    author = manifest.get("author")
+    if not isinstance(author, dict) or not author.get("name"):
+        errors.append(label + " manifest: author.name is required")
+    if manifest.get("name") != plugin_root_name:
+        errors.append(label + " manifest: name " + repr(manifest.get("name"))
+                      + " must match the plugin directory " + repr(plugin_root_name))
+    if not SEMVER.match(str(manifest.get("version", ""))):
+        errors.append(label + " manifest: version " + repr(manifest.get("version"))
+                      + " is not a semantic version")
+    try:
+        declared_skills_path(manifest)
+    except ValueError as exc:
+        errors.append(label + " manifest: " + str(exc))
+    interface = manifest.get("interface")
+    if not isinstance(interface, dict):
+        errors.append(label + " manifest: interface must be an object")
+    else:
+        for field in INTERFACE_FIELDS:
+            value = interface.get(field)
+            if not value or (field in ("capabilities", "defaultPrompt") and not isinstance(value, list)):
+                errors.append(label + " manifest: interface." + field + " is required")
+    for field in ("hooks", "mcpServers", "apps"):
+        if field in manifest:
+            errors.append(label + " manifest: " + field + " is not declared by this package; "
+                          "declaring a component replaces default discovery and belongs to its "
+                          "own change")
+    return errors
+
+
+def marketplace_errors(catalog, manifest, plugin_relative):
+    errors = []
+    if catalog.get("name") != manifest.get("name"):
+        errors.append("marketplace: name " + repr(catalog.get("name"))
+                      + " must match the plugin name " + repr(manifest.get("name")))
+    interface = catalog.get("interface")
+    expected = (manifest.get("interface") or {}).get("displayName")
+    if not isinstance(interface, dict) or interface.get("displayName") != expected:
+        errors.append("marketplace: interface.displayName must match the manifest display name "
+                      + repr(expected))
+    entries = [e for e in catalog.get("plugins", []) if isinstance(e, dict)
+               and e.get("name") == manifest.get("name")]
+    if len(entries) != 1:
+        return errors + ["marketplace: expected exactly one entry named "
+                         + repr(manifest.get("name"))]
+    entry = entries[0]
+    source = entry.get("source") or {}
+    if source.get("source") != "local":
+        errors.append("marketplace: entry source.source must be local")
+    path = source.get("path")
+    if not isinstance(path, str) or PurePosixPath(path.lstrip("./")).as_posix() != plugin_relative:
+        errors.append("marketplace: entry source.path " + repr(path)
+                      + " does not point at " + plugin_relative)
+    policy = entry.get("policy") or {}
+    if policy.get("installation") != "AVAILABLE":
+        errors.append("marketplace: entry policy.installation must be AVAILABLE")
+    if policy.get("authentication") != "ON_USE":
+        errors.append("marketplace: entry policy.authentication must be ON_USE; installation "
+                      "does not create credentials")
+    if not entry.get("category"):
+        errors.append("marketplace: entry category is required")
+    return errors
 
 
 def hygiene(payload, label):
     errors = []
+    for required in REQUIRED_FILES:
+        if required not in payload:
+            errors.append(label + ": " + required + " must ship with the package")
     for name, (_, data) in sorted(payload.items()):
         parts = PurePosixPath(name).parts
         if parts[0] not in TOP_LEVEL:
-            errors.append(f"{label} {name}: only {sorted(TOP_LEVEL)} may ship in the package")
+            errors.append(label + " " + name + ": only " + ", ".join(sorted(TOP_LEVEL))
+                          + " may ship in the package")
         if any(FORBIDDEN_NAMES.match(part) for part in parts):
-            errors.append(f"{label} {name}: operational state and credentials may not ship")
+            errors.append(label + " " + name + ": operational state and credentials may not ship")
         try:
             text = data.decode()
         except UnicodeDecodeError:
@@ -110,88 +220,108 @@ def hygiene(payload, label):
         for pattern in HOME_PATHS:
             found = pattern.search(text)
             if found:
-                errors.append(f"{label} {name}: contains the personal path {found.group(0)!r}; "
-                              "the package must not require one account's checkout")
+                errors.append(label + " " + name + ": contains the personal path "
+                              + repr(found.group(0)) + "; the package must not require one "
+                              "account checkout")
                 break
     return errors
 
 
 def skills(payload, manifest, label):
     """The declared directory is the only source for the shipped skill set."""
-    declared = manifest.get("skills")
-    errors = []
-    if not isinstance(declared, str) or not declared.startswith("./"):
-        return [f"{label}: manifest must declare skills as a relative path inside the plugin root"], {}
-    prefix = PurePosixPath(declared.strip("./")).as_posix()
-    if not prefix or ".." in PurePosixPath(prefix).parts:
-        return [f"{label}: declared skills path must stay inside the plugin root"], {}
-    found = {}
+    try:
+        prefix = declared_skills_path(manifest)
+    except ValueError as exc:
+        return [label + ": " + str(exc)], {}
+    errors, found = [], {}
     for name in payload:
         parts = PurePosixPath(name).parts
-        if len(parts) < 3 or PurePosixPath(*parts[:1]).as_posix() != prefix:
+        if len(parts) < 3 or parts[0] != prefix:
             continue
         found.setdefault(parts[1], set()).add(PurePosixPath(*parts[2:]).as_posix())
     if not found:
-        errors.append(f"{label}: the declared skills path {declared} ships no skill")
+        errors.append(label + ": the declared skills path ships no skill")
     for skill, files in sorted(found.items()):
         for required in ("SKILL.md", "agents/openai.yaml"):
             if required not in files:
-                errors.append(f"{label} {prefix}/{skill}: missing {required}")
+                errors.append(label + " " + prefix + "/" + skill + ": missing " + required)
     return errors, found
 
 
-def manifest_errors(manifest):
-    errors = []
-    for field in MANIFEST_FIELDS:
-        if not manifest.get(field):
-            errors.append(f"manifest: missing {field}")
-    if not SEMVER.match(str(manifest.get("version", ""))):
-        errors.append(f"manifest: version {manifest.get('version')!r} is not semantic")
-    if not isinstance(manifest.get("author"), dict) or not manifest["author"].get("name"):
-        errors.append("manifest: author.name is required")
-    interface = manifest.get("interface")
-    if not isinstance(interface, dict):
-        errors.append("manifest: interface must be an object")
-    else:
-        for field in INTERFACE_FIELDS:
-            if not interface.get(field):
-                errors.append(f"manifest: interface.{field} is required")
-    for field in ("hooks", "mcpServers", "apps"):
-        if field in manifest:
-            errors.append(f"manifest: {field} is not declared by this package; "
-                          "declaring it replaces default discovery and belongs to its own change")
-    return errors
+def compatibility_link_errors(revision, manifest, plugin_relative):
+    """The repository root link is what keeps installations made before the move working."""
+    listing = git("ls-tree", "-z", revision, "--", "skills")
+    record = listing.split("\0")[0]
+    if not record:
+        return ["skills: the repository root must keep a link to the packaged skills"]
+    meta, _, _ = record.partition("\t")
+    mode, kind, sha = meta.split(" ", 2)
+    if mode != "120000" or kind != "blob":
+        return ["skills: the repository root entry must be a symlink to the packaged skills"]
+    target = git("cat-file", "blob", sha).strip()
+    expected = plugin_relative + "/" + declared_skills_path(manifest)
+    if target != expected:
+        return ["skills: the root link points at " + repr(target) + " instead of " + repr(expected)
+                + "; both installation paths must read one source"]
+    return []
 
 
-def marketplace_errors(entry_source, manifest, plugin_root):
-    errors = []
+def report_payload(payload, manifest, found, extra):
+    result = {
+        "digest": digest(payload),
+        "files": len(payload),
+        "version": manifest.get("version"),
+        "skills": sorted(found),
+        "expectedSkillNames": sorted(manifest.get("name", "") + ":" + skill for skill in found),
+    }
+    result.update(extra)
+    return result
+
+
+def check_installed(path):
+    payload, errors = directory_payload(path)
+    manifest = read_manifest(payload, "installed")
+    errors += manifest_errors(manifest, path.name, "installed")
+    errors += hygiene(payload, "installed")
+    skill_errors, found = skills(payload, manifest, "installed")
+    return errors + skill_errors, report_payload(payload, manifest, found,
+                                                 {"source": "payload", "path": str(path)})
+
+
+def check_revision(revision):
+    resolved = git("rev-parse", revision).strip()
+    plugin_relative = PLUGIN_ROOT.relative_to(ROOT).as_posix()
+    release, errors = revision_payload(resolved, plugin_relative)
+    manifest = read_manifest(release, "release")
+    errors += manifest_errors(manifest, PLUGIN_ROOT.name, "release")
+    errors += hygiene(release, "release")
+    skill_errors, found = skills(release, manifest, "release")
+    errors += skill_errors
     try:
-        catalog = json.loads(MARKETPLACE.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return [f"{MARKETPLACE.name}: {exc}"]
-    if not catalog.get("name"):
-        errors.append("marketplace: name is required")
-    if not isinstance(catalog.get("interface"), dict) or not catalog["interface"].get("displayName"):
-        errors.append("marketplace: interface.displayName is required")
-    entries = [e for e in catalog.get("plugins", []) if e.get("name") == manifest.get("name")]
-    if len(entries) != 1:
-        return errors + [f"marketplace: expected exactly one entry named {manifest.get('name')!r}"]
-    entry = entries[0]
-    source = entry.get("source") or {}
-    if source.get("source") != "local":
-        errors.append("marketplace: entry source.source must be local")
-    path = source.get("path", "")
-    if (MARKETPLACE.parents[2] / path).resolve() != plugin_root.resolve():
-        errors.append(f"marketplace: entry source.path {path!r} does not point at the plugin root")
-    policy = entry.get("policy") or {}
-    if policy.get("installation") != "AVAILABLE":
-        errors.append("marketplace: entry policy.installation must be AVAILABLE")
-    if policy.get("authentication") != "ON_USE":
-        errors.append("marketplace: entry policy.authentication must be ON_USE; "
-                      "installation does not create credentials")
-    if not entry.get("category"):
-        errors.append("marketplace: entry category is required")
-    return errors
+        catalog = json.loads(git("show", resolved + ":" + MARKETPLACE))
+        if not isinstance(catalog, dict):
+            raise ValueError("the marketplace file must be a JSON object")
+        errors += marketplace_errors(catalog, manifest, plugin_relative)
+    except (PackageError, ValueError) as exc:
+        errors.append("marketplace: " + str(exc))
+    license_blob = git("show", resolved + ":LICENSE", binary=True)
+    if release.get("LICENSE", ("", b""))[1] != license_blob:
+        errors.append("release LICENSE: the package copy must match the repository license")
+    errors += compatibility_link_errors(resolved, manifest, plugin_relative)
+    # A local marketplace installs the working tree, so it is checked with the same rules.
+    working, working_errors = directory_payload(PLUGIN_ROOT)
+    errors += working_errors + hygiene(working, "working tree")
+    errors += skills(working, manifest, "working tree")[0]
+    for line in git("status", "--porcelain", "--ignored", "--", plugin_relative).splitlines():
+        if line[:2] in ("??", "!!"):
+            errors.append("working tree " + line[3:].strip() + ": untracked or ignored files "
+                          "inside the plugin root are copied into the cache; commit or remove it")
+    drift = sorted(name for name in set(release) | set(working)
+                   if release.get(name) != working.get(name))
+    return errors, report_payload(release, manifest, found, {
+        "source": "revision", "revision": revision, "resolved": resolved,
+        "worktreeDigest": digest(working), "worktreeDrift": drift,
+    })
 
 
 def main():
@@ -202,73 +332,23 @@ def main():
                         help="Validate an installed payload directory instead of this checkout")
     parser.add_argument("--json", action="store_true", help="Print the machine-readable result")
     args = parser.parse_args()
-
-    if args.payload:
-        plugin_root = args.payload.resolve()
-        manifest_path = plugin_root / ".codex-plugin/plugin.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            print(f"{manifest_path}: {exc}", file=sys.stderr)
-            return 1
-        payload, errors = worktree_payload(plugin_root)
-        errors += manifest_errors(manifest) + hygiene(payload, "installed")
-        skill_errors, found = skills(payload, manifest, "installed")
-        errors += skill_errors
-        result = {"source": "payload", "path": str(plugin_root), "digest": digest(payload),
-                  "version": manifest.get("version"),
-                  "skills": sorted(found), "files": len(payload),
-                  "expectedSkillNames": sorted(f"{manifest.get('name')}:{s}" for s in found)}
-    else:
-        plugin_root = PLUGIN_ROOT
-        manifest_path = plugin_root / ".codex-plugin/plugin.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            print(f"{manifest_path}: {exc}", file=sys.stderr)
-            return 1
-        resolved = run("git", "rev-parse", args.revision).decode().strip()
-        release, errors = revision_payload(resolved, plugin_root)
-        working, working_errors = worktree_payload(plugin_root)
-        errors += working_errors
-        errors += manifest_errors(manifest)
-        errors += marketplace_errors(MARKETPLACE, manifest, plugin_root)
-        errors += hygiene(release, "release") + hygiene(working, "working tree")
-        skill_errors, found = skills(release, manifest, "release")
-        errors += skill_errors
-        errors += skills(working, manifest, "working tree")[0]
-        # Untracked or ignored files are copied by a local install, so they are a package defect.
-        stray = run("git", "status", "--porcelain", "--ignored", "--",
-                    plugin_root.relative_to(ROOT).as_posix()).decode().splitlines()
-        for line in stray:
-            state, _, name = line.partition(" ")
-            if line[:2] in ("??", "!!"):
-                errors.append(f"working tree {name.strip()}: untracked or ignored files inside the "
-                              "plugin root are copied into the cache; commit or remove it")
-        link = ROOT / "skills"
-        declared = (plugin_root / manifest.get("skills", "./skills/")).resolve()
-        if not link.is_symlink() or link.resolve() != declared:
-            errors.append("skills: the repository root link must point at the declared skills "
-                          "directory so both installation paths read one source")
-        license_copy = plugin_root / "LICENSE"
-        if not license_copy.is_file() or license_copy.read_bytes() != (ROOT / "LICENSE").read_bytes():
-            errors.append("LICENSE: the package copy must match the repository license")
-        drift = sorted(name for name in set(release) | set(working)
-                       if release.get(name) != working.get(name))
-        result = {"source": "revision", "revision": args.revision, "resolved": resolved,
-                  "digest": digest(release), "worktreeDigest": digest(working),
-                  "version": manifest.get("version"), "skills": sorted(found),
-                  "files": len(release), "worktreeDrift": drift,
-                  "expectedSkillNames": sorted(f"{manifest.get('name')}:{s}" for s in found)}
-
+    try:
+        if args.payload:
+            errors, result = check_installed(args.payload.resolve())
+        else:
+            errors, result = check_revision(args.revision)
+    except PackageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if errors:
         print("\n".join(sorted(set(errors))), file=sys.stderr)
         return 1
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
-    print(f"Package {result['version']} at {result.get('resolved', result.get('path'))}: "
-          f"{result['files']} files, digest {result['digest'][:16]}")
+    print("Package " + str(result["version"]) + " at "
+          + str(result.get("resolved", result.get("path"))) + ": " + str(result["files"])
+          + " files, digest " + result["digest"][:16])
     print("Skill names under the plugin namespace: " + ", ".join(result["expectedSkillNames"]))
     if result.get("worktreeDrift"):
         print("Working tree differs from the revision payload: "

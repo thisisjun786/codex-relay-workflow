@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,13 +24,30 @@ def manifest(**overrides):
         "version": "0.1.0",
         "description": "d",
         "author": {"name": "a"},
+        "repository": "https://example.invalid/repo",
         "license": "MIT",
+        "keywords": ["codex"],
         "skills": "./skills/",
         "interface": {
             "displayName": "CRW", "shortDescription": "s", "longDescription": "l",
             "developerName": "a", "category": "Developer Tools",
             "capabilities": ["Skills"], "defaultPrompt": ["p"],
         },
+    }
+    base.update(overrides)
+    return base
+
+
+def catalog(**overrides):
+    base = {
+        "name": "crw",
+        "interface": {"displayName": "CRW"},
+        "plugins": [{
+            "name": "crw",
+            "source": {"source": "local", "path": "./plugins/crw"},
+            "policy": {"installation": "AVAILABLE", "authentication": "ON_USE"},
+            "category": "Developer Tools",
+        }],
     }
     base.update(overrides)
     return base
@@ -49,32 +67,80 @@ GOOD = {
 
 
 class ManifestTests(unittest.TestCase):
-    def test_required_fields_and_semver(self):
-        self.assertEqual(plugin.manifest_errors(manifest()), [])
-        for bad, expected in (({"version": "1.0"}, "not semantic"),
+    def test_required_fields_types_and_semver(self):
+        self.assertEqual(plugin.manifest_errors(manifest(), "crw", "t"), [])
+        for bad, expected in (({"version": "1.0"}, "semantic version"),
+                              ({"version": "01.0.0"}, "semantic version"),
                               ({"author": {"url": "u"}}, "author.name"),
-                              ({"skills": ""}, "missing skills")):
+                              ({"keywords": []}, "keywords"),
+                              ({"repository": 5}, "repository"),
+                              ({"skills": ""}, "skills")):
             with self.subTest(bad=bad):
-                errors = plugin.manifest_errors(manifest(**bad))
+                errors = plugin.manifest_errors(manifest(**bad), "crw", "t")
                 self.assertTrue(any(expected in e for e in errors), errors)
+
+    def test_name_must_match_the_plugin_directory(self):
+        errors = plugin.manifest_errors(manifest(), "other", "t")
+        self.assertTrue(any("must match the plugin directory" in e for e in errors), errors)
 
     def test_missing_interface_field_is_refused(self):
         broken = manifest()
         del broken["interface"]["defaultPrompt"]
-        self.assertTrue(any("interface.defaultPrompt" in e for e in plugin.manifest_errors(broken)))
+        errors = plugin.manifest_errors(broken, "crw", "t")
+        self.assertTrue(any("interface.defaultPrompt" in e for e in errors), errors)
 
     def test_undeclared_components_stay_undeclared(self):
         # Declaring a component replaces default discovery, so an accidental
         # hooks or mcpServers field would change what loads without saying so.
         for field in ("hooks", "mcpServers", "apps"):
             with self.subTest(field=field):
-                errors = plugin.manifest_errors(manifest(**{field: "./x.json"}))
+                errors = plugin.manifest_errors(manifest(**{field: "./x.json"}), "crw", "t")
                 self.assertTrue(any(field in e for e in errors), errors)
+
+    def test_declared_path_may_not_leave_the_plugin_root(self):
+        for bad in ("../../skills/", "/abs/skills/", "skills/"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    plugin.declared_skills_path(manifest(skills=bad))
+
+
+class MarketplaceTests(unittest.TestCase):
+    def test_entry_is_pinned_to_the_manifest(self):
+        self.assertEqual(plugin.marketplace_errors(catalog(), manifest(), "plugins/crw"), [])
+        cases = (
+            (catalog(name="other"), "name"),
+            (catalog(interface={"displayName": "Other"}), "displayName"),
+        )
+        for broken, expected in cases:
+            with self.subTest(expected=expected):
+                errors = plugin.marketplace_errors(broken, manifest(), "plugins/crw")
+                self.assertTrue(any(expected in e for e in errors), errors)
+
+    def test_entry_fields_are_required(self):
+        for mutate, expected in (
+            (lambda e: e["source"].update({"path": "./plugins/other"}), "source.path"),
+            (lambda e: e["source"].update({"source": "git"}), "source.source"),
+            (lambda e: e["policy"].update({"authentication": "ON_INSTALL"}), "ON_USE"),
+            (lambda e: e["policy"].update({"installation": "NOT_AVAILABLE"}), "AVAILABLE"),
+            (lambda e: e.pop("category"), "category"),
+        ):
+            with self.subTest(expected=expected):
+                broken = catalog()
+                mutate(broken["plugins"][0])
+                errors = plugin.marketplace_errors(broken, manifest(), "plugins/crw")
+                self.assertTrue(any(expected in e for e in errors), errors)
 
 
 class HygieneTests(unittest.TestCase):
     def test_clean_payload_passes(self):
         self.assertEqual(plugin.hygiene(payload(GOOD), "t"), [])
+
+    def test_required_files_must_ship(self):
+        for missing in (".codex-plugin/plugin.json", "LICENSE"):
+            with self.subTest(missing=missing):
+                files = {k: v for k, v in GOOD.items() if k != missing}
+                errors = plugin.hygiene(payload(files), "t")
+                self.assertTrue(any(missing in e for e in errors), errors)
 
     def test_top_level_allowlist(self):
         errors = plugin.hygiene(payload({**GOOD, "packages/relay.py": "x"}), "t")
@@ -82,7 +148,8 @@ class HygieneTests(unittest.TestCase):
 
     def test_operational_state_and_credentials(self):
         for name in (".codexclaw/sessions/s.json", "skills/crw-run/relay.sqlite3",
-                     ".env", "skills/id_rsa"):
+                     ".env", ".env.local", "skills/id_rsa", "skills/aws-credentials",
+                     "skills/client.key"):
             with self.subTest(name=name):
                 errors = plugin.hygiene(payload({**GOOD, name: "x"}), "t")
                 self.assertTrue(any("may not ship" in e for e in errors), errors)
@@ -92,7 +159,7 @@ class HygieneTests(unittest.TestCase):
                                       "put it in /home/someone/code/x"}), "t")
         self.assertTrue(any("personal path" in e for e in bad), bad)
         placeholder = plugin.hygiene(payload({**GOOD, "skills/crw-run/SKILL.md":
-                                              "put it in <worktree-root>/<project> or /example/home/x"}), "t")
+                                              "use <worktree-root>/<project> or /example/home/x"}), "t")
         self.assertEqual(placeholder, [])
 
 
@@ -107,12 +174,8 @@ class SkillSetTests(unittest.TestCase):
         errors, _ = plugin.skills(payload(files), manifest(), "t")
         self.assertTrue(any("agents/openai.yaml" in e for e in errors), errors)
 
-    def test_declaration_may_not_leave_the_plugin_root(self):
-        errors, _ = plugin.skills(payload(GOOD), manifest(skills="../../skills/"), "t")
-        self.assertTrue(errors)
-
     def test_empty_declaration_is_refused(self):
-        errors, _ = plugin.skills(payload({".codex-plugin/plugin.json": "{}"}), manifest(), "t")
+        errors, _ = plugin.skills(payload({"LICENSE": "MIT"}), manifest(), "t")
         self.assertTrue(any("ships no skill" in e for e in errors), errors)
 
 
@@ -121,13 +184,99 @@ class DigestTests(unittest.TestCase):
         first = plugin.digest(payload(GOOD))
         reordered = plugin.digest(payload(dict(reversed(list(GOOD.items())))))
         self.assertEqual(first, reordered)
-        changed = dict(GOOD, LICENSE="MIT ")
-        self.assertNotEqual(first, plugin.digest(payload(changed)))
+        self.assertNotEqual(first, plugin.digest(payload(dict(GOOD, LICENSE="MIT "))))
 
     def test_digest_covers_the_file_mode(self):
         executable = dict(payload(GOOD))
         executable["LICENSE"] = ("100755", b"MIT")
         self.assertNotEqual(plugin.digest(payload(GOOD)), plugin.digest(executable))
+
+    def test_names_cannot_be_smuggled_across_the_field_boundary(self):
+        # Without length framing a newline in a file name lets two different
+        # payloads serialise identically, and the digest stops being evidence.
+        left = {"a\n100644 x": ("100644", b"one"), "b": ("100644", b"two")}
+        right = {"a": ("100644", b"one"), "b": ("100644", b"two"), "x": ("100644", b"three")}
+        self.assertNotEqual(plugin.digest(left), plugin.digest(right))
+
+
+class SyntheticRepositoryTests(unittest.TestCase):
+    """The release payload must come from the revision, not from the working tree."""
+
+    def build(self, folder, files=None, link="plugins/crw/skills", commit=True):
+        root = Path(folder)
+        (root / "scripts/ci").mkdir(parents=True)
+        shutil.copy(SCRIPT, root / "scripts/ci/plugin.py")
+        for name, data in (files or GOOD).items():
+            path = root / "plugins/crw" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(data, encoding="utf-8")
+        (root / "LICENSE").write_text("MIT", encoding="utf-8")
+        marketplace = root / ".agents/plugins/marketplace.json"
+        marketplace.parent.mkdir(parents=True, exist_ok=True)
+        marketplace.write_text(json.dumps(catalog()), encoding="utf-8")
+        if link:
+            (root / "skills").symlink_to(link)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True)
+        if commit:
+            subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t",
+                            "commit", "-q", "-m", "package"], check=True)
+        return root
+
+    def run_in(self, root):
+        return subprocess.run([sys.executable, str(root / "scripts/ci/plugin.py")],
+                              cwd=root, capture_output=True, text=True)
+
+    def test_healthy_synthetic_package_passes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            result = self.run_in(self.build(folder))
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_committed_manifest_must_be_readable(self):
+        with tempfile.TemporaryDirectory() as folder:
+            files = dict(GOOD, **{".codex-plugin/plugin.json": "not-json"})
+            result = self.run_in(self.build(folder, files))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("plugin.json", result.stderr)
+
+    def test_committed_license_must_ship_and_match(self):
+        with tempfile.TemporaryDirectory() as folder:
+            files = {k: v for k, v in GOOD.items() if k != "LICENSE"}
+            result = self.run_in(self.build(folder, files))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("LICENSE", result.stderr)
+        with tempfile.TemporaryDirectory() as folder:
+            result = self.run_in(self.build(folder, dict(GOOD, LICENSE="Apache")))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("repository license", result.stderr)
+
+    def test_marketplace_entry_is_read_from_the_revision(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.build(folder)
+            broken = catalog()
+            broken["plugins"][0]["source"]["path"] = "./plugins/elsewhere"
+            (root / ".agents/plugins/marketplace.json").write_text(json.dumps(broken), encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t",
+                            "commit", "-q", "-m", "break"], check=True)
+            result = self.run_in(root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("source.path", result.stderr)
+
+    def test_compatibility_link_must_point_at_the_packaged_skills(self):
+        for link, expected in ((None, "must keep a link"), ("plugins/crw", "root link points at")):
+            with self.subTest(link=link), tempfile.TemporaryDirectory() as folder:
+                result = self.run_in(self.build(folder, link=link))
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(expected, result.stderr)
+
+    def test_untracked_file_in_the_plugin_root_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.build(folder)
+            (root / "plugins/crw/notes.txt").write_text("local", encoding="utf-8")
+            result = self.run_in(root)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("untracked", result.stderr)
 
 
 class CommandTests(unittest.TestCase):
@@ -159,6 +308,14 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(good.returncode, 0, good.stderr)
             self.assertEqual(json.loads(good.stdout)["expectedSkillNames"], ["crw:crw-run"])
 
+    def test_installed_payload_missing_a_required_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "crw"
+            self.write_payload(root, {k: v for k, v in GOOD.items() if k != "LICENSE"})
+            result = self.run_script("--payload", str(root))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("LICENSE", result.stderr)
+
     def test_installed_payload_with_a_symlink_is_refused(self):
         # The installer drops symlinks, so a package that relies on one loses those files.
         with tempfile.TemporaryDirectory() as folder:
@@ -172,4 +329,3 @@ class CommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -21,8 +21,14 @@ MANIFEST = ROOT / "plugins/crw/.codex-plugin/plugin.json"
 
 def skills_root():
     """The manifest's declared component path is where the skills live."""
-    declared = json.loads(MANIFEST.read_text(encoding="utf-8"))["skills"]
-    return (MANIFEST.parent.parent / declared).resolve()
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    declared = manifest.get("skills") if isinstance(manifest, dict) else None
+    if not isinstance(declared, str) or not declared.startswith("./"):
+        raise ValueError("skills must be declared as a ./ relative path")
+    relative = Path(declared[2:].strip("/"))
+    if not relative.name or relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("the declared skills path must stay inside the plugin")
+    return (MANIFEST.parent.parent / relative).resolve()
 
 
 def scalar(text):
@@ -105,7 +111,11 @@ def main():
     ).decode().split("\0")
     errors = []
     skills = 0
-    root = skills_root()
+    try:
+        root = skills_root()
+    except (OSError, ValueError) as exc:
+        print(f"{MANIFEST}: {exc}", file=sys.stderr)
+        return 1
     for name in sorted(set(files) - {""}):
         path = ROOT / name
         try:

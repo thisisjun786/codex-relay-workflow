@@ -30,8 +30,8 @@ needs a refreshed briefing. Route roadmap authoring to
 
 ## Determine the requested operation
 
-A submitted `$crw-run <Linear project link>` execution request, spelled `$crw:crw-run`
-under a plugin installation, designates or restores
+A submitted `$crw-run <Linear project link>` execution request, where a plugin
+installation exposes this skill as `crw:crw-run`, designates or restores
 this task as the fixed parent using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
 and executes the agreed project scope. Record that scope and delivery boundary,
 including its known blocked successors, rather than equating scope with today's ready
