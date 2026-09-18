@@ -232,46 +232,46 @@ SUMMARIES = {
 # early returns inside an if not (...), so no producer path reduces.
 FOLDS_BEYOND_ITS_PATHS = (
     ("ack.py", None, "_re_review_open", "function"),
-    ("daemon.py", None, "_reads_were_complete", "function"),
-    ("guard.py", None, "receipt_matches", "function"),
-    ("guard.py", None, "reserve_hold", "function"),
-    ("intent.py", None, "_ambiguity_resolved", "function"),
-    ("intent.py", None, "correlated", "function"),
-    ("intent.py", None, "covered", "function"),
-    ("intent.py", None, "identity_contested", "function"),
-    ("marker.py", None, "valid_assignment", "function"),
-    ("report.py", None, "_may_have_reached", "function"),
-    ("scope.py", None, "still_held", "function"),
-)
-
-# Folds nothing a reader of this package can see.
-FOLD_FREE_BOOLEANS = (
     ("ack.py", None, "_ruling_is_current", "function"),
     ("ack.py", None, "certainly_before", "function"),
-    ("admission.py", None, "_stored", "function"),
     ("admission.py", "Admission", "admitted", "field"),
-    ("assignment.py", None, "_any_receipt", "function"),
-    ("assignment.py", None, "_claimed", "function"),
     ("assignment.py", None, "_criteria_current", "function"),
     ("bridge_adapter.py", None, "_scan_listing", "function"),
     ("cli.py", None, "_reads_no_selected_store", "function"),
     ("daemon.py", None, "_already_observed", "function"),
-    ("daemon.py", None, "_alternate", "function"),
+    ("daemon.py", None, "_reads_were_complete", "function"),
     ("daemon.py", None, "_worth_polling", "function"),
+    ("guard.py", None, "receipt_matches", "function"),
+    ("guard.py", None, "reserve_hold", "function"),
     ("hostadapter.py", "TokenScan", "exhausted", "field"),
     ("hostadapter.py", "TokenScan", "found", "field"),
-    ("lifecycle.py", None, "is_busy", "function"),
-    ("lifecycle.py", None, "may_send", "function"),
+    ("intent.py", None, "_ambiguity_resolved", "function"),
+    ("intent.py", None, "correlated", "function"),
+    ("intent.py", None, "covered", "function"),
+    ("intent.py", None, "identity_contested", "function"),
     ("manifest.py", None, "_is_access_failure", "function"),
+    ("marker.py", None, "valid_assignment", "function"),
     ("marker.py", None, "valid_segment", "function"),
     ("reconcile.py", None, "_is_current", "function"),
+    ("report.py", None, "_may_have_reached", "function"),
     ("scope.py", None, "acquire", "function"),
-    ("scope.py", None, "at_least", "function"),
+    ("scope.py", None, "still_held", "function"),
     ("service.py", None, "lock_is_held", "function"),
     ("service.py", None, "send", "function"),
+    ("transport.py", "TransportFacts", "retry_safe", "field"),
+)
+
+# Reaches its value down one producer path that folds nothing.
+FOLD_FREE_BOOLEANS = (
+    ("admission.py", None, "_stored", "function"),
+    ("assignment.py", None, "_any_receipt", "function"),
+    ("assignment.py", None, "_claimed", "function"),
+    ("daemon.py", None, "_alternate", "function"),
+    ("lifecycle.py", None, "is_busy", "function"),
+    ("lifecycle.py", None, "may_send", "function"),
+    ("scope.py", None, "at_least", "function"),
     ("service.py", None, "stop_requested", "function"),
     ("service.py", None, "usable", "function"),
-    ("transport.py", "TransportFacts", "retry_safe", "field"),
 )
 
 # A write context naming a declared boolean that is not one of the producer forms above. All
@@ -283,111 +283,262 @@ UNACCOUNTED_OCCURRENCES = (
     ("guard.py", 389, "found", "hold_counters"),
 )
 
-# A read of a summary whose asserted value this reader cannot attribute.
+# A read of a folded boolean whose asserted value this reader cannot attribute.
 UNRESOLVED_READS = (
     ("test_daemon_cadence.py", "test_a_real_run_spends_its_deadline_polling", "quiet",
      "reached through GeneratorExp/Call"),
+    ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
+     "_reads_no_selected_store", "reached through assertIs"),
+    ("test_service.py", "holder", "lock_is_held", "no enclosing assertion"),
 )
 
-# Every place this suite measures something with a summary: module, test, summary, the value
-# asserted, the assertion verbatim, and the verdict a reader wrote after following the summary
-# into what computes it. The assertion is part of the key on purpose - keying by test name and
-# polarity alone let a case be replaced by a duplicate of its neighbour with the inventory
-# unchanged, which is how a derived list quietly narrows.
+# Every place this suite measures something with a folded boolean: module, test, symbol, the
+# value asserted, the assertion verbatim, and the verdict a reader wrote after following the
+# symbol into what computes it. The assertion is part of the key on purpose - keying by test
+# name and polarity alone let a case be replaced by a duplicate of its neighbour with the
+# inventory unchanged, which is how a derived list quietly narrows.
+#
+# Both kinds are here. For a symbol in SUMMARIES the rule knows which value one input alone can
+# produce, so it can say which side is cheap. For one in FOLDS_BEYOND_ITS_PATHS it does not, and
+# the verdict is the only thing that weighs the site at all.
 SUMMARY_SITES = (
+    ("test_ack_reconcile.py", "test_a_turn_starting_in_the_same_second_as_its_send_is_not_refused",
+     "certainly_before", False, "self.assertFalse(certainly_before(1789420929, sent))",
+     "the function is the subject and both arguments are literals, so the case is identified;"
+     " its two parse-failure paths return the same value and no case here reaches them"),
+    ("test_ack_reconcile.py", "test_a_genuinely_earlier_whole_second_turn_is_still_refused",
+     "certainly_before", True, "self.assertTrue(certainly_before(1789420920, sent))",
+     "this value is reachable only through the chronology comparison, so it pins the branch"),
+    ("test_ack_reconcile.py", "test_a_genuinely_earlier_whole_second_turn_is_still_refused",
+     "certainly_before", True, "self.assertTrue(certainly_before(1789420928, sent))",
+     "the boundary one second inside the precision window, named apart from the case above"),
+    ("test_ack_reconcile.py", "test_a_later_turn_is_never_refused",
+     "certainly_before", False, "self.assertFalse(certainly_before(1789420930, sent))",
+     "false here is also what a parse failure answers, and nothing in the case distinguishes"
+     " them; the literals are well formed, so the reading rests on the argument rather than on"
+     " the assertion"),
+    ("test_bridge_adapter.py", "test_a_token_beyond_the_first_page_is_found_with_the_forward_cursor",
+     "found", True, "self.assertTrue(scan.found)",
+     "the scan result is the subject, and the token it found is asserted on the next line"),
+    ("test_bridge_adapter.py", "test_a_bounded_scan_reports_that_it_did_not_exhaust_the_history",
+     "found", False, "self.assertFalse(scan.found)",
+     "paired with the exhausted assertion below it, which is what separates a bounded stop from"
+     " an absence"),
+    ("test_bridge_adapter.py", "test_a_bounded_scan_reports_that_it_did_not_exhaust_the_history",
+     "exhausted", False,
+     "self.assertFalse(scan.exhausted, 'a bounded stop is not proof of absence')",
+     "the field is the subject: this is the distinction the record exists to carry"),
+    ("test_bridge_adapter.py", "test_an_exhausted_scan_says_so", "found", False,
+     "self.assertFalse(scan.found)",
+     "paired with the exhausted assertion below, the positive control for the case above"),
+    ("test_bridge_adapter.py", "test_an_exhausted_scan_says_so", "exhausted", True,
+     "self.assertTrue(scan.exhausted)", "the field is the subject"),
+    ("test_bridge_adapter.py", "_assert_no_start", "retry_safe", True,
+     "self.assertTrue(facts.retry_safe)",
+     "a shared helper rather than a case: it asserts the classification beside the absence of a"
+     " transport call, and its callers name the refusal each is about"),
+    ("test_bridge_adapter.py",
+     "test_a_non_never_approval_policy_is_inbox_only_not_a_settings_mismatch", "retry_safe",
+     False, "self.assertFalse(facts.retry_safe, 'a closed push channel is not a retry loop')",
+     "paired: the refusal code is asserted beside it, so this names which of the several"
+     " not-retry-safe refusals produced the value"),
+    ("test_bridge_adapter.py", "test_a_withheld_send_classifies_as_busy_and_retry_safe",
+     "retry_safe", True,
+     "self.assertTrue(facts.retry_safe, 'a send that never happened must stay retryable')",
+     "paired with the busy classification asserted beside it"),
     ("test_daemon.py", "test_two_consecutive_unchanged_ticks_write_no_journal_rows", "quiet",
      True, "self.assertTrue(report.quiet)",
-     "the flag is the subject of the test, and this polarity pins all seven counters it folds;"
-     " the journal-row count beside it covers skipped and notes, which quiet does not fold"),
-    ("test_daemon.py", "test_a_tick_that_changed_something_is_not_quiet", "quiet",
-     False, "self.assertFalse(report.quiet)",
+     "the flag is the subject, and this value pins the seven counters it folds; the two it does"
+     " not fold, skipped and notes, are asserted separately beside it because the journal-row"
+     " count does not cover them"),
+    ("test_daemon.py", "test_a_tick_that_changed_something_is_not_quiet", "quiet", False,
+     "self.assertFalse(report.quiet)",
      "the flag is the subject - the name is about quiet itself - and assertEqual(report"
      ".delivered, 1) beside it names which of the seven counters moved"),
     ("test_daemon.py", "test_a_failed_turn_suppresses_the_staged_claim_instead_of_delivering_it",
      "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
-     "same meaning: deliverable folds a row existing with its stage final, and the stage is"
-     " asserted suppressed two lines below, so an absent row cannot read as a suppressed one"),
+     "paired: deliverable folds a row existing with its stage final, and the stage is asserted"
+     " suppressed two lines below, so an absent row cannot read as a suppressed one"),
     ("test_fairness.py", "test_cancelling_one_assignment_leaves_the_others_served", "quiet",
      False, "self.assertFalse(report.quiet)",
      "redundant rather than wrong: the condition the name states is carried by the send-list"
      " assertions above it, and this line on its own pins none of the seven counters"),
-    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "named",
-     False, "self.assertFalse(marker.named(blank))",
+    ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
+     "_reads_no_selected_store", True,
+     "self.assertTrue(cli._reads_no_selected_store(Namespace(handler=cli.cmd_intent_register,"
+     " db_path='/named/relay.sqlite3')))",
+     "the predicate is the subject and the namespace is written out, so the case names which of"
+     " its three branches it is about"),
+    ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
+     "_reads_no_selected_store", True,
+     "self.assertTrue(cli._reads_no_selected_store(Namespace(handler=cli.cmd_intent_declare,"
+     " no_db_path=True)))",
+     "the documented exception, named apart from the case above"),
+    ("test_guard_property.py", "test_marker_commands_are_exempt_from_the_store_selection_refusal",
+     "_reads_no_selected_store", False,
+     "self.assertFalse(cli._reads_no_selected_store(Namespace(handler=cli.cmd_emit)))",
+     "the negative control: a command outside the marker set"),
+    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "named", False,
+     "self.assertFalse(marker.named(blank))",
      "the function is the subject; a blank fails both of its conjuncts and the cases enumerate"
      " the blanks rather than asking the summary to tell them apart"),
-    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "same_identity",
-     False, "self.assertFalse(marker.same_identity(blank, blank))",
-     "the function is the subject and both arguments are written out, so this polarity names"
-     " the case rather than standing in for it"),
-    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "same_identity",
-     False, "self.assertFalse(marker.same_identity(blank, 'a-real-identity'))",
+    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "same_identity", False,
+     "self.assertFalse(marker.same_identity(blank, blank))",
+     "the function is the subject and both arguments are written out, so this value names the"
+     " case rather than standing in for it"),
+    ("test_guard_property.py", "test_a_blank_never_equals_an_identity", "same_identity", False,
+     "self.assertFalse(marker.same_identity(blank, 'a-real-identity'))",
      "as above, and the asymmetric pair is the case a symmetric one would miss"),
-    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
-     True, "self.assertTrue(is_within('/a/b', '/a/b'))",
+    ("test_intent.py", "test_correlation_requires_the_preimage_the_intent_hashed", "correlated",
+     False, "self.assertFalse(intent.correlated(self.facts(), SESSION))",
+     "paired with the positive below it in the same case, which is what separates a wrong"
+     " preimage from no claim at all"),
+    ("test_intent.py", "test_correlation_requires_the_preimage_the_intent_hashed", "correlated",
+     True, "self.assertTrue(intent.correlated(self.facts(), 'second'))",
+     "the positive control for the line above"),
+    ("test_intent.py", "test_t7_a_second_claim_after_a_bind_contests_the_assignment",
+     "identity_contested", False, "self.assertFalse(intent.identity_contested(self.facts()))",
+     "the before half of a before-and-after pair in one case, so the transition is what is"
+     " measured rather than either value alone"),
+    ("test_intent.py", "test_t7_a_second_claim_after_a_bind_contests_the_assignment",
+     "identity_contested", True, "self.assertTrue(intent.identity_contested(self.facts()))",
+     "the after half; the second claim between them is the change under test"),
+    ("test_intent.py", "test_t16_a_competing_claim_that_leaves_its_session_blank_still_competes",
+     "identity_contested", True, "self.assertTrue(intent.identity_contested(self.facts()))",
+     "the blank-session branch the docstring of identity_contested names, reached only through"
+     " same_identity refusing to match nobody with nobody"),
+    ("test_intent.py", "test_a_resolution_clears_a_contest_only_by_naming_the_bound_identity",
+     "identity_contested", True, "self.assertTrue(intent.identity_contested(self.facts()))",
+     "the before half of a pair, with a resolution naming a competitor applied between them"),
+    ("test_intent.py", "test_a_resolution_clears_a_contest_only_by_naming_the_bound_identity",
+     "identity_contested", False, "self.assertFalse(intent.identity_contested(self.facts()))",
+     "the after half; only the resolution naming the bound identity may produce it"),
+    ("test_intent.py", "test_coverage_needs_the_digest_to_match_the_content", "identity_contested",
+     True, "self.assertTrue(intent.identity_contested(self.facts()))",
+     "used as the observable for a digest mismatch, and covered() is asserted directly beside"
+     " it, which is the quantity the name is about"),
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within", True,
+     "self.assertTrue(is_within('/a/b', '/a/b'))",
      "the disjunction is the contract, and this case names its first branch, a path equal to"
      " the root"),
-    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
-     True, "self.assertTrue(is_within('/a/b', '/a/b/c'))",
-     "the second branch, a path descending from the root; between them the two cases cover"
-     " both sides of the or rather than either one twice"),
-    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
-     False, "self.assertFalse(is_within('/a/b', '/a/bc'))",
-     "this polarity pins both branches at once, and the sibling-with-a-longer-name is the"
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within", True,
+     "self.assertTrue(is_within('/a/b', '/a/b/c'))",
+     "the second branch, a path descending from the root; between them the two cases cover both"
+     " sides of the or rather than either one twice"),
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within", False,
+     "self.assertFalse(is_within('/a/b', '/a/bc'))",
+     "this value pins both branches at once, and the sibling-with-a-longer-name is the"
      " string-prefix trap the function exists to refuse"),
-    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
-     False, "self.assertFalse(is_within('/a/b', '/a/bc/d'))",
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within", False,
+     "self.assertFalse(is_within('/a/b', '/a/bc/d'))",
      "the same trap one component deeper, where a prefix test would still answer yes"),
-    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within",
-     False, "self.assertFalse(is_within('/a/b', '/a'))",
+    ("test_manifest_scope.py", "test_component_containment_not_string_prefix", "is_within", False,
+     "self.assertFalse(is_within('/a/b', '/a'))",
      "containment in the wrong direction; an ancestor is not inside its own descendant"),
-    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
-     False, "self.assertFalse(marker.same_identity(None, None))",
+    ("test_manifest_scope.py", "test_a_broken_lease_refuses_the_read", "still_held", False,
+     "self.assertFalse(handle._lease.still_held())",
+     "false here is also what an unheld lease and an OSError answer, and the case does not"
+     " separate them; what carries the name is the refusal asserted beside it, so this line is"
+     " a fixture check rather than the claim"),
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity", False,
+     "self.assertFalse(marker.same_identity(None, None))",
      "the function is the subject and the pair is written out, so this names the case"),
-    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
-     False, "self.assertFalse(marker.same_identity('', ''))",
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity", False,
+     "self.assertFalse(marker.same_identity('', ''))",
      "as above, for the empty string rather than the absent value"),
-    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
-     False, "self.assertFalse(marker.same_identity('  ', '  '))",
-     "as above, for whitespace, which is the member named() strips rather than rejects"),
-    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
-     False, "self.assertFalse(marker.same_identity('a', None))",
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity", False,
+     "self.assertFalse(marker.same_identity('  ', '  '))",
+     "as above, for whitespace, which named() strips rather than rejects"),
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity", False,
+     "self.assertFalse(marker.same_identity('a', None))",
      "as above, asymmetric, so a blank on one side alone is enough"),
-    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity",
-     True, "self.assertTrue(marker.same_identity('a', 'a'))",
-     "this polarity pins both named() conjuncts and the equality, which is the whole function;"
-     " it is the positive control that stops the four negatives passing on a broken summary"),
-    ("test_marker.py", "test_nothing_names_nothing", "named",
-     False, "self.assertFalse(marker.named(value), repr(value))",
+    ("test_marker.py", "test_two_records_naming_nothing_never_match", "same_identity", True,
+     "self.assertTrue(marker.same_identity('a', 'a'))",
+     "this value pins both named() conjuncts and the equality, which is the whole function; it"
+     " is the positive control that stops the four negatives passing on a broken summary"),
+    ("test_marker.py", "test_nothing_names_nothing", "named", False,
+     "self.assertFalse(marker.named(value), repr(value))",
      "table-driven over a written list of unnamed values, and the message names which member"
      " failed, so the summary is the subject and the case is identified"),
-    ("test_multi_parent_isolation.py",
-     "test_pausing_then_archiving_a_stops_neither_b_nor_the_shared_daemon", "quiet",
+    ("test_registration_contention.py",
+     "test_two_concurrent_binds_leave_one_winner_and_one_recorded_conflict", "identity_contested",
+     True,
+     "self.assertTrue(intent.identity_contested(facts), 'a recorded conflict left the assignment"
+     " reading as uncontested, so nobody has to adjudicate an identity two coordinators both"
+     " tried to bind')",
+     "paired: the recorded conflict itself is asserted above, and this line is about what the"
+     " predicate makes of it"),
+    ("test_registration_contention.py",
+     "test_two_concurrent_binds_leave_one_winner_and_one_recorded_conflict", "identity_contested",
      False,
-     "self.assertFalse(first.quiet, 'the shared daemon went quiet when one project paused')",
-     "PROXY, and the instance this inventory was built for: it is the only evidence that B"
-     " kept being served while A was paused, and any one of seven counters satisfies it, so an"
-     " observation or a reconciliation alone passes it with nothing delivered to B"),
+     "self.assertFalse(intent.identity_contested(resolved), 'a resolution naming the bound"
+     " identity did not settle the contest it covers')",
+     "the after half of the pair, with the resolution written out between them"),
+    ("test_service.py", "test_enable_is_refused_while_a_foreign_supervisor_is_shutting_down",
+     "lock_is_held", True,
+     "self.assertTrue(service.lock_is_held(), 'the fixture needs the lock still held')",
+     "the message says what it is: a fixture precondition, not the claim the test carries"),
+    ("test_service.py", "test_disable_is_refused_while_a_foreign_supervisor_is_shutting_down",
+     "lock_is_held", True,
+     "self.assertTrue(service.lock_is_held(), 'the fixture needs the lock still held')",
+     "as above, a fixture precondition for the sibling case"),
+    ("test_service.py",
+     "test_stop_writes_no_request_for_a_lock_held_by_an_unidentified_process", "lock_is_held",
+     True, "self.assertTrue(service.lock_is_held())",
+     "a fixture precondition; the claim is the absent stop request asserted below it"),
+    ("test_service.py", "test_stop_terminates_a_process_this_installation_owns", "lock_is_held",
+     False, "self.assertFalse(service.lock_is_held())",
+     "false is also what an absent lock file and an unopenable one answer; here the file was"
+     " created by the fixture, so the reading rests on the fixture rather than on the assertion,"
+     " and the process outcome asserted beside it is what carries the name"),
+    ("test_service.py", "test_a_stale_record_does_not_block_a_fresh_start", "lock_is_held", False,
+     "self.assertFalse(service.lock_is_held())",
+     "as above: the stale record is written by the fixture and the fresh start asserted beside"
+     " it is the claim"),
+    ("test_service.py", "test_a_worker_that_exits_is_replaced_on_the_same_store", "lock_is_held",
+     False,
+     "self.assertFalse(service.lock_is_held(), 'the supervisor released on the way out')",
+     "the release is the named condition and this is the only line about it; the two other ways"
+     " to reach false need an absent or unopenable lock file, and the supervisor created one"),
+    ("test_settings_preservation.py", "test_an_unrecognised_refusal_code_stays_uncertain",
+     "retry_safe", False, "self.assertFalse(facts.retry_safe)",
+     "paired: the refusal code and the uncertainty are asserted beside it"),
+    ("test_settings_preservation.py",
+     "test_an_absent_policy_withholds_while_a_reported_one_closes_the_channel", "retry_safe", True,
+     "self.assertTrue(absent.retry_safe)",
+     "one of a matched pair in the same case, and the pair is the contrast the name states"),
+    ("test_settings_preservation.py",
+     "test_an_absent_policy_withholds_while_a_reported_one_closes_the_channel", "retry_safe",
+     False, "self.assertFalse(reported.retry_safe)", "the other half of that pair"),
+    ("test_settings_preservation.py", "test_approval_policy_is_decided_before_the_generic_mismatch",
+     "retry_safe", False, "self.assertFalse(facts.retry_safe)",
+     "paired: which refusal won the precedence is asserted beside it, and that is the name"),
+    ("test_settings_preservation.py", "test_every_settings_refusal_is_a_pre_send_refusal",
+     "retry_safe", True, "self.assertTrue(facts.retry_safe)",
+     "inside a loop over a written list of refusals, with the pre-send state asserted beside it"),
     ("test_wp1_regressions.py", "test_a_claim_from_a_live_turn_is_accepted_but_staged",
      "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
      "paired: the stage is asserted staged on the line above and the turn status below, so an"
      " absent row cannot read as a staged one"),
     ("test_wp1_regressions.py", "test_normal_completion_finalizes_the_staged_claim_exactly_once",
      "deliverable", True, "self.assertTrue(self.intake.deliverable(payload['eventId']))",
-     "this polarity pins both conjuncts, and the finalized list beside it names the event"),
-    ("test_wp1_regressions.py", "test_a_failed_ending_suppresses_the_staged_claim",
-     "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
+     "this value pins both conjuncts, and the finalized list beside it names the event"),
+    ("test_wp1_regressions.py", "test_a_failed_ending_suppresses_the_staged_claim", "deliverable",
+     False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
      "paired: the row's stage is asserted suppressed two lines below"),
     ("test_wp1_regressions.py", "test_an_interrupted_ending_suppresses_the_staged_claim",
      "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
-     "PROXY, found by this inventory rather than by review: deliverable is equally false for a"
-     " row that is absent, and alone among its four siblings this case asserts no stage, so it"
-     " cannot tell suppression from the claim never having been recorded at all"),
-    ("test_wp1_regressions.py", "test_a_still_running_turn_leaves_the_claim_staged",
-     "deliverable", False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
-     "paired: result['pending'] above it names the condition the test is named for"),
+     "paired now, and it was not before: this inventory found it asserting nothing but the"
+     " summary, which is equally false for a row that is absent, so it could not tell"
+     " suppression from the claim never having been recorded. The stage is asserted beside it"),
+    ("test_wp1_regressions.py", "test_a_still_running_turn_leaves_the_claim_staged", "deliverable",
+     False, "self.assertFalse(self.intake.deliverable(payload['eventId']))",
+     "paired now. result['pending'] above it is returned before resolve_staged reads the stored"
+     " claim, so it was true for a suppressed row too and named nothing; review measured that."
+     " The stage is asserted beside it"),
     ("test_wp1_regressions.py", "test_a_receipt_from_a_completed_turn_is_final_immediately",
      "deliverable", True, "self.assertTrue(self.intake.deliverable(payload['eventId']))",
-     "this polarity pins both conjuncts and the stage is asserted final above it"),
+     "this value pins both conjuncts and the stage is asserted final above it"),
 )
 
 
@@ -564,7 +715,7 @@ def declared_boolean_rows():
             if weak_value(expression) is not None:
                 touched |= {x.attr for x in ast.walk(expression) if isinstance(x, ast.Attribute)}
         siblings = tuple(sorted(set(order) - touched - {name})) if folded else ()
-        beyond = _folds_outside_its_paths(module, name, kind)
+        beyond = _folds_outside_its_paths(paths, module, name, kind)
         rows[key] = (folded, unreduced if folded else (), siblings, beyond)
     return rows
 
@@ -572,10 +723,11 @@ def declared_boolean_rows():
 def partitioned_booleans():
     """Every declared boolean in exactly one of three lists, so none is classified out.
 
-    A symbol that folds is a summary and carries its whole row. A symbol that folds somewhere
-    this rule cannot follow is named, because that fold would otherwise leave no trace at all.
-    Everything else folds nothing a reader of this package can see. Membership is derived; a
-    symbol that starts folding moves lists and fails this module until somebody says so.
+    A symbol whose fold reduces to a weak value is a summary and carries its whole row. A
+    symbol that folds where the rule cannot compute that value is named anyway, because a fold
+    nobody can weigh is still a fold. Everything else reaches its value one way, down one
+    producer path that folds nothing. Membership is derived; a symbol that starts folding moves
+    lists and fails this module until somebody says so.
     """
     rows = declared_boolean_rows()
     summaries = {key: row for key, row in rows.items() if row[0]}
@@ -585,24 +737,29 @@ def partitioned_booleans():
     return summaries, beyond, plain
 
 
-def _folds_outside_its_paths(module, name, kind):
-    """Does this symbol fold where the reduction rule cannot follow it?
+def _folds_outside_its_paths(paths, module, name, kind):
+    """Does this symbol fold where the reduction rule cannot compute a weak value?
 
-    guard.receipt_matches is the case this exists for: four checks folded through early
-    returns inside an if not (...), so no producer path reduces and the fold would otherwise
-    leave no trace in the inventory at all.
+    Two shapes, and the second was missing until review found it. The first is a fold the rule
+    cannot follow: guard.receipt_matches runs four checks through early returns inside an
+    if not (...), so no producer path reduces. The second needs no boolean operator at all -
+    more than one producer path IS a fold, because the value summarises which branch was taken.
+    ack.certainly_before folds two parse failures and a chronology comparison that way and has
+    no BoolOp anywhere, and calling that fold-free was a misclassification rather than a
+    declared blind spot.
     """
+    if kind == "function":
+        mine = [p for p in paths if p[0] == name and p[2] == "return" and p[1] == module]
+    else:
+        mine = [p for p in paths if p[0] == name and p[2] != "return"]
+    if len(mine) >= 2:
+        return True
     if kind != "function":
         return False
     tree = ast.parse((SOURCE / module).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == name and _is_bool(node.returns):
-            reduced = any(
-                weak_value(inner.value) is not None
-                for inner in ast.walk(node)
-                if isinstance(inner, ast.Return) and inner.value is not None
-            )
-            return (not reduced) and any(isinstance(x, ast.BoolOp) for x in ast.walk(node))
+            return any(isinstance(x, ast.BoolOp) for x in ast.walk(node))
     return False
 
 
@@ -627,16 +784,21 @@ def _asserted_value(call, read):
                 return right.value if name in ("assertEqual", "assertIs") else not right.value
     return None
 
-
 def summary_reads():
     """Every place this suite measures something with a summary, and every read it cannot read.
 
     One entry per occurrence rather than per distinct text: two identical assertions in one
     test are two rows, so deleting one of them is a failure rather than a silent narrowing.
+
+    Both kinds of folded boolean are in scope. For a summary the rule knows which value is
+    cheap; for one that folds beyond its paths it does not, and a reader supplies what the rule
+    cannot. Leaving the second kind out would put the larger half of the class outside the
+    reach while the inventory still called itself complete.
     """
-    summaries = boolean_summaries()
-    fields = {key[2] for key in summaries if key[3] == "field"}
-    functions = {key[2] for key in summaries if key[3] == "function"}
+    summaries, beyond, _plain = partitioned_booleans()
+    folded = list(summaries) + list(beyond)
+    fields = {key[2] for key in folded if key[3] == "field"}
+    functions = {key[2] for key in folded if key[3] == "function"}
     sites, unresolved = [], []
     for path in sorted(TESTS.glob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))

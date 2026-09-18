@@ -75,7 +75,7 @@ overstatement this map exists to avoid.
 |---|---|---|
 | `test_registration_contention.py` | 4 | 1 |
 | `test_failure_recovery.py` | 6 | 2, 3 |
-| `test_multi_parent_isolation.py` | 7 | 5, 6 |
+| `test_multi_parent_isolation.py` | 8 | 5, 6 |
 | `test_operational_scale.py` | 8 | 7, 8 |
 | `test_regression_map.py` | 9 | 9, and the sweep's own reach |
 
@@ -116,8 +116,21 @@ new work inherits the limit: nothing there observes four real hours, so nothing 
 speaks to process memory, write-ahead-log growth, descriptor or socket drift, or a host
 that answers differently after hours of uptime. A `FakeWorker` exits in microseconds
 and never opens the store, so the crossing shows the supervisor preserving records across
-replacements. Whether a replacement worker reads them back is a separate question,
-answered by a real process in `test_operational_scale.py` and reported separately.
+replacements.
+
+Whether a replacement worker reads those records back is a separate question, and this row
+used to answer it with one word for three different tables. `ARealWorkerReadsTheHandoffBack`
+in `test_operational_scale.py` settles two of them in a real process against a socket that
+does not exist: the relationship, which it names in a tick note and writes a poll observation
+for, and an acknowledgement left at `unverified_turn`, which `ack.verify_pending_acks` is
+the only reader of in a tick - it names that event and records why it could not promote it,
+and the `ack_evidence` row is asserted as a CHANGE because `acknowledge()` already wrote
+one when the intent was authored.
+
+The owed coordination write is not among them. No tick pass reads `sync_outbox`;
+`SyncOutbox.next` and `claim` are reached through their own commands and nothing in that
+module runs one. So the crossing shows the supervisor carrying that row, a real worker reads
+back the other two, and nobody here reads back the outbox job. That is the whole claim now.
 
 ## Scale, stated as a bound rather than a guarantee
 
@@ -199,8 +212,14 @@ package declares is partitioned into one of three lists and the suite checks the
 total: the ones that fold, the ones that fold where the reduction rule cannot follow, and the
 ones that fold nothing. Every place the suite measures something with one of the first kind is
 listed, keyed by the assertion's own text, with a verdict written beside it. Today that reads
-47 booleans as 10 / 11 / 26, and 25 measured places; those counts come from the suite, and a
+47 booleans as 10 / 11 / 26, and 24 measured places; those counts come from the suite, and a
 number here that disagreed with it would fail there.
+
+Its first run produced two findings, which is the answer to whether it is bookkeeping.
+It named the isolation case this work was opened for, and it named a second one review
+had not: `test_wp1_regressions.py` asserted an interrupted claim was suppressed using
+only `deliverable()`, which is equally false for a claim that was never recorded, and
+alone among its four siblings it asserted no stage beside it. Both are closed here.
 
 What the derivation does NOT do, said plainly because the alternative is the overstatement this
 section exists to end: it does not decide whether a place is a proxy. It supplies the reach and

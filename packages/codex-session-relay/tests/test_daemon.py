@@ -54,6 +54,11 @@ class QuietTicks(DaemonTestCase):
         report = self.daemon.tick()
         self.assertEqual(self.journal_rows(), after_first, "an unchanged tick wrote nothing")
         self.assertTrue(report.quiet)
+        # quiet folds seven counters and leaves these two out, so a tick that suppressed a send
+        # or wrote a note is quiet and writes no journal row either. Neither assertion above
+        # covers them; they are named here rather than implied.
+        self.assertEqual(report.skipped, 0, "a suppressed send is not an unchanged tick")
+        self.assertEqual(report.notes, [], f"a tick that had something to say: {report.notes}")
 
     def test_a_tick_that_changed_something_is_not_quiet(self):
         _relationship, event_id = self.queued_event()
