@@ -6,9 +6,14 @@ a row that adds evidence names the new test. Clock provenance is a column becaus
 injected clock reproduces arithmetic and ordering and never elapsed time, and because
 some of the reused evidence is real-time.
 
-`tests/test_regression_map.py` checks this file against the suite: every class named
-below must exist in the module it is attributed to, every module must exist, and the
-clock column must agree with which modules actually wait on something real.
+`tests/test_regression_map.py` checks this file against the suite, and the list of what
+it checks is itself a claim that can go stale, so it is kept current here. Every class
+named below must exist in the module it is attributed to; every module must exist; the
+clock column must agree with which modules actually wait on something real; every number
+this file prints, the per-module case counts and the sweep's own counts, is read back out
+of it and compared against what the suite produces. That module also derives two
+inventories the prose used to assert: which booleans the suite measures with, and where it
+injects store faults and what interval each one reaches.
 
 ## What the two named landings actually changed
 
