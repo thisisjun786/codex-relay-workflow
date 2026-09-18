@@ -512,13 +512,20 @@ def load_start(path, *, environment=None, mode="preflight"):
     if launched.timestamp() > time.time():
         raise Refused("the supervisor's launchedAt is in the future",
                       launchedAt=field(record, "supervisor", "launchedAt"))
-    # A preflight runs immediately before the dispatch that opens the window, so a record whose
-    # window has already closed is a finished trial's record being started from again.
-    closes = field(record, "window", "closesAt")
-    if (closes not in (MISSING, None)
-            and moment(closes, "window.closesAt").timestamp() < time.time()):
-        raise Refused("this record's trial window has already closed, so it is not a record to"
-                      " start from", closesAt=closes, now=stamp())
+    # A preflight runs immediately before the dispatch that opens the window, so the whole window
+    # is required and it has to be ahead: a record whose window has opened is a trial already
+    # running, and starting from it again dispatches a second time into one measured interval.
+    window = field(record, "window")
+    if not isinstance(window, dict):
+        raise Refused("the start record declares no window", window=shown(window))
+    opens = moment(window.get("opensAt"), "window.opensAt")
+    closes = moment(window.get("closesAt"), "window.closesAt")
+    if closes <= opens:
+        raise Refused("this record's window has no duration",
+                      opensAt=window.get("opensAt"), closesAt=window.get("closesAt"))
+    if opens.timestamp() < time.time():
+        raise Refused("this record's trial window has already opened, so it is not a record to"
+                      " start from", opensAt=window.get("opensAt"), now=stamp())
     number(field(record, "supervisor", "minimumAliveSeconds"), "supervisor.minimumAliveSeconds",
            minimum=0)
 
@@ -1093,7 +1100,9 @@ def reading_boundaries(record, relay):
     scopes = [b.get("scopeRef") for b in boundaries]
     roots = [str(resolve(b.get("repositoryRoot"))) for b in boundaries]
     tasks = [p.get("taskId") for b in boundaries for p in b.get("participants") or []]
-    distinct = (len(boundaries) >= 2 and len(set(keys)) == len(keys)
+    stated = all(isinstance(value, str) and value.strip()
+                 for value in keys + scopes + tasks)
+    distinct = (stated and len(boundaries) >= 2 and len(set(keys)) == len(keys)
                 and len(set(scopes)) == len(scopes) and len(set(roots)) == len(roots)
                 and len(set(tasks)) == len(tasks))
     cells.append(cell("declaration", VERIFIED if distinct else NOT_VERIFIED, provenance=READ,
@@ -1103,7 +1112,7 @@ def reading_boundaries(record, relay):
                                 + ", participants " + json.dumps(tasks)
                                 + ". Two boundaries in one repository are not two repository"
                                   " identities, and two sharing a participant are not two"
-                                  " parents"),
+                                  " parents. A blank identity is not one either"),
                       measured_at=stamp()))
 
     for boundary in boundaries:

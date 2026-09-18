@@ -2184,7 +2184,7 @@ class SixteenthHostedRound(TrialCase):
         self.world.flush()
         refused = self.world.refusal()
         self.assertIsNotNone(refused)
-        self.assertIn("already closed", refused.reason)
+        self.assertIn("already opened", refused.reason)
 
     def test_the_ledger_still_grades_that_same_record(self):
         now = time.time()
@@ -2214,6 +2214,55 @@ class SixteenthHostedRound(TrialCase):
         answer = startup.launcher_unchanged(record, relay)
         self.assertFalse(answer["passed"])
         self.assertTrue(answer["unreadableBeforeAProbe"])
+
+
+class SeventeenthHostedRound(TrialCase):
+    """A trial already running, a window that is not there, and identities left blank."""
+
+    def test_a_trial_already_running_cannot_be_started_again(self):
+        now = time.time()
+        self.world.record["window"] = {"opensAt": startup.stamp(now - 60),
+                                       "closesAt": startup.stamp(now + 600)}
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("already opened", refused.reason)
+
+    def test_a_record_with_no_window_or_an_unreadable_one_is_refused(self):
+        for window in (None, {}, {"opensAt": "not a time", "closesAt": "also not"},
+                       {"opensAt": startup.stamp(time.time() + 60)},
+                       "a window"):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            if window is None:
+                world.record.pop("window")
+            else:
+                world.record["window"] = window
+            world.flush()
+            self.assertIsNotNone(world.refusal(), repr(window) + " was accepted")
+
+    def test_a_window_with_no_duration_is_refused_at_the_start_too(self):
+        instant = startup.stamp(time.time() + 120)
+        self.world.record["window"] = {"opensAt": instant, "closesAt": instant}
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("no duration", refused.reason)
+
+    def test_blank_boundary_identities_are_not_identities(self):
+        for key in ("issueKey", "scopeRef"):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.record["boundaries"][1][key] = ""
+            world.captures["register-B.json"]["issueKey"] = (
+                "" if key == "issueKey" else world.captures["register-B.json"]["issueKey"])
+            world.captures["register-B.json"]["authorizedScope"]["scopeRef"] = (
+                "" if key == "scopeRef"
+                else world.captures["register-B.json"]["authorizedScope"]["scopeRef"])
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(cells_of(document, "boundaries")["declaration"]["value"],
+                             NOT_VERIFIED, "a blank " + key + " was read as an identity")
 
 
 if __name__ == "__main__":                                           # pragma: no cover
