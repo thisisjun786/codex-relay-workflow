@@ -3041,7 +3041,7 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
             emit(dict(standing, refused="the missing half of this promotion could not be"
                                         " written: "
                                         + type(error).__name__ + ": " + str(error),
-                      pointerRestored=put_back))
+                      pointerRestored=put_back, **_outstanding_ownership(put_back)))
             return EXIT_REFUSED
         landed = pointer.names(pointer_path, environment)
         if landed is not True:
@@ -3051,7 +3051,7 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
                                         data["definitionVersion"], owned_before)
             emit(dict(standing, refused="the pointer did not land on the environment the host"
                                         " record already selects",
-                      pointerRestored=put_back))
+                      pointerRestored=put_back, **_outstanding_ownership(put_back)))
             return EXIT_REFUSED
     staging.write_claim(environment, staging.COMPLETE, issue=issue, run=str(os.getpid()))
     emit(dict(standing, applied=True,
@@ -3397,6 +3397,22 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
             "ownership": owned, "detail": detail}
 
 
+def _outstanding_ownership(pointer_restored):
+    """The claim a rollback left behind, as the two fields a RESULT reports it with.
+
+    One place, because two commands end on this and a reader has to find the same answer in
+    both. _install_failed is the update's exit and _finish_promotion is the resume's, and the
+    resume's never goes through the update's -- so a receipt following the documented procedure
+    read nulls there for a claim that was outstanding, while the same failure one path over
+    reported it. Written twice they would drift; asked of one helper they cannot.
+
+    The sentence is carried rather than composed. Only the restoration knows which of its states
+    this was, and a sentence written at an exit could name just one of them.
+    """
+    return {"residualOwnership": (pointer_restored or {}).get("residualOwnership"),
+            "recoveryRequires": (pointer_restored or {}).get("settleOwnership")}
+
+
 def _restore_selection(record_path, definition_version, previous, installs):
     """Put back the selection this run just moved, for the components it moved.
 
@@ -3532,12 +3548,9 @@ def _install_failed(record_path, definition_version, performed, environment, own
     # deterministic directory decides and a record claim does not. Answering either of those
     # with this would be a cell carrying a reading its own question did not produce, which is
     # the shape the rest of this change exists to remove.
-    unsettled = (pointer_restored or {}).get("residualOwnership")
-    # The sentence comes from the restoration that produced it rather than being composed here.
-    # Three different states set that residual and only the reader that made the readings knows
-    # which one this is; a sentence written here could name only one of them, and naming the
-    # wrong one sends an operator after another run's record entry.
-    settle = (pointer_restored or {}).get("settleOwnership")
+    outstanding = _outstanding_ownership(pointer_restored)
+    unsettled = outstanding["residualOwnership"]
+    settle = outstanding["recoveryRequires"]
     emit({
         "command": "install", "applied": False, "steps": performed,
         "environment": str(environment),

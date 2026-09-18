@@ -1724,11 +1724,16 @@ for path in sys.argv[1:]:
 # pointer.pointerRestored: 'ownership' reads "moved on", 'verified' is false because the
 # rollback did not do what it set out to, and 'detail' names the path the record holds now. The
 # command below prints 'pointer', so the receipt carries it.
+#
+# A RESUME or an adoption that fails reports the same rollback at the TOP level rather than
+# under 'pointer', because it never reaches the update's exit. It carries residualOwnership and
+# recoveryRequires from the same helper, so those two read the same either way, and the receipt
+# reads 'pointerRestored' as well so the rollback's own detail is there for both.
 "$controller" -c 'import json, sys
 result = json.load(open(sys.argv[1]))
 print(json.dumps({key: result.get(key) for key in
                   ("failedStep", "retriable", "residualPaths", "residualOwnership",
-                   "recoveryRequires", "removedCandidate", "pointer")},
+                   "recoveryRequires", "removedCandidate", "pointer", "pointerRestored")},
                  indent=2))' <receipt>/install.json
 
 # Kept the same way, and under its own name: this is the recovery read-back, a different

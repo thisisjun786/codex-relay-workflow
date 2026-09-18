@@ -8080,6 +8080,46 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
         self.assertEqual(payload["pointerRestored"]["ownership"],
                          runtime_install_module.OWNERSHIP_WITHDRAWN)
 
+    def test_the_resume_exit_reports_the_same_outstanding_claim(self):
+        """A resume never reaches the update's exit, so the two fields a receipt reads for an
+        outstanding claim had to be produced there too -- from one helper, so the same failure
+        cannot read one way on one path and another way on the other.
+
+        Raised by an independent review of this pull request: the documented receipt read nulls
+        here for a claim that was outstanding.
+        """
+        import runtime_install
+
+        real_update = hostrecord.update
+
+        def refuse_the_rollback_write(path, version, **delta):
+            if "drop_pointer" in delta or "restore_pointer" in delta:
+                raise OSError("the record could not be written")
+            return real_update(path, version, **delta)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self._link_deleted_under_it(host)
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=refuse_the_rollback_write):
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="replace the owned pointer")
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertEqual(payload["residualOwnership"], str(host.pointer_path),
+                         "the resume's exit names the claim it left, the way the update's does")
+        self.assertIn("settle the host record's pointer ownership",
+                      payload["recoveryRequires"] or "")
+        self.assertEqual(payload["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_UNREADABLE)
+
     # ---------------------------------------------------------------- support, not evidence
 
     def test_a_stranger_link_is_still_refused_after_an_inherited_rollback(self):
