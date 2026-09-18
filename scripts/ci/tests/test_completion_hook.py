@@ -2296,6 +2296,49 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          " call, so two registrations running it can be given different"
                          " startability: " + repr(probes))
 
+    def test_alias_spellings_of_one_resource_are_one_reading(self):
+        """The class behind three findings: a cache keyed by the raw string still read one file
+        twice when two registrations spelled it differently. The host opens one file, and two
+        readings of it in one status call can disagree about it."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            first, second = second_registration(temporary, "journal-two")
+            document = json.loads(second.read_text(encoding="utf-8"))
+            # The same journal as the first registration, with a trailing separator.
+            document["journalRoot"] = str(Path(temporary) / "journal") + os.sep
+            second.write_text(json.dumps(document), encoding="utf-8")
+            path = Path(temporary) / "hooks.json"
+            hooks_file = json.loads(path.read_text(encoding="utf-8"))
+            entries = hooks_file["hooks"][completion.EVENT][0]["hooks"]
+            # The same adapter and the same interpreter, spelled with a redundant './'.
+            aliased = str(ENTRY_POINT.parent) + os.sep + "." + os.sep + ENTRY_POINT.name
+            entries[1]["command"] = entries[1]["command"].replace(str(ENTRY_POINT), aliased)
+            path.write_text(json.dumps(hooks_file), encoding="utf-8")
+
+            journals, adapters = [], []
+            real_journal, real_presence = completion._journal_cell, completion.presence
+            # Keyed here with the stdlib rather than with the module's own helper, so a head
+            # that has no such helper fails on the behaviour instead of on a missing name.
+            same = lambda value: os.path.normpath(os.path.expanduser(str(value)))
+
+            def counting_journal(config):
+                journals.append(same((config or {}).get("journalRoot") or ""))
+                return real_journal(config)
+
+            def counting_presence(target, what, **kwargs):
+                if what in ("the adapter script", "the registered interpreter"):
+                    adapters.append(same(target))
+                return real_presence(target, what, **kwargs)
+
+            with mock.patch.object(completion, "_journal_cell", side_effect=counting_journal), \
+                 mock.patch.object(completion, "presence", side_effect=counting_presence):
+                completion.status(codex_home=temporary, environ={})
+        self.assertEqual(len(journals), len(set(journals)),
+                         "one journal directory, two spellings, two listings: " + repr(journals))
+        self.assertEqual(len(adapters), len(set(adapters)),
+                         "one program, two spellings, two probes: " + repr(adapters))
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

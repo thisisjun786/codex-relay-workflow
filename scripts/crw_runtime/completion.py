@@ -1140,6 +1140,23 @@ def _cell(value, evidence, **extra):
     return answer
 
 
+def resource_key(path):
+    """One key for one resource, however a registration spelled it.
+
+    Caching a reading by the raw string still read the same file twice when two registrations
+    wrote it differently -- /tmp/journal and /tmp/journal/, or /opt/crw/completion_hook.py and
+    /opt/crw/./completion_hook.py. The host opens one file; two readings of it in one status
+    call can disagree, and the payload then gives two registrations different answers about the
+    same thing.
+
+    Expanded and lexically normalised, and deliberately NOT resolved: resolve() walks symlinks,
+    so it would fail on a loop and would make this key depend on what a link points at. Two
+    spellings that only the kernel can equate stay two keys, which costs a second reading and
+    never a wrong one.
+    """
+    return os.path.normpath(os.path.expanduser(str(path)))
+
+
 def presence(path, what, *, directory=False):
     """Whether something is at this path, keeping "could not look" apart from "not there".
 
@@ -1266,6 +1283,11 @@ def _interpreter_cell(ours):
     not write.
     """
     checked = []
+    # One probe per resolved interpreter, mapped back to every registration that names it.
+    # Probing per registration attached time-separated results to commands that share one
+    # executable, so an interpreter replaced or chmodded between probes gave them different
+    # startability.
+    probed = {}
     for entry in ours:
         first = (registered_argv(entry["command"]) or [None])[0]
         if not first:
@@ -1287,10 +1309,15 @@ def _interpreter_cell(ours):
         else:
             # A bare name is looked up on PATH, which is what the host does with it too.
             resolved = shutil.which(first) or first
-        probe = presence(resolved, "the registered interpreter")
-        if probe["value"] == reading.PRESENT and not os.access(str(resolved), os.X_OK):
-            probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
-                          path=str(resolved))
+        key = resource_key(resolved)
+        if key in probed:
+            probe = probed[key]
+        else:
+            probe = presence(resolved, "the registered interpreter")
+            if probe["value"] == reading.PRESENT and not os.access(str(resolved), os.X_OK):
+                probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
+                              path=str(resolved))
+            probed[key] = probe
         checked.append({"registration": entry["identity"], "word": first,
                         "resolved": str(resolved), "probe": probe})
     if not checked:
@@ -1394,7 +1421,7 @@ def journals_named(registrations, already_read=None):
                                       else firing.NO_RECORDS_KEPT)
             found.append(entry)
             continue
-        root = config.get("journalRoot")
+        root = resource_key(config.get("journalRoot") or "")
         if root in scanned:
             # The policy is this registration's own; the listing is the directory's, and the
             # directory is the same one.
@@ -1501,9 +1528,11 @@ def status(codex_home=None, environ=None, event=EVENT):
         # same program.
         by_target = {}
         for entry in firm:
-            if entry["target"] not in by_target:
-                by_target[entry["target"]] = presence(entry["target"], "the adapter script")
-        adapter_probes = {entry["identity"]: by_target[entry["target"]] for entry in firm}
+            key = resource_key(entry["target"])
+            if key not in by_target:
+                by_target[key] = presence(entry["target"], "the adapter script")
+        adapter_probes = {entry["identity"]: by_target[resource_key(entry["target"])]
+                          for entry in firm}
         probes = [adapter_probes[entry["identity"]] for entry in firm]
         worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
         if worst is not None:
