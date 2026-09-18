@@ -64,6 +64,12 @@ A criterion does not get to claim the half it prefers. The inventory is derived 
 `ast` scan in `tests/test_regression_map.py` and compared against the tuple
 declared there, so a new test that waits on anything real fails until it is named.
 
+Where the boundary sits, since it is a judgement and not an accident: a barrier, a thread
+join and a lock acquisition all block, but they block until another thread arrives rather
+than until a duration passes. They synchronise without measuring, so a module that only uses
+them stays *injected*. Several of the new tests do exactly that. A test that asserted how
+long one of those waits took would have to read a clock, and the scan would catch it.
+
 What each one waits on:
 
 - `test_service.py` starts real subprocesses and polls `time.monotonic` until one
@@ -129,4 +135,3 @@ on, so it reports failures that belong to the runner.
 Whether a new test asserts something an existing test already asserts. No scan can answer
 that, and claiming otherwise would be the same kind of overstatement this map exists to
 avoid. The reuse column is where that judgement is recorded, not where it is enforced.
-

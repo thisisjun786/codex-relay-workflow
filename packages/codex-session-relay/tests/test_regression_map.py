@@ -61,7 +61,16 @@ def criterion_rows():
 
 
 def spends_real_time(path):
-    """Why this module spends wall time, or an empty set if it only moves an injected clock."""
+    """Why this module spends wall time, or an empty set if it only moves an injected clock.
+
+    The boundary is deliberate: reading a clock or starting a process is what produces
+    elapsed-time evidence, and that is what the map's column is about. A barrier, a thread
+    join or a lock acquisition blocks until another thread arrives rather than until a
+    duration passes, so it synchronises without measuring. A test that did assert on how long
+    one of them took would have to read a clock, and would be caught here. Modules that only
+    synchronise stay injected, and the map records the boundary rather than leaving it to be
+    inferred from this function.
+    """
     reasons = set()
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
@@ -170,4 +179,3 @@ class TheMapNamesEveryTestThatSpendsRealTime(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

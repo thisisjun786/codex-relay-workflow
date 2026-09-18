@@ -437,22 +437,49 @@ class TheDeclaredLoad(DaemonTestCase):
         )
         self.assertEqual(backlogs[0], TOTAL_EVENTS - len(history[0][0]))
 
-    def test_no_parent_is_served_twice_over_before_every_parent_is_served_once(self):
+    def test_every_parent_is_reached_long_before_any_parent_is_drained(self):
+        """Measured in ticks, because a count bounded by the backlog bounds nothing.
+
+        The first version of this compared the most-served parent against EVENTS_PER_PARENT,
+        which no parent can exceed, so it passed for every possible ordering including the
+        starvation it was named after. What distinguishes fair rotation from draining one
+        parent first is HOW LONG everyone takes to be reached: two ceilings mean a tick can
+        touch at most two parents, so six parents take three ticks fairly and six ticks if one
+        of them is emptied first.
+        """
         self.load()
+        policy = self.delivery.policy
         history = self.drain(limit=80)
+        parents_per_tick = max(
+            1, policy.max_sends_per_tick // policy.max_sends_per_parent_per_tick
+        )
+        reach = math.ceil(PARENTS / parents_per_tick)
+
         served = {}
-        first_round = None
-        for sent, _backlog in history:
+        ticks = None
+        most = None
+        for index, (sent, _backlog) in enumerate(history, start=1):
             for parent in sent:
                 served[parent] = served.get(parent, 0) + 1
-            if first_round is None and len(served) == PARENTS:
-                first_round = max(served.values())
-        self.assertIsNotNone(first_round, f"not every parent was served: {served}")
-        self.assertLessEqual(
-            first_round, EVENTS_PER_PARENT,
-            f"one parent was drained before another was reached at all: {served}",
-        )
+            if len(served) == PARENTS:
+                ticks, most = index, max(served.values())
+                break
 
+        self.assertIsNotNone(ticks, f"not every parent was served at all: {served}")
+        self.assertLessEqual(
+            ticks, reach + 1,
+            f"every parent was reached only after {ticks} ticks against a derived {reach + 1};"
+            f" the rotation is spending its budget on a few parents: {served}",
+        )
+        self.assertLessEqual(
+            most, policy.max_sends_per_parent_per_tick * ticks,
+            f"a parent received more than the per-parent ceiling allows in {ticks} ticks:"
+            f" {served}",
+        )
+        self.assertLess(
+            most, EVENTS_PER_PARENT,
+            f"a parent was drained before every parent had been reached: {served}",
+        )
 
 if __name__ == "__main__":
     unittest.main()
