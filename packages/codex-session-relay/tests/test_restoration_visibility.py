@@ -593,6 +593,23 @@ class RestorationDelivery(DeliveryTestCase):
         self.assertEqual(reported.get("outcome"), "unmeasured")
         self.assertIn("presend_attempt_cap", reported.get("detail", ""))
 
+    def test_a_superseded_relationship_can_never_claim_again(self):
+        """A stopped assignment leaves the row queued and the claim refuses it forever.
+
+        Reading only the state and the hold classifies it as retryable, so an oversized
+        historical report is refused over bytes no attempt can ever build.
+        """
+        revision = self._oversized_correction("v-superseded")
+        self.store.db.execute(
+            "UPDATE relationships SET status = 'cancelled' WHERE relationship_id ="
+            " (SELECT relationship_id FROM deliveries WHERE event_id = ?)",
+            (revision,),
+        )
+        recorded = self._record_oversized(revision)
+        reported = recorded.get("restoration") or {"outcome": "nothing was recorded"}
+        self.assertEqual(reported.get("outcome"), "unmeasured")
+        self.assertIn("no longer active", reported.get("detail", ""))
+
     def test_two_findings_cannot_both_declare_the_block(self):
         """Two candidates is a block nobody can locate, which is the silence again."""
         _relationship, event_id = self._acknowledged()

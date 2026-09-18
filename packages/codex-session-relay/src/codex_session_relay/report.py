@@ -296,9 +296,26 @@ def _delivery_of(store, event_id):
     matters as much as the state: the claim predicate requires hold_reason IS NULL, so a
     delivery parked at its attempt cap keeps a claimable-looking state while being unable to
     produce another message.
+
+    The last two columns are the half of _claim's predicate that no later event can make true
+    again: a relationship that has stopped or been superseded, and an event that is not the
+    current final revision of the current generation. Those rows stay `queued` and are
+    refused by the claim forever, so a state check alone reads them as retryable. Asked here
+    rather than approximated, and asked as the claim asks it; if that predicate moves, this
+    moves with it.
     """
     return store.one(
-        "SELECT state, hold_reason, attempt_count FROM deliveries WHERE event_id = ?",
+        "SELECT d.state, d.hold_reason, d.attempt_count,"
+        "       EXISTS (SELECT 1 FROM relationships r"
+        "                WHERE r.relationship_id = d.relationship_id"
+        "                  AND r.status = 'active'"
+        "                  AND r.superseded_by IS NULL) AS relationship_live,"
+        "       EXISTS (SELECT 1 FROM events e"
+        "                JOIN relationships rr ON rr.relationship_id = e.relationship_id"
+        "               WHERE e.event_id = d.event_id AND e.stage = 'final'"
+        "                 AND e.execution_generation >= rr.execution_generation)"
+        "           AS event_current"
+        "  FROM deliveries d WHERE d.event_id = ?",
         (event_id,),
     )
 
@@ -329,6 +346,10 @@ def _project_restoration(store, event, row):
         "no delivery is queued for it" if delivery is None
         else f"the delivery is held: {delivery['hold_reason']!r}"
         if delivery["hold_reason"] is not None
+        else "its relationship is no longer active, or has been superseded"
+        if not delivery["relationship_live"]
+        else "the event is behind the assignment's current generation"
+        if not delivery["event_current"]
         else f"the delivery is {delivery['state']!r}"
         if delivery["state"] not in _STILL_ATTEMPTABLE else None
     )
