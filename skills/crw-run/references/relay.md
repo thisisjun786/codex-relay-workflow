@@ -306,21 +306,31 @@ A `needs_changes` verdict IS the correction: it opens the next generation and qu
 request to the same registered child, carrying the superseded event, its digest and the findings.
 Give every finding a note.
 
-What the child actually reads is the RENDERED revision request, which is not the whole verdict. On
-the version named above the renderer emits only the first ten findings and adds no notice that it
-dropped the rest, so a finding past that point is delivered nowhere and looks delivered from the
-parent's side. A size budget can go further and drop the findings section outright, first entry
-included. So putting what the child must receive in the first finding is a precaution and not a
-guarantee, and no arrangement of the verdict makes one: the verdict is a single transaction that
-has already opened the next generation before anything can be read back.
+What the child actually reads is the RENDERED revision request, which is not the whole verdict.
+The renderer still shows only the first ten findings, but it now says how many it dropped and
+names the restoration block when the cut took it. Say which finding carries that block:
 
-Confirmation therefore comes from a dispatched attempt and what the child actually received. A
-queued rendering is the bytes the next attempt would send, not evidence that any send happened,
-and reading it settles nothing about delivery. Where the content did not arrive there is no second
-correction to send: the verdict does not resend, and this workflow forbids the route around it. So
-it is recorded as an undelivered correction on the assignment and handed to the coordinator to
-decide, rather than repaired here. Treat all of these limits as this version's behaviour rather
-than constants.
+    codex-session-relay --state "$RELAY_STATE" verdict --event <id> --verdict needs_changes \
+      --verdict-turn <own turn> --restoration c2 \
+      --finding 'c2=needs_changes:what to change, and the context to resume from'
+
+A declared block the message would not carry refuses the verdict with
+`restoration_undeliverable` BEFORE any generation is opened, so nothing is superseded and
+nothing is queued: move the finding and rule again. Recording a work report on the revision
+request moves it onto the composer, which has a byte budget the plain renderer does not, so
+that command re-measures and refuses there too, while there is still nothing sent to undo. The
+outcome is named either way — `carried`, `truncated`, `budget_dropped`, `not_carried` or
+`unmeasured` — and is reported beside the verdict record and by `show --event <id>`.
+
+All of that is about what the relay will put in the bytes, and none of it is a claim that the
+child read them. Confirmation still comes from a dispatched attempt and what the child actually
+received. A queued rendering is the bytes the next attempt would send, not evidence that any
+send happened, and reading it settles nothing about delivery. Where the content did not arrive
+there is no second correction to send: the verdict does not resend, and this workflow forbids
+the route around it. So it is recorded as an undelivered correction on the assignment and
+handed to the coordinator to decide, rather than repaired here. Treat all of this as this
+version's behaviour rather than constants, and whether an installed relay behaves this way as
+a separate fact from what this source does.
 
 Queued is not sent. That revision request travels the same way a completion does, so the
 host-capable `deliver`, or a `daemon` already running, is what puts it in front of the child. A
