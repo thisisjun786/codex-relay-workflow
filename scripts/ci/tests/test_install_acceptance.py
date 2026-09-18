@@ -135,16 +135,6 @@ PRODUCER_FILES = {
     "test_install_acceptance": HERE,
 }
 
-# The sources that assemble each payload, and therefore the ones that have to still be writing
-# the key this table reads out of it. A diagnosis is assembled by the command together with the
-# result module it delegates the result shape to, so both are named rather than one standing in
-# for the other.
-EMITTING_FILES = {
-    "diagnose": (RUNTIME, CHECK_SOURCE),
-    "hook-status": (COMPLETION_SOURCE,),
-    ACCEPTANCE: (HERE,),
-}
-
 # Rows whose reading is a check.field cell and therefore answers in check.VALUES. The others
 # answer in their own producer vocabulary and are NOT translated into this one: a cell rewritten
 # into a neighbour vocabulary is the same borrowed answer with better manners.
@@ -835,16 +825,36 @@ class SevenReadingsTests(unittest.TestCase):
                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
                 self.assertIn(name, defined, cell + ": " + producer + " does not exist")
 
-    def test_the_key_each_row_reads_is_still_written_where_it_is_read_from(self):
-        """A rename in the source fails here instead of leaving a row reading a dead key."""
+    def test_every_declared_path_is_one_its_source_actually_writes(self):
+        """A rename fails here, and it is the payload that says so rather than the file text.
+
+        Searching the producing source for the key passes on a mention in a comment, in an
+        unrelated branch, or -- for the reading this module performs itself -- on the entry in
+        this very table, which would have left the check answering its own question. So the
+        payloads are real, the declared path is walked in them, and the case then removes the
+        last key to show the walk was load-bearing rather than incidental.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            payloads, _host = observe_all(Path(temporary).resolve())
+
         for cell, source, path, _producer in DECLARED:
             with self.subTest(cell):
-                wanted = repr(path[-1]).replace("'", '"')
-                written = any(wanted in where.read_text(encoding="utf-8").replace("'", '"')
-                              for where in EMITTING_FILES[source])
-                self.assertTrue(written,
-                                cell + ": nothing that assembles " + source + " writes "
-                                + repr(path[-1]))
+                found = payloads.get(source)
+                for key in path:
+                    self.assertIsInstance(found, dict,
+                                          cell + ": " + source + " does not reach " + repr(key))
+                    self.assertIn(key, found,
+                                  cell + ": " + source + " no longer writes " + repr(key))
+                    found = found[key]
+
+                pruned = copy.deepcopy(payloads)
+                target = pruned[source]
+                for key in path[:-1]:
+                    target = target[key]
+                del target[path[-1]]
+                self.assertEqual(read(cell, pruned)["value"], reading.UNREADABLE,
+                                 cell + ": the row survived its own key being taken away, so"
+                                 " the path it declares is not the path it reads")
 
     def test_no_cell_is_filled_without_going_through_the_declared_reading(self):
         """Lint, not proof: the proof is the mutation case below.
