@@ -9,7 +9,9 @@ Nothing here touches a real Codex home, an installed runtime or an operational d
 relay is a file these cases create, and every command runs against a temporary CODEX_HOME.
 """
 
+import contextlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -18,8 +20,11 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "ci"))
 
-from crw_runtime import completion, hooks
+from crw_runtime import bridgerecord, completion, hooks
+
+import plugin
 
 RUNTIME_INSTALL = ROOT / "scripts" / "runtime_install.py"
 
@@ -74,7 +79,7 @@ class Home:
 class OwnershipTest(unittest.TestCase):
 
     def setUp(self):
-        self.stack = __import__("contextlib").ExitStack()
+        self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
         self.home = Home(self.stack)
 
@@ -183,6 +188,288 @@ class OwnershipTest(unittest.TestCase):
             self.assertEqual(status, 0, output)
             self.assertFalse(self.home.settings.exists(), output)
             self.assertFalse(self.home.hook_file.exists(), output)
+
+
+# ---------------------------------------------------------------- the bridge MCP record
+
+
+class BridgeRecordTest(unittest.TestCase):
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Home(self.stack)
+        self.bridge = self.home.destination / "current" / "bin" / "codex-thread-bridge"
+        self.bridge.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self.bridge.chmod(0o755)
+
+    def register(self, *extra):
+        return run("register-mcp", "--codex-home", str(self.home.codex_home),
+                   "--bridge-command", str(self.bridge), *extra)
+
+    @property
+    def record(self):
+        return self.home.codex_home / bridgerecord.RECORD_NAME
+
+    def test_a_relative_bridge_command_is_refused(self):
+        """The launcher runs from the installed package, the one place a runtime must not be."""
+        with self.assertRaises(ValueError):
+            bridgerecord.document(command="./codex-thread-bridge")
+
+    def test_plugin_owner_writes_the_record_and_not_the_configuration(self):
+        status, emitted, output = self.register("--owner", "plugin", "--apply")
+        self.assertEqual(status, 0, output)
+        self.assertTrue(self.record.exists(), output)
+        self.assertFalse((self.home.codex_home / "config.toml").exists(),
+                         "the plugin owner must not write the configuration: " + output)
+        document = json.loads(self.record.read_text(encoding="utf-8"))
+        self.assertEqual(document["owner"], bridgerecord.OWNER_PLUGIN)
+        self.assertEqual(document["bridgeExecutable"], str(self.bridge))
+
+    def test_user_owner_is_refused_when_the_plugin_owns_the_server(self):
+        self.assertEqual(self.register("--owner", "plugin", "--apply")[0], 0)
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertIn(bridgerecord.OWNER_PLUGIN, emitted["detail"])
+        self.assertFalse((self.home.codex_home / "config.toml").exists(), output)
+
+    def test_plugin_owner_is_refused_when_the_configuration_registers_it(self):
+        self.assertEqual(self.register("--apply")[0], 0)
+        status, emitted, output = self.register("--owner", "plugin", "--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertFalse(self.record.exists(), "a refused run writes nothing: " + output)
+
+    def test_a_record_that_says_something_else_is_not_overwritten(self):
+        self.assertEqual(self.register("--owner", "plugin", "--apply")[0], 0)
+        other = self.home.destination / "current" / "bin" / "other-bridge"
+        other.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        before = self.record.read_bytes()
+        status, emitted, output = run("register-mcp", "--codex-home", str(self.home.codex_home),
+                                      "--bridge-command", str(other), "--owner", "plugin",
+                                      "--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertEqual(self.record.read_bytes(), before, output)
+
+    def test_a_plan_writes_nothing(self):
+        status, emitted, output = self.register("--owner", "plugin")
+        self.assertEqual(status, 0, output)
+        self.assertFalse(self.record.exists(), output)
+
+
+# ---------------------------------------------------------------- the packaged launchers
+
+
+class StopLauncherTest(unittest.TestCase):
+    """The launcher may never cost a turn, and may never be the second hook on one Stop."""
+
+    LAUNCHER = ROOT / "plugins/crw/wiring/crw_stop_hook.py"
+    PAYLOAD = json.dumps({"hook_event_name": "Stop", "session_id": "s", "turn_id": "t"})
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw114-")))
+        self.adapter = self.home / "adapter.py"
+        self.seen = self.home / "seen.txt"
+        self.adapter.write_text(
+            "import sys\n"
+            "open(%r, 'a').write(sys.stdin.read() + '\\n')\n"
+            "sys.stdout.write('{\"decision\": \"block\"}')\n" % str(self.seen),
+            encoding="utf-8")
+
+    def settings(self, **overrides):
+        document = {"configVersion": 1, "event": "Stop", "owner": "plugin",
+                    "relayExecutable": "/opt/relay/bin/codex-session-relay",
+                    "markerRoot": "/opt/marker", "mode": "observe", "timeoutSeconds": 5,
+                    "adapterInterpreter": sys.executable,
+                    "adapterEntryPoint": str(self.adapter)}
+        document.update(overrides)
+        (self.home / "crw-completion-hook.json").write_text(json.dumps(document),
+                                                            encoding="utf-8")
+
+    def fire(self):
+        return subprocess.run([sys.executable, str(self.LAUNCHER)], input=self.PAYLOAD,
+                              capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home)})
+
+    def test_it_runs_the_adapter_and_forwards_only_what_it_printed(self):
+        self.settings()
+        done = self.fire()
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, '{"decision": "block"}')
+        self.assertEqual(done.stderr, "")
+        self.assertIn("turn_id", self.seen.read_text(encoding="utf-8"))
+
+    def test_it_stands_down_when_the_user_owns_the_registration(self):
+        """Installing the package on a host that already registered the hook cannot be refused
+        from here, so the second copy is prevented at run time as well."""
+        self.settings(owner="user")
+        done = self.fire()
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+        self.assertFalse(self.seen.exists())
+
+    def test_it_stands_down_when_the_owner_key_is_absent(self):
+        self.settings()
+        document = json.loads((self.home / "crw-completion-hook.json").read_text())
+        del document["owner"]
+        (self.home / "crw-completion-hook.json").write_text(json.dumps(document))
+        done = self.fire()
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+        self.assertFalse(self.seen.exists())
+
+    def test_absent_unreadable_and_nonsense_settings_all_release_in_silence(self):
+        for content in (None, "{ not json", json.dumps(["a list"]),
+                        json.dumps({"owner": "plugin"})):
+            if content is None:
+                (self.home / "crw-completion-hook.json").unlink(missing_ok=True)
+            else:
+                (self.home / "crw-completion-hook.json").write_text(content, encoding="utf-8")
+            done = self.fire()
+            self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""),
+                             repr(content))
+
+    def test_a_relative_adapter_path_is_not_run(self):
+        self.settings(adapterEntryPoint="adapter.py")
+        done = self.fire()
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+        self.assertFalse(self.seen.exists())
+
+    def test_an_adapter_that_crashes_still_costs_nothing(self):
+        self.adapter.write_text("raise SystemExit(2)\n", encoding="utf-8")
+        self.settings()
+        done = self.fire()
+        self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
+
+
+class BridgeLauncherTest(unittest.TestCase):
+    """The opposite failure direction: a server that cannot start says why."""
+
+    LAUNCHER = ROOT / "plugins/crw/wiring/crw_bridge_mcp.py"
+
+    def setUp(self):
+        self.stack = contextlib.ExitStack()
+        self.addCleanup(self.stack.close)
+        self.home = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix="crw114-")))
+
+    def start(self):
+        return subprocess.run([sys.executable, str(self.LAUNCHER)], capture_output=True,
+                              text=True, input="",
+                              env={"PATH": os.environ["PATH"], "CODEX_HOME": str(self.home)})
+
+    def record(self, **overrides):
+        document = {"recordVersion": 1, "owner": "plugin", "serverName": "codex-thread-bridge",
+                    "bridgeExecutable": "/does/not/exist", "args": []}
+        document.update(overrides)
+        (self.home / bridgerecord.RECORD_NAME).write_text(json.dumps(document), encoding="utf-8")
+
+    def test_an_absent_record_names_the_command_that_writes_it(self):
+        done = self.start()
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("register-mcp --owner plugin", done.stderr)
+
+    def test_a_user_owned_record_refuses_to_start_a_second_bridge(self):
+        self.record(owner="user")
+        done = self.start()
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("second one", done.stderr)
+
+    def test_a_relative_executable_is_refused(self):
+        self.record(bridgeExecutable="./codex-thread-bridge")
+        done = self.start()
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("absolute path", done.stderr)
+
+    def test_a_missing_runtime_points_at_the_installer(self):
+        self.record()
+        done = self.start()
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("pointer names the runtime", done.stderr)
+
+    def test_it_starts_the_executable_the_record_names(self):
+        proof = self.home / "started"
+        executable = self.home / "bridge"
+        executable.write_text("#!/bin/sh\necho started > %s\n" % proof, encoding="utf-8")
+        executable.chmod(0o755)
+        self.record(bridgeExecutable=str(executable), args=["--stdio"])
+        done = self.start()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(proof.exists(), done.stderr)
+
+
+# ---------------------------------------------------------------- the package check
+
+
+class DeclaredComponentTest(unittest.TestCase):
+    """The rules the measured loading behaviour turned into package requirements."""
+
+    def payload(self, **files):
+        return {name: ("100644", data.encode()) for name, data in files.items()}
+
+    def test_an_inline_hooks_document_is_refused(self):
+        with self.assertRaises(ValueError):
+            plugin.declared_hooks({"hooks": {"Stop": []}})
+
+    def test_a_list_and_a_string_are_both_accepted(self):
+        self.assertEqual(plugin.declared_hooks({"hooks": "./a.json"}), ["./a.json"])
+        self.assertEqual(plugin.declared_hooks({"hooks": ["./a.json"]}), ["./a.json"])
+
+    def test_declared_roots_come_from_the_manifest(self):
+        _, roots, errors = plugin.declared_components(
+            {"skills": "./skills/", "hooks": ["./wiring/hooks/stop.json"],
+             "mcpServers": "./wiring/mcp.json"})
+        self.assertEqual(errors, [])
+        self.assertEqual(roots, {".codex-plugin", "LICENSE", "skills", "wiring"})
+
+    def test_an_inline_mcp_table_and_apps_are_refused(self):
+        _, _, errors = plugin.declared_components(
+            {"skills": "./skills/", "mcpServers": {"x": {}}, "apps": "./apps"})
+        self.assertEqual(len(errors), 2, errors)
+
+    def test_a_hook_timeout_over_the_host_clamp_is_refused(self):
+        document = json.dumps({"hooks": {"Stop": [{"hooks": [
+            {"type": "command", "command": "x", "timeout": 600}]}]}})
+        errors = plugin.hook_document_errors("h.json", document.encode(), "release")
+        self.assertTrue(any("may not exceed" in problem for problem in errors), errors)
+
+    def test_a_hook_that_is_not_a_command_is_refused(self):
+        document = json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "mcp"}]}]}})
+        self.assertTrue(plugin.hook_document_errors("h.json", document.encode(), "release"))
+
+    def test_an_mcp_server_without_cwd_is_refused(self):
+        document = json.dumps({"mcpServers": {"b": {"command": "python3",
+                                                    "args": ["./w/run.py"]}}})
+        errors = plugin.mcp_document_errors("m.json", document.encode(),
+                                            self.payload(**{"w/run.py": "x"}), "release")
+        self.assertTrue(any("cwd" in problem for problem in errors), errors)
+
+    def test_a_variable_in_an_mcp_argument_is_refused(self):
+        document = json.dumps({"mcpServers": {"b": {
+            "command": "python3", "cwd": ".", "args": ["${PLUGIN_ROOT}/w/run.py"]}}})
+        errors = plugin.mcp_document_errors("m.json", document.encode(), self.payload(),
+                                            "release")
+        self.assertTrue(any("literal text" in problem for problem in errors), errors)
+
+    def test_an_absolute_mcp_argument_is_refused(self):
+        document = json.dumps({"mcpServers": {"b": {
+            "command": "python3", "cwd": ".", "args": ["/opt/run.py"]}}})
+        errors = plugin.mcp_document_errors("m.json", document.encode(), self.payload(),
+                                            "release")
+        self.assertTrue(any("absolute path" in problem for problem in errors), errors)
+
+    def test_an_mcp_argument_the_package_does_not_ship_is_refused(self):
+        document = json.dumps({"mcpServers": {"b": {
+            "command": "python3", "cwd": ".", "args": ["./w/missing.py"]}}})
+        errors = plugin.mcp_document_errors("m.json", document.encode(), self.payload(),
+                                            "release")
+        self.assertTrue(any("does not ship" in problem for problem in errors), errors)
+
+    def test_the_shipped_package_passes_its_own_rules(self):
+        """A positive control, so the rules above are not merely rejecting everything."""
+        errors, result = plugin.check_revision("HEAD")
+        self.assertEqual(errors, [])
+        self.assertEqual(result["expectedSkillNames"],
+                         ["crw:crw-check", "crw:crw-define", "crw:crw-logic", "crw:crw-loop",
+                          "crw:crw-next", "crw:crw-plan", "crw:crw-run"])
 
 
 if __name__ == "__main__":
