@@ -60,13 +60,38 @@ API key is needed; the existing App Server owns its authentication and model usa
 | `steer_thread` | Put an instruction into the turn a thread is already running, guarded by that turn id |
 | `pause_goal` | Pause an active Goal by status alone, without touching its objective or budget |
 | `list_threads` | Read a page of unarchived backend thread summaries |
-| `read_thread` | Read metadata and a paginated history without resuming |
+| `read_thread` | Read metadata and a paginated history without resuming, naming what of it could not be received |
 | `wait_thread` | Wait up to 50 seconds for the supplied recent turn ID |
 | `get_goal` | Read persistent Goal state |
 | `get_operation` | Recover a mutation receipt after a lost response or client restart |
 
 Text limits apply to display content such as messages, previews, and summaries.
 Pagination cursors, IDs, paths, and other protocol fields are returned unchanged.
+
+### Reading a thread that is larger than the transport
+
+The App Server bounds no response by size. It builds a whole response before it writes any of
+it, and one page of ten turns in its full item view measured 754 MB on a real thread, taking the
+host 96.7 seconds whether or not the client accepts a byte of it. Reducing the turn limit does
+not help, because one turn's full view was 82 MB on its own. So `read_thread` never asks for
+that view. It reads metadata without turns, then a page of turns in the host's summary view —
+each turn's user and agent messages — and then the newest turn's real items in a bounded page.
+When an oversized frame closes the connection anyway, it narrows and asks again, and it reports
+what it ended up with rather than raising.
+
+Every response carries an `observation` block naming the view its turns actually carry
+(`summary`, `notLoaded`, or none at all) and how many turns had their items read. Each turn
+carries an `itemsDetailStatus`: `not_requested`, `complete`, `partial`, `narrowed`,
+`not_observed`, `method_unavailable`, or `refused`. None of these fails the read and none is a
+claim about the thread — a page this bridge could not receive never means a task finished,
+stalled, or must be run again. Where an item page will not arrive even one item at a time,
+`not_observed` says so plainly instead of offering a narrower query that does not exist.
+
+A response frame past the client's 16 MiB limit raises `ResponseTooLarge`, which names the frame
+size, the limit and what was in flight — but never which request it belonged to. A frame is
+refused from its header, before any id in it is read, and it may be a notification that never
+carried one.
+
 For the first page, omit `cursor`. For later pages, pass `nextCursor` as the exact
 string returned, even when it looks like JSON. The MCP cursor argument accepts a
 string, not `null`; an empty string also selects the first page. Restart the MCP
@@ -273,8 +298,9 @@ where the code that asks for them sits: immediately before a frame is written to
 the socket, and immediately before a worktree directory is reserved, created or
 checked out. A frame that was begun counts even if `send` then raised, because a
 partial write cannot be proven not to have arrived. A method that only asks a
-question — `thread/read`, `thread/list`, `thread/turns/list`, `thread/goal/get`,
-`project/read`, `initialize` — is not an attempt; anything else is, including a
+question — `thread/read`, `thread/list`, `thread/turns/list`, `thread/items/list`,
+`thread/goal/get`, `project/read`, `initialize` — is not an attempt; anything else is,
+including a
 method this bridge has not classified, so a mutation added later cannot read as
 nothing having happened. `thread/resume` is deliberately treated as a change: it
 transmits `cwd`, `model`, sandbox and config, and that the tested host adopts

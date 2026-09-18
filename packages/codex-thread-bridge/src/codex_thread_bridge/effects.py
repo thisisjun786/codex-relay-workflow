@@ -24,6 +24,7 @@ OBSERVATIONS = frozenset(
         "thread/read",
         "thread/list",
         "thread/turns/list",
+        "thread/items/list",
         "thread/goal/get",
     }
 )
