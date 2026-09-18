@@ -5684,6 +5684,40 @@ class BuildStepNamingTests(unittest.TestCase):
         self.assertEqual(build_step([sys.executable, "-m", "pip", "--quiet", "install", "/pkg"]),
                          "install packages")
 
+    def test_the_naming_covers_every_build_command_the_installer_performs(self):
+        """Read the build commands back out of the installer and name them from here.
+
+        build_step mirrors argv that lives in another file. If the installer ever builds a
+        different way, or adds a third build step, a fixture that cannot name the new shape
+        stops simulating it: the injection passes straight through and the boundary case
+        reports a step nothing failed at. So the shapes are read from the source rather than
+        trusted to stay where they were, and every non-literal argument is substituted with a
+        path that spells both build tools, which is the one thing the naming may not read.
+        """
+        contaminated = self.CONTAMINATED + "/dest"
+        performed = {}
+        for node in ast.walk(ast.parse(RUNTIME.read_text(encoding="utf-8"))):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "perform" and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[1], ast.List)):
+                performed[node.args[0].value] = node.args[1].elts
+        self.assertEqual(sorted(performed), sorted(BUILD_REFUSALS),
+                         "the installer performs a build step this fixture cannot inject into")
+        for step, elements in performed.items():
+            argv = []
+            for element in elements:
+                if isinstance(element, ast.Constant):
+                    argv.append(element.value)
+                elif isinstance(element, ast.Starred):
+                    argv.append(contaminated + "/a-package")
+                else:
+                    argv.append(contaminated + "/bin/python")
+            with self.subTest(step):
+                self.assertEqual(build_step(argv), step,
+                                 "scripts/runtime_install.py performs " + step + " as "
+                                 + " ".join(argv) + ", which this fixture must recognise")
+
 
 class UpdateRecoveryTests(unittest.TestCase):
     """Failure injected at each boundary an update crosses.
