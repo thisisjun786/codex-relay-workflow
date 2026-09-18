@@ -24,8 +24,8 @@ arguments. The off arm omits `--apply`, which is that command's own dry run; the
 | off | 0 | `MISSING` | `config_would_create` | none |
 | on | 0 | `CREATED` | `config_created` | one |
 
-The exit code and both outcomes are read back from the command's own report and are a precondition
-of everything after them. An installer that failed before writing leaves exactly the empty Codex
+The exit status and both outcomes are three readings rather than one, taken from the command's own
+report, and they are a precondition of everything after them. An installer that failed before writing leaves exactly the empty Codex
 home a successful dry run leaves, so an off arm judged only on what is missing would pass on a run
 that never happened.
 
@@ -46,7 +46,7 @@ document records that rather than asserting it, every block and reservation it p
 synthetic hold-mode output, and none of it describes what a default installation does when a turn
 ends, which is nothing.
 
-## Thirteen cells, thirteen readings
+## Sixteen cells, sixteen readings
 
 Each cell is filled by the reading its own question called for. A reading that could not be made
 answers `unreadable` and names why; it never answers false and never takes the value of the cell
@@ -54,8 +54,11 @@ beside it.
 
 | Cell | Answered by | Read from | Never established by |
 | -- | -- | -- | -- |
-| `installOutcome` | the install command | its own emitted report: exit code, result, settings outcome | the state of the Codex home afterwards |
+| `installExit` | the install command | its exit status | the state of the Codex home afterwards |
+| `installResult` | the install command | its own report, `result.outcome` | the exit status alone |
+| `installSettings` | the install command | its own report, `settings.outcome` | the result beside it |
 | `registration` | the arm's `hooks.json` | the entries `adapter_entries` finds under `Stop` | the install command's report |
+| `foreignRegistration` | the arm's `hooks.json` | whether the entry another owner had there is still there | the count of entries |
 | `firedCommand` | that entry | its `command` string, executed as a program | a helper call into `completion.run` |
 | `adapterOutcome` | the hook's journal record | `adapterOutcome` | the process exit code, which is always zero |
 | `observation` | the hook's journal record | `observation`, what the turn was | the guard's own stdout, which this run never sees |
