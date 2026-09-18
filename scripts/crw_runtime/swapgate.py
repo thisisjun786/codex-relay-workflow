@@ -22,19 +22,43 @@ BLOCKED = "BLOCKED"
 UNESTABLISHED = "UNESTABLISHED"
 VERDICTS = (ALLOWED, BLOCKED, UNESTABLISHED)
 
-# What comparing the store's tables with the candidate's can say.
+# What comparing the store's schema with the candidate's can say.
 #
 # Comparing recorded schema VERSIONS would say nothing at all: the relay declares version one,
 # has never raised it, writes it once with INSERT OR IGNORE when the database is created, and
-# grows its schema through separate CREATE TABLE IF NOT EXISTS statements. Every store therefore
+# grows its schema through separate CREATE ... IF NOT EXISTS statements. Every store therefore
 # agrees with every candidate at version one, so a version comparison detects neither a
-# downgrade nor an upgrade while looking exactly like a check. The tables are what differ.
+# downgrade nor an upgrade while looking exactly like a check. The schema is what differs.
 AGREES = "AGREES"
 EXTENDS = "EXTENDS"
 NARROWS = "NARROWS"
 DIFFERS = "DIFFERS"
 NO_STORE = "NO_STORE"
 TABLE_ANSWERS = (AGREES, EXTENDS, NARROWS, DIFFERS, NO_STORE)
+
+# The one question both schema readings ask the catalog, written once so the store side and the
+# candidate side cannot drift into asking different things.
+#
+# There is NO type predicate, and that absence is the point. Naming the kinds that count would be
+# this module deciding what a schema is made of, and it decided wrongly: asking only for
+# type = 'table' compared tables and agreed silently about every index, trigger and view, so a
+# store missing an index passed as identical while the new daemon would re-create it on its first
+# write-open. The catalog is the source the comparison set is drawn from, so a kind SQLite gains
+# is compared without this module being taught about it.
+#
+# What is excluded is only what SQLite owns, and the exclusion is an exact prefix rather than
+# NOT LIKE 'sqlite_%' because LIKE reads _ as a one-character wildcard: that pattern also drops a
+# legal user object named sqlitexfoo. Everything it should drop it still drops -- the autoindexes
+# a UNIQUE or PRIMARY KEY constraint creates, whose definition is already inside the table
+# statement being compared, and the bookkeeping tables AUTOINCREMENT and ANALYZE leave behind.
+#
+# Each object is keyed by its kind AND its name. A trigger may share a name with a table, so
+# names alone can collide; and an object whose kind changed would otherwise be reported as one
+# redefinition when it is really one object lost and a different one gained.
+SCHEMA_OBJECTS_QUERY = (
+    "SELECT type || ' ' || name AS object, sql FROM sqlite_master"
+    " WHERE lower(substr(name, 1, 7)) <> 'sqlite_' ORDER BY type, name"
+)
 
 # The in-flight cell's established-absent answer, given a name. No store means no attempt can
 # be open, and that is a count this command READ rather than one nobody could take. Named
@@ -44,8 +68,8 @@ NO_ATTEMPTS = 0
 
 # Only an identical schema, or no store at all, lets a replacement through.
 #
-# NARROWS loses data outright: the store holds a table the candidate does not declare, so the
-# runtime being installed cannot preserve what is in it. That is the implicit downgrade the
+# NARROWS loses data outright: the store holds a schema object the candidate does not declare, so
+# the runtime being installed cannot preserve what is in it. That is the implicit downgrade the
 # issue forbids.
 #
 # EXTENDS and DIFFERS refuse for the contract's reason rather than for that one. The relay
@@ -177,9 +201,14 @@ def inflight_cell(envelope, presence=None):
 def tables_cell(store_answer, candidate_answer):
     """Compare the schema the store holds with the schema the candidate declares.
 
-    The comparison is over each table's CREATE statement and not merely its name. Names alone
+    The comparison is over each object's CREATE statement and not merely its name. Names alone
     agree while a column, a constraint or a default differs, which is a schema difference the
     new runtime would apply on its first write-open, and it would have passed as agreement.
+
+    Every object the catalog reports is compared, not only the tables. Both readings ask
+    SCHEMA_OBJECTS_QUERY, which names no kind at all, so indexes, triggers and views are in the
+    judgement on the same terms as tables. Asking only for tables was the same failure one level
+    up from the name comparison: it agreed about everything it had not looked at.
 
     Both sides are readings and either can fail. An absent store is established by looking at
     the path, never inferred from a failed open, because a permission failure and a locked
@@ -202,7 +231,7 @@ def tables_cell(store_answer, candidate_answer):
     if candidate is None:
         return _cell(reading.UNREADABLE, readable=False,
                      command=candidate_answer.get("command"),
-                     detail="the candidate reported table names without their definitions, so"
+                     detail="the candidate reported object names without their definitions, so"
                             " the schemas could not be compared on anything but names")
     if store_answer.get("present") is False:
         return _cell(NO_STORE, readable=True, command=store_answer.get("command"),
@@ -212,7 +241,7 @@ def tables_cell(store_answer, candidate_answer):
     held = _schema(store_answer.get("tables"))
     if held is None:
         return _cell(reading.UNREADABLE, readable=False, command=store_answer.get("command"),
-                     detail="the store reported table names without their definitions, so the"
+                     detail="the store reported object names without their definitions, so the"
                             " schemas could not be compared on anything but names")
     lost = sorted(set(held) - set(candidate))
     added = sorted(set(candidate) - set(held))
@@ -226,36 +255,40 @@ def tables_cell(store_answer, candidate_answer):
     if lost:
         return _cell(NARROWS, readable=True, command=store_answer.get("command"),
                      evidence=evidence,
-                     detail=("the store holds tables this candidate does not declare, so"
+                     detail=("the store holds schema objects this candidate does not declare, so"
                              " installing it would leave data no runtime can read: "
                              + ", ".join(lost)))
     if changed:
         return _cell(DIFFERS, readable=True, command=store_answer.get("command"),
                      evidence=evidence,
-                     detail=("the store and the candidate define the same tables differently: "
+                     detail=("the store and the candidate define the same schema objects"
+                             " differently: "
                              + ", ".join(changed) + "." + backup))
     if added:
         return _cell(EXTENDS, readable=True, command=store_answer.get("command"),
                      evidence=evidence,
-                     detail=("the candidate declares tables the store does not hold: "
+                     detail=("the candidate declares schema objects the store does not hold: "
                              + ", ".join(added) + ". Nothing in the store would be lost, and"
                              " that is why this is reported as its own answer rather than as a"
                              " downgrade." + backup))
     return _cell(AGREES, readable=True, command=store_answer.get("command"), evidence=evidence,
-                 detail="the store and the candidate declare the same tables identically")
+                 detail="the store and the candidate declare the same schema objects identically")
 
 
-def _schema(tables):
-    """Table name -> its CREATE statement, or None when the reading cannot answer this cell.
+def _schema(objects):
+    """Object key -> its CREATE statement, or None when the reading cannot answer this cell.
+
+    A key is the catalog's own kind and name, "index sync_ready" rather than "sync_ready", so a
+    trigger sharing a table's name cannot collide with it and a refusal says which kind moved.
 
     A reading that carries only names is not a weaker version of this comparison, it is a
     different one: two name-only readings agree while a column differs, and reporting that as
     agreement is the defect the statement comparison exists to remove. So a reading without
     statements leaves the cell unanswered rather than answering it on less.
     """
-    if not isinstance(tables, dict):
+    if not isinstance(objects, dict):
         return None
-    return {str(name): value for name, value in tables.items()}
+    return {str(name): value for name, value in objects.items()}
 
 
 def _normalised(statement):

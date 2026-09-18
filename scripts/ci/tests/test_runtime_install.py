@@ -6496,6 +6496,288 @@ class SchemaComparisonTests(unittest.TestCase):
             swapgate.UNESTABLISHED)
 
 
+# =========================================================================================
+# Check 10 - the comparison set is the catalog's, not a list of kinds this command chose
+# =========================================================================================
+
+# One object of every kind SQLite can put in a schema, plus a name the old exclusion swallowed.
+#
+# NOT LIKE 'sqlite_%' reads _ as a one-character wildcard, so it dropped a legal user object
+# called sqlitexfoo as well as the internal ones it was aimed at. SQLite refuses the real prefix
+# outright, so nothing internal can be spelled this way and the name is only ever a user's.
+EVERY_KIND_DDL = (
+    "CREATE TABLE kept (id INTEGER PRIMARY KEY, value TEXT UNIQUE);\n"
+    "CREATE INDEX kept_value ON kept (value);\n"
+    "CREATE VIEW kept_seen AS SELECT id FROM kept;\n"
+    "CREATE TRIGGER kept_touch AFTER INSERT ON kept"
+    " BEGIN UPDATE kept SET value = value WHERE id = NEW.id; END;\n"
+    "CREATE TABLE sqlitexfoo (a TEXT);\n"
+)
+
+
+def _relay_ddl():
+    """The relay's schema script, read from its source rather than from an installed package."""
+    tree = ast.parse((RELAY_SRC / "store.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "DDL" for target in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError("the relay's store.py no longer binds DDL at module level")
+
+
+def _partitioned(ddl):
+    """Every catalog row a scratch copy lets you DROP, and every row it refuses.
+
+    SQLite's own division between what a user declared and what SQLite maintains for itself,
+    asked of SQLite instead of restated here. A test that wrote its own exclusion would be
+    checking the comparison against a second copy of the comparison's rule, which is the shape
+    this whole issue exists to remove. The refused rows come back too, so a row that is neither
+    internal nor droppable is something a caller can fail on rather than something the oracle
+    quietly absorbs.
+    """
+    def built():
+        connection = sqlite3.connect(":memory:")
+        connection.executescript(ddl)
+        return connection
+
+    catalogue = built()
+    rows = catalogue.execute("SELECT type, name FROM sqlite_master").fetchall()
+    catalogue.close()
+    droppable, refused = set(), set()
+    for kind, name in rows:
+        scratch = built()
+        try:
+            scratch.execute('DROP ' + kind + ' "' + name.replace('"', '""') + '"')
+            droppable.add(kind + " " + name)
+        except sqlite3.Error:
+            refused.add(kind + " " + name)
+        finally:
+            scratch.close()
+    return droppable, refused
+
+
+def _built_store(state, ddl, drop=None):
+    """Build a store at the path the RELAY resolves for this state directory.
+
+    The path is asked of the relay rather than spelled here, because which file a state
+    directory resolves to is the relay's rule; a test that wrote its own copy would be building
+    a database the probe under test does not read.
+    """
+    import runtime_install
+
+    presence = runtime_install.store_presence(RELAY_RUNTIME, str(state))
+    assert presence.get("readable"), presence.get("detail")
+    database = Path(presence["dbPath"])
+    database.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.executescript(ddl)
+        if drop is not None:
+            kind, name = drop.split(" ", 1)
+            connection.execute('DROP ' + kind + ' "' + name.replace('"', '""') + '"')
+        connection.commit()
+    finally:
+        connection.close()
+    return database
+
+
+needs_relay = unittest.skipUnless(sys.version_info >= (3, 11),
+                                  "the relay requires Python 3.11 or newer")
+
+
+class SchemaDepthTests(unittest.TestCase):
+    """A schema is not its tables (CRW-91).
+
+    Both readings asked the catalog for type = 'table', so an index, a trigger or a view was
+    never in the judgement at all. A store that had lost one compared identical to a candidate
+    that declares it, the gate answered AGREES, and the relay runs its whole DDL on every
+    write-open -- so the new daemon would put it back. Letting an update through on that is the
+    implicit migration OPS-4.5 reserves for its own issue with its own copied backup, arrived at
+    by not looking rather than by deciding.
+
+    Nothing here names a kind. The comparison set is whatever the catalog holds, and the tests
+    draw their expectations from SQLite rather than from a list, so a kind SQLite gains is
+    covered without this file being taught about it.
+
+    Two groups, said out loud rather than left to be inferred. REGRESSION cases fail at the
+    parent commit on the defect itself: they drive the real probe functions, which exist there
+    under the same names, so the failure is the answer and not a missing symbol. SUPPORT cases
+    prove an oracle can fail, pin the output shape, or keep the two readings from drifting; they
+    passed at the parent too, and that is them doing their job rather than them being weak.
+    """
+
+    @needs_relay
+    def test_the_store_reading_carries_every_object_the_catalog_owns(self):
+        """REGRESSION. The reading, against SQLite's own account of the same database.
+
+        Both sides are derived: the reading comes from the shipped probe, and what it is
+        measured against is every row a scratch copy of that database lets you drop. A kind the
+        query stops returning is the difference between the two sets.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "state"
+            _built_store(state, EVERY_KIND_DDL)
+            reading = runtime_install.store_tables(RELAY_RUNTIME, str(state))
+        droppable, refused = _partitioned(EVERY_KIND_DDL)
+
+        self.assertTrue(reading.get("readable"), str(reading.get("detail")))
+        self.assertGreater(len({key.split(" ", 1)[0] for key in droppable}), 1,
+                           "a fixture holding one kind cannot show a comparison losing kinds")
+        self.assertEqual(set(reading["tables"]), droppable,
+                         "the store reading and the objects this database actually owns are"
+                         " different sets, so the comparison is being made on a schema the"
+                         " store does not have")
+        self.assertTrue(all(name.startswith("sqlite_") for name in
+                            (key.split(" ", 1)[1] for key in refused)),
+                        "a row this database owns cannot be dropped, so the oracle above would"
+                        " leave it out of the comparison without saying so: " + repr(refused))
+
+    def test_a_reading_that_lost_a_kind_does_not_satisfy_that_check(self):
+        """SUPPORT, the negative control for the check above.
+
+        Narrowing the QUERY would not have proved this. The query ends in ORDER BY, so SQLite
+        reads a trailing AND as another ordering expression and every kind stays -- a control
+        written that way passes while narrowing nothing. So the control narrows the reading,
+        which is what that check actually compares.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "schema.sqlite3"
+            connection = sqlite3.connect(str(database))
+            connection.executescript(EVERY_KIND_DDL)
+            connection.commit()
+            whole = {row[0] for row in connection.execute(swapgate.SCHEMA_OBJECTS_QUERY)}
+            connection.close()
+        droppable, _refused = _partitioned(EVERY_KIND_DDL)
+
+        self.assertEqual(whole, droppable, "the control's own fixture must start out satisfied")
+        kinds = {key.split(" ", 1)[0] for key in whole}
+        for kind in sorted(kinds):
+            with self.subTest(kind):
+                without = {key for key in whole if not key.startswith(kind + " ")}
+                self.assertNotEqual(without, droppable,
+                                    "a reading that lost every " + kind + " still satisfies the"
+                                    " inventory check, so the check cannot fail and its passing"
+                                    " means nothing")
+
+    @needs_relay
+    def test_the_candidate_reading_is_every_object_its_own_ddl_creates(self):
+        """REGRESSION. The candidate side, measured the same way against the relay's real DDL.
+
+        This is the half that decides what an update would install, and the relay's schema has
+        held indexes all along: eight of them, none of which reached the comparison.
+        """
+        import runtime_install
+
+        ddl = _relay_ddl()
+        droppable, refused = _partitioned(ddl)
+        reading = runtime_install.candidate_tables(RELAY_RUNTIME)
+
+        self.assertTrue(reading.get("readable"), str(reading.get("detail")))
+        self.assertEqual(set(reading["tables"]), droppable,
+                         "the candidate declares objects this reading never reports, so an"
+                         " update compares against a schema the runtime would not install")
+        self.assertTrue(all(name.startswith("sqlite_") for name in
+                            (key.split(" ", 1)[1] for key in refused)),
+                        "a row the relay's own schema owns cannot be dropped: " + repr(refused))
+
+    @needs_relay
+    def test_a_store_missing_one_object_of_any_kind_refuses_the_swap(self):
+        """REGRESSION, and criterion 3 in the same breath.
+
+        One object per kind the relay's schema actually has, chosen from the catalog rather than
+        listed here, so a kind the relay gains enters this loop without being added to it. The
+        answer must be one of the refusing ones and the verdict must be BLOCKED: the existing
+        installation is kept, and nothing is downgraded on the quiet.
+
+        Dropping a table takes its indexes with it, so what is required of the refusal is that
+        it NAMES the object that went, never that exactly one thing changed.
+        """
+        import runtime_install
+
+        ddl = _relay_ddl()
+        droppable, _refused = _partitioned(ddl)
+        candidate = runtime_install.candidate_tables(RELAY_RUNTIME)
+        self.assertTrue(candidate.get("readable"), str(candidate.get("detail")))
+
+        first_of_kind = {}
+        for key in sorted(droppable):
+            first_of_kind.setdefault(key.split(" ", 1)[0], key)
+        self.assertGreater(len(first_of_kind), 1,
+                           "one kind in the relay's schema proves nothing about a comparison"
+                           " that is supposed to span kinds")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "intact"
+            _built_store(state, ddl)
+            whole = runtime_install.store_tables(RELAY_RUNTIME, str(state))
+        self.assertEqual(swapgate.tables_cell(whole, candidate)["answer"], swapgate.AGREES,
+                         "the control: an untouched store must agree, or every refusal below is"
+                         " a refusal of the fixture rather than of the missing object")
+
+        for kind, key in sorted(first_of_kind.items()):
+            with self.subTest(kind):
+                with tempfile.TemporaryDirectory() as temporary:
+                    state = Path(temporary) / "missing"
+                    _built_store(state, ddl, drop=key)
+                    reading = runtime_install.store_tables(RELAY_RUNTIME, str(state))
+                cell = swapgate.tables_cell(reading, candidate)
+                self.assertIn(cell["answer"], swapgate.TABLES_BLOCKING,
+                              "a store missing " + key + " answered " + str(cell["answer"])
+                              + ", so the new daemon would re-create it on its first write-open")
+                self.assertIn(key, cell["detail"], "the refusal has to name what went")
+                self.assertIn(key, cell["evidence"]["onlyInCandidate"])
+                verdict = swapgate.decide({
+                    "daemon": swapgate.daemon_cell(
+                        {"ok": True, "payload": {"running": False}}),
+                    "inFlight": swapgate.inflight_cell(
+                        {"ok": True, "payload": {"contents": {"available": True,
+                                                              "openAttempts": 0}}}),
+                    "storeTables": cell})["verdict"]
+                self.assertEqual(verdict, swapgate.BLOCKED,
+                                 "the existing installation is kept rather than replaced over a"
+                                 " store whose schema the candidate does not match")
+
+    def test_both_schema_readings_ask_the_one_question(self):
+        """SUPPORT, the drift guard.
+
+        Two copies of a query kept equal by hand is how the two sides come to compare different
+        schemas, and this cell reports that as a schema difference -- a refusal caused by the
+        readers rather than by the store.
+        """
+        import runtime_install
+
+        programs = {name: value for name, value in vars(runtime_install).items()
+                    if name.endswith("_PROGRAM") and isinstance(value, str)}
+        asking = {name for name, value in programs.items() if "sqlite_master" in value}
+        self.assertEqual(len(asking), 2,
+                         "the schema comparison has two sides; found " + repr(sorted(asking)))
+        for name in sorted(asking):
+            with self.subTest(name):
+                self.assertIn(swapgate.SCHEMA_OBJECTS_QUERY, programs[name],
+                              name + " asks the catalog a question of its own instead of the"
+                              " one both sides are compared on")
+
+    def test_the_refusal_names_the_kind_as_well_as_the_name(self):
+        """SUPPORT, pinning the output shape this change introduces.
+
+        The evidence lists reach install JSON, and their entries gained a kind: 'index
+        sync_ready' where they used to read 'sync_ready'. A consumer parses those, so the format
+        is stated here rather than left to be discovered from a payload.
+        """
+        held = {"table kept": "CREATE TABLE kept (a TEXT)"}
+        declared = dict(held, **{"index kept_a": "CREATE INDEX kept_a ON kept (a)"})
+        cell = swapgate.tables_cell(
+            {"readable": True, "present": True, "dbPath": "/d", "tables": held},
+            {"readable": True, "tables": declared})
+
+        self.assertEqual(cell["answer"], swapgate.EXTENDS)
+        self.assertEqual(cell["evidence"]["onlyInCandidate"], ["index kept_a"])
+        self.assertEqual(cell["evidence"]["onlyInStore"], [])
+        self.assertIn("index kept_a", cell["detail"])
+
+
 class NarrowReadingTests(unittest.TestCase):
     """Two questions that must not be answered by the conservative reading."""
 

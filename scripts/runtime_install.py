@@ -417,6 +417,10 @@ def protected_environment(record, environment, destination, data):
 # no schema script, so asking the question does not create the store the question is about.
 # Absence is established by looking at the path FIRST: a failed open also answers for a
 # permission failure and for a locked database, and neither of those means nothing is there.
+#
+# WHAT is asked is swapgate's and is embedded here rather than written again. The two sides of
+# this comparison asking different questions would arrive as a schema difference and be refused
+# as one, so the question is one value with two readers rather than two copies kept equal by hand.
 _STORE_TABLES_PROGRAM = """
 import json, os, sys
 from codex_session_relay.store import resolve_state_dir, read_only_rows
@@ -434,33 +438,27 @@ except OSError as error:
                       "tables": None,
                       "detail": type(error).__name__ + ": " + str(error)}))
     raise SystemExit(0)
-answer = read_only_rows(
-    selection,
-    "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
-    " AND name NOT LIKE 'sqlite_%' ORDER BY name",
-)
+answer = read_only_rows(selection, """ + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """)
 if not answer["readable"] or answer["detail"]:
     print(json.dumps({"readable": False, "present": True, "dbPath": str(database),
                       "tables": None,
                       "detail": answer["detail"] or "the store could not be read"}))
     raise SystemExit(0)
 print(json.dumps({"readable": True, "present": True, "dbPath": str(database),
-                  "tables": {row["name"]: row["sql"] for row in answer["rows"]},
+                  "tables": {row["object"]: row["sql"] for row in answer["rows"]},
                   "detail": None}))
 """
 
-# The candidate's tables come from its own DDL applied to an in-memory database, so nothing is
-# created anywhere and the answer is the schema that relay would actually install.
+# The candidate's schema comes from its own DDL applied to an in-memory database, so nothing is
+# created anywhere and the answer is the schema that relay would actually install. It asks the
+# same question the store side asks, from the same value.
 _CANDIDATE_TABLES_PROGRAM = """
 import json, sqlite3
 from codex_session_relay import store
 
 database = sqlite3.connect(":memory:")
 database.executescript(store.DDL)
-rows = database.execute(
-    "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
-    " AND name NOT LIKE 'sqlite_%' ORDER BY name",
-).fetchall()
+rows = database.execute(""" + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """).fetchall()
 print(json.dumps({"readable": True, "tables": {row[0]: row[1] for row in rows},
                   "schemaVersion": store.SCHEMA_VERSION, "detail": None}))
 """
@@ -521,10 +519,14 @@ def store_presence(interpreter, state=None, socket_path=None):
 
 
 def store_tables(interpreter, state=None, socket_path=None):
-    """The tables the store actually holds, read under the relay that owns the rule.
+    """The schema objects the store actually holds, read under the relay that owns the rule.
 
     Asked of this checkout instead, the answer would describe a copy of a schema the selected
     installation owns rather than the schema it will run.
+
+    Every object the catalog reports, keyed by kind and name: a store's indexes, triggers and
+    views are part of its schema and an update that replaces the runtime over them has to see
+    them.
     """
     argv = [str(interpreter), "-c", _STORE_TABLES_PROGRAM, str(state or ""),
             str(socket_path or "")]
@@ -532,7 +534,7 @@ def store_tables(interpreter, state=None, socket_path=None):
 
 
 def candidate_tables(interpreter):
-    """The tables the candidate declares, read under the candidate's own interpreter."""
+    """The schema objects the candidate declares, read under the candidate's own interpreter."""
     argv = [str(interpreter), "-c", _CANDIDATE_TABLES_PROGRAM]
     return _asked(argv, "the candidate's declared tables")
 
