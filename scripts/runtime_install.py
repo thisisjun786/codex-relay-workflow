@@ -2136,6 +2136,7 @@ def cmd_hook(args):
     # about the adapters this repository happens to own.
     adapter = getattr(args, "adapter", None)
     if adapter == COMPLETION:
+        owner = getattr(args, "owner", completion.OWNER_USER)
         # EVERY precondition is checked before ANY write, and that ordering is the whole point
         # of this block rather than an accident of how it grew. Five rounds of review each found
         # one more condition being evaluated after a write it should have preceded, and the last
@@ -2161,6 +2162,9 @@ def cmd_hook(args):
                     timeout=args.guard_timeout, journal_root=args.journal_root,
                     codex_home=codex_home, issue=args.issue,
                     isolation=getattr(args, "isolation_asserted_by", None),
+                    owner=owner,
+                    adapter_interpreter=interpreter,
+                    adapter_entry_point=ROOT / "scripts" / completion.ENTRY_POINT_NAME,
                 )
             except ValueError as error:
                 refused = [str(error)]
@@ -2180,8 +2184,23 @@ def cmd_hook(args):
                   "note": "the hook file could not be read, so nothing was written: whether"
                           " this adapter is already registered could not be established."})
             return EXIT_REFUSED
+        # Ownership before duplication, because they answer different questions and the first
+        # one can make the second meaningless. Duplication asks whether appending would leave
+        # two registrations in THIS file; ownership asks whether the other owner already holds
+        # the event somewhere this file cannot see. A plugin package declares its Stop hook in
+        # its own manifest, so the hook file stays empty and every check that reads only the
+        # hook file answers "nothing here" while two hooks run on every Stop.
+        registered = completion.adapter_entries(already.value, event)
+        conflict = completion.ownership_complaints(configuration, owner, registered=registered)
+        if conflict:
+            emit({"command": "hook", "adapter": adapter, "owner": owner, "settings": None,
+                  "hookFile": str(path), "result": None, "error": "; ".join(conflict),
+                  "registrations": [entry["identity"] for entry in registered],
+                  "note": "nothing was written. One owner registers this event; the other is"
+                          " reported with its evidence rather than joined."})
+            return EXIT_REFUSED
         duplicate = completion.duplicate_complaints(already.value, event, command, args.timeout)
-        if duplicate:
+        if duplicate and owner == completion.OWNER_USER:
             emit({"command": "hook", "adapter": adapter, "settings": None,
                   "hookFile": str(path), "result": None, "error": "; ".join(duplicate),
                   "note": "nothing was written. Writing the settings first would have handed"
@@ -2203,9 +2222,32 @@ def cmd_hook(args):
                            " registered against settings it cannot act on is installed and"
                            " inert, which is the one outcome worth refusing outright.")})
             return EXIT_REFUSED
+        if owner == completion.OWNER_PLUGIN:
+            # The registration is the plugin package's to declare, so this command writes the
+            # settings that registration will read and stops. Appending here as well is the
+            # duplicate this owner exists to prevent.
+            #
+            # Reported as what it is: settings written, nothing registered. A caller reading
+            # only the exit status would otherwise record an installed hook, and on this host
+            # there is none until the plugin is installed.
+            emit({"command": "hook", "adapter": adapter, "owner": owner, "event": event,
+                  "settings": settings, "hookFile": str(path), "result": None,
+                  "registrations": [],
+                  "note": ("Settings written; no registration was made and the hook file was"
+                           " not touched. The " + completion.OWNER_PLUGIN + " owner registers"
+                           " this event through the plugin package's own manifest, so install"
+                           " that package to register it. Written, registered and observed to"
+                           " have fired stay three separate claims.")})
+            return EXIT_OK
     else:
         command = args.hook_command
         event = args.event or SESSION_START
+        if getattr(args, "owner", completion.OWNER_USER) != completion.OWNER_USER:
+            emit({"command": "hook", "adapter": None, "hookFile": str(path), "result": None,
+                  "error": "--owner names who registers an adapter this repository owns; an"
+                           " explicit --hook-command is registered by whoever ran this command",
+                  "note": "nothing was written"})
+            return EXIT_USAGE
     hook = {"type": "command", "command": command, "timeout": args.timeout}
     try:
         result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
@@ -3858,6 +3900,12 @@ def build_parser():
                       help="observe classifies and records and never holds, which is the"
                            " default because holding depends on per-session write isolation"
                            " the caller has to have granted")
+    hook.add_argument("--owner", choices=completion.OWNERS, default=completion.OWNER_USER,
+                      help="who registers this adapter. user appends to the hook file, which is"
+                           " what this command has always done. plugin writes the settings and"
+                           " registers nothing, because the CRW plugin package declares the"
+                           " registration itself; installing both would run two copies on every"
+                           " " + completion.EVENT)
     hook.add_argument("--isolation-asserted-by",
                       help="who established that a held child cannot write the facts the"
                            " decision reads; required by --mode hold and recorded in the"

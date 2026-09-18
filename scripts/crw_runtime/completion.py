@@ -66,6 +66,22 @@ OBSERVE = "observe"
 HOLD = "hold"
 MODES = (OBSERVE, HOLD)
 
+# Who owns the registration these settings belong to. The settings say which runtime answers a
+# Stop; this says which registration is allowed to exist at all. Two owners of one event is not
+# a preference: both copies run, both ask the guard, and the turn's one hold goes to whichever
+# wins the reservation.
+#
+# "user" is this repository's own $CODEX_HOME/hooks.json registration and stays the default.
+# It is deliberately NOT written into the document: a host that installed before this key
+# existed holds a document without it, and adding the key to what this command generates would
+# make an ordinary reinstall differ from the file on disk and be refused. Absent reads as user.
+#
+# "plugin" is a registration the CRW plugin package declares. The plugin cannot write this file,
+# so the record is written here, by the command that would otherwise have registered the hook.
+OWNER_USER = "user"
+OWNER_PLUGIN = "plugin"
+OWNERS = (OWNER_USER, OWNER_PLUGIN)
+
 # How much this hook records about itself. Every invocation is the default because the guard
 # records only when it selected an assignment: on a host with no managed session it writes
 # nothing at all, and then "no firing evidence" would be indistinguishable from "this hook never
@@ -388,6 +404,30 @@ def complaints(document):
     policy = document.get("journalPolicy")
     if policy is not None and policy not in JOURNAL_POLICIES:
         found.append("journalPolicy must be one of " + ", ".join(JOURNAL_POLICIES))
+    owner = document.get("owner")
+    if owner is not None and owner not in OWNERS:
+        # Checked rather than ignored. An owner this reader does not know is not a document it
+        # can act on: the value decides which registration may exist, so reading past it would
+        # let a second copy be installed beside one this command cannot see.
+        found.append("owner must be one of " + ", ".join(OWNERS)
+                     + " when it is present at all, found " + repr(owner))
+    for field in ("adapterInterpreter", "adapterEntryPoint"):
+        value = document.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            found.append(field + " must be a non-empty string when it is present at all")
+        elif not os.path.isabs(value):
+            # Same reason relayExecutable is absolute: whatever starts this adapter runs from
+            # the session's own workspace, and a relative path names a file the install never
+            # resolved. A bare name is worse, because it falls back to PATH.
+            found.append(field + " must be an absolute path")
+    if owner == OWNER_PLUGIN:
+        for field in ("adapterInterpreter", "adapterEntryPoint"):
+            if not document.get(field):
+                found.append(field + " is required when owner is " + OWNER_PLUGIN
+                             + ": a registration declared by the plugin package cannot resolve"
+                               " this repository's adapter, so the install records it here")
     budget = document.get("timeoutSeconds")
     if budget is not None and not usable_seconds(budget):
         found.append("timeoutSeconds must be a positive number of seconds, at most "
@@ -416,6 +456,60 @@ def read_configuration(path):
     if wrong:
         return None, CONFIG_MALFORMED, "; ".join(wrong), found
     return found.value, None, None, found
+
+
+def owner_of(document):
+    """Who owns the registration these settings belong to.
+
+    Absent is not unknown. A document written before this key existed was written by the
+    command that also appends to the hook file, so absence means exactly one thing and is
+    answered as that one thing rather than as a third state nobody can act on.
+    """
+    owner = (document or {}).get("owner")
+    return owner if owner in OWNERS else OWNER_USER
+
+
+def ownership_complaints(path, owner, *, registered):
+    """Why this owner may not take the registration, given what is already on this host.
+
+    Two owners of one Stop is the failure this exists to prevent, and it is prevented in both
+    directions because either one can be installed first. The user path is refused by settings
+    that already name the plugin; the plugin path is refused by a registration already sitting
+    in the hook file. Neither reads the other's artifact as a hint: settings are read as
+    settings and the hook file as the hook file, and a reading that did not happen refuses
+    rather than defaults.
+
+    registered is the list adapter_entries() returned for the event, or None when the hook file
+    could not be read. None refuses: whether this adapter is already registered was not
+    established, and installing on an unanswered question is how the second copy arrives.
+    """
+    if owner not in OWNERS:
+        return ["owner must be one of " + ", ".join(OWNERS) + ", found " + repr(owner)]
+    document, outcome, detail, _ = read_configuration(path)
+    if owner == OWNER_USER:
+        if document is not None and owner_of(document) == OWNER_PLUGIN:
+            return ["the settings at " + str(path) + " record the " + OWNER_PLUGIN
+                    + " as the owner of this " + EVENT + " registration, so the plugin package"
+                      " already declares it; appending a hook file registration would run two"
+                      " copies on every " + EVENT + ". Install with --owner " + OWNER_PLUGIN
+                    + ", or remove the plugin declaration and these settings first"]
+        return []
+    if outcome == CONFIG_MALFORMED:
+        # A readable file saying something this reader cannot act on is not an absent one. The
+        # write below would refuse it anyway; refusing here says why in the operator's terms.
+        return ["the settings at " + str(path) + " could not be acted on (" + str(detail)
+                + "), so who owns this " + EVENT + " registration was not established"]
+    if registered is None:
+        return ["the hook file could not be read, so whether this adapter is already registered"
+                " for " + EVENT + " was not established; nothing was written"]
+    if registered:
+        names = ", ".join(entry["identity"] for entry in registered)
+        return ["this adapter is already registered for " + EVENT + " in the hook file as "
+                + names + ", which is the " + OWNER_USER + "-owned registration; a plugin"
+                  " declaration beside it would run two copies on every " + EVENT
+                + ". Remove that registration first, by hand, because removal renumbers later"
+                  " identities and this command does not perform one"]
+    return []
 
 
 # ------------------------------------------------------------------ asking the guard
@@ -998,10 +1092,13 @@ def relay_through_pointer(destination):
 
 def configuration(*, destination=None, relay=None, marker_root=None, database=None,
                   mode=OBSERVE, timeout=DEFAULT_TIMEOUT_SECONDS, journal_root=None,
-                  codex_home=None, environ=None, issue=None, isolation=None):
+                  codex_home=None, environ=None, issue=None, isolation=None,
+                  owner=OWNER_USER, adapter_interpreter=None, adapter_entry_point=None):
     """The settings document, built once so install and diagnosis cannot disagree about it."""
     environ = os.environ if environ is None else environ
     home = Path(codex_home or environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+    if owner not in OWNERS:
+        raise ValueError("owner must be one of " + ", ".join(OWNERS) + ", not " + repr(owner))
     if relay:
         executable = _settled(relay)
     elif destination:
@@ -1009,7 +1106,7 @@ def configuration(*, destination=None, relay=None, marker_root=None, database=No
     else:
         raise ValueError("a relay executable or an install destination is required: this"
                          " configuration never resolves the runtime from PATH")
-    return {
+    document = {
         "configVersion": CONFIG_VERSION,
         "event": EVENT,
         "relayExecutable": str(executable),
@@ -1028,6 +1125,20 @@ def configuration(*, destination=None, relay=None, marker_root=None, database=No
         # the mode having been set.
         "isolationAssertedBy": isolation,
     }
+    if owner != OWNER_USER:
+        # Written only when it is not the default, so a host that installed before this key
+        # existed keeps a byte-identical document and an ordinary reinstall is still UNCHANGED
+        # rather than refused as settings that say something else.
+        document["owner"] = owner
+        # The user-owned registration carries these two in the command line it writes into the
+        # hook file. A plugin-declared registration has no such moment: its command ships inside
+        # a package that knows nothing about this host, so the two values the launcher needs are
+        # resolved here, once, by the command that resolved them for the other owner too.
+        document["adapterInterpreter"] = str(_settled(adapter_interpreter)) \
+            if adapter_interpreter else None
+        document["adapterEntryPoint"] = str(_settled(adapter_entry_point)) \
+            if adapter_entry_point else None
+    return document
 
 
 def no_configuration():
