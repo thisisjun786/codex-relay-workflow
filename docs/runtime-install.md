@@ -1278,6 +1278,119 @@ daemon is not observable from a Stop and is never inferred from one; `hook-statu
 separately or says it did not look. Long retries and whole verification loops belong to the daemon
 and to the coordinating task, not to a hook with a five-second budget.
 
+## The composed acceptance run
+
+Installing, updating and hooking each have their own cases above. What none of them states is
+the sequence a host actually lives through, on one destination, with the state that has to
+survive it put there before the first install and read again after the last refusal. A suite of
+separately passing cases is not that sequence, and the difference is where a host loses a
+runtime. `scripts/ci/tests/test_install_acceptance.py` is that sequence.
+
+It reuses the update fixture rather than restating it: the same host, the same injected seams,
+the same snapshot of everything a failed update promised not to change. What it adds is that the
+installation recovered at the end is one the run itself promoted, not a directory a fixture
+placed on disk. An installer that had lost the ability to install would leave the update cases
+green; it fails here at stage one.
+
+| Stage | What runs | What must be true afterwards |
+| --- | --- | --- |
+| A new install | `install --apply` onto a destination holding nothing | An environment was built, the record selects it, `current` reaches it, the claim is `COMPLETE` |
+| The same run again | the identical command | `alreadyInstalled`, staging `SETTLED`, the claim and the configuration byte-identical, no orphan directory |
+| An update that fails | a source arrives, so the candidate is a different directory, and one of the eight seams refuses | exit 1, the seam names itself, and the refusal names the arriving environment |
+| The install it replaced | nothing further | selection, pointer target, configuration bytes, store bytes, store inode and store rows all as stage two left them, and a further install still answers `alreadyInstalled` |
+
+The last column is the reason the stage list is not the test. Every one of those equalities also
+holds for a run that did nothing at all, so the sequence separately requires what a no-op cannot
+produce: an environment in the destination, a selection naming it, and a seam that reported the
+boundary it stopped at against the environment it was building.
+
+### Seven questions, seven readings
+
+The criterion asks for seven judgements and forbids one standing in for another. They are not
+one payload: two are commands and one is a comparison the acceptance module performs. `READINGS`
+declares the cell, the source that answers it and the path the answer is read from, and a single
+`read()` is the only way a cell is filled. A reading that could not be made reads `UNREADABLE` --
+never `False`, and never the value of the cell beside it.
+
+| Judgement | Answered by | Read from | Never established by it |
+| --- | --- | --- | --- |
+| Skill link | `diagnose` | `skillLinks`, from `scripts/install.py --check` | that a linked skill is loaded or trusted by a host |
+| Runtime import | `diagnose` | `checks.results.imported` | that an imported module is the one a pointer reaches |
+| MCP tool exposure | `diagnose` | `checks.results.mcpExposed` | that a registered server was started, or that a session listed its tools |
+| App Server connection | `diagnose` | `checks.results.connected` | that a socket that accepted a connection will accept delivery |
+| Real hook callback | `hook-status` | `firingJournal` | that a registered hook is an enabled one, or that a firing was judged correctly |
+| Model and permission preservation | the acceptance module | the model and permission keys, read before and again after | that anything else in the configuration survived |
+| Delivery acceptance | `diagnose` | `checks.results.deliveryAccepted` | that an accepted delivery was acted on |
+
+The vocabularies are deliberately not merged. The result rows answer in `check.VALUES`, the hook
+row answers in the completion module's own words, and the listing row answers with a listing. A
+cell rewritten into a neighbour's vocabulary is the same borrowed answer with better manners.
+
+Two of the seven are established by construction rather than by trusting a number. The hook row
+counts records, and a count taken from a directory somebody populated says nothing, so the case
+establishes it by the transition instead: the journal is established absent, the Stop hook is
+actually run, and the journal then names exactly one invocation. And no verdict cell anywhere
+reads model or permission state on both sides of an install, so the acceptance module performs
+that comparison itself. `checks.settingsPreserved` is not that reading -- it answers whether a
+command that writes nothing left `config.toml` alone, which is true of a diagnosis whatever the
+model keys say -- and neither is `settings_usable`, which answers whether a value a caller
+supplied is admissible to the relay. Filling the preservation cell from either would be the
+borrowed answer the whole arrangement refuses, so the missing cell is recorded as missing.
+
+A version that moved and a source that moved are likewise two findings and not one. Only
+`definition.verify` reports the first, and it refuses the install rather than filling a cell; a
+reader wanting a version disagreement reads the refusal, not a classification.
+
+### What the run exercised, and what it stood in for
+
+Every path is temporary, and the two build steps, the relay and the measurement are stand-ins
+inherited from the update fixture. The acceptance module says so in a declaration it derives from
+that fixture rather than from memory, so a stand-in added there fails this suite until the record
+acknowledges it. A provenance record a later change can silently outgrow is worse than none.
+
+Rows this repository has exercised are `fixture`: a temporary destination whose build steps and
+relay are simulated. No committed row can say `host`, and a check enforces that. The diagnosis
+runs with `HOME`, `XDG_STATE_HOME`, `CODEX_HOME` and `PATH` pointed inside the temporary
+directory and with `--relay-command` naming a path in it, because redirecting `--state` alone is
+not isolation: the survey runs discovery of its own, the filesystem side reads the real home, and
+an installed entry point on `PATH` would be resolved and run. The case then requires every path
+the diagnosis reported to be inside that directory.
+
+### Running the combination against a real host
+
+A real combination is an operator action, not a check. It needs a destination, a Codex home, a
+host record and a state directory that are yours to change, and it establishes nothing until it
+is recorded.
+
+```sh
+# Start: install, then read the seven separately.
+python3 scripts/runtime_install.py install --dest <destination> --record <record> \
+    --codex-home <codex-home> --state <state> --apply
+python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
+    --codex-home <codex-home> --state <state> --socket <socket> \
+    --observed-tool get_capabilities --trial
+python3 scripts/runtime_install.py hook-status --codex-home <codex-home>
+
+# Recovery: an update that failed has already restored what it found. Read it back rather than
+# assuming it, and look at residualPaths before retrying.
+python3 scripts/runtime_install.py diagnose --dest <destination> --record <record> \
+    --codex-home <codex-home> --state <state>
+```
+
+Stopping is not on that list, because nothing here starts anything. The installer never starts or
+stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well
+it went; whoever operates the service starts and stops it. A refused update naming a residual
+pointer is telling you to look at that link rather than telling you it is fine: the restoration
+happened on disk but could not be read back, and the command declines to claim what it could not
+confirm.
+
+A real run records the exact revision it ran at, the interpreter and host it ran on, the
+destination kind, and the answer to each of the seven with the command that produced it and the
+time it was produced. `repositoryCommit` and `definitionVersion` are in the payload for that
+reason. Those receipts are host facts: they belong in the private record outside this repository,
+not in a commit, and `measuredPoints` in the committed definition stays empty until a measured
+point is made. This page is the procedure and the shape. It is not a record that anybody ran it.
+
 ## What none of this establishes
 
 Running the entry point against a temporary destination proves what it did there. It is not
