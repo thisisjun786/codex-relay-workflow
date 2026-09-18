@@ -1509,6 +1509,8 @@ def _hands_on(tree, spelled):
     because alias = helper is an ordinary refactor and not a place to lose one.
     """
     places = _places(tree)
+    parents = {node.name: [_dotted(base) for base in node.bases]
+               for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     defined, methods = set(), {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -1519,6 +1521,18 @@ def _hands_on(tree, spelled):
         # not a module-level function or another class's method that happens to share the name.
         if klass is not None and "." not in where:
             methods[(klass, where)] = where
+
+    def inherited(klass, named, seen=()):
+        """The method this class reaches by that name, its own or one it inherits."""
+        if klass is None or klass in seen:
+            return None
+        if (klass, named) in methods:
+            return methods[(klass, named)]
+        for base in parents.get(klass, ()):
+            reached = inherited(base, named, tuple(seen) + (klass,))
+            if reached:
+                return reached
+        return None
 
     def scopes(caller):
         """The scope this call sits in and every one enclosing it, innermost first."""
@@ -1548,9 +1562,11 @@ def _hands_on(tree, spelled):
         where = places.get(id(node), (MODULE_LEVEL, None))[0]
         if where == MODULE_LEVEL:
             continue
-        for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-            if isinstance(named, ast.Name):
-                taken_names.setdefault(where, set()).add(named.id)
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+            # Every name the target introduces, destructured ones included: carrier, other = ...
+            # makes carrier local exactly as carrier = ... does.
+            taken_names.setdefault(where, set()).update(
+                inner.id for inner in ast.walk(target) if isinstance(inner, ast.Name))
 
     def outwards(caller, named, aliases=None):
         """Every place this name may reach, innermost scope first.
@@ -1597,7 +1613,7 @@ def _hands_on(tree, spelled):
                 # would, and alias = self.carrier is as ordinary as alias = carrier. Resolved
                 # against this class, so a same-named method on another class is not dragged in.
                 _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-                reached = methods.get((klass, node.value.attr))
+                reached = inherited(klass, node.value.attr)
                 targets = {reached} if reached else set()
             elif isinstance(node.value, ast.Lambda):
                 # A lambda given a name is a function given a name.
@@ -1621,7 +1637,7 @@ def _hands_on(tree, spelled):
         if isinstance(node.func, ast.Attribute) and _dotted(node.func.value) in ("self", "cls"):
             # cls.name in a classmethod names a method of this class exactly as self.name does.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-            reached = methods.get((klass, node.func.attr))
+            reached = inherited(klass, node.func.attr)
             return {reached} if reached else set()
         return set()
 
@@ -1876,8 +1892,9 @@ def _refusal_spelled(spellings, held):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return repr(node.value) if node.value in answers else None
         if isinstance(node, ast.Attribute):
-            if _dotted(node.value) == "self" and node.attr in held.get(klass, ()):
-                return "self." + node.attr
+            through = _dotted(node.value)
+            if through in ("self", "cls") and node.attr in held.get(klass, ()):
+                return through + "." + node.attr
             return "." + node.attr if node.attr in attributes else None
         if isinstance(node, ast.Name) and node.id in names:
             return node.id
@@ -1892,14 +1909,20 @@ def _source_spelled(handles, hands_source, held):
         if isinstance(node, ast.Name):
             return node.id if node.id in handles else None
         if isinstance(node, ast.Attribute):
-            if _dotted(node.value) == "self" and node.attr in held.get(klass, ()):
-                return "self." + node.attr
+            through = _dotted(node.value)
+            if through in ("self", "cls") and node.attr in held.get(klass, ()):
+                return through + "." + node.attr
             return "." + node.attr if node.attr == "__file__" else None
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return repr(node.value) if node.value.endswith(".py") else None
         if isinstance(node, ast.Call):
             spelling = _dotted(node.func)
-            return spelling if spelling in hands_source else None
+            if spelling in hands_source:
+                return spelling
+            # A read taken ON a handle hands source text back: a helper answering
+            # HERE.read_text() gives its caller the text as surely as one answering ast.parse.
+            head, _, _attribute = (spelling or "").partition(".")
+            return spelling if head and head in handles and _attribute else None
         return None
 
     return spelled
