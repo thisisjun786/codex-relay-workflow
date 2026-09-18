@@ -639,9 +639,16 @@ def cmd_verdict(services, args) -> dict:
         # actually carries. Naming one that is not there is refused rather than ignored: a
         # flag that silently attaches to nothing is the same silence this whole path removes.
         marked = [
-            item for item in criteria + findings if item.get("id") == args.restoration
+            item for item in criteria + findings
+            # Shape-checked here because --criteria accepts arbitrary JSON and this runs
+            # before normalise_findings can refuse it. Calling .get on a null entry raised an
+            # AttributeError out of a command whose contract is a named refusal and an exit
+            # code, so a malformed array answered with a traceback.
+            if isinstance(item, dict) and item.get("id") == args.restoration
         ]
-        if not marked:
+        if not marked and all(isinstance(item, dict) for item in criteria + findings):
+            # Only when every entry was well formed. Otherwise the array itself is the
+            # problem, and normalise_findings owns that refusal and already words it.
             raise SystemExit2(
                 f"--restoration names {args.restoration!r}, which is not one of the findings "
                 "this verdict carries. The block travels inside a finding, so it names one",
