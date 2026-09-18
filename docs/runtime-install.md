@@ -1415,6 +1415,15 @@ is recorded. Four of the seven need an input the command cannot supply for itsel
 `diagnose` produces four answers and three admissions that it did not look.
 
 ```sh
+# Substitute every <...> below before running any of it. They are placeholders, not literals:
+# an unsubstituted one is a shell redirection rather than a value, which is as true of the
+# controller assignment below as of the flags further down. Nothing here runs as it stands.
+
+# The receipt directory has to exist before the first write, or the baseline redirect and the
+# install redirect below both fail -- and the second of those stops the install from running at
+# all rather than merely losing a file.
+mkdir -p <receipt>
+
 # One controller for the whole block, on 3.11 or newer. Five of the steps below read a Codex
 # configuration and they do not fail alike without a reader, so naming the interpreter once is
 # the difference between a block that can be copied and a block whose readings quietly degrade.
