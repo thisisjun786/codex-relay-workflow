@@ -170,6 +170,23 @@ class ManifestTests(unittest.TestCase):
                 errors = plugin.manifest_errors(broken, "crw", "t", shipped)
                 self.assertTrue(any(expected in e for e in errors), (field, errors))
 
+    def test_urls_are_parsed_rather_than_prefix_matched(self):
+        for value in ("https://", "https:///missing-host", "http://example.invalid", "example.invalid"):
+            with self.subTest(value=value):
+                broken = manifest()
+                broken["interface"]["websiteURL"] = value
+                errors = plugin.manifest_errors(broken, "crw", "t")
+                self.assertTrue(any("https URL" in e for e in errors), (value, errors))
+                author = plugin.manifest_errors(manifest(author={"name": "a", "url": value}), "crw", "t")
+                self.assertTrue(any("author.url" in e for e in author), (value, author))
+
+    def test_optional_author_values_are_checked_when_present(self):
+        self.assertEqual(plugin.manifest_errors(
+            manifest(author={"name": "a", "email": "a@example.invalid",
+                             "url": "https://example.invalid"}), "crw", "t"), [])
+        errors = plugin.manifest_errors(manifest(author={"name": "a", "email": 5}), "crw", "t")
+        self.assertTrue(any("author.email" in e for e in errors), errors)
+
     def test_ssh_keys_and_credential_dotfiles_are_refused(self):
         for name in ("skills/id_ed25519", "skills/id_ecdsa", "skills/.netrc",
                      "skills/.npmrc", "skills/authorized_keys"):

@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_ROOT = ROOT / "plugins/crw"
@@ -162,12 +163,20 @@ def declared_skills_path(manifest):
     return relative.as_posix()
 
 
+def https_url(value):
+    """An ingestible URL carries the https scheme and a host, not just the prefix."""
+    if not isinstance(value, str):
+        return False
+    parsed = urlsplit(value)
+    return parsed.scheme == "https" and bool(parsed.netloc)
+
+
 def interface_option_errors(interface, payload, label):
     """Optional presentation fields follow the ingestion rules or they are refused."""
     errors = []
     for field in HTTPS_FIELDS:
         value = interface.get(field)
-        if value is not None and (not isinstance(value, str) or not value.startswith("https://")):
+        if value is not None and not https_url(value):
             errors.append(label + " manifest: interface." + field + " must be an https URL")
     color = interface.get("brandColor")
     if color is not None and (not isinstance(color, str) or not BRAND_COLOR.match(color)):
@@ -207,6 +216,11 @@ def manifest_errors(manifest, plugin_root_name, label, payload=None):
     elif set(author) - AUTHOR_KEYS:
         errors.append(label + " manifest: author carries unsupported keys "
                       + repr(sorted(set(author) - AUTHOR_KEYS)))
+    if isinstance(author, dict):
+        if "email" in author and (not isinstance(author["email"], str) or not author["email"]):
+            errors.append(label + " manifest: author.email must be a nonempty string")
+        if "url" in author and not https_url(author["url"]):
+            errors.append(label + " manifest: author.url must be an https URL with a host")
     for unsupported in sorted(set(manifest) - MANIFEST_KEYS):
         errors.append(label + " manifest: " + repr(unsupported)
                       + " is not a supported manifest key")
