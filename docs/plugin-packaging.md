@@ -30,16 +30,51 @@ the ingestion validator knows, and optional presentation fields are checked agai
 its shapes: URLs that begin with `https://`, a `#RRGGBB` brand colour, and `./`
 relative asset paths the package actually ships.
 
-The manifest declares `skills` and nothing else. On this Codex version a declared
-component replaces default discovery rather than adding to it, so declaring
-`hooks` or `mcpServers` would change what loads; wiring those belongs to its own
-change.
-
-That replacement behavior was measured on codex-cli 0.154.0: a plugin declaring a
+The manifest declares every component the package ships. A declared component replaces
+default discovery rather than adding to it, measured on codex-cli 0.154.0: a plugin declaring a
 non-default skills directory while also holding `./skills/` loaded only the declared
 one. The plugin specification bundled with Codex describes the opposite, saying
 declared components supplement default discovery. This package follows the measured
-behavior and keeps every shipped component under the declared path.
+behavior and keeps every shipped component under a declared path.
+
+## How hooks and MCP servers load
+
+Measured on codex-cli 0.154.0 by installing probe plugins into isolated Codex homes and
+ending real turns against a local stub model provider, so the readings below are what a
+hook and a server actually did rather than what an installer accepted. The evidence is
+kept with the task record, outside this repository.
+
+| Reading | Result |
+| --- | --- |
+| `hooks` as an array of file paths | Loads, and the hooks fire |
+| `hooks` as one string path | Loads, and the hook fires |
+| `hooks` as an inline document | Does not load |
+| No `hooks` key, with a `./hooks/` directory present | Does not load: there is no default discovery for hooks |
+| Firing without persisted hook trust | Nothing fires. `--dangerously-bypass-hook-trust` is what made a probe fire |
+| `[hooks.state]` after installing, after read-only commands, after a session | Empty every time; `codex exec` never recorded trust |
+| Variables in a hook command | Expanded: the command goes through a shell and the process carries `CODEX_HOME`, `PLUGIN_ROOT`, `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA` |
+| The same variables for a hook registered in `$CODEX_HOME/hooks.json` | `PLUGIN_ROOT` is absent; that environment belongs to plugin-declared hooks |
+| `skills`, `hooks` and `mcpServers` declared together | All three load |
+| A relative command in an MCP declaration | Resolves only when `cwd` is set; a `cwd` of `.` resolves to the installed version directory |
+| An MCP declaration with no `cwd` | `cwd` stays null and the server never starts |
+| A plugin-root variable in an MCP argument | Delivered literally, never expanded, and the server never starts |
+| What an MCP server inherits | `HOME` and its working directory. Not `CODEX_HOME`, not `PLUGIN_ROOT` |
+
+Those two environments are opposites, and the wiring is built around the difference. A
+hook command can name the plugin root and the Codex home through shell variables because
+a shell expands them. An MCP command can do neither, so it sets `cwd` to `.` with a
+`./` relative argument, and the program it starts derives the Codex home from its own
+location: the cache layout is
+`$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>`.
+
+Hooks ship as an array with one event per file. A single file carrying several events
+works too, but a hook's identity is positional, so adding an event to a shared file
+renumbers the ones after it and detaches the trust Codex recorded against them.
+
+Installing the package does not make its hooks run. Trust is a separate, explicit step,
+and until it is given the declared hooks are inert. That is why installation activates
+nothing on its own, and why the installation flow has to say so rather than leave an
+operator waiting for a hook that is working exactly as installed.
 
 ## Install
 
