@@ -113,6 +113,12 @@ class FakeServer:
             elif method == "thread/start":
                 tid = f"thread-{len(self.threads) + 1}"
                 thread = {"id": tid, "cwd": params["cwd"], "status": {"type": "idle"}, "turns": []}
+                # The real host reports the project a thread was started in, and
+                # create_worktree_thread refuses a launch whose returned project differs from the
+                # requested one. A fake that drops the field fails that check for a reason the
+                # code under test never had.
+                if params.get("projectId") is not None:
+                    thread["projectId"] = params["projectId"]
                 self.threads[tid] = thread
                 result = {"thread": dict(thread), **self.settings_view(params)}
                 result.update(self.override_creation)

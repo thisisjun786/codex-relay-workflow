@@ -7,6 +7,17 @@ import sqlite3
 import time
 from pathlib import Path
 
+# The one status a retained receipt can be retried from. It says this request began nothing, so
+# repeating it cannot repeat an effect. Every other status keeps the conservative contract, and
+# in_progress_or_unknown keeps it for a reason worth stating: what a request began is recorded in
+# memory and dies with the process, so a row left behind by a crash cannot say which side of the
+# send it stopped on.
+RETRYABLE_STATUSES = frozenset({"not_attempted"})
+
+# How many earlier attempts a re-armed receipt keeps: enough to diagnose a flapping socket,
+# bounded so a caller that retries all day cannot grow one row without limit.
+PRIOR_ATTEMPTS_KEPT = 5
+
 
 class Ledger:
     def __init__(self, path: Path):
@@ -67,7 +78,35 @@ class Ledger:
                 (request_id, fingerprint, json.dumps(receipt)),
             ).rowcount
             existing = self.lookup(request_id, method, params, legacy_params=legacy_params)
-        return bool(inserted), existing
+            if inserted:
+                return True, existing
+            if existing.get("status") in RETRYABLE_STATUSES:
+                return self._rearm(request_id, receipt, existing)
+        return False, existing
+
+    def _rearm(self, request_id: str, receipt: dict, previous: dict):
+        """Re-open a request that began nothing, keeping what its earlier attempts reported.
+
+        Two processes sharing a state directory cannot both re-arm one row, and the guard is the
+        transaction rather than a comparison: the ignored INSERT above already took this
+        transaction's write lock, so the second process waits, then reads the in-progress receipt
+        this one wrote and does not re-arm. The fingerprint column is never rewritten, which
+        leaves a legacy row's recovery path exactly as it was.
+        """
+        history = [
+            *previous.get("priorAttempts", []),
+            {
+                "status": previous.get("status"),
+                "error": previous.get("error"),
+                "updatedAt": previous.get("updatedAt"),
+            },
+        ][-PRIOR_ATTEMPTS_KEPT:]
+        rearmed = {**receipt, "attempt": previous.get("attempt", 1) + 1, "priorAttempts": history}
+        self.db.execute(
+            "UPDATE operations SET receipt = ? WHERE request_id = ?",
+            (json.dumps(rearmed), request_id),
+        )
+        return True, rearmed
 
     def save(self, receipt: dict):
         receipt = {**receipt, "updatedAt": time.time()}
