@@ -156,11 +156,29 @@ OWN_SHAPE_ROWS = ("skillLink", "modelPermissionPreservation")
 PRESERVED = "preserved"
 CHANGED = "changed"
 
-# The flags that make the supplied interpreter hermetic: no site directory, no inherited import
-# path. Named here so the case can require the wrapper to still carry them -- an interpreter
-# whose shebang was quietly changed back is the whole isolation gone, and every path this suite
-# reports would still look right.
-HERMETIC_FLAGS = ("-S", "-E")
+# What the supplied interpreter has to answer about itself. Asked of the interpreter rather
+# than read out of the text that launches it: a wrapper can mention -S and -E in a comment and
+# run neither, and then every path this suite reports is right while the probe had the site
+# directory and the inherited import path all along. The flags are a property of the process,
+# so the process is the only thing that can establish them.
+HERMETIC_FLAGS = {"no_site": 1, "ignore_environment": 1}
+
+_FLAG_PROGRAM = (
+    "import json, sys\n"
+    "print(json.dumps({'no_site': sys.flags.no_site,\n"
+    "                  'ignore_environment': sys.flags.ignore_environment,\n"
+    "                  'smuggled': [p for p in sys.path if 'crw-smuggled' in p]}))\n"
+)
+
+
+def hermetic_answers(interpreter, root):
+    """Ask the supplied interpreter what it is, with something planted where it must not look."""
+    done = subprocess.run(
+        [str(interpreter), "-c", _FLAG_PROGRAM], capture_output=True, text=True, timeout=120,
+        env=dict(os.environ, PYTHONPATH=str(root / "crw-smuggled")))
+    if done.returncode != 0 or not done.stdout.strip():
+        return None, "the supplied interpreter did not answer: " + (done.stderr or "")[-200:]
+    return json.loads(done.stdout), None
 
 
 def inside(where, root):
@@ -1105,7 +1123,7 @@ class SevenReadingsTests(unittest.TestCase):
             payloads, host = observe_all(root)
             supplied = host.candidate / "bin" / "python"
             present = supplied.is_file()
-            wrapper = supplied.read_text(encoding="utf-8") if present else ""
+            answers, refusal = hermetic_answers(supplied, root) if present else (None, "absent")
             # The console scripts are run as programs by the survey, so their first line is what
             # decides the interpreter for those invocations. The record does not govern that
             # one: a shebang changed back to this machine's interpreter would leave every
@@ -1118,11 +1136,16 @@ class SevenReadingsTests(unittest.TestCase):
 
         self.assertTrue(components, "the diagnosis reported no component at all")
         self.assertTrue(present, "the supplied runtime is not there at all")
-        for flag in HERMETIC_FLAGS:
-            self.assertIn(flag, wrapper,
-                          "the supplied interpreter stopped being hermetic, so every path this"
-                          " case reads could be right while the probe ran with this machine's"
-                          " site directory and import path")
+        self.assertIsNone(refusal, str(refusal))
+        for flag, wanted in HERMETIC_FLAGS.items():
+            self.assertEqual(answers.get(flag), wanted,
+                             "the supplied interpreter answered " + repr(answers.get(flag))
+                             + " for " + flag + ", so it is not hermetic and every path this"
+                             " case reads could be right while the probe ran with this"
+                             " machine's site directory and import path")
+        self.assertEqual(answers.get("smuggled"), [],
+                         "an import path planted in the environment reached the interpreter the"
+                         " probes run, which is the thing the flags were supposed to prevent")
         for script, first in shebangs.items():
             with self.subTest(script):
                 self.assertEqual(first, "#!" + str(supplied),
