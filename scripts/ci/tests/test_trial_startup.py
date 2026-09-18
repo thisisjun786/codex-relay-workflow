@@ -315,7 +315,7 @@ class World:
             "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
                       "challengeNonce": self.NONCE},
             "supervisor": {"pid": os.getpid(), "witness": str(self.trial / "supervisor.jsonl"),
-                           "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 1,
+                           "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 0,
                            "witnessAdvanceSeconds": 0.3, "service": False},
             "assignment": {"relationshipId": self.RELATIONSHIP, "parentTaskId": self.PARENT_A,
                            "childTaskId": self.CHILD_A, "issueKey": self.ISSUE_A,
@@ -2404,6 +2404,50 @@ class TwentyFirstHostedRound(TrialCase):
         with self.assertRaises(startup.Refused) as raised:
             self.world.run_ledger()
         self.assertIn("inside a git worktree", raised.exception.reason)
+
+
+class TwentySecondHostedRound(TrialCase):
+    """Uptime that belongs to the pid, and captures aged again at the end."""
+
+    def test_uptime_is_the_observed_processs_own(self):
+        # The record declares a launch two minutes ago; the process started a moment ago, and a
+        # restarted supervisor keeps the old declaration.
+        self.world.start_supervisor()
+        self.world.record["supervisor"]["minimumAliveSeconds"] = 60
+        self.world.flush()
+        document = self.world.preflight()
+        cell = cells_of(document, "processPersistence")["uptime"]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("this process has been running", cell["evidence"])
+
+    def test_uptime_is_unknown_where_the_host_cannot_say(self):
+        self.assertIsNone(startup.process_started_at(0))
+        self.assertIsNotNone(startup.process_started_at(os.getpid()))
+
+    def test_a_capture_that_expires_during_the_run_fails_at_the_end(self):
+        self.world.start_supervisor()
+        self.world.record["captureMaxAgeSeconds"] = 2
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 3
+        for kind in ("parentLifecycle", "creationReceipt", "registration", "peerDoctor"):
+            for name in self.world.record["captures"][kind]:
+                self.world.record["captures"][kind][name]["capturedAt"] = startup.stamp(
+                    time.time() - 0.2)
+        self.world.flush()
+        document = startup.preflight(
+            startup.load_start(str(self.world.trial / "start.json"),
+                               environment=self.world.environment()),
+            sleeper=time.sleep)
+        self.assertFalse(document["capturesStillFresh"]["passed"])
+        self.assertTrue(document["capturesStillFresh"]["stale"])
+        self.assertIn("capturesStillFresh.passed", document["judgmentsThatFailed"])
+        self.assertFalse(document["readyToStart"])
+
+    def test_captures_well_inside_the_bound_stay_fresh(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertTrue(document["capturesStillFresh"]["passed"])
+        self.assertEqual(document["capturesStillFresh"]["stale"], [])
+        self.assertTrue(document["readyToStart"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover

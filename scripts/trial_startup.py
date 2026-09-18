@@ -726,6 +726,9 @@ def capture(record, kind, name):
     if age > record["captureMaxAgeSeconds"]:
         return None, ("the capture is " + str(int(age)) + " seconds old, past the record's bound of "
                       + str(int(record["captureMaxAgeSeconds"])))
+    # Remembered so the run can age them all again at the end: a capture fresh when it was read can
+    # expire during the witness delay and the probes that follow it.
+    record.setdefault("_captures", []).append({"kind": kind, "name": name, "at": taken})
     found = reading.read_json(path, "a captured payload")
     if not found.usable or found.state == reading.ABSENT or not isinstance(found.value, dict):
         return None, "the capture at " + str(path) + " could not be read (" + str(found.state) + ")"
@@ -811,6 +814,19 @@ def session_of(pid):
         return None
 
 
+def process_started_at(pid):
+    """When this process itself started, or None where the host cannot say.
+
+    The record declares when a supervisor was launched, and a restarted supervisor keeps the old
+    declaration: a new process alive for two seconds then satisfied any minimum. The process's own
+    start time is the one that belongs to the pid being observed.
+    """
+    try:
+        return os.stat("/proc/" + str(int(pid))).st_ctime
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 def reading_process(record, relay, sleeper=time.sleep):
     """Alive, detached from this caller, and still making progress. Three questions, not one."""
     supervisor = record["supervisor"]
@@ -824,14 +840,25 @@ def reading_process(record, relay, sleeper=time.sleep):
     second_alive, second_witness = alive(pid), read_witness(witness_path)
 
     launched = moment(supervisor.get("launchedAt"), "supervisor.launchedAt")
-    lived = time.time() - launched.timestamp()
     minimum = supervisor.get("minimumAliveSeconds")
-    cells.append(cell("uptime", VERIFIED if lived >= minimum else NOT_VERIFIED, provenance=READ,
-                      evidence=("the supervisor was launched " + str(int(lived)) + " seconds ago"
-                                " against a declared minimum of " + str(minimum) + ". A process"
-                                " that has not yet outlived the shell that started it has not"
-                                " shown that it will"),
-                      measured_at=stamp()))
+    started = process_started_at(pid)
+    if started is None:
+        cells.append(cell("uptime", UNKNOWN, provenance=READ,
+                          evidence=("when pid " + str(pid) + " itself started could not be read,"
+                                    " and the record's launchedAt belongs to whatever was launched"
+                                    " rather than to this process")))
+    else:
+        lived = time.time() - started
+        declared = time.time() - launched.timestamp()
+        ok = lived >= minimum
+        cells.append(cell("uptime", VERIFIED if ok else NOT_VERIFIED, provenance=READ,
+                          evidence=("this process has been running " + str(int(lived)) + " seconds"
+                                    " against a declared minimum of " + str(minimum)
+                                    + ", and the record's launchedAt is " + str(int(declared))
+                                    + " seconds ago. The process's own start time is the one that"
+                                    " belongs to the pid, because a restarted supervisor keeps the"
+                                    " old declaration"),
+                          measured_at=stamp()))
 
     if first_alive is None or second_alive is None:
         cells.append(cell("alive", UNKNOWN, evidence="whether pid " + str(pid) + " exists could not"
@@ -1664,6 +1691,19 @@ def same_file(left, right):
         return False
 
 
+def captures_still_fresh(record):
+    """Every capture that contributed to readiness, aged once more at the end of the run."""
+    bound = record.get("captureMaxAgeSeconds")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    stale = [{"kind": entry["kind"], "name": entry["name"],
+              "ageSeconds": int((now - entry["at"]).total_seconds())}
+             for entry in record.get("_captures", [])
+             if (now - entry["at"]).total_seconds() > bound]
+    return {"passed": not stale, "boundSeconds": bound, "readAt": stamp(), "stale": stale,
+            "detail": "a capture fresh when it was read can expire while the readings after it are"
+                      " taken, and readiness is published after all of them"}
+
+
 def launcher_unchanged(record, relay=None):
     """The launcher's bytes read again, after every probe has run.
 
@@ -1727,6 +1767,7 @@ def preflight(record, *, sleeper=time.sleep):
 
     gate = order_gate(record, store_payload, entry)
     launcher = launcher_unchanged(record, relay)
+    captures = captures_still_fresh(record)
     # The window was ahead when the record was read; the witness delay and the probes take real
     # time, so it is read again here. A run that publishes readiness after the window has opened
     # sends the dispatch into an interval already being measured.
@@ -1749,6 +1790,7 @@ def preflight(record, *, sleeper=time.sleep):
         "readings": assembled,
         "orderGate": gate,
         "windowStillAhead": window_ahead,
+        "capturesStillFresh": captures,
         # Filled from the judgment walk below, so a judgment added later cannot be left out of it.
         "readyToStart": None,
         "wroteNothing": "this process creates no file of its own. It is not a claim about the"
