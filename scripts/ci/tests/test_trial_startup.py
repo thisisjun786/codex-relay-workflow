@@ -2374,5 +2374,37 @@ class TwentiethHostedRound(TrialCase):
                 NOT_VERIFIED, json.dumps(where))
 
 
+class TwentyFirstHostedRound(TrialCase):
+    """The two private paths the containment check had exempted."""
+
+    def nested_trial(self):
+        nested = self.world.trial / "nested-repo"
+        nested.mkdir()
+        subprocess.run(["git", "init", "-q", str(nested)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return nested
+
+    def test_a_start_record_inside_a_nested_worktree_is_refused(self):
+        nested = self.nested_trial()
+        moved = nested / "start.json"
+        moved.write_text((self.world.trial / "start.json").read_text(encoding="utf-8"),
+                         encoding="utf-8")
+        try:
+            startup.load_start(str(moved), environment=self.world.environment())
+        except startup.Refused as refused:
+            self.assertIn("inside a git worktree", refused.reason)
+        else:                                                        # pragma: no cover
+            self.fail("a start record inside a nested worktree was accepted")
+
+    def test_a_ledger_linked_into_a_nested_worktree_is_refused(self):
+        nested = self.nested_trial()
+        inside = nested / "ledger.jsonl"
+        inside.write_text("", encoding="utf-8")
+        (self.world.trial / "ledger.jsonl").symlink_to(inside)
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("inside a git worktree", raised.exception.reason)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

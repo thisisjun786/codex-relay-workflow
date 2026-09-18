@@ -439,6 +439,15 @@ def load_start(path, *, environment=None, mode="preflight"):
         raise Refused("the ledger resolves outside the trial root",
                       path=str(record["_ledger"]), trialRoot=str(trial_root))
 
+    # Every private trial record, the start record and the ledger among them: the rule is that
+    # operational state is in no repository, and a check that exempted the two paths this command
+    # is given would leave exactly those two inside one.
+    for item in (start, record["_ledger"]):
+        nested = git_worktree_of(item)
+        if nested is not None:
+            raise Refused("a private trial record is inside a git worktree", path=str(item),
+                          worktree=str(nested))
+
     if mode == "ledger":
         # Grading a ledger uses the trial root, the window and nothing else. Requiring the
         # installed relay and every capture here made a finished trial ungradable as soon as the
