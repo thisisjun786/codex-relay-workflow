@@ -32,7 +32,9 @@ from .transport import (
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
 from . import restoration
-from .report import read as read_work_report, render_completion, render_revision
+from .report import (
+    compose_revision, read as read_work_report, render_completion, render_revision,
+)
 
 COMPLETION = "completion_event"
 REVISION = "revision_request"
@@ -243,6 +245,32 @@ class DeliveryService:
         if row["kind"] == REVISION:
             return self._render_revision(row, record, request, report)
         return self._render_completion(row, record, request, report)
+
+    def _render_and_account(self, row, record, request, report=None):
+        """The bytes, and what became of a declared restoration block in exactly those bytes.
+
+        Accounted from the SAME rendering the recipient gets rather than recomputed beside it,
+        so the two cannot disagree, and rendered once rather than twice because this runs
+        inside the claim transaction, where a second pass holds the single writer for no
+        reason. The legacy renderer's rule IS its cap, which is arithmetic over the finding
+        list; the composed one reports which findings its own shortening left standing.
+
+        None means there is nothing to account for: a completion carries no correction, and a
+        correction that declared no block has no claim to check.
+        """
+        if row["kind"] != REVISION:
+            return self._render_completion(row, record, request, report), None
+        findings = record.get("criteria") or []
+        declared = restoration.declared(findings) is not None
+        if report is not None:
+            composed = compose_revision(row, record, request, report)
+            return composed.text, (
+                restoration.project_survivors(findings, composed.survivors)
+                if declared else None
+            )
+        return self._render_revision(row, record, request, None), (
+            restoration.project_cap(findings, cap=MANIFEST_LINES) if declared else None
+        )
 
     def preview_message(self, event_id: str) -> str:
         """What the NEXT attempt would say. Never evidence of what any attempt DID say.
@@ -526,9 +554,7 @@ class DeliveryService:
                 )
             record = self.intake.get(event_id) or {}
             report = read_work_report(self.store, event_id)
-            message = self._render_for(
-                row, record, request_id, report
-            )
+            message, carried = self._render_and_account(row, record, request_id, report)
             db.execute(
                 "INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state,"
                 " state, sent_at, observed_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -542,6 +568,18 @@ class DeliveryService:
                 " message, rendered_at) VALUES (?,?,?,?,?,?)",
                 (request_id, event_id, attempt_no, row["kind"], message, self.clock.iso()),
             )
+            if carried is not None:
+                # Against the bytes this attempt actually froze, in the same transaction that
+                # froze them. Everything measured earlier describes the attempt that was next
+                # AT THAT TIME: a retry-safe attempt that never sent leaves the following
+                # render one request-id digit longer, and at a byte boundary that is the
+                # difference between carrying the block and dropping it. So the earlier
+                # measurements stay what they are, preflight, and this is the one that
+                # settles what an attempt carried.
+                carried["attempt"] = attempt_no
+                self.store.journal(
+                    "restoration_attempted", event_id, carried, at=self.clock.iso(),
+                )
             if report is not None:
                 # Which submission these bytes came from. The message says so for its reader;
                 # this is the same fact in a form the relay can compare against, so a

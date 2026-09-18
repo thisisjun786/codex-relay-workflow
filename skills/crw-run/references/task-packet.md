@@ -294,7 +294,9 @@ What that establishes is what the relay will put in the bytes, which is a differ
 from the child having read them, so delivery of the block still needs evidence rather than
 following from placement. Confirm it from a dispatched attempt and what the child actually
 received, never from a queued rendering, which is the bytes a next attempt would send rather
-than proof of a send. Where the block did not arrive, say so plainly: there is still no
+than proof of a send. A relay that records what each attempt froze reports that as
+`restoration_attempted` beside the bytes, which is the one measurement about a send rather
+than about the next one. Where the block did not arrive, say so plainly: there is still no
 supported way to send it again, because the verdict does not resend and the parallel route
 stays forbidden. Record it as an undelivered correction on that assignment and hand it to the
 coordinator, whose decision it is: to let the child proceed on the context it has, or to

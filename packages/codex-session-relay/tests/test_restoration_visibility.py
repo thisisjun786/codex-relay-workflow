@@ -406,6 +406,49 @@ class RestorationDelivery(DeliveryTestCase):
 
     # ------------------------------------------------- an unlocatable declaration
 
+    def test_each_attempt_records_what_its_own_bytes_carried(self):
+        """A projection describes the attempt that was next when it ran. This describes bytes.
+
+        A retry-safe attempt that never sent leaves the following render one request-id digit
+        longer, so nothing measured earlier can settle what a later attempt carried. The
+        transaction that freezes an attempt's message is the only place that can.
+        """
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-bytes",
+            findings=_findings(12, carries=1),
+        )
+        revision = self._revision_of(relationship, event_id, "v-bytes")
+        self.attempt(revision)
+        self.assertEqual(
+            [(entry.get("outcome"), entry.get("attempt"))
+             for entry in self._projections(revision, kind="restoration_attempted")],
+            [("carried", 1)],
+        )
+
+    def test_an_attempt_that_drops_the_block_records_that_against_its_own_bytes(self):
+        relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-late-bytes",
+            findings=_findings(12),
+        )
+        revision = self._revision_of(relationship, event_id, "v-late-bytes")
+        # Declared after the ruling, which is the only way to reach a send that drops it: the
+        # verdict itself refuses this arrangement before it opens a generation.
+        row = self.store.one("SELECT receipt FROM events WHERE event_id = ?", (revision,))
+        receipt = json.loads(row["receipt"])
+        receipt["criteria"][11]["restoration"] = True
+        self.store.db.execute(
+            "UPDATE events SET receipt = ? WHERE event_id = ?",
+            (json.dumps(receipt), revision),
+        )
+        self.attempt(revision)
+        self.assertEqual(
+            [(entry.get("outcome"), entry.get("attempt"))
+             for entry in self._projections(revision, kind="restoration_attempted")],
+            [("truncated", 1)],
+        )
+
     def test_two_findings_cannot_both_declare_the_block(self):
         """Two candidates is a block nobody can locate, which is the silence again."""
         _relationship, event_id = self._acknowledged()

@@ -320,7 +320,14 @@ nothing is queued: move the finding and rule again. Recording a work report on t
 request moves it onto the composer, which has a byte budget the plain renderer does not, so
 that command re-measures and refuses there too, while there is still nothing sent to undo. The
 outcome is named either way — `carried`, `truncated`, `budget_dropped`, `not_carried` or
-`unmeasured` — and is reported beside the verdict record and by `show --event <id>`.
+`unmeasured` — and is reported beside the verdict record, as `_restoration`, and by
+`show --event <id>`.
+
+Those two are preflight: each describes the message the NEXT attempt would render. What an
+attempt actually froze is recorded by that attempt, in the transaction that froze its bytes,
+and `show` returns it as `restoration_attempted` beside the bytes themselves. A retry that
+never sent leaves the following render one request-id digit longer, so a measurement taken
+earlier is a good reason to act and never evidence of what went out.
 
 All of that is about what the relay will put in the bytes, and none of it is a claim that the
 child read them. Confirmation still comes from a dispatched attempt and what the child actually
