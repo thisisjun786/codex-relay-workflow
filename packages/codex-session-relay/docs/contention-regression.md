@@ -45,20 +45,35 @@ binding, `test_supersession.py` already proves a superseded event opens no gener
 and makes no transport call, and `test_receipts.py` already refuses a stale
 generation at intake. Adding a fourth version of that would be volume, not coverage.
 
-Criterion 2's new evidence is narrower than its test name reads, and the difference was
-found in review rather than by the predicate above. `ATickInterruptedInsideItsOwnTransaction`
-kills the tick inside the FIRST write it makes, which is `_record_poll` during
-`_observe`, not the attempt claim in `_deliver`. Traced directly: the injected fault
-fires at `tick -> _observe -> _record_poll`, and no attempt transaction has begun. So
-what that test establishes is that a tick interrupted at its first write leaves the store
-consistent and a different daemon over a reopened store then completes the handoff exactly
-once - which is real, and is the shape a killed worker has. What it does NOT establish is
-that the delivery attempt's own transaction rolls back, because that transaction never ran;
-its empty-attempts assertion is true by construction. Rollback of a write transaction
-mid-body is covered by reused evidence in `test_wp1_regressions.py` TransactionRecovery
-and `test_ack_reconcile.py` VerdictAtomicity, named in this map's criterion 2 row.
-Tightening the injection to reach the attempt transaction is a test change, escalated
-rather than made, because the coordinator closed implementation on this PR.
+Criterion 2's new evidence used to be narrower than its test name read, and the difference
+was found in review rather than by the predicate above. The store's fault hook is global
+and fires just before every COMMIT, so arming it and running a tick kills whichever write
+the tick makes first. That was `_record_poll`'s poll observation during `_observe`, not
+the attempt claim in `_deliver`, and the case named for attempt-transaction rollback
+therefore asserted an empty `attempts` table that was empty by construction. Measured:
+with `Store.transaction` changed to COMMIT instead of ROLLBACK on error, that case still
+passed.
+
+`ATickInterruptedInsideItsOwnTransaction` now holds two cases and each names the
+transaction it kills. The first-write case asserts the interrupted transaction wrote the
+poll observation and did not reach an attempt, so the account above is checked here rather
+than traced by hand, and what it establishes is unchanged and still real: a tick
+interrupted at its first write leaves the store consistent, and a different daemon over a
+reopened store completes the handoff exactly once, which is the shape a killed worker has.
+The second kills inside `delivery._claim`'s transaction and establishes what the first
+cannot reach - the attempt row, its rendered bytes and its reserved send capacity all roll
+back, no send escaped, the tick's earlier commits survive, and recovery is exactly once.
+That transaction is identified rather than assumed: `attempts` has three writers, and
+`attempt_messages` has one, inside `_claim`.
+
+Rollback of a write transaction mid-body remains covered by reused evidence in
+`test_wp1_regressions.py` TransactionRecovery and `test_ack_reconcile.py`
+VerdictAtomicity, named in this map's criterion 2 row; the new case is not a third copy of
+it, because it has to reach `_deliver` through a real tick and then recover across a
+process boundary. Where the injections are and what each one reaches is no longer written
+here. `tests/test_regression_map.py` derives it, for the same reason the sweep's reach
+moved there: a sentence in this file saying how much was checked is the thing that keeps
+being wrong.
 
 Criterion 5 is narrower than the issue's wording and the row now says so. Two of the four
 paths run from two threads: acknowledgement and `record_verdict`. Completion intake and
@@ -74,10 +89,10 @@ overstatement this map exists to avoid.
 | Module | Cases | Covers |
 |---|---|---|
 | `test_registration_contention.py` | 4 | 1 |
-| `test_failure_recovery.py` | 13 | 2, 3 |
+| `test_failure_recovery.py` | 14 | 2, 3 |
 | `test_multi_parent_isolation.py` | 8 | 5, 6 |
 | `test_operational_scale.py` | 8 | 7, 8 |
-| `test_regression_map.py` | 10 | 9, and the sweep's own reach |
+| `test_regression_map.py` | 17 | 9, the sweep's own reach, and where the faults are injected |
 
 ## Clock provenance, derived rather than asserted
 

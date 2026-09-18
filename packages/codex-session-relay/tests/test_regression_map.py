@@ -27,6 +27,8 @@ import pathlib
 import re
 import unittest
 
+from .support import written_table
+
 TESTS = pathlib.Path(__file__).resolve().parent
 MAP = TESTS.parent / "docs" / "contention-regression.md"
 
@@ -998,6 +1000,312 @@ class TheSweepDerivesItsOwnReachRatherThanClaimingIt(unittest.TestCase):
                 verdict.strip(),
                 f"{module} {test} measures {summary} with no verdict written beside it",
             )
+
+
+# --------------------------------------------- where this suite injects store faults
+#
+# The sweep above derives which booleans this suite measures WITH. This derives where it
+# breaks things on purpose, which is the other way a case can assert nothing. The store's
+# fault hook is global and fires just before every COMMIT, so an arming reaches whichever
+# transaction runs first rather than the one the case is named for - and a case can then
+# pass in a situation its own name does not describe. Every arming is enumerated from
+# source and carries the interval it reaches and a reading.
+#
+# What this does NOT claim, written down because the claim was wrong twice before it was
+# narrowed. The rule is total over the grammar it accepts: an attribute assignment naming
+# the hook, a call to the helper including one reached through a single-level alias, and
+# the shapes that could hide an arming - a string containing the hook's name, a call to
+# setattr, exec or eval or a single-level alias of one, a __dict__ subscript assignment, an
+# __setattr__ call. Every one of those either becomes a site or fails here as an
+# unaccounted occurrence. Anything outside that grammar - arbitrary reflective mutation,
+# transitive aliasing, a name assembled at runtime and reached another way - is OUT OF
+# REACH, and this says so rather than claiming such a thing is absent.
+#
+# As with SUMMARY_SITES above: the scan supplies the reach, a person supplies the verdict,
+# and a wrong verdict fails nothing here.
+
+HOOK = "fault_hook"
+HELPER = "killed_before_commit"
+HIDING_CALLS = ("setattr", "exec", "eval")
+UNREADABLE = "unreadable"
+
+FAULT_SITES = (
+    ("support.py", "killed_before_commit", "raw", None,
+     "the helper's own arming, and the only raw one outside a declared row below: every"
+     " other case reaches the hook through it"),
+    ("test_ack_reconcile.py", "test_a_fault_at_commit_time_also_rolls_back", "raw", None,
+     "record_verdict runs exactly one transaction, measured as generations, relationships,"
+     " journal, delivery_supersession, events, deliveries, verdicts and verdict_context"
+     " together, so an unconditional arming cannot land anywhere but the transaction the"
+     " name is about. Left raw deliberately: a predicate would pin a fact the single"
+     " transaction already guarantees"),
+    ("test_failure_recovery.py",
+     "test_a_tick_killed_at_its_first_write_leaves_no_partial_state_and_a_new_daemon"
+     "_delivers_once", "helper", None,
+     "no predicate, because first IS the interval this case is named for. It asserts the"
+     " interrupted transaction wrote the poll observation and did NOT reach an attempt, so"
+     " the two cases in that class cannot collapse into one"),
+    ("test_failure_recovery.py",
+     "test_a_tick_killed_inside_the_attempt_transaction_rolls_that_attempt_back_and_a_new"
+     "_daemon_delivers_once", "helper", "attempts",
+     "attempts alone would not identify the claim - delivery's _settle and reconcile write"
+     " that table too, and _settle writes deliveries beside it - so the case asserts"
+     " attempt_messages was in the same transaction, which has exactly one writer and it is"
+     " inside _claim, with an empty send list as the independent check"),
+    ("test_store.py", "test_a_failed_registration_is_not_a_registration", "helper",
+     "relationships",
+     "register() runs three transactions and this name held only because the relationship"
+     " write happens to come first; the predicate says so now, and the case asserts the"
+     " first generation was in the same transaction"),
+    ("test_store.py", "test_a_fault_after_the_body_still_rolls_back", "raw", None,
+     "the case opens the only transaction in scope itself, so the arming has nowhere else"
+     " to land. Left raw: there is nothing for a predicate to disambiguate"),
+)
+
+# A shape that could hide an arming and that this reader cannot classify. The one entry is
+# this module's own HOOK constant: from the outside a string naming the hook is a string
+# naming the hook, and nothing here can tell a scan's own subject from an attribute name
+# assembled for a setattr. Declared rather than excluded, because excluding this file would
+# create the one place an arming could sit unseen.
+UNACCOUNTED_FAULT_OCCURRENCES = (
+    ("test_regression_map.py", "<module>", "names the hook in a string"),
+)
+
+
+def _referred(node):
+    """The bare name an expression refers to, for the two spellings that matter here."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _single_level_aliases(tree, names):
+    """name = <one of names>, one level. Deliberately not followed further.
+
+    Following an alias chain is a different reader with a different failure mode. One level
+    covers the spelling a test would actually use, and anything deeper lands in the
+    leftovers instead of being silently missed.
+    """
+    aliases, sources = {}, set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
+            continue
+        target = node.targets[0]
+        referred = _referred(node.value)
+        if isinstance(target, ast.Name) and referred in names:
+            aliases[target.id] = referred
+            sources.add(id(node.value))
+    return aliases, sources
+
+
+def fault_injection_sites():
+    """Every arming of the store's fault hook in this suite, and everything it cannot read.
+
+    Occurrence accounting, like producer_paths above: a shape that could hide an arming and
+    is not one of the forms this reader knows becomes a leftover and fails this module,
+    rather than disappearing from a reach that calls itself complete.
+    """
+    sites, leftover = [], []
+    for path in sorted(TESTS.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        owner = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for child in ast.walk(node):
+                    owner.setdefault(child, node.name)
+        aliases, alias_sources = _single_level_aliases(tree, {HELPER, *HIDING_CALLS})
+        helpers = {HELPER} | {n for n, t in aliases.items() if t == HELPER}
+        hiding = set(HIDING_CALLS) | {n for n, t in aliases.items() if t in HIDING_CALLS}
+        # A string whose value is thrown away cannot name an attribute for any purpose, so a
+        # docstring mentioning the hook is not a hiding place.
+        discarded = {
+            id(node.value) for node in ast.walk(tree)
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+        }
+        accounted = set(alias_sources)
+
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+            for target in targets:
+                if isinstance(target, ast.Attribute) and target.attr == HOOK:
+                    accounted.add(id(target))
+                    value = node.value
+                    if isinstance(value, ast.Constant) and value.value is None:
+                        continue
+                    sites.append((path.name, owner.get(node, "<module>"), "raw", None))
+                if isinstance(target, ast.Subscript) and _referred(target.value) == "__dict__":
+                    leftover.append(
+                        (path.name, owner.get(node, "<module>"), "assigns through __dict__")
+                    )
+            if isinstance(node, ast.Call):
+                callee = _referred(node.func)
+                if callee in helpers:
+                    accounted.add(id(node.func))
+                    writing = None
+                    for keyword in node.keywords:
+                        if keyword.arg != "writing":
+                            continue
+                        writing = (
+                            keyword.value.value
+                            if isinstance(keyword.value, ast.Constant) else UNREADABLE
+                        )
+                    sites.append((path.name, owner.get(node, "<module>"), "helper", writing))
+                elif callee in hiding or callee == "__setattr__":
+                    leftover.append(
+                        (path.name, owner.get(node, "<module>"), "calls " + str(callee))
+                    )
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if HOOK in node.value and id(node) not in discarded:
+                    leftover.append(
+                        (path.name, owner.get(node, "<module>"), "names the hook in a string")
+                    )
+                continue
+            if isinstance(node, ast.Attribute) and node.attr == HOOK:
+                if id(node) not in accounted:
+                    leftover.append(
+                        (path.name, owner.get(node, "<module>"), "reads the hook")
+                    )
+            if isinstance(node, (ast.Name, ast.Attribute)) and _referred(node) in helpers:
+                if id(node) not in accounted:
+                    bound = isinstance(node, ast.Name) and node.id in aliases
+                    leftover.append(
+                        (path.name, owner.get(node, "<module>"),
+                         "binds the helper to another name" if bound
+                         else "names the helper uncalled")
+                    )
+    return tuple(sorted(sites, key=_site_order)), tuple(sorted(leftover))
+
+
+def _site_order(site):
+    module, where, kind, writing = site
+    return (module, where, kind, writing or "")
+
+
+class EveryFaultInjectionSiteIsDeclared(unittest.TestCase):
+    """The reach of the fault injections, produced here rather than described in prose.
+
+    CRW-97 opened because one case's arming reached a transaction its name did not name.
+    Fixing that instance would leave the next one to be found by hand, so the sites are
+    derived and each carries what it reaches and why a reader believes that is the interval
+    the case is about.
+    """
+
+    def test_every_place_this_suite_arms_the_fault_hook_is_declared_with_its_interval(self):
+        sites, _leftover = fault_injection_sites()
+        declared = tuple(row[:4] for row in FAULT_SITES)
+        self.assertEqual(
+            sorted(sites, key=_site_order), sorted(declared, key=_site_order),
+            "the armings in this suite and the ones written down disagree."
+            f" Only in source: {sorted(set(sites) - set(declared))}."
+            f" Only declared: {sorted(set(declared) - set(sites))}."
+            " Read the new one, say which transaction it reaches and whether that is the"
+            " interval its case is named for, and declare it.",
+        )
+        self.assertGreater(
+            len(sites), 4,
+            f"only {len(sites)} armings were found, so the scan stopped seeing the suite it"
+            " is supposed to be reading",
+        )
+
+    def test_nothing_arms_the_hook_outside_the_helper_without_saying_why(self):
+        """The helper is the route; a bare assignment has to argue for itself."""
+        sites, _leftover = fault_injection_sites()
+        raw = {(module, where) for module, where, kind, _ in sites if kind == "raw"}
+        self.assertEqual(
+            raw, {(row[0], row[1]) for row in FAULT_SITES if row[2] == "raw"},
+            "an arming bypasses killed_before_commit without a declared reason. Either route"
+            " it through the helper, which makes the interval it reaches assertable, or"
+            f" declare why this one does not need to: {sorted(raw)}",
+        )
+
+    def test_a_shape_that_could_hide_an_arming_is_declared(self):
+        _sites, leftover = fault_injection_sites()
+        self.assertEqual(
+            leftover, UNACCOUNTED_FAULT_OCCURRENCES,
+            "a construct that could name the hook by a route this reader cannot follow is"
+            " neither a form it knows nor declared. Say what it is, or teach the reader the"
+            " form. Arbitrary reflective mutation stays out of reach either way.",
+        )
+
+    def test_no_declared_arming_is_left_without_a_reading(self):
+        for module, where, _kind, _writing, verdict in FAULT_SITES:
+            self.assertTrue(
+                verdict.strip(),
+                f"{module} {where} arms the hook with no reading written beside it",
+            )
+
+
+class TheWriteClassifierSaysWhatItCannotRead(unittest.TestCase):
+    """support.written_table decides which transaction a fault landed in.
+
+    So its reach is not a detail. A statement it cannot read makes a transaction look
+    emptier than it is, and a case could then assert it killed somewhere it did not.
+    """
+
+    def test_the_write_forms_this_package_issues_are_classified(self):
+        for statement, table in (
+            ("INSERT INTO attempts (request_id) VALUES (?)", "attempts"),
+            ("INSERT INTO poll_observations (a) VALUES (?)"
+             " ON CONFLICT(a) DO UPDATE SET b = 1", "poll_observations"),
+            ("INSERT OR IGNORE INTO schema_meta VALUES ('k','v')", "schema_meta"),
+            ("INSERT OR REPLACE INTO attempt_report_submissions (x) VALUES (?)",
+             "attempt_report_submissions"),
+            ("UPDATE deliveries SET state = ?", "deliveries"),
+            ("DELETE FROM holds WHERE id = ?", "holds"),
+            ("  update  relationships  set x = 1", "relationships"),
+            ("INSERT INTO main.journal (at) VALUES (?)", "journal"),
+        ):
+            self.assertEqual(written_table(statement), table, statement)
+
+    def test_the_forms_it_cannot_read_answer_nothing_rather_than_guessing(self):
+        """The blind spots, as data. A reader that guessed here would be worse than one
+        that declines, because a wrong table is a wrong transaction."""
+        for statement in (
+            "WITH recent AS (SELECT 1) INSERT INTO attempts (a) VALUES (1)",
+            "SELECT * FROM attempts",
+            "BEGIN IMMEDIATE",
+            "CREATE TABLE attempts (a)",
+            "SAVEPOINT inner",
+        ):
+            self.assertIsNone(written_table(statement), statement)
+
+    def test_no_write_statement_in_this_package_escapes_the_classifier(self):
+        """The blind spot above, watched instead of only described.
+
+        Screened case-sensitively, because every SQL statement in this package is uppercase
+        and a case-insensitive screen fires on ordinary prose - "With a host this verifies",
+        "Replace bounded workers". What that rests on is a convention, so state it: a
+        lowercase CTE would evade this, and that is the gap this cannot close.
+        """
+        head = re.compile(r"^\s*(?:INSERT|REPLACE|UPDATE|DELETE|WITH)\b")
+        screened, unreadable = 0, []
+        for path in sorted(SOURCE.glob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                    continue
+                if not head.match(node.value):
+                    continue
+                screened += 1
+                if written_table(node.value) is None:
+                    unreadable.append((path.name, node.lineno, node.value[:60]))
+        self.assertEqual(
+            unreadable, [],
+            "a write statement in this package is one the transaction watcher cannot"
+            " attribute, so a transaction holding it would look emptier than it is",
+        )
+        self.assertGreater(
+            screened, 60,
+            f"only {screened} write statements were screened, so this scan stopped matching",
+        )
+
 
 
 if __name__ == "__main__":
