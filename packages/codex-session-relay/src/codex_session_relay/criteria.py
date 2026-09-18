@@ -112,6 +112,18 @@ def normalise_findings(criteria=None, findings=None) -> list:
             f"{carriers} each declare the restoration block. One correction carries one "
             "block, and two candidates is a block nobody can locate",
         )
+    # After the merge, so a note supplied through the other input still counts. The block
+    # travels in the note and nowhere else, so a declaration with no note marks an empty
+    # carrier: coverage is satisfied by some other actionable finding, the renderer labels the
+    # empty one, and the relay reports it carried. Every check downstream tests the boolean,
+    # so this is the only place that can tell an intention from a delivery.
+    empty = [e["id"] for e in merged if e.get(restoration.FIELD) and not e.get("note")]
+    if empty:
+        raise AckRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            f"{empty[0]!r} declares the restoration block and carries no note. The block is "
+            "the note; a declaration without one names a carrier with nothing in it",
+        )
     return merged
 
 

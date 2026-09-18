@@ -651,6 +651,32 @@ class RestorationDelivery(DeliveryTestCase):
             )
         self.assertEqual(caught.exception.reason.value, "disposition_conflict")
 
+    def test_a_carrier_with_no_note_is_refused_because_the_note_is_the_block(self):
+        """Declaring a carrier is not carrying anything.
+
+        Coverage is satisfied by any actionable finding, not necessarily the declared one, so
+        an empty carrier passes every later check: the renderer labels it, the projection
+        reports carried, and the generation opens with the child holding nothing.
+        """
+        _relationship, event_id = self._acknowledged()
+        with self.assertRaises(RelayError) as caught:
+            self.ack.record_verdict(
+                event_id, verdict="needs_changes", verdict_turn_id="v-empty",
+                criteria=[{"id": "c01", "verdict": "verified", "restoration": True}],
+                findings=[{"id": "c02", "verdict": "needs_changes", "note": "fix the test"}],
+            )
+        self.assertEqual(caught.exception.reason.value, "disposition_conflict")
+        self.assertIn("carries no note", caught.exception.detail)
+
+    def test_a_note_supplied_through_the_other_input_still_counts(self):
+        """The check runs after the merge, so a note from either input satisfies it."""
+        _relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-merged-note",
+            criteria=[{"id": "c01", "verdict": "needs_changes", "restoration": True}],
+            findings=[{"id": "c01", "verdict": "needs_changes", "note": "resume context"}],
+        )
+        self.assertEqual(self._projection(event_id)["outcome"], "carried")
     def test_a_declaration_in_one_input_is_not_erased_by_the_other(self):
         """criteria and findings are merged by id and the last entry wins.
 

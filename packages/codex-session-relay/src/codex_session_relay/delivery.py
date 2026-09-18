@@ -50,7 +50,7 @@ MANIFEST_LINES = 10
 NEWLINE = chr(10)
 
 
-def _overflow_line(items, event_id, *, shown=MANIFEST_LINES):
+def _overflow_line(items, event_id, *, shown=MANIFEST_LINES, name_block=True):
     """What the cap removed, said out loud, or None when it removed nothing.
 
     The deliverables block has always said this and the two findings blocks did not, so a
@@ -66,7 +66,8 @@ def _overflow_line(items, event_id, *, shown=MANIFEST_LINES):
     if not hidden:
         return None
     return (
-        f"  ... {len(hidden)} more{restoration.overflow_detail(hidden)}; see"
+        f"  ... {len(hidden)} more"
+        f"{restoration.overflow_detail(hidden) if name_block else ''}; see"
         f" 'codex-session-relay show --event {event_id}'"
     )
 
@@ -314,7 +315,7 @@ class DeliveryService:
                     f"  {entry['path']}  sha256={entry['sha256']}"
                     + (f"  bytes={size}" if size is not None else "")
                 )
-            overflow = _overflow_line(manifest, row["event_id"])
+            overflow = _overflow_line(manifest, row["event_id"], name_block=False)
             if overflow:
                 lines.append(overflow)
         else:
@@ -325,10 +326,13 @@ class DeliveryService:
         if criteria:
             lines.append("criteria claimed by the child:")
             for item in criteria[:MANIFEST_LINES]:
-                lines.append(
-                    f"  {item.get('id')}{restoration.label(item)}: {item.get('verdict')}"
-                )
-            overflow = _overflow_line(criteria, row["event_id"])
+                # No restoration label on this direction. These are the CHILD's claims about
+                # its own work, they never pass through normalise_findings, and the completion
+                # receipt's schema lets an item carry any extra property - so a stray truthy
+                # "restoration" would print an official-looking marker on a message that
+                # carries no correction at all, contradicting the accounting one method below.
+                lines.append(f"  {item.get('id')}: {item.get('verdict')}")
+            overflow = _overflow_line(criteria, row["event_id"], name_block=False)
             if overflow:
                 lines.append(overflow)
         lines += [
