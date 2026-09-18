@@ -347,14 +347,24 @@ class OneParentCappedTheOtherProgresses(TwoParents):
 
         self.daemon.tick(now=now)
 
+        # Read before the clock moves. drain() advances an hour on its first line, which starts
+        # a new rate window and lifts the cap, so every assertion about B while A is capped has
+        # to be made here or it is not about that situation at all.
+        sent_in_window = [thread for _r, thread, _m, _o in self.adapter.sends]
         self.assertNotIn(
-            self.parent_of("a"), [thread for _r, thread, _m, _o in self.adapter.sends],
+            self.parent_of("a"), sent_in_window,
             "a recipient at its hourly cap was sent to anyway",
+        )
+        self.assertIn(
+            self.parent_of("b"), sent_in_window,
+            "the other parent was served nothing in the tick where this one was capped, so"
+            f" the cap cost the whole tick rather than one recipient: {sent_in_window}",
         )
         self.assertNotEqual(
             self.delivery.get(alpha_ids[0])["state"], DISPATCHED,
             "the capped recipient was delivered to inside the window it had already spent",
         )
+
         self.assertEqual(self.drain(beta_ids), set(beta_ids))
         # And the cap is a delay rather than a wall: drain() advances past the window, so the
         # parent that spent its allowance is served once a new hour starts. A bound that
