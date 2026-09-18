@@ -230,7 +230,10 @@ def _with_pointer(answer, pointer_path, recorded_pointer, destination):
         answer["recoveryRequires"].append(
             "the pointer at " + answer["pointer"]["path"] + " names a target that is not there,"
             " and the host record records it as this command's own, so nothing reaches a"
-            " runtime through it until it is repointed or removed")
+            " runtime through it until it is repointed. An install repoints it under its own"
+            " lock; this reading held none, so a run may have repointed it since, and removing"
+            " it by hand means reading it again first -- taking away a link that has become"
+            " live breaks every registered command that goes through it")
     return answer
 
 
