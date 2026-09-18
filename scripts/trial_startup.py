@@ -422,6 +422,13 @@ def load_start(path, *, environment=None, mode="preflight"):
         raise Refused("the start record itself is outside the trial root", path=str(start),
                       trialRoot=str(trial_root))
 
+    # The ledger is a private trial record like the captures, and it is read by path, so it is
+    # confined the same way rather than followed wherever a link points.
+    record["_ledger"] = trial_root / "ledger.jsonl"
+    if not within(record["_ledger"], trial_root):
+        raise Refused("the ledger resolves outside the trial root",
+                      path=str(record["_ledger"]), trialRoot=str(trial_root))
+
     if mode == "ledger":
         # Grading a ledger uses the trial root, the window and nothing else. Requiring the
         # installed relay and every capture here made a finished trial ungradable as soon as the
@@ -443,6 +450,14 @@ def load_start(path, *, environment=None, mode="preflight"):
         if found is MISSING or found is None or (isinstance(found, str) and not found.strip()):
             raise Refused("the start record does not state " + ".".join(str(p) for p in path),
                           value=shown(found))
+    # Operational state never lives inside a repository (OPS-3.2), and this one would be reached by
+    # every relay probe: a store placed in this checkout would be constructed by the first command
+    # that opened it.
+    state = absolute(field(record, "relay", "stateDirectory"), "relay.stateDirectory")
+    state_worktree = git_worktree_of(state)
+    if state_worktree is not None:
+        raise Refused("the relay state directory is inside a git worktree",
+                      stateDirectory=str(state), worktree=str(state_worktree))
     if not isinstance(field(record, "assignment", "artifacts"), list):
         raise Refused("assignment.artifacts must be a list")
     for artifact in field(record, "assignment", "artifacts"):
@@ -1018,6 +1033,13 @@ def reading_boundaries(record, relay):
                                  if p.get("role") == "parent"), None))
                   and (child.get("cwd") is None
                        or resolve(str(field(receipt, "child", "cwd"))) == resolve(child.get("cwd"))))
+            parent = next((p for p in boundary.get("participants") or []
+                           if p.get("role") == "parent"), {})
+            # Both workspaces, because the relay reads the recipient's own for lifecycle discovery,
+            # and a parent registered against another workspace has delivery withheld there.
+            ok = ok and (parent.get("cwd") is None
+                         or resolve(str(field(receipt, "parent", "cwd")))
+                         == resolve(parent.get("cwd")))
             cells.append(graded("registration:" + str(name), scope, ok, provenance=CAPTURED,
                                 measured_at=found["capturedAt"],
                                 unreadable="this registration receipt carries no authorised scope",
@@ -1261,7 +1283,7 @@ def order_gate(record, store_payload, entry):
 
 def ledger_report(record):
     """Preparation and the window, separated by timestamp rather than by what a record called itself."""
-    path = Path(field(record, "trialRoot")) / "ledger.jsonl"
+    path = record["_ledger"]
     found = reading.read_text(path, "the intervention ledger")
     if not found.usable or found.state == reading.ABSENT:
         raise Refused("the ledger could not be read", path=str(path), state=found.state)

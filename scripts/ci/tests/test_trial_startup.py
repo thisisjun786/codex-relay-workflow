@@ -1795,5 +1795,34 @@ class SixthHostedRound(TrialCase):
                         json.dumps(gate["comparisons"]))
 
 
+class SeventhHostedRound(TrialCase):
+    """The state directory, the ledger's own path, and the parent's workspace."""
+
+    def test_a_relay_state_directory_inside_a_worktree_is_refused(self):
+        inside = self.world.repos["A"] / "state"
+        inside.mkdir()
+        self.world.record["relay"]["stateDirectory"] = str(inside)
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("state directory is inside a git worktree", refused.reason)
+
+    def test_a_ledger_linked_out_of_the_trial_root_is_refused(self):
+        outside = self.world.root / "somebody-elses-ledger.jsonl"
+        outside.write_text(json.dumps(
+            {"at": startup.stamp(time.time() - 60), "kind": "window_open", "segment": "w"}) + "\n",
+            encoding="utf-8")
+        (self.world.trial / "ledger.jsonl").symlink_to(outside)
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("outside the trial root", raised.exception.reason)
+
+    def test_a_registration_naming_another_parent_workspace_fails(self):
+        self.world.captures["register-A.json"]["parent"]["cwd"] = str(self.world.repos["B"])
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"], NOT_VERIFIED)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
