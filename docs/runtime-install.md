@@ -1382,6 +1382,12 @@ cp <codex-home>/config.toml <receipt>/config.before.toml
 python3 scripts/runtime_install.py install --dest <destination> --record <record> \
     --codex-home <codex-home> --state <state> --apply
 
+# The skill links are a layer of their own: install builds the runtime, and the diagnosis reads
+# the links by running scripts/install.py --check separately. Skip this and the link row answers
+# that every crw-* skill is missing -- an accurate reading of a Codex home nobody linked, and
+# not a reading of the installation just made.
+python3 scripts/install.py --apply --dest <codex-home>/skills
+
 # Registration is a separate operation from installing, and tool exposure compares the
 # registered command with the tools a session actually listed. Both halves or neither.
 python3 scripts/runtime_install.py register-mcp --codex-home <codex-home> \
@@ -1491,6 +1497,22 @@ Read `recordsUnreadable` before concluding. Zero matches beside a nonzero unread
 not an answer either: a record the hook had created but not finished writing is neither your
 turn nor evidence against it, and the honest move is to look again rather than to write down a
 callback that did not happen or rule out one that did.
+
+### What this block cannot produce on its own
+
+Three of the seven are readings of something live, and the command supplies none of it. The
+fixture answers them with stand-ins it builds; an operator has the real thing or has nothing,
+and an absence recorded as a result is the one way a receipt from here misleads.
+
+| Reading | What has to be there already | How you know it was |
+| --- | --- | --- |
+| App Server connection | an App Server accepting connections at `<socket>` | `scope.socketConnect` reads `ok`; anything else leaves `connected` `not_verified` or `unknown`, which is an answer about the socket and not about the install |
+| MCP tool exposure | a session that actually listed the bridge tools, whose names go in `--observed-tool` | without the flag the row says no tool names were observed; with it, the evidence names the tools compared against the registered command |
+| Delivery acceptance | a relay that can carry the eight steps through to a returned turn id, and a recipient whose settings its own predicate accepts | `deliveryAccepted` reads `verified` only with that turn id in the evidence; every refusal names the step or the input that stopped it |
+
+None of those is a precondition to arrange around. They are the questions, so if the live half
+is absent the honest receipt records the absence for that row and says the rest. What it must
+not do is carry a row forward as though the question had been put.
 
 Stopping is not on that list, because nothing here starts anything. The installer never starts or
 stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well
