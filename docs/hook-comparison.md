@@ -10,7 +10,7 @@ without it.
 
 `scripts/hook_comparison.py` runs that comparison. It builds two destinations from one command, drives
 the same scenarios at both, and reads what each one has afterwards. The criteria it reports against
-were fixed before it existed, in [the hook contract](../skills/crw-run/references/hook-contract.md),
+were fixed before it existed, in [the hook contract](../plugins/crw/skills/crw-run/references/hook-contract.md),
 and this document neither restates nor extends them. Two of the six are reported as not performed
 for reasons given below, which is the honest count rather than a shortfall discovered later.
 
@@ -144,7 +144,7 @@ scenario or cell added later either declares its absence answer or fails.
 ## The six measures
 
 The contract fixes these at
-[Decision criteria, fixed before implementation](../skills/crw-run/references/hook-contract.md).
+[Decision criteria, fixed before implementation](../plugins/crw/skills/crw-run/references/hook-contract.md).
 Where this arrangement cannot reach one, it is reported as not performed rather than rewritten into
 something it can reach.
 
