@@ -83,6 +83,10 @@ class ManifestTests(unittest.TestCase):
         errors = plugin.manifest_errors(manifest(), "other", "t")
         self.assertTrue(any("must match the plugin directory" in e for e in errors), errors)
 
+    def test_installed_tree_is_not_checked_against_its_version_directory(self):
+        # An installed payload lives in a directory named by version, not by plugin.
+        self.assertEqual(plugin.manifest_errors(manifest(), None, "t"), [])
+
     def test_missing_interface_field_is_refused(self):
         broken = manifest()
         del broken["interface"]["defaultPrompt"]

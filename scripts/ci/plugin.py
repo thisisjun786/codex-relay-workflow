@@ -132,6 +132,7 @@ def declared_skills_path(manifest):
 
 
 def manifest_errors(manifest, plugin_root_name, label):
+    """plugin_root_name is None for an installed tree, whose directory is the version."""
     errors = []
     for field in TEXT_FIELDS:
         if not isinstance(manifest.get(field), str) or not manifest.get(field):
@@ -141,7 +142,7 @@ def manifest_errors(manifest, plugin_root_name, label):
     author = manifest.get("author")
     if not isinstance(author, dict) or not author.get("name"):
         errors.append(label + " manifest: author.name is required")
-    if manifest.get("name") != plugin_root_name:
+    if plugin_root_name is not None and manifest.get("name") != plugin_root_name:
         errors.append(label + " manifest: name " + repr(manifest.get("name"))
                       + " must match the plugin directory " + repr(plugin_root_name))
     if not SEMVER.match(str(manifest.get("version", ""))):
@@ -281,7 +282,8 @@ def report_payload(payload, manifest, found, extra):
 def check_installed(path):
     payload, errors = directory_payload(path)
     manifest = read_manifest(payload, "installed")
-    errors += manifest_errors(manifest, path.name, "installed")
+    # The installed directory is named by version, so only the packaged facts apply here.
+    errors += manifest_errors(manifest, None, "installed")
     errors += hygiene(payload, "installed")
     skill_errors, found = skills(payload, manifest, "installed")
     return errors + skill_errors, report_payload(payload, manifest, found,
