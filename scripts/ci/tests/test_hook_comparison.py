@@ -1,0 +1,1458 @@
+#!/usr/bin/env python3
+"""What the off/on comparison has to be true of, checked against a run rather than against itself.
+
+The harness reports that every row agreed with what it declared. That sentence is the thing most
+worth distrusting, because the arrangement has one silent failure that produces it: point the run
+at a marker root nobody built and every scenario reads unmanaged, releases, holds nothing, finishes
+quickly and looks calm. So this module asserts the states themselves, and it writes them out here
+rather than importing the harness's own declarations. A harness that quietly changed what it
+expected would otherwise change this check with it.
+
+The inventories below are literals for the same reason. Counting the arms, scenarios, cells and
+measures from the module under test turns "ten scenarios ran" into "however many ran, ran", and a
+harness that lost one would lose the assertion about it in the same edit.
+
+One run serves every case here. It is the expensive part, it is deterministic, and running it per
+case would buy nothing but minutes.
+"""
+
+import ast
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import hook_comparison as harness  # noqa: E402
+from crw_runtime import completion, hooks  # noqa: E402
+
+# The relay this harness drives requires 3.11, and CI runs this suite on 3.10 as well. The module
+# imports there - nothing 3.11-only is imported, because every relay call is a subprocess - and on
+# that interpreter the harness refuses and this module checks the refusal.
+HAVE_RELAY = sys.version_info >= (3, 11)
+
+ARMS = ("off", "on")
+
+SCENARIOS = ("receipt_missing", "managed_unregistered", "undeclared_turn_end",
+             "declared_ready_receipted", "declared_in_progress", "declared_blocked_needs_input",
+             "declared_interrupted", "unmanaged", "cxc_concurrent", "duplicate")
+
+ARM_CELLS = ("installExit", "installResult", "installSettings", "registration",
+             "foreignRegistration")
+
+FIRING_CELLS = ("firedCommand", "adapterOutcome", "observation", "guardDecision", "guardState",
+                "printedBlock", "recordedAs", "observationFile", "heldFile", "journalElapsedMs",
+                "processWallMs", "processExit")
+
+# Every answer that means there is nothing there, written here. The harness declares its own and
+# this check requires the two to be the same set: importing the harness's would have made every
+# absence comparison below agree with whatever the harness currently calls an absence.
+ABSENCE_ANSWERS = ("ABSENT", "not_published", "not_reserved", None)
+
+# Where an absence is the correct answer, written here as places rather than as a vocabulary. The
+# harness derives its own set and the run reports it, but a declaration and a cell that moved
+# together would agree with each other; this table does not move with them. The off arm is every
+# firing cell of every scenario and is expanded below rather than typed out ten times.
+ABSENCE_PLACES = {
+    ("on", "unmanaged", "recordedAs"): None,
+    ("on", "unmanaged", "observationFile"): "not_published",
+    ("on", "unmanaged", "heldFile"): "not_reserved",
+    ("on", "cxc_concurrent", "heldFile"): "not_reserved",
+    ("on", "declared_ready_receipted", "heldFile"): "not_reserved",
+    ("on", "declared_in_progress", "heldFile"): "not_reserved",
+    ("on", "declared_blocked_needs_input", "heldFile"): "not_reserved",
+    ("on", "declared_interrupted", "heldFile"): "not_reserved",
+}
+
+# Which source answers each cell and down which path, written here for the same reason: a row
+# whose cells were assembled by something other than the declared reading would have to reproduce
+# this exactly, and at that point it is a reading.
+CELL_READINGS = {
+    "installExit": ("install", ["exitCode"]),
+    "installResult": ("install", ["result", "outcome"]),
+    "installSettings": ("install", ["settings", "outcome"]),
+    "registration": ("hook-file", ["entries"]),
+    "foreignRegistration": ("hook-file", ["foreign"]),
+    "firedCommand": ("hook-file", ["command"]),
+    "adapterOutcome": ("journal", ["adapterOutcome"]),
+    "observation": ("journal", ["observation"]),
+    "guardDecision": ("journal", ["guardDecision"]),
+    "guardState": ("journal", ["guardState"]),
+    "printedBlock": ("stdout", ["printed"]),
+    "recordedAs": ("journal", ["guardRecordedAs"]),
+    "observationFile": ("marker-root", ["observationFile"]),
+    "heldFile": ("marker-root", ["heldFile"]),
+    "journalElapsedMs": ("journal", ["elapsedMs"]),
+    "processWallMs": ("harness", ["wallMs"]),
+    "processExit": ("harness", ["exitCode"]),
+}
+
+MEASURES = ("missedDetectionStateAndReceiptAbsent", "missedDetectionReceiptAbsentOnly",
+            "missedDetectionMarkerWithoutRegistration", "handoffSuccess", "wrongBlock",
+            "duplicateExecution", "addedLatency")
+
+# The two the contract defines in terms of a parent verification and of work this arrangement does
+# not do. Required to be reported not performed: a harness that started answering them would be
+# answering a question it cannot reach.
+NOT_PERFORMED = ("handoffSuccess", "duplicateExecution")
+
+# Ten scenarios, eleven firings: the duplicate scenario fires twice.
+FIRINGS = {name: 1 for name in SCENARIOS}
+FIRINGS["duplicate"] = 2
+
+# What each firing at the ON arm must have reached, written here and not imported. observation is
+# what the turn was, decision is block or release, state is the decision state, and the last two
+# are what the host would have seen and what was reserved.
+DECLARED = {
+    ("receipt_missing", 0): ("receipt_missing", "block", "receipt_missing",
+                             "printed_a_block", "reserved"),
+    ("managed_unregistered", 0): ("managed_unregistered", "block", "managed_unregistered",
+                                  "printed_a_block", "reserved"),
+    ("undeclared_turn_end", 0): ("undeclared_turn_end", "block", "undeclared_turn_end",
+                                 "printed_a_block", "reserved"),
+    ("declared_ready_receipted", 0): ("declared_ready_receipted", "release",
+                                      "declared_ready_receipted", "printed_nothing",
+                                      "not_reserved"),
+    ("declared_in_progress", 0): ("declared_in_progress", "release", "declared_in_progress",
+                                  "printed_nothing", "not_reserved"),
+    ("declared_blocked_needs_input", 0): ("declared_blocked_needs_input", "release",
+                                          "declared_blocked_needs_input", "printed_nothing",
+                                          "not_reserved"),
+    ("declared_interrupted", 0): ("declared_interrupted", "release", "declared_interrupted",
+                                  "printed_nothing", "not_reserved"),
+    ("unmanaged", 0): ("unmanaged", "release", "unmanaged", "printed_nothing", "not_reserved"),
+    ("cxc_concurrent", 0): ("undeclared_turn_end", "release", "hold_in_flight",
+                            "printed_nothing", "not_reserved"),
+    ("duplicate", 0): ("undeclared_turn_end", "block", "undeclared_turn_end",
+                       "printed_a_block", "reserved"),
+    ("duplicate", 1): ("undeclared_turn_end", "release", "hold_in_flight",
+                       "printed_nothing", "reserved"),
+}
+
+# The scenarios where the contract requires no hold: an unmarked session, a turn waiting on a
+# person, and a turn the person stopped.
+NO_HOLD = ("unmanaged", "declared_blocked_needs_input", "declared_interrupted")
+
+_RUN = {}
+
+
+def run_once():
+    """The one comparison run these cases read, kept so the suite pays for it once."""
+    if "answer" not in _RUN:
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-check-"))
+        # Placed before the run so the case above can show the run left it alone.
+        (root / "somebody-elses-file").write_text("not the harness's to touch", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "hook_comparison.py"), "--root", str(root)],
+            capture_output=True, text=True, timeout=900)
+        _RUN["root"] = root
+        _RUN["done"] = done
+        _RUN["answer"] = json.loads(done.stdout) if done.stdout.strip() else None
+    return _RUN["answer"]
+
+
+def tearDownModule():
+    root = _RUN.get("root")
+    if root is not None:
+        import shutil
+        shutil.rmtree(str(root), ignore_errors=True)
+
+
+def run_root():
+    """The directory the run made for itself, found rather than taken from what it reported.
+
+    The check creates the parent and the run creates exactly one child inside it, so the child is
+    a filesystem fact. Reading the path out of the document would have let a run that wrote
+    somewhere else send every disk witness to the place that agrees with it.
+    """
+    children = sorted(path for path in _RUN["root"].iterdir() if path.is_dir())
+    assert len(children) == 1, "the run made " + str(len(children)) + " directories, not one"
+    return children[0]
+
+
+def firing(answer, scenario, arm, index):
+    return answer["scenarios"][scenario][arm]["firings"][index]
+
+
+@unittest.skipUnless(HAVE_RELAY, "the relay requires Python 3.11, and the refusal case below is"
+                                 " what this module checks on the older interpreter")
+class ComparisonRunTests(unittest.TestCase):
+    """The run happened, it produced one document, and the document is the shape claimed."""
+
+    def test_the_run_completed_and_printed_one_document_carrying_its_own_stamp(self):
+        answer = run_once()
+        done = _RUN["done"]
+        self.assertEqual(done.returncode, 0,
+                         "the comparison did not complete: " + done.stderr[-2000:])
+        self.assertIsNotNone(answer, "nothing was printed, so there is nothing to check")
+        self.assertEqual(answer.get("source"), "hook-comparison",
+                         "a document without the stamp is not this command's answer")
+        self.assertIsNone(answer.get("refused"), "the run refused rather than comparing anything")
+        self.assertTrue(answer.get("wroteOnlyInsideItsRoot", {}).get("met"),
+                        "the run wrote outside the directory it created for itself: "
+                        + json.dumps(answer.get("wroteOnlyInsideItsRoot")))
+        self.assertTrue(answer.get("passed"),
+                        "the run did not pass: rows "
+                        + json.dumps(answer.get("rowsThatDisagreed")) + ", arms "
+                        + json.dumps(answer.get("armsThatDisagreed")) + ", measures "
+                        + json.dumps(answer.get("measuresThatMissedTheirBound")))
+        self.assertEqual(answer.get("measuresThatMissedTheirBound"), [],
+                         "a criterion this command exists to judge was not met")
+        self.assertEqual(answer.get("judgmentsThatFailed"), [],
+                         "a judgment in the document said false while the run reported passing")
+
+    def test_the_inventories_are_the_ones_this_check_names(self):
+        """Counted against literals, so a scenario that vanished takes no assertion with it."""
+        answer = run_once()
+        self.assertEqual(sorted(answer["arms"]), sorted(ARMS))
+        self.assertEqual(sorted(answer["scenarios"]), sorted(SCENARIOS))
+        self.assertEqual(sorted(answer["measures"]), sorted(MEASURES))
+        for arm in ARMS:
+            self.assertEqual(sorted(cell for cell in answer["arms"][arm] if cell in ARM_CELLS),
+                             sorted(ARM_CELLS), "arm " + arm + " is missing a declared reading")
+        for scenario in SCENARIOS:
+            for arm in ARMS:
+                firings = answer["scenarios"][scenario][arm]["firings"]
+                self.assertEqual(len(firings), FIRINGS[scenario],
+                                 scenario + "/" + arm + " fired an unexpected number of times")
+                for one in firings:
+                    self.assertEqual(sorted(one["cells"]), sorted(FIRING_CELLS),
+                                     scenario + "/" + arm + " is missing a declared reading")
+
+
+    def test_every_firing_reached_the_state_this_check_declares_for_it(self):
+        """The states, asserted against this module's own table rather than the harness's.
+
+        This is the case that catches the silent failure worth caring about. A run pointed at a
+        marker root nobody built answers unmanaged everywhere, releases everything, holds nothing
+        and reports itself calm, and only an assertion naming receipt_missing, managed_unregistered
+        and hold_in_flight one at a time can tell that apart from a run that worked.
+        """
+        answer = run_once()
+        for (scenario, index), declared in sorted(DECLARED.items()):
+            one = firing(answer, scenario, "on", index)
+            cells = one["cells"]
+            where = scenario + "#" + str(index) + ": "
+            self.assertEqual(cells["adapterOutcome"]["value"], "guard_answered",
+                             where + "the adapter never received a verdict, so this scenario was"
+                                     " not measured")
+            self.assertEqual(
+                (cells["observation"]["value"], cells["guardDecision"]["value"],
+                 cells["guardState"]["value"], cells["printedBlock"]["value"],
+                 cells["heldFile"]["value"]), declared, where + "the state disagrees")
+            self.assertEqual(cells["processExit"]["value"], 0,
+                             where + "the hook process exited nonzero, which the host reads as a"
+                                     " failed hook run whatever it wrote")
+            self.assertTrue(one["verdict"]["passed"], where + json.dumps(one["verdict"]))
+
+    def test_a_managed_scenario_publishes_an_observation_that_is_actually_there(self):
+        """What the guard said it wrote, and what is on disk, asked separately."""
+        answer = run_once()
+        for scenario in SCENARIOS:
+            if scenario == "unmanaged":
+                continue
+            for index in range(FIRINGS[scenario]):
+                cells = firing(answer, scenario, "on", index)["cells"]
+                self.assertTrue(cells["recordedAs"]["value"],
+                                scenario + " published nothing, so the guard never selected it")
+                self.assertEqual(cells["observationFile"]["value"], "resolved",
+                                 scenario + " named a path that is not on disk")
+
+    def test_the_run_works_in_a_directory_of_its_own_and_leaves_the_rest_alone(self):
+        """A caller names a place to work in; the run does not work in it.
+
+        The harness writes a launcher and two Codex homes at fixed names, so using the named
+        directory itself would replace whatever was already using those names. A file placed in
+        the parent before the run is still there afterwards, unchanged.
+        """
+        run_once()
+        witness = _RUN["root"] / "somebody-elses-file"
+        self.assertTrue(witness.is_file(), "the file placed before the run is gone")
+        self.assertEqual(witness.read_text(encoding="utf-8"), "not the harness's to touch",
+                         "the run changed a file it did not create")
+        self.assertNotEqual(str(run_root()), str(_RUN["root"]),
+                            "the run used the directory it was given instead of one of its own")
+
+    def test_the_off_arm_ran_nothing_and_gives_the_one_reason(self):
+        """An absence with a reason, never a false, a zero, or a release."""
+        answer = run_once()
+        self.assertEqual(answer["arms"]["off"]["registration"]["value"], 0)
+        for scenario in SCENARIOS:
+            for index in range(FIRINGS[scenario]):
+                one = firing(answer, scenario, "off", index)
+                for cell in FIRING_CELLS:
+                    found = one["cells"][cell]
+                    self.assertEqual(found["value"], "ABSENT",
+                                     scenario + "/" + cell + " answered something other than an"
+                                                             " absence at the arm that ran nothing")
+                    self.assertIn("dry run", found.get("detail") or "",
+                                  scenario + "/" + cell + " is absent without saying why")
+                self.assertTrue(one["verdict"]["passed"])
+
+    def test_both_arms_installed_as_their_own_arm_declares(self):
+        """The absences above mean nothing unless the install that produced them succeeded."""
+        answer = run_once()
+        self.assertEqual(answer["arms"]["off"]["installExit"]["value"], 0)
+        self.assertEqual(answer["arms"]["off"]["installResult"]["value"], "MISSING")
+        self.assertEqual(answer["arms"]["off"]["installSettings"]["value"], "config_would_create")
+        self.assertEqual(answer["arms"]["on"]["installExit"]["value"], 0)
+        self.assertEqual(answer["arms"]["on"]["installResult"]["value"], "CREATED")
+        self.assertEqual(answer["arms"]["on"]["installSettings"]["value"], "config_created")
+        self.assertEqual(answer["arms"]["off"]["registration"]["value"], 0)
+        self.assertEqual(answer["arms"]["on"]["registration"]["value"], 1)
+        for arm in ARMS:
+            self.assertEqual(answer["arms"][arm]["foreignRegistration"]["value"], "present")
+            self.assertTrue(answer["arms"][arm]["installed"]["passed"],
+                            json.dumps(answer["arms"][arm]["installed"]))
+
+    def test_what_ran_is_the_command_the_arms_own_hook_file_names(self):
+        """Which command, which directory, read from the file rather than from the report.
+
+        The run keeps its root, so the registration is on disk and this case reads it there with
+        the product's own reader. Comparing the harness's firedCommand with the harness's argv
+        would only have shown that it reported one fabricated string in two places.
+        """
+        answer = run_once()
+        # Derived from the root this check made, so a run that reported a decoy home cannot
+        # send this case to the file that agrees with it.
+        home = run_root() / "on" / "codex"
+        self.assertEqual(answer["arms"]["on"]["codexHome"], str(home),
+                         "the run reports a Codex home other than the one under its own root")
+        document = hooks.read(home / "hooks.json")
+        self.assertTrue(document.usable, "the installer wrote a hook file that cannot be read")
+        entries = completion.adapter_entries(document.value or {}, completion.EVENT)
+        self.assertEqual(len(entries), 1, "the on arm does not carry exactly one registration")
+        registered = entries[0]["command"]
+        self.assertIn("completion_hook.py", registered)
+        self.assertEqual(
+            firing(answer, "receipt_missing", "on", 0)["cells"]["firedCommand"]["value"],
+            registered, "the harness reported running something other than what is registered")
+        for scenario in SCENARIOS:
+            for index in range(FIRINGS[scenario]):
+                provenance = firing(answer, scenario, "on", index)["provenance"]
+                self.assertEqual(" ".join(provenance["argv"]), registered,
+                                 scenario + " ran something other than the registered command")
+                self.assertEqual(provenance["codexHome"], str(home),
+                                 scenario + " ran against a different Codex home from the one the"
+                                            " registration was written into")
+                self.assertTrue(provenance["argv"][0].endswith("python3")
+                                or "python" in provenance["argv"][0])
+
+    def test_the_foreign_registration_is_still_there_and_was_never_executed(self):
+        answer = run_once()
+        for arm in ARMS:
+            self.assertEqual(answer["arms"][arm]["foreignRegistration"]["value"], "present",
+                             "the install displaced a Stop entry belonging to another owner")
+        entries = completion.adapter_entries(
+            hooks.read(run_root() / "on" / "codex" / "hooks.json").value or {},
+            completion.EVENT)
+        self.assertNotIn("/opt/cxc/stop", entries[0]["command"],
+                         "the entry this adapter owns names the other owner's command")
+        for scenario in SCENARIOS:
+            for index in range(FIRINGS[scenario]):
+                argv = firing(answer, scenario, "on", index)["provenance"]["argv"]
+                self.assertNotIn("/opt/cxc/stop", " ".join(argv),
+                                 scenario + " executed the other owner's command")
+
+    def test_the_measures_are_the_contract_ones_and_the_two_it_cannot_reach_say_so(self):
+        answer = run_once()
+        for name in NOT_PERFORMED:
+            measure = answer["measures"][name]
+            self.assertEqual(measure["answer"], "not_performed", name + " claims an answer")
+            self.assertTrue(measure.get("because"), name + " does not say why it was not performed")
+        for name in ("missedDetectionStateAndReceiptAbsent", "missedDetectionReceiptAbsentOnly",
+                     "missedDetectionMarkerWithoutRegistration"):
+            measure = answer["measures"][name]
+            self.assertEqual(measure["answer"], "measured")
+            self.assertGreater(measure["injected"], 0, name + " injected nothing, so reporting"
+                                                              " everything injected is vacuous")
+            self.assertEqual(measure["injected"], measure["reported"])
+            self.assertTrue(measure["met"])
+
+    def test_no_hold_is_taken_where_the_contract_says_none_may_be(self):
+        answer = run_once()
+        measure = answer["measures"]["wrongBlock"]
+        self.assertEqual(sorted(measure["watched"]), sorted(NO_HOLD))
+        self.assertEqual(measure["reserved"], [])
+        self.assertEqual(measure["printedABlock"], [])
+        self.assertTrue(measure["met"])
+        for scenario in NO_HOLD:
+            cells = firing(answer, scenario, "on", 0)["cells"]
+            self.assertEqual(cells["heldFile"]["value"], "not_reserved")
+            self.assertEqual(cells["printedBlock"]["value"], "printed_nothing")
+
+    def test_every_judgment_the_document_carries_reaches_the_answer(self):
+        """Derived from the document, because the enumerated list was wrong three times.
+
+        A judgment is any field named passed or met. Collecting only the kinds someone remembered
+        left the supplemental observations out of the answer, so one of them could have failed
+        while the command exited zero. This walks the document the way the harness does and
+        requires the two to agree.
+        """
+        answer = run_once()
+        counted = []
+
+        def walk(payload, path=()):
+            if isinstance(payload, dict):
+                for key, value in sorted(payload.items()):
+                    here = path + (key,)
+                    if key in ("passed", "met"):
+                        counted.append(("/".join(str(one) for one in here), value))
+                    walk(value, here)
+            elif isinstance(payload, list):
+                for index, value in enumerate(payload):
+                    walk(value, path + (index,))
+
+        walk(dict((key, value) for key, value in answer.items() if key != "passed"))
+        self.assertGreater(len(counted), 20, "the document carries almost no judgments, so this"
+                                             " check is watching something that stopped judging")
+        self.assertEqual(answer["judgmentsCounted"], len(counted),
+                         "the run counted a different number of judgments from this walk")
+        self.assertEqual(sorted(answer["judgmentsThatFailed"]),
+                         sorted(where for where, value in counted if value is False),
+                         "the run collected different failures from the ones in its own document")
+        for kind in ("scenarios", "arms", "measures", "supplemental"):
+            self.assertTrue(any(where.startswith(kind) for where, _v in counted),
+                            kind + " carries no judgment, so nothing there can fail")
+
+    def test_no_judgment_can_be_met_without_saying_what_it_could_not_read(self):
+        """Derived over every judgment, because this was fixed one measure at a time.
+
+        A criterion that drops an unreadable reading and concludes from what is left reports a
+        bound as kept on evidence nobody has. Each fix closed one place and left the next open, so
+        the property is now asked of every judgment carrying met: its answer set has to be able to
+        say that a reading could not be taken, and it must not be met while it is saying so.
+        """
+        answer = run_once()
+        judgments = []
+        for name, measure in sorted(answer["measures"].items()):
+            if measure.get("answer") == "measured":
+                judgments.append(("measures/" + name, measure))
+        for name, measure in sorted(answer["supplemental"].items()):
+            judgments.append(("supplemental/" + name, measure))
+        for name in ("wroteOnlyInsideItsRoot", "sourceIdentity"):
+            judgments.append((name, answer[name]))
+        self.assertGreaterEqual(len(judgments), 8,
+                                "almost nothing carries a judgment, so this derivation is"
+                                " watching a document that stopped judging")
+        for where, measure in judgments:
+            says = [key for key in measure
+                    if key.lower().endswith("nottaken") or key == "unreadable"]
+            self.assertTrue(says, where + " cannot say that a reading could not be taken, so an"
+                                          " unreadable one is indistinguishable from a negative")
+            for key in says:
+                found = measure[key]
+                count = found if isinstance(found, int) else len(found)
+                if count:
+                    self.assertFalse(measure.get("met"),
+                                     where + " is met while " + key + " says a reading could not"
+                                             " be taken")
+
+    def test_a_measured_criterion_that_misses_its_bound_is_collected(self):
+        """The overall answer covers the criteria, not only the rows.
+
+        Keeping them apart let a run whose latency exceeded the contract's bound exit 0 because
+        every row had agreed with its own table.
+        """
+        answer = run_once()
+        measured = [name for name in MEASURES
+                    if answer["measures"][name].get("answer") == "measured"]
+        self.assertTrue(measured, "no criterion was measured, so the collection is vacuous")
+        for name in measured:
+            self.assertIn("met", answer["measures"][name], name + " reports no verdict to collect")
+        self.assertIn("measuresThatMissedTheirBound", answer,
+                      "the document does not collect the criteria that missed their bound")
+
+    def test_the_latency_distribution_is_measured_against_the_budget(self):
+        answer = run_once()
+        measure = answer["measures"]["addedLatency"]
+        distribution = measure["distributionMs"]
+        self.assertEqual(distribution["count"], sum(FIRINGS.values()),
+                         "a distribution over fewer firings than were fired")
+        for key in ("minimum", "median", "p95", "maximum"):
+            self.assertIsInstance(distribution[key], int, key + " was not measured")
+        self.assertEqual(measure["budgetMs"], {"median": 2000, "p95": 5000})
+        self.assertTrue(measure["met"], json.dumps(distribution))
+        self.assertIn("necessary and not sufficient", measure["narrowing"])
+
+    def test_the_supplemental_observation_is_about_the_reservation_it_names(self):
+        answer = run_once()
+        supplemental = answer["supplemental"]["oneReservationPerTurn"]
+        self.assertEqual(supplemental["reservations"], ["reserved", "reserved"])
+        self.assertEqual(len(set(supplemental["observationsPublished"])), 2,
+                         "two firings of one turn published one observation between them")
+        self.assertTrue(supplemental["met"])
+        self.assertIn("duplicate execution measure", supplemental["isNot"],
+                      "the supplemental observation does not say which measure it is not")
+
+
+
+class ReadingTests(unittest.TestCase):
+    """The accessor itself, driven with payloads made here. No relay and no run is needed.
+
+    These are the mutations the run cannot perform on itself. A suite that only reads a successful
+    run proves that the cells were filled, never that they could have refused to be.
+    """
+
+    def payloads(self):
+        return {
+            "journal": {"source": "journal", "adapterOutcome": "guard_answered",
+                        "observation": "receipt_missing", "guardDecision": "block",
+                        "guardState": "receipt_missing", "guardRecordedAs": "hook/s/t/0",
+                        "elapsedMs": 7},
+            "stdout": {"source": "stdout", "printed": "printed_a_block"},
+            "marker-root": {"source": "marker-root", "observationFile": "resolved",
+                            "heldFile": "reserved"},
+            "harness": {"source": "harness", "wallMs": 11, "exitCode": 0},
+            "hook-file": {"source": "hook-file", "entries": 1, "foreign": "present",
+                          "command": "python3 completion_hook.py settings.json"},
+        }
+
+    def test_withholding_a_source_leaves_only_its_own_cells_unreadable(self):
+        """One cell, one question: a source that did not answer moves nothing beside it."""
+        every = self.payloads()
+        for withheld in ("journal", "stdout", "marker-root", "harness"):
+            kept = dict(every)
+            kept.pop(withheld)
+            for cell, source, _path, _producer in harness.CELLS:
+                if source == "install":
+                    continue
+                found = harness.read(cell, kept)
+                if source == withheld:
+                    self.assertEqual(found["value"], harness.reading.UNREADABLE,
+                                     cell + " answered although " + withheld + " did not")
+                    self.assertIn(withheld, found["detail"])
+                else:
+                    self.assertNotEqual(found["value"], harness.reading.UNREADABLE,
+                                        cell + " went unreadable because " + withheld
+                                        + " was withheld, which is a question it was not asked")
+
+    def test_a_missing_key_answers_unreadable_and_says_which_key(self):
+        every = self.payloads()
+        del every["journal"]["observation"]
+        found = harness.read("observation", every)
+        self.assertEqual(found["value"], harness.reading.UNREADABLE)
+        self.assertIn("observation", found["detail"])
+        self.assertFalse(found["readable"])
+        # The neighbour reading the same payload is untouched.
+        self.assertEqual(harness.read("guardDecision", every)["value"], "block")
+
+    def test_a_declared_absence_answers_absent_rather_than_unreadable(self):
+        """Absence and a failed reading are different facts and must not share an answer."""
+        every = self.payloads()
+        every["hook-file"] = {"source": "hook-file", "entries": 0, "foreign": "present",
+                              "absentPaths": {"command": harness.NO_REGISTRATION}}
+        found = harness.read("firedCommand", every)
+        self.assertEqual(found["value"], harness.reading.ABSENT)
+        self.assertTrue(found["readable"], "an absence is an answer, so it was readable")
+        self.assertEqual(found["detail"], harness.NO_REGISTRATION)
+
+        undeclared = self.payloads()
+        del undeclared["hook-file"]["command"]
+        self.assertEqual(harness.read("firedCommand", undeclared)["value"],
+                         harness.reading.UNREADABLE,
+                         "a key missing without a declared reason is a failed reading, not an"
+                         " absence")
+
+    def test_stdout_that_the_host_would_discard_is_not_a_delivered_block(self):
+        """A block with no reason is a failed hook run that continues nothing.
+
+        The contract records that, so classifying it as a delivered block judges the row by a rule
+        the host does not use, and every blocking scenario would pass on output the host throws
+        away.
+        """
+        def printed(raw):
+            return harness.stdout_payload({"stdout": raw, "exitCode": 0, "wallMs": 1})["printed"]
+
+        self.assertEqual(printed(json.dumps({"decision": "block", "reason": "because",
+                                             "continue": True})), "printed_a_block")
+        self.assertEqual(printed(json.dumps({"decision": "block"})), "printed_something_else")
+        self.assertEqual(printed(json.dumps({"decision": "block", "reason": "  "})),
+                         "printed_something_else")
+        self.assertEqual(printed(json.dumps({"decision": "block", "reason": None})),
+                         "printed_something_else")
+        self.assertEqual(printed(""), "printed_nothing")
+        self.assertEqual(printed("not json at all"), "printed_something_else")
+
+    def test_a_reading_that_failed_never_passes_as_a_value(self):
+        """The other half of making absence expressible: nowhere may consume it as a value.
+
+        The sentinel is a non-empty string, so it slips past exactly the tests that look like they
+        exclude it - truthiness, uniqueness, and a predicate asking only whether something is
+        there. recordedAs is the case that matters: the row asks whether a path was named, and an
+        unreadable journal satisfied that question without naming one.
+        """
+        declared = None
+        for one in harness.SCENARIOS:
+            if one["name"] == "receipt_missing":
+                declared = one
+        values = {"processExit": 0, "adapterOutcome": "guard_answered",
+                  "observation": "receipt_missing", "guardDecision": "block",
+                  "guardState": "receipt_missing", "printedBlock": "printed_a_block",
+                  "heldFile": "reserved", "recordedAs": harness.reading.UNREADABLE,
+                  "observationFile": "resolved", "firedCommand": "python3 x",
+                  "journalElapsedMs": 5, "processWallMs": 9}
+        cells = dict((cell, {"cell": cell, "value": value, "readable": True})
+                     for cell, value in values.items())
+        arm = type("Arm", (object,), {"name": "on"})()
+        verdict = harness.judge(arm, declared, cells, declared["expected"])
+        self.assertFalse(verdict["passed"],
+                         "an unreadable journal satisfied the question whether a path was named")
+        self.assertIn("recordedAs", [one["cell"] for one in verdict["disagreed"]])
+        self.assertTrue(verdict.get("unmeasured"),
+                        "a managed scenario whose publication could not be read is not measured")
+
+    def test_stdout_is_judged_by_the_adapter_own_validator(self):
+        """The rule for what the host accepts comes from the code that decides it.
+
+        A second copy of that rule here agrees with the original only until one of them changes,
+        and it already had: the copy accepted a block that never asked for a continuation, which
+        the host reports as a failed run.
+        """
+        def printed(payload):
+            return harness.stdout_payload(
+                {"stdout": json.dumps(payload), "exitCode": 0, "wallMs": 1})["printed"]
+
+        self.assertEqual(printed({"decision": "block", "reason": "because", "continue": True}),
+                         "printed_a_block")
+        self.assertEqual(printed({"decision": "block", "reason": "because", "continue": False}),
+                         "printed_something_else")
+        self.assertEqual(printed({"decision": "block", "reason": "because"}),
+                         "printed_something_else")
+        self.assertEqual(printed({"decision": "block", "continue": True}),
+                         "printed_something_else")
+        # And the rule really is the adapter's: what it refuses, this refuses.
+        for payload in ({"decision": "block", "reason": "because", "continue": False},
+                        {"decision": "block", "continue": True}):
+            self.assertTrue(
+                completion.verdict_complaints({"decision": payload.get("decision"),
+                                               "hook_output": payload}),
+                "the adapter accepts output this check expects it to refuse")
+
+    def test_a_payload_from_another_source_cannot_fill_this_cell(self):
+        every = self.payloads()
+        every["journal"] = dict(every["journal"], source="stdout")
+        found = harness.read("observation", every)
+        self.assertEqual(found["value"], harness.reading.UNREADABLE)
+        self.assertIn("stamp", found["detail"])
+
+    def test_a_producer_that_reported_itself_unreadable_stays_unreadable(self):
+        every = self.payloads()
+        every["journal"]["observation"] = harness.reading.UNREADABLE
+        every["journal"]["detail"] = "the record could not be parsed"
+        found = harness.read("observation", every)
+        self.assertEqual(found["value"], harness.reading.UNREADABLE)
+        self.assertIn("could not be parsed", found["detail"])
+
+    def test_the_environment_handed_to_a_subprocess_writes_nothing_into_the_checkout(self):
+        """Asked of the function that builds it, because the promise is about what it hands over.
+
+        The subprocesses import the relay and the runtime modules out of this checkout. Without
+        this they leave __pycache__ beside that source, which is a write into the checkout by a
+        command whose result says everything it writes goes under its own directory.
+        """
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-env-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        arm = type("Arm", (object,), {"root": root, "codex_home": root / "codex"})()
+        built = harness.environment(arm)
+        self.assertEqual(built.get("PYTHONDONTWRITEBYTECODE"), "1")
+        self.assertEqual(built.get("PYTHONPATH"), "")
+        self.assertEqual(built.get("CODEX_HOME"), str(root / "codex"))
+        for leaked in ("CRW_COMPLETION_HOOK_CONFIG", "CODEX_SESSION_RELAY_MARKER_ROOT"):
+            self.assertNotIn(leaked, built,
+                             leaked + " is handed to the subprocesses, and it can send them"
+                                      " outside the directory this run made for itself")
+
+    def test_a_stat_that_failed_is_not_reported_as_an_absence(self):
+        """The reading that answers whether a file is there must not answer for one it cannot see.
+
+        Exercised against the filesystem rather than a patched call, because the defect this
+        replaces was exactly that the failure never escaped the call being relied on.
+        """
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-stat-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        loop = root / "loop"
+        os.symlink(str(loop), str(loop))
+        real = root / "real"
+        real.write_text("x", encoding="utf-8")
+        self.assertEqual(harness._there(loop, "present", "missing"), harness.reading.UNREADABLE)
+        self.assertEqual(harness._there(root / "nope", "present", "missing"), "missing")
+        self.assertEqual(harness._there(real, "present", "missing"), "present")
+
+
+class VerdictTests(unittest.TestCase):
+    """A row's assertion has to be able to fail, and to fail for the right reason."""
+
+    def cells(self, **overrides):
+        values = {"processExit": 0,
+                  "adapterOutcome": "guard_answered", "observation": "receipt_missing",
+                  "guardDecision": "block", "guardState": "receipt_missing",
+                  "printedBlock": "printed_a_block", "heldFile": "reserved",
+                  "recordedAs": "hook/s/t/0", "observationFile": "resolved",
+                  "firedCommand": "python3 x", "journalElapsedMs": 5, "processWallMs": 9}
+        values.update(overrides)
+        return dict((cell, {"cell": cell, "value": value, "readable": True})
+                    for cell, value in values.items())
+
+    def declared(self):
+        for one in harness.SCENARIOS:
+            if one["name"] == "receipt_missing":
+                return one
+        raise AssertionError("the scenario this case is built on is gone")
+
+    def arm(self, name):
+        return type("Arm", (object,), {"name": name})()
+
+    def test_a_row_that_missed_its_declared_state_fails_and_names_the_cell(self):
+        declared = self.declared()
+        verdict = harness.judge(self.arm("on"), declared,
+                                self.cells(guardState="unresolved_handoff"), declared["expected"])
+        self.assertFalse(verdict["passed"])
+        self.assertEqual([one["cell"] for one in verdict["disagreed"]], ["guardState"])
+
+    def test_a_row_that_reached_everything_it_declared_passes(self):
+        declared = self.declared()
+        verdict = harness.judge(self.arm("on"), declared, self.cells(), declared["expected"])
+        self.assertTrue(verdict["passed"], json.dumps(verdict))
+
+    def test_a_managed_scenario_that_published_nothing_is_unmeasured_rather_than_passing(self):
+        """The silent failure, asserted directly: a guard that selected nothing is not a pass."""
+        declared = self.declared()
+        verdict = harness.judge(self.arm("on"), declared,
+                                self.cells(recordedAs=None, observationFile="not_published"),
+                                declared["expected"])
+        self.assertFalse(verdict["passed"])
+        self.assertTrue(verdict["unmeasured"])
+
+    def test_an_adapter_that_never_answered_is_unmeasured_and_not_a_clean_bill(self):
+        declared = self.declared()
+        verdict = harness.judge(self.arm("on"), declared,
+                                self.cells(adapterOutcome="guard_unreachable"),
+                                declared["expected"])
+        self.assertFalse(verdict["passed"])
+        self.assertTrue(verdict["unmeasured"])
+        self.assertIn("does not mean no omission", verdict["because"])
+
+    def test_the_off_arm_fails_a_cell_that_answered_something_instead_of_an_absence(self):
+        declared = self.declared()
+        cells = dict((cell, {"cell": cell, "value": harness.reading.ABSENT, "readable": True,
+                             "detail": harness.NO_REGISTRATION})
+                     for cell in harness.FIRING_CELLS)
+        self.assertTrue(harness.judge(self.arm("off"), declared, cells,
+                                      declared["expected"])["passed"])
+        cells["observation"] = {"cell": "observation", "value": "unmanaged", "readable": True}
+        verdict = harness.judge(self.arm("off"), declared, cells, declared["expected"])
+        self.assertFalse(verdict["passed"])
+        self.assertEqual([one["cell"] for one in verdict["disagreed"]], ["observation"])
+
+
+
+# The one place this module reaches a conclusion by reading source text rather than by asking the
+# thing itself, with the reason it cannot ask. What it forbids is a line that was never written,
+# so the source is the only witness there is. It is a lint and says so; that cells really are
+# filled by read() is established behaviourally by the mutation cases above.
+TEXT_EVIDENCE = {
+    "test_every_cell_written_into_a_row_went_through_the_declared_reading":
+        "the property is that no other line assembles a cell, and a line nobody wrote has no"
+        " object to interrogate. It is a lint, and it is the weaker half: what actually carries"
+        " the property is that every cell in every row names the source and the path this check"
+        " writes down for it, which a helper assembling cells another way would have to"
+        " reproduce exactly, and reproducing it is being a reading.",
+}
+
+
+@unittest.skipUnless(HAVE_RELAY, "these read what the hook process left on disk, and no run can"
+                                 " be made on an interpreter the relay does not support")
+class WitnessTests(unittest.TestCase):
+    """What the hook process itself left behind, read from the root this check created.
+
+    Everything else here reads a document the harness printed. These cases read files the harness
+    did not write: the journal is written by the registered command, and the observations under
+    the marker root by the relay that command calls. A harness that printed a well-formed document
+    without running anything leaves both of them empty.
+    """
+
+    # What these cannot witness, stated where the claim is made rather than left to be assumed:
+    # they establish that a hook process ran, reached the guard and left the states below, and
+    # they do not establish WHICH executable ran. The argv is the harness's own report, checked
+    # against the registration on disk, so a harness that deliberately ran a different entry point
+    # writing byte-identical journals and markers while reporting the registered command would
+    # pass. Closing that needs a witness at the process boundary, which is not built here.
+
+    def records(self, arm):
+        found = []
+        for path in sorted((run_root() / arm / "journal").rglob("*.json")):
+            found.append(json.loads(path.read_text(encoding="utf-8")))
+        return found
+
+    def test_the_arm_that_registered_nothing_left_no_record_of_a_firing(self):
+        run_once()
+        self.assertEqual(self.records("off"), [],
+                         "the arm whose install was a dry run produced hook journal records, so"
+                         " something ran there")
+        self.assertEqual(sorted((run_root() / "off" / "markers").rglob("hook")), [],
+                         "the arm that ran nothing has published observations")
+
+    def test_the_registered_command_left_one_record_for_every_firing(self):
+        """Counted on disk, so a document describing firings that did not happen fails here."""
+        run_once()
+        found = self.records("on")
+        self.assertEqual(len(found), sum(FIRINGS.values()),
+                         "the number of records the hook process wrote is not the number of"
+                         " firings this check expects")
+        for record in found:
+            self.assertEqual(record.get("event"), "Stop")
+            self.assertEqual(record.get("adapterOutcome"), "guard_answered",
+                             "a firing the hook recorded never reached the guard")
+
+    def test_the_states_on_disk_are_the_states_this_check_declares(self):
+        """The same table as the row case, read from the journal instead of from the report."""
+        run_once()
+        found = sorted((record["observation"], record["guardDecision"], record["guardState"])
+                       for record in self.records("on"))
+        declared = sorted((one[0], one[1], one[2]) for one in DECLARED.values())
+        self.assertEqual(found, declared,
+                         "what the hook process recorded is not what this check declared, so the"
+                         " document and the disk disagree")
+
+    def test_the_guard_published_its_observations_under_the_marker_root(self):
+        run_once()
+        # The reservation lives in the same directory and is named rather than numbered, so it
+        # is excluded here: counting it would have made this case agree with itself.
+        published = sorted(path for path in
+                           (run_root() / "on" / "markers").rglob("hook/*/*/*.json")
+                           if path.name != "hold.json")
+        # Every firing but the unmanaged one, which selects no assignment and so publishes nothing.
+        self.assertEqual(len(published), sum(FIRINGS.values()) - 1,
+                         "the relay published a different number of observations from the number"
+                         " of managed firings")
+        reserved = sorted((run_root() / "on" / "markers").rglob("hook/*/*/hold.json"))
+        self.assertEqual(len(reserved), 4,
+                         "the reservations on disk are not the three omissions plus the first"
+                         " firing of the duplicate scenario")
+
+
+class DerivationTests(unittest.TestCase):
+    """Properties of the declarations, derived rather than restated."""
+
+    def test_the_harness_absence_partition_is_the_one_this_check_names(self):
+        """The set the comparisons run against, checked rather than adopted."""
+        self.assertEqual(sorted(str(one) for one in harness.ABSENCE_ANSWERS),
+                         sorted(str(one) for one in ABSENCE_ANSWERS),
+                         "the harness recognises a different set of absences from this check")
+
+    def test_every_declared_cell_has_exactly_one_reading(self):
+        names = [cell for cell, _s, _p, _q in harness.CELLS]
+        self.assertEqual(len(names), len(set(names)), "a cell is declared twice")
+        self.assertEqual(sorted(names), sorted(ARM_CELLS + FIRING_CELLS),
+                         "the harness declares a different set of cells from this check")
+        for cell, source, path, producer in harness.CELLS:
+            self.assertTrue(path, cell + " declares no path to read")
+            self.assertTrue(producer, cell + " declares nothing that produces it")
+
+    def test_every_place_an_absence_is_normal_is_derived_and_carries_a_reason(self):
+        places = harness.absence_places()
+        self.assertTrue(places, "no place declares an absence, so the derivation is empty")
+        for (arm, scenario, cell), place in places.items():
+            self.assertIn(arm, ARMS)
+            self.assertIn(scenario, SCENARIOS)
+            self.assertIn(cell, FIRING_CELLS)
+            self.assertTrue(str(place["because"]).strip(), arm + "/" + scenario + "/" + cell
+                            + " declares an absence without saying why it is normal there")
+            self.assertIn(place["answer"], ABSENCE_ANSWERS,
+                          arm + "/" + scenario + "/" + cell + " declares an absence whose answer"
+                          " is not one the sources can give")
+        for scenario in SCENARIOS:
+            for cell in FIRING_CELLS:
+                self.assertIn(("off", scenario, cell), places,
+                              "the arm that runs nothing must declare its absence for every cell")
+
+    @unittest.skipUnless(HAVE_RELAY, "the derived places are compared with a run, and no run can"
+                                     " be made on an interpreter the relay does not support")
+    def test_every_cell_that_read_absent_was_declared_absent_and_every_declared_place_read_it(self):
+        """The two sets are the same set, which is what makes the declaration load-bearing."""
+        answer = run_once()
+        expected = dict(ABSENCE_PLACES)
+        for scenario in SCENARIOS:
+            for cell in FIRING_CELLS:
+                expected[("off", scenario, cell)] = "ABSENT"
+        declared = dict(((place["arm"], place["scenario"], place["cell"]), place["answer"])
+                        for place in answer["absenceIsNormalAt"])
+        self.assertEqual(sorted(str(one) for one in declared),
+                         sorted(str(one) for one in expected),
+                         "the run declares absences in different places from this check")
+        for place, answered in sorted(expected.items()):
+            self.assertEqual(declared[place], answered,
+                             str(place) + " declares an absence answer this check does not")
+        found = {}
+        for scenario in SCENARIOS:
+            for arm in ARMS:
+                for one in answer["scenarios"][scenario][arm]["firings"]:
+                    for cell, value in one["cells"].items():
+                        if value["value"] in ABSENCE_ANSWERS:
+                            found[(arm, scenario, cell)] = value["value"]
+        self.assertEqual(sorted(set(found) - set(declared)), [],
+                         "a cell answered an absence in a place nothing declared it normal")
+        self.assertEqual(sorted(set(declared) - set(found)), [],
+                         "a place declares an absence that never happened, so the declaration"
+                         " describes a run other than this one")
+        self.assertEqual(sorted(str(one) for one in found),
+                         sorted(str(one) for one in expected),
+                         "the cells that answered an absence are not the places this check names")
+        for place, answered in sorted(found.items()):
+            self.assertEqual(answered, expected[place],
+                             str(place) + " answered a different absence from the one declared")
+
+    @unittest.skipUnless(HAVE_RELAY, "this reads a run, and no run can be made on an interpreter"
+                                     " the relay does not support")
+    def test_every_cell_in_every_row_carries_the_reading_this_check_names_for_it(self):
+        """The behavioural half of the rule below, and the stronger half.
+
+        A helper that assembled cells without going through the declared reading would have to
+        reproduce the source and the path for every cell exactly as they are written here, and
+        something that does that is a reading.
+        """
+        answer = run_once()
+        for arm in ARMS:
+            for cell in ARM_CELLS:
+                source, path = CELL_READINGS[cell]
+                found = answer["arms"][arm][cell]
+                self.assertEqual((found["answeredBy"], found["readingPath"]), (source, path),
+                                 arm + "/" + cell + " was answered by something else")
+        for scenario in SCENARIOS:
+            for arm in ARMS:
+                for one in answer["scenarios"][scenario][arm]["firings"]:
+                    for cell, found in one["cells"].items():
+                        source, path = CELL_READINGS[cell]
+                        self.assertEqual((found["cell"], found["answeredBy"], found["readingPath"]),
+                                         (cell, source, path),
+                                         scenario + "/" + arm + "/" + cell
+                                         + " was answered by something else")
+
+    def test_every_process_and_parse_boundary_is_guarded(self):
+        """Derived from source: a boundary that can raise must not be able to end the command.
+
+        The command promises one JSON object on stdout, so a timeout, an executable that could not
+        be started, or output that is not JSON has to become a refusal or an unreadable reading.
+        Two of these were found by deriving the set rather than reading the code: both git calls
+        caught a missing executable and not a timeout.
+        """
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        needed = {"run": ("TimeoutExpired", "OSError"), "loads": ("ValueError",),
+                  "read_text": ("OSError",)}
+        parents = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+
+        def named(node):
+            if isinstance(node, ast.Attribute):
+                return node.attr
+            if isinstance(node, ast.Name):
+                return node.id
+            return ""
+
+        def handlers_around(node):
+            seen, cur = [], parents.get(node)
+            while cur is not None:
+                if isinstance(cur, ast.Try):
+                    for handler in cur.handlers:
+                        if isinstance(handler.type, ast.Tuple):
+                            seen.extend(named(one) for one in handler.type.elts)
+                        elif handler.type is not None:
+                            seen.append(named(handler.type))
+                cur = parents.get(cur)
+            return seen
+
+        boundaries = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            call = named(node.func)
+            if call not in needed:
+                continue
+            if call == "run" and not isinstance(node.func, ast.Attribute):
+                continue
+            boundaries.append((call, node.lineno, handlers_around(node)))
+        self.assertGreaterEqual(len(boundaries), 8,
+                                "almost no boundary was found, so this derivation is watching a"
+                                " file that no longer crosses any")
+        unguarded = []
+        for call, line, seen in boundaries:
+            for wanted in needed[call]:
+                if not any(one == wanted or one in ("Exception", "BaseException") for one in seen):
+                    unguarded.append(call + " at line " + str(line) + " does not handle " + wanted)
+        self.assertEqual(unguarded, [],
+                         "a boundary can raise past the refusal document: " + "; ".join(unguarded))
+
+    def test_every_cell_written_into_a_row_went_through_the_declared_reading(self):
+        """No other line in the harness assembles a cell. Source, because the subject is absence.
+
+        Declared in TEXT_EVIDENCE with its reason. Everything else this module concludes it
+        concludes by asking the thing itself.
+        """
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        # Every way the name could be written, not one spelling of it: a comprehension named
+        # differently, a loop filling it key by key, a dict() call or a literal would each have
+        # walked past a rule that only looked at comprehensions iterating a variable called cell.
+        built, stored = [], []
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id == "cells":
+                    built.append(node.value)
+                if (isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
+                        and target.value.id == "cells"):
+                    stored.append(node)
+        self.assertEqual(stored, [],
+                         "a cell is written into the mapping one key at a time, which is a slot"
+                         " this rule cannot see through")
+        mutated = [node for node in ast.walk(tree)
+                   if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                   and isinstance(node.func.value, ast.Name) and node.func.value.id == "cells"]
+        self.assertEqual(mutated, [],
+                         "a mapping of cells is changed by a method call, which is another slot"
+                         " this rule cannot see through")
+        # Binding the name to a mapping that already exists builds nothing and is left alone;
+        # what this rule is about is the places that CONSTRUCT one.
+        # Only two ways of binding the name are left alone: a comprehension over the declared
+        # readings, and a subscript that reads a mapping built elsewhere in this file. Binding it
+        # to another name is rejected too, because the name could have been bound to a helper
+        # call a line earlier and the indirection is the evasion rather than a use of it.
+        constructed = [value for value in built if not isinstance(value, ast.Subscript)]
+        self.assertTrue(constructed,
+                        "nothing constructs a mapping of cells, so this check is watching a file"
+                        " that no longer does what it describes")
+        for value in constructed:
+            self.assertIsInstance(value, ast.DictComp,
+                                  "a mapping of cells is bound to something other than a"
+                                  " comprehension over the declared readings or a subscript of a"
+                                  " mapping already built that way. A helper, directly or through"
+                                  " another name, could stamp the declared source onto a value it"
+                                  " took from somewhere else")
+            self.assertTrue(isinstance(value.value, ast.Call)
+                            and isinstance(value.value.func, ast.Name)
+                            and value.value.func.id == "read",
+                            "a mapping of cells is filled by something other than read()")
+        self.assertIn("test_every_cell_written_into_a_row_went_through_the_declared_reading",
+                      TEXT_EVIDENCE, "the one text reading has to stay declared")
+
+
+class VerdictGuardTests(unittest.TestCase):
+    """No verdict can be computed without the guard, and the guard does what it says.
+
+    The rule was stated and each verdict applied it separately, until one did not. The standing
+    check that was meant to catch that only fired when a not-taken count was already nonzero,
+    which never happens in a healthy run, so it watched the property without exercising it. Both
+    halves are here now: the guard is the only way to compute a verdict, and the guard is driven
+    with a nonzero count rather than observed on a run where the count is zero.
+    """
+
+    def test_the_guard_refuses_a_verdict_while_a_reading_was_not_taken(self):
+        self.assertTrue(harness.judged(True, 0))
+        self.assertTrue(harness.judged(True, []))
+        self.assertFalse(harness.judged(True, 1))
+        self.assertFalse(harness.judged(True, ["a/cell"]))
+        self.assertFalse(harness.judged(False, 0))
+        self.assertFalse(harness.judged(False, 2))
+
+    def test_every_verdict_in_the_harness_is_computed_by_that_guard(self):
+        """Derived over every met in the file, not over the ones a healthy run happens to show."""
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        verdicts = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if isinstance(key, ast.Constant) and key.value == "met":
+                    verdicts.append((getattr(value, "lineno", None), value))
+        self.assertGreaterEqual(len(verdicts), 7,
+                                "almost nothing computes a verdict, so this derivation is"
+                                " watching a file that stopped judging")
+        for line, value in verdicts:
+            self.assertTrue(isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                            and value.func.id == "judged",
+                            "the verdict at line " + str(line) + " is computed without the guard,"
+                            " so it can be true while a reading under it was not taken")
+
+    def test_the_standing_check_reaches_every_verdict_the_document_carries(self):
+        """The check's reach and the set of verdicts have to be the same set.
+
+        A check whose set is narrower than the property leaks exactly where it is not looking,
+        which is how one verdict passed while the rule was already written down. Compared as sets
+        of places rather than as counts: the source computes seven verdicts and the document
+        carries nine, because one function produces three of them, and a count would have been
+        satisfied by the wrong nine.
+        """
+        if not HAVE_RELAY:
+            self.skipTest("the document side of this needs a run")
+        answer = run_once()
+        carried = set()
+
+        def walk(payload, path=()):
+            if isinstance(payload, dict):
+                for key, value in payload.items():
+                    here = path + (key,)
+                    if key == "met":
+                        carried.add("/".join(str(one) for one in path))
+                    walk(value, here)
+            elif isinstance(payload, list):
+                for index, value in enumerate(payload):
+                    walk(value, path + (index,))
+
+        walk(dict((key, value) for key, value in answer.items() if key != "passed"))
+        reached = set()
+        for name, measure in answer["measures"].items():
+            if "met" in measure:
+                reached.add("measures/" + name)
+        for name in answer["supplemental"]:
+            reached.add("supplemental/" + name)
+        for name in ("wroteOnlyInsideItsRoot", "sourceIdentity"):
+            reached.add(name)
+        self.assertEqual(sorted(carried - reached), [],
+                         "the document carries a verdict in a place the checks never look")
+        self.assertEqual(sorted(reached - carried), [],
+                         "the checks look for a verdict the document does not carry")
+        self.assertGreaterEqual(len(carried), 9)
+
+
+class ScopeTests(unittest.TestCase):
+    """A judgment speaks for the arms it declares, and its predicate reads exactly those.
+
+    The same judgment had two holes in a row: it folded an unreadable reading, and then it read
+    one arm while the evidence it cited was the pair. Matching claim to predicate by eye is what
+    produced the second, so the scope is declared and this derives the agreement.
+    """
+
+    @unittest.skipUnless(HAVE_RELAY, "this reads a run")
+    def test_every_judgment_reads_exactly_the_arms_it_claims(self):
+        answer = run_once()
+        scoped = []
+        for name, measure in sorted(answer["measures"].items()):
+            if "arms" in measure:
+                scoped.append(("measures/" + name, measure))
+        for name, measure in sorted(answer["supplemental"].items()):
+            if "arms" in measure:
+                scoped.append(("supplemental/" + name, measure))
+        self.assertGreaterEqual(len(scoped), 6,
+                                "almost no judgment declares which arms it speaks for")
+        for where, measure in scoped:
+            declared = measure["arms"]
+            self.assertTrue(declared, where + " declares an empty scope")
+            for arm in declared:
+                self.assertIn(arm, ARMS, where + " claims an arm that does not exist")
+            values = measure.get("values")
+            if values is not None:
+                self.assertEqual(sorted(values), sorted(declared),
+                                 where + " records values for a different set of arms from the"
+                                         " one it claims to speak for")
+
+    @unittest.skipUnless(HAVE_RELAY, "this reads a run")
+    def test_the_judgment_about_both_arms_reads_both(self):
+        answer = run_once()
+        survives = answer["supplemental"]["foreignRegistrationSurvives"]
+        self.assertEqual(sorted(survives["arms"]), sorted(ARMS),
+                         "the claim is about the entry surviving in both hook files")
+        self.assertEqual(sorted(survives["values"]), sorted(ARMS))
+        for arm in ARMS:
+            self.assertEqual(survives["values"][arm], "present")
+
+    def cell(self, value):
+        return {"cell": "x", "value": value, "readable": True}
+
+    def scenarios_with(self, off, on):
+        """The smallest input the supplemental judgments read, with the arms set by hand."""
+        firing = {"cells": {"heldFile": self.cell("reserved"),
+                            "recordedAs": self.cell("hook/s/t/0")}}
+        second = {"cells": {"heldFile": self.cell("reserved"),
+                            "recordedAs": self.cell("hook/s/t/1")}}
+        return {"_arms": {"off": {"foreignRegistration": self.cell(off)},
+                          "on": {"foreignRegistration": self.cell(on)}},
+                "duplicate": {"on": {"firings": [firing, second]}}}
+
+    def test_the_both_arms_judgment_fails_when_the_arm_it_does_not_read_fails(self):
+        """Driven at the judgment, because comparing declared arms with recorded values is not it.
+
+        A predicate that reads the on arm while the claim covers both still records both values,
+        so a check comparing those two sets passes while the hole is open. The only thing that
+        closes it is making the arm the predicate might be skipping the one that fails.
+        """
+        both_present = harness.supplemental(self.scenarios_with("present", "present"))
+        self.assertTrue(both_present["foreignRegistrationSurvives"]["met"])
+        off_displaced = harness.supplemental(self.scenarios_with("displaced", "present"))
+        self.assertFalse(off_displaced["foreignRegistrationSurvives"]["met"],
+                         "the judgment claims both hook files and passed while the off arm had"
+                         " displaced the other owner's entry")
+        on_displaced = harness.supplemental(self.scenarios_with("present", "displaced"))
+        self.assertFalse(on_displaced["foreignRegistrationSurvives"]["met"])
+
+    def test_an_entry_rewritten_in_place_has_not_survived(self):
+        """The claim is that another owner's registration survived, not that a string is present.
+
+        An entry whose command still reads the same while its type, timeout or matcher changed has
+        been rewritten, and the owner would find a registration it did not make.
+        """
+        seeded = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+        self.assertEqual(harness._foreign(seeded), "present")
+        for field, value in (("timeout", 99), ("type", "something-else")):
+            altered = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+            altered["hooks"][harness.completion.EVENT][0]["hooks"][0][field] = value
+            self.assertEqual(harness._foreign(altered), "altered",
+                             "an entry rewritten in " + field + " was reported as surviving")
+        with_matcher = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+        with_matcher["hooks"][harness.completion.EVENT][0]["matcher"] = "something"
+        self.assertEqual(harness._foreign(with_matcher), "altered")
+        gone = {"version": 1, "hooks": {harness.completion.EVENT: []}}
+        self.assertEqual(harness._foreign(gone), "displaced")
+        # Position is identity: hooks.identity derives a hook's identity from the event, the
+        # matcher index and the hook index, so an entry appended ahead of this one moves it and
+        # invalidates the hash its owner trusted.
+        ahead = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+        ahead["hooks"][harness.completion.EVENT].insert(
+            0, {"hooks": [{"type": "command", "command": "/opt/other", "timeout": 1}]})
+        self.assertEqual(harness._foreign(ahead), "moved",
+                         "an entry pushed to a new index was reported as surviving in place")
+        within = json.loads(json.dumps(harness.FOREIGN_HOOKS))
+        within["hooks"][harness.completion.EVENT][0]["hooks"].insert(
+            0, {"type": "command", "command": "/opt/other", "timeout": 1})
+        self.assertEqual(harness._foreign(within), "moved")
+
+    def test_a_predicate_over_a_scope_fails_when_any_arm_in_it_fails(self):
+        """The helper itself, driven with an arm that fails, rather than watched on a clean run."""
+        passing = {"off": "present", "on": "present"}
+        self.assertTrue(harness.across(ARMS, passing, lambda value: value == "present"))
+        for broken in ({"off": "displaced", "on": "present"},
+                       {"off": "present", "on": "displaced"}):
+            self.assertFalse(harness.across(ARMS, broken, lambda value: value == "present"),
+                             "a scope covering both arms passed while one of them failed")
+
+
+class ResponseContractTests(unittest.TestCase):
+    """Nothing is taken out of a relay response that the command did not promise to answer with.
+
+    Three members of one family landed in a row: a parse that failed, valid JSON that is not an
+    object, and an object missing the field the caller was about to read. Each time the boundary
+    was a layer narrower than what could go wrong, so the contract now lives with the command and
+    relay() is the only door.
+    """
+
+    def launcher(self, body):
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-contract-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        path = root / "codex-session-relay"
+        path.write_text("#!" + sys.executable + chr(10) + body, encoding="utf-8")
+        path.chmod(0o755)
+        return type("Arm", (object,), {
+            "launcher": path, "state": root / "state", "root": root,
+            "codex_home": root / "codex",
+            "environment": harness.environment(
+                type("A", (object,), {"root": root, "codex_home": root / "codex"})()),
+        })()
+
+    def test_a_response_missing_a_field_the_caller_reads_is_refused(self):
+        for body, missing in (("pass", "assignmentId"),
+                              ("print('{}')", "assignmentId"),
+                              ("print('{\"assignmentId\": \"a\"}')", "assignmentDir")):
+            arm = self.launcher(body + chr(10))
+            with self.assertRaises(harness.RelayError) as caught:
+                harness.relay(arm, "intent-declare", "--workspace", "x")
+            self.assertIn(missing, str(caught.exception),
+                          "the refusal does not name the field that was not answered")
+
+    def test_a_complete_response_is_returned(self):
+        arm = self.launcher(
+            "print('{\"assignmentId\": \"a\", \"assignmentDir\": \"/d\"}')" + chr(10))
+        self.assertEqual(harness.relay(arm, "intent-declare")["assignmentId"], "a")
+
+    def test_every_field_taken_from_a_response_is_one_its_command_promises(self):
+        """Derived over the source, so a field read without a contract cannot be added quietly."""
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        taken = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Subscript):
+                continue
+            target = node.value
+            command = None
+            if isinstance(target, ast.Call) and isinstance(target.func, ast.Name) \
+                    and target.func.id == "relay" and len(target.args) >= 2 \
+                    and isinstance(target.args[1], ast.Constant):
+                command = target.args[1].value
+            if command is None:
+                continue
+            key = node.slice.value if isinstance(node.slice, ast.Constant) else None
+            taken.append((command, key, node.lineno))
+        self.assertTrue(taken, "nothing reads a field out of a response, so this derivation is"
+                               " watching a file that stopped reading them")
+        for command, key, line in taken:
+            self.assertIn(command, harness.RESPONSE_FIELDS,
+                          "line " + str(line) + " reads a field out of " + repr(command)
+                          + ", which declares no response contract")
+            self.assertIn(key, harness.RESPONSE_FIELDS[command],
+                          "line " + str(line) + " reads " + repr(key) + " out of "
+                          + repr(command) + ", which does not promise it")
+
+
+class BoundaryTests(unittest.TestCase):
+    """Every failure mode executed, rather than inferred from a handler being present.
+
+    Reading the source for an except clause says a handler exists; it does not say the path
+    reaches it and answers with the document this command promises. These drive each mode for
+    real. The mode that was missing from the derived list is the last one: valid JSON whose shape
+    is not an object, where the parse succeeds and there is still nothing to read.
+    """
+
+    MODES = ("timeout", "not startable", "nonzero exit", "unparseable output",
+             "valid JSON that is not an object", "empty output")
+
+    def launcher(self, body):
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-boundary-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        path = root / "codex-session-relay"
+        path.write_text("#!" + sys.executable + chr(10) + body, encoding="utf-8")
+        path.chmod(0o755)
+        arm = type("Arm", (object,), {
+            "launcher": path, "state": root / "state", "root": root,
+            "codex_home": root / "codex",
+            "environment": harness.environment(
+                type("A", (object,), {"root": root, "codex_home": root / "codex"})()),
+        })()
+        return arm
+
+    def refusal_for(self, body):
+        arm = self.launcher(body)
+        with self.assertRaises(harness.RelayError) as caught:
+            harness.relay(arm, "intent-declare", "--marker-root", str(arm.root))
+        return str(caught.exception)
+
+    def test_every_relay_failure_mode_answers_with_a_named_refusal(self):
+        answered = {}
+        answered["nonzero exit"] = self.refusal_for("raise SystemExit(3)" + chr(10))
+        answered["unparseable output"] = self.refusal_for("print('<>')" + chr(10))
+        answered["valid JSON that is not an object"] = self.refusal_for(
+            "print('[1, 2]')" + chr(10))
+        arm = self.launcher("pass" + chr(10))
+        self.assertEqual(harness.relay(arm, "intent-bind"), {},
+                         "empty output is an empty answer for a command nothing is read out of")
+        with self.assertRaises(harness.RelayError):
+            harness.relay(arm, "intent-declare")
+        answered["empty output"] = "refused where a field is read, accepted where none is"
+        missing = self.launcher("pass" + chr(10))
+        missing.launcher = Path(str(missing.launcher) + "-does-not-exist")
+        with self.assertRaises(harness.RelayError) as caught:
+            harness.relay(missing, "intent-declare")
+        answered["not startable"] = str(caught.exception)
+        self.assertIn("could not be started", answered["not startable"])
+        self.assertIn("exited 3", answered["nonzero exit"])
+        self.assertIn("not JSON", answered["unparseable output"])
+        self.assertIn("not an object", answered["valid JSON that is not an object"])
+        for mode in ("nonzero exit", "unparseable output", "valid JSON that is not an object",
+                     "not startable"):
+            self.assertTrue(answered[mode], mode + " produced no named refusal")
+
+    @unittest.skipUnless(HAVE_RELAY, "below the relay floor the run refuses on the interpreter"
+                                     " before it reaches the build, so the injected failure is"
+                                     " never the one answered; the refusal itself is checked in"
+                                     " RefusalTests, which does run here")
+    def test_a_failure_after_the_root_exists_still_answers_with_a_document(self):
+        """The promise is one JSON object, and only the relay's own error was turned into one.
+
+        Everything else a run can hit after the root exists - a filesystem error, an interrupted
+        run - ended the command with a traceback. Driven by running the real command with a
+        failure injected into its build, rather than by reading main for an except clause.
+
+        The copy is given a repository root of its own so its imports resolve where the original's
+        do; without that the process fails before reaching the injection and the case would pass
+        on an error that is not the one it means to cause.
+        """
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-fault-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        scripts = root / "scripts"
+        scripts.mkdir()
+        for name in ("crw_runtime", "completion_hook.py", "runtime_install.py"):
+            os.symlink(str(ROOT / "scripts" / name), str(scripts / name))
+        os.symlink(str(ROOT / "packages"), str(root / "packages"))
+        marker = "def launcher_for(root):"
+        source = (ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8")
+        self.assertIn(marker, source)
+        (scripts / "hook_comparison.py").write_text(
+            source.replace(marker, marker + chr(10)
+                           + '    raise OSError("injected filesystem failure")'),
+            encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(scripts / "hook_comparison.py"), "--root", str(root / "work")],
+            capture_output=True, text=True, timeout=300)
+        self.assertEqual(done.returncode, 2,
+                         "a run that could not finish must not exit 0 or 1: " + done.stderr[-400:])
+        answer = json.loads(done.stdout)
+        self.assertIn("injected filesystem failure", answer["refused"])
+        self.assertIn("OSError", answer["refused"],
+                      "the refusal does not name what went wrong, so a defect here would read as"
+                      " a data problem")
+        self.assertNotIn("scenarios", answer, "a refusal must carry no rows")
+
+    def test_stdout_that_is_valid_json_but_not_an_object_is_not_a_block(self):
+        """The mode the derived list did not have: the parse succeeds and nothing can be read."""
+        for raw in ("[1, 2]", "null", "3", '"a string"'):
+            self.assertEqual(
+                harness.stdout_payload({"stdout": raw, "exitCode": 0, "wallMs": 1})["printed"],
+                "printed_something_else",
+                raw + " was read as something other than output nobody can act on")
+
+    def test_a_journal_record_that_is_not_an_object_is_not_correlated(self):
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-journal-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        day = root / "journal" / "20260918"
+        day.mkdir(parents=True)
+        (day / ("a" * 32 + ".json")).write_text("[1, 2]", encoding="utf-8")
+        (day / ("b" * 32 + ".json")).write_text("not json", encoding="utf-8")
+        (day / ("c" * 32 + ".json")).write_text(
+            json.dumps({"sessionId": "s", "turnId": "t", "observation": "x"}), encoding="utf-8")
+        arm = type("Arm", (object,), {"journal": root / "journal"})()
+        found = harness.journal_records(arm, "s", "t")
+        self.assertEqual(len(found), 1, "a record that is not an object was correlated as one")
+
+
+class RefusalTests(unittest.TestCase):
+    """An interpreter the relay cannot run on gets a refusal, not rows nobody took."""
+
+    @unittest.skipIf(HAVE_RELAY, "on 3.11 and later the refusal is reached by pinning the version"
+                                 " below; the case above it is the real one and it runs on 3.10")
+    def test_the_harness_refuses_for_real_on_this_interpreter(self):
+        done = subprocess.run([sys.executable, str(ROOT / "scripts" / "hook_comparison.py")],
+                              capture_output=True, text=True, timeout=300)
+        self.assertEqual(done.returncode, 2, "a refusal is not a result and must not exit 0")
+        answer = json.loads(done.stdout)
+        self.assertIn("3.11", answer["refused"])
+        self.assertNotIn("scenarios", answer, "a refusal must carry no rows")
+
+    @unittest.skipUnless(HAVE_RELAY, "this pins the version the other case reaches for real")
+    def test_the_refusal_is_the_answer_below_the_relays_floor(self):
+        import io
+        import contextlib
+        printed = io.StringIO()
+        with mock.patch.object(sys, "version_info", (3, 10, 0, "final", 0)):
+            with contextlib.redirect_stdout(printed):
+                code = harness.main([])
+        self.assertEqual(code, 2)
+        answer = json.loads(printed.getvalue())
+        self.assertIn("3.11", answer["refused"])
+        self.assertNotIn("scenarios", answer)
+        self.assertEqual(answer["source"], "hook-comparison")
+
+
+if __name__ == "__main__":
+    unittest.main()
