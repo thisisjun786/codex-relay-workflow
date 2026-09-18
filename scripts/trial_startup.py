@@ -217,6 +217,24 @@ def within(child, parent):
         return False
 
 
+def lexically_within(child, parent):
+    """Containment the way the relay decides it for an artifact root: on the path, not the place.
+
+    The relay compares normalised POSIX paths and never resolves symbolic links, and then opens
+    every component with O_NOFOLLOW. So an absolute symlink outside a root whose target resolves
+    inside it is inside the root by resolution and outside it by the contract that actually
+    decides the manifest. A gate resolving both sides approved artifacts emit then refused.
+
+    Private-record containment keeps using the resolved comparison, where following the link is
+    exactly the escape worth catching.
+    """
+    here, root = str(child), str(parent)
+    if not here.startswith("/") or not root.startswith("/"):
+        return False
+    here, root = os.path.normpath(here), os.path.normpath(root)
+    return here == root or here.startswith(root.rstrip("/") + "/")
+
+
 def git_worktree_of(path):
     """The nearest directory holding a .git, or None. Operational state lives in neither."""
     here = resolve(path)
@@ -417,8 +435,15 @@ def load_start(path, *, environment=None):
                       boundaries=[b.get("issueKey") for b in record["boundaries"]])
     # And its participants have to be that boundary's own, or the readings would cover one set of
     # tasks while the dispatch went to another.
-    roles = {p.get("role"): p.get("taskId") for p in (owning[0].get("participants") or [])
-             if isinstance(p, dict)}
+    participants = [p for p in (owning[0].get("participants") or []) if isinstance(p, dict)]
+    for role in ("parent", "child"):
+        named = [p.get("taskId") for p in participants if p.get("role") == role]
+        if len(named) != 1:
+            # One boundary is one parent and one child. A repeated role made this check read the
+            # last one while the boundary reading read the first.
+            raise Refused("a boundary declares exactly one " + role,
+                          boundary=owning[0].get("name"), found=shown(named))
+    roles = {p.get("role"): p.get("taskId") for p in participants}
     for role, key in (("parent", "parentTaskId"), ("child", "childTaskId")):
         if not same(roles.get(role), field(record, "assignment", key)):
             raise Refused("the assignment's " + role + " is not the one its boundary declares",
@@ -1159,7 +1184,7 @@ def order_gate(record, store_payload, entry):
                                            " command returns the authorised roots"})
     else:
         for artifact in artifacts:
-            inside = any(within(artifact, root) for root in roots)
+            inside = any(lexically_within(artifact, root) for root in roots)
             comparisons.append({"field": "artifact", "agrees": inside, "left": shown(artifact),
                                 "right": shown(roots), "leftSource": "the assignment file",
                                 "rightSource": roots_source})
@@ -1233,8 +1258,10 @@ def ledger_report(record):
                       opensAt=opens[0].get("at"), opensSegment=shown(opens[0].get("segment")),
                       closesAt=closes[0].get("at"), closesSegment=shown(closes[0].get("segment")))
     opened, closed = opens[0]["_at"], closes[0]["_at"]
-    if closed < opened:
-        raise Refused("the window closes before it opens", opensAt=opens[0].get("at"),
+    if closed <= opened:
+        # A point interval holds none of the completion, delivery, verdict and correction the
+        # trial exists to measure, and it is clean of interventions by construction.
+        raise Refused("this window has no duration to measure", opensAt=opens[0].get("at"),
                       closesAt=closes[0].get("at"))
     if closed.timestamp() > time.time():
         # A window that has not closed cannot be graded: the interventions it would have to be

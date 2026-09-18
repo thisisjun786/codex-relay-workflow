@@ -1585,5 +1585,75 @@ class ThirdHostedRound(TrialCase):
         self.assertIn("overlaps the trial window", raised.exception.reason)
 
 
+class FourthHostedRound(TrialCase):
+    """Symlinked artifacts, a point-sized window, and a boundary with two parents."""
+
+    def test_an_artifact_reached_through_a_symlink_is_outside_the_root(self):
+        # The relay compares normalised paths and never follows links, then opens every component
+        # with O_NOFOLLOW, so a link outside the root whose target lands inside it is outside.
+        outside = self.world.root / "linked-artifact.py"
+        outside.symlink_to(self.world.artifact)
+        self.world.assignment_file.write_text(json.dumps({
+            "relationshipId": World.RELATIONSHIP, "childTaskId": World.CHILD_A,
+            "executionGeneration": 1, "artifacts": [str(outside)]}), encoding="utf-8")
+        self.world.record["assignment"]["artifacts"] = [str(outside)]
+        self.world.message_file.write_text(
+            "relationship " + World.RELATIONSHIP + " artifact " + str(outside) + "\n",
+            encoding="utf-8")
+        self.world.flush()
+        gate = self.world.preflight()["orderGate"]
+        self.assertFalse(gate["passed"])
+        self.assertTrue([c for c in gate["comparisons"]
+                         if c["field"] == "artifact" and c["agrees"] is False])
+
+    def test_lexical_containment_answers_on_the_path_not_the_place(self):
+        root = str(self.world.repos["A"])
+        self.assertTrue(startup.lexically_within(root + "/artifact.py", root))
+        self.assertTrue(startup.lexically_within(root, root))
+        self.assertFalse(startup.lexically_within(str(self.world.root) + "/link.py", root))
+        self.assertFalse(startup.lexically_within(root + "-next/artifact.py", root))
+        self.assertFalse(startup.lexically_within("artifact.py", root))
+
+    def test_private_containment_still_follows_the_link(self):
+        # The two containments answer different questions, and this pins that they stay different.
+        loose = self.world.root / "elsewhere.json"
+        loose.write_text("{}", encoding="utf-8")
+        link = self.world.trial / "link.json"
+        link.symlink_to(loose)
+        self.assertFalse(startup.within(str(link), self.world.trial))
+        self.assertTrue(startup.lexically_within(str(link), str(self.world.trial)))
+
+    def test_a_window_with_no_duration_is_refused(self):
+        now = time.time()
+        instant = startup.stamp(now - 30)
+        self.world.record["window"] = {"opensAt": instant, "closesAt": instant}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": instant, "kind": "window_open", "segment": "window"},
+            {"at": instant, "kind": "window_close", "segment": "window"},
+        ])
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("no duration", raised.exception.reason)
+
+    def test_a_boundary_with_two_parents_is_refused(self):
+        boundary = self.world.record["boundaries"][0]
+        boundary["participants"].append({
+            "role": "parent", "taskId": "a-second-parent", "cwd": str(self.world.repos["A"]),
+            "expect": dict(boundary["participants"][0]["expect"])})
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("exactly one parent", refused.reason)
+
+    def test_a_boundary_with_no_child_is_refused(self):
+        boundary = self.world.record["boundaries"][0]
+        boundary["participants"] = [p for p in boundary["participants"] if p["role"] != "child"]
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("exactly one child", refused.reason)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
