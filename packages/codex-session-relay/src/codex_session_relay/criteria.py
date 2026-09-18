@@ -72,6 +72,12 @@ def normalise_findings(criteria=None, findings=None) -> list:
     normalisation rather than being dropped with every other unrecognised key.
     """
     merged = []
+    # Explicit declarations, kept beside the merge rather than read back out of it. The
+    # merged entry records only a true, so an explicit false left no trace and the
+    # contradiction check could only see one ordering: true then false refused, false then
+    # true was accepted. The rule is about a caller saying two things, which does not depend
+    # on the order they said them in.
+    declared = {}
     for source in (criteria or [], findings or []):
         for item in source:
             if not isinstance(item, dict):
@@ -101,21 +107,21 @@ def normalise_findings(criteria=None, findings=None) -> list:
                     f"a finding declares its restoration block with true or false, not "
                     f"{type(flag).__name__}",
                 )
-            previous = next((e for e in merged if e["id"] == identifier), None)
-            declared_before = bool(previous and previous.get(restoration.FIELD))
-            if flag is False and declared_before:
-                # Last-entry-wins is right for a disposition and a note and wrong for this.
-                # The two inputs are merged by id, so a caller that declared the block in
-                # criteria and then described it in findings would have the declaration
-                # cancelled by the entry that was only supposed to add the note. A caller
-                # that means to cancel it cannot be told apart from one that forgot, so the
-                # contradiction is refused rather than guessed either way.
-                raise AckRefused(
-                    RefusalReason.DISPOSITION_CONFLICT,
-                    f"{identifier!r} both declares and disclaims the restoration block; one "
-                    "correction carries one block and says so once",
-                )
-            if flag or declared_before:
+            if flag is not None:
+                if declared.get(identifier, flag) is not flag:
+                    # Last-entry-wins is right for a disposition and a note and wrong for
+                    # this. The two inputs are merged by id, so a caller that declared the
+                    # block in criteria and then described it in findings would have the
+                    # declaration cancelled by the entry that was only meant to add the note.
+                    # A caller that means to cancel it cannot be told apart from one that
+                    # forgot, so the contradiction is refused rather than guessed either way.
+                    raise AckRefused(
+                        RefusalReason.DISPOSITION_CONFLICT,
+                        f"{identifier!r} both declares and disclaims the restoration block; "
+                        "one correction carries one block and says so once",
+                    )
+                declared[identifier] = flag
+            if declared.get(identifier):
                 entry[restoration.FIELD] = True
             merged = [e for e in merged if e["id"] != identifier] + [entry]
     carriers = [e["id"] for e in merged if e.get(restoration.FIELD)]

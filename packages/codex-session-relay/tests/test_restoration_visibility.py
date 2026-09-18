@@ -793,3 +793,31 @@ class RestorationDelivery(DeliveryTestCase):
                            "restoration": False}],
             )
         self.assertEqual(caught.exception.reason.value, "disposition_conflict")
+
+    def test_the_same_contradiction_is_refused_in_either_order(self):
+        """Saying two things is the contradiction; which was said first is not part of it.
+
+        A merged entry records only a true, so an explicit false left no trace and the check
+        could see one ordering. Refusing one arrangement and accepting the mirror image of it
+        is not a rule about the caller's intent.
+        """
+        _relationship, event_id = self._acknowledged()
+        with self.assertRaises(RelayError) as caught:
+            self.ack.record_verdict(
+                event_id, verdict="needs_changes", verdict_turn_id="v-contra-rev",
+                criteria=[{"id": "c01", "verdict": "needs_changes", "restoration": False}],
+                findings=[{"id": "c01", "verdict": "needs_changes", "note": "n",
+                           "restoration": True}],
+            )
+        self.assertEqual(caught.exception.reason.value, "disposition_conflict")
+
+    def test_repeating_the_same_declaration_is_not_a_contradiction(self):
+        """Two entries agreeing is one statement made twice, which is nothing to refuse."""
+        _relationship, event_id = self._acknowledged()
+        self.ack.record_verdict(
+            event_id, verdict="needs_changes", verdict_turn_id="v-agree",
+            criteria=[{"id": "c01", "verdict": "needs_changes", "restoration": True}],
+            findings=[{"id": "c01", "verdict": "needs_changes", "note": "resume context",
+                       "restoration": True}],
+        )
+        self.assertEqual(self._projection(event_id)["outcome"], "carried")

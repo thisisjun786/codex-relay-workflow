@@ -307,12 +307,22 @@ request to the same registered child, carrying the superseded event, its digest 
 Give every finding a note.
 
 What the child actually reads is the RENDERED revision request, which is not the whole verdict.
-The renderer still shows only the first ten findings, but it now says how many it dropped and
-names the restoration block when the cut took it. Say which finding carries that block:
+A build carrying the behaviour below still shows only the first ten findings, but it says how
+many it dropped and names the restoration block when the cut took it. Say which finding carries
+that block:
 
     codex-session-relay --state "$RELAY_STATE" verdict --event <id> --verdict needs_changes \
       --verdict-turn <own turn> --restoration c2 \
       --finding 'c2=needs_changes:what to change, and the context to resume from'
+
+Ask the installed command whether it has this before relying on it, the same way capability is
+discovered everywhere else here: `verdict --help` lists `--restoration` on a build that carries
+it, and a build without it rejects the flag as unknown. The package version does not answer the
+question: both stay `0.1.0` while their contents change, which is why
+[OPS-1.2](operations.md#ops-12-the-integrity-digest) makes the integrity digest the thing that
+detects drift. An operator reading a version alone cannot tell this source from an older
+installation, and would get a usage error where the paragraph below promises a refusal before
+the generation opens.
 
 A declared block the message would not carry refuses the verdict with
 `restoration_undeliverable` BEFORE any generation is opened, so nothing is superseded and
