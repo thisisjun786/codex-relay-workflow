@@ -2192,7 +2192,7 @@ def cmd_hook(args):
         try:
             settings = completion.write_configuration(
                 configuration, wanted, apply=args.apply)
-        except TimeoutError as error:
+        except hostrecord.Busy as error:
             return _hook_busy(adapter, path, error, settings=None, locked=configuration)
         if settings["outcome"] not in completion.CONFIG_SETTLED:
             emit({"command": "hook", "adapter": adapter, "settings": settings,
@@ -2207,7 +2207,7 @@ def cmd_hook(args):
     hook = {"type": "command", "command": command, "timeout": args.timeout}
     try:
         result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
-    except TimeoutError as error:
+    except hostrecord.Busy as error:
         return _hook_busy(adapter, path, error, settings=settings, locked=path)
     landed = None
     if adapter == COMPLETION and args.apply:
@@ -2391,7 +2391,7 @@ def cmd_install(args):
     holder = None
     try:
         taking = hostrecord.Locked(environment).__enter__()
-    except TimeoutError as error:
+    except hostrecord.Busy as error:
         # A lock another run holds establishes nothing about this directory, which is the same
         # answer release_candidate gives for a record it cannot read. Letting it out would
         # report a competing run as an internal defect in this command.
@@ -2848,7 +2848,7 @@ def cmd_install(args):
                                   "target": str(environment)})
         except reading.Refused:
             raise
-        except TimeoutError as error:
+        except hostrecord.Busy as error:
             # Another run holds the promotion. A lock this run could not take establishes
             # nothing, so the candidate is released and nothing owned is touched.
             performed.append({"step": "take the promotion lock", "ok": False,
@@ -3692,7 +3692,7 @@ def cmd_register_mcp(args):
                 if outcome == codexconfig.CREATED:
                     hostrecord.atomic_write(path, fresh)
                     new_text, wrote = fresh, True
-        except TimeoutError as error:
+        except hostrecord.Busy as error:
             emit({"command": "register-mcp", "path": str(path), "outcome": BUSY,
                   "detail": str(error), "applied": False, "wrote": False,
                   "otherTablesPreserved": True})
@@ -3896,11 +3896,16 @@ def main(argv=None):
               "note": "a record could not be read and the command that reads it did not"
                       " report the refusal itself"})
         return EXIT_REFUSED
-    except TimeoutError as error:
+    except hostrecord.Busy as error:
         # A lock another run holds is a modelled outcome of every command that takes one, and
         # it says the same thing wherever it happens: nothing was established. Each site that
         # can say more answers it itself; this is the backstop, so a sibling added later cannot
         # report a competing run as a defect in this command the way the hook path did.
+        #
+        # The LOCK's own type, not the built-in. TimeoutError is an OSError, and a destination
+        # on a network mount raises it with ETIMEDOUT for an ordinary filesystem call; catching
+        # the broad type here would answer "another run holds a lock" about a failure no lock
+        # took part in, which is this command's own subject in its own failure contract.
         emit({"command": args.command, "outcome": BUSY,
               "refused": "another run holds a lock this command needs: " + str(error),
               "raisedAt": reading.where(error),

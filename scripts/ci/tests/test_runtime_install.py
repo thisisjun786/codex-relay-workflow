@@ -8345,6 +8345,27 @@ class IncompleteReadingTests(unittest.TestCase):
             finally:
                 os.chmod(package / "sub", 0o755)
 
+    def test_an_unreadable_excluded_directory_cannot_refuse_a_digest_it_cannot_affect(self):
+        """Pruning is not omission.
+
+        A directory the definition excludes cannot change the answer, so it must not be able to
+        withhold it. Opened before it was excluded, a root-owned __pycache__ turned a perfectly
+        readable package into an unreadable one at every boundary that asks for its digest.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "pkg"
+            (package / definition.EXCLUDED_DIRECTORY).mkdir(parents=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / definition.EXCLUDED_DIRECTORY / "x.pyc").write_bytes(b"cached")
+            expected = definition.ops12_digest(package)
+            os.chmod(package / definition.EXCLUDED_DIRECTORY, 0o000)
+            try:
+                if os.access(package / definition.EXCLUDED_DIRECTORY, os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                self.assertEqual(definition.ops12_digest(package), expected)
+            finally:
+                os.chmod(package / definition.EXCLUDED_DIRECTORY, 0o755)
+
     def test_an_unreadable_subtree_stops_the_classification_rather_than_forking_it(self):
         import runtime_install
 
@@ -8404,8 +8425,14 @@ class LockSiblingTests(unittest.TestCase):
                           if key.startswith("runtime_install.cmd_"))
         self.assertTrue(commands, "no command reaches a lock, so this proves nothing")
         arms = _handler_arms("main")
-        self.assertIn("TimeoutError", arms, "main() files a busy lock as an unmodelled defect")
-        self.assertLess(arms.index("TimeoutError"), arms.index("Exception"),
+        self.assertIn("hostrecord.Busy", arms,
+                      "main() files a busy lock as an unmodelled defect, or answers it from a"
+                      " type that is not specific to a lock")
+        self.assertNotIn("TimeoutError", arms,
+                         "TimeoutError is an OSError: a network destination raises it with"
+                         " ETIMEDOUT for an ordinary call, and answering that as BUSY claims a"
+                         " lock nobody took")
+        self.assertLess(arms.index("hostrecord.Busy"), arms.index("Exception"),
                         "the catch-all runs first, so the busy arm is unreachable")
 
     def test_the_hook_path_reports_a_busy_lock_rather_than_a_defect(self):
@@ -8432,12 +8459,34 @@ class LockSiblingTests(unittest.TestCase):
 
         emitted = []
         with mock.patch.object(runtime_install, "cmd_verify_definition",
-                               side_effect=TimeoutError("another run holds it")), \
+                               side_effect=hostrecord.Busy("another run holds it")), \
              mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
             code = runtime_install.main(["verify-definition"])
         self.assertEqual(code, 1)
         self.assertIsNone(emitted[0].get("internalError"))
         self.assertEqual(emitted[0]["outcome"], runtime_install.BUSY)
+
+    def test_a_timeout_no_lock_took_part_in_is_not_reported_as_a_busy_lock(self):
+        """The other half of the answer, and the reason the lock has its own type.
+
+        TimeoutError is an OSError. A destination on a network mount raises it with ETIMEDOUT
+        for an ordinary filesystem call, and reporting that as BUSY would claim another run
+        holds a lock that was never involved -- a receipt filled by something other than the
+        reading its own question produced, inside the contract that exists to prevent exactly
+        that.
+        """
+        import runtime_install
+
+        emitted = []
+        elsewhere = TimeoutError("the mount stopped answering")
+        elsewhere.errno = errno.ETIMEDOUT
+        with mock.patch.object(runtime_install, "cmd_verify_definition",
+                               side_effect=elsewhere), \
+             mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            code = runtime_install.main(["verify-definition"])
+        self.assertEqual(code, 1)
+        self.assertNotEqual(emitted[0].get("outcome"), runtime_install.BUSY)
+        self.assertEqual(emitted[0]["internalError"]["exception"], "TimeoutError")
 
     def test_a_busy_settings_lock_still_names_the_hook_file_it_was_installing(self):
         """The completion adapter takes TWO locks, on two different files.

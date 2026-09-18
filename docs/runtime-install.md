@@ -296,6 +296,13 @@ knows the settings are written before the hook and a lock taken between them lea
 The check reads the lock reachers as a call graph rather than a list, and requires the busy arm to
 precede the catch-all, because an arm after it is unreachable.
 
+Review then found the other half of it. `TimeoutError` is an `OSError`, and a destination on a
+network mount raises it with `ETIMEDOUT` for an ordinary filesystem call, so answering the
+built-in would claim another run holds a lock that was never involved - the same defect, inside
+the contract that exists to prevent it. The lock raises `hostrecord.Busy`, its own type, which
+subclasses `TimeoutError` so a caller that already answered the broader question keeps working.
+The check requires the narrow type and forbids the broad one.
+
 ### One cell, one question
 
 Two readings that answer different questions are never joined into one value. `summarise`
@@ -413,6 +420,12 @@ findings. `OMITTING_READERS` names the readers whose answer to an unreadable sub
 `rglob`, `glob`, `iterdir` and `os.walk`, whose default `onerror` discards the error - and
 `OMISSION_DECLARED` names each place one is used with what omission means there. `os.scandir` is
 deliberately absent from that list: it raises, which is the behaviour the list exists to require.
+
+Pruning is not omission, and review found where the difference bites. The walk opened every
+directory, including the `__pycache__` the definition excludes, so a cache directory nobody can
+read turned a perfectly readable package into an unreadable one at every boundary that asks for
+its digest. An excluded directory cannot change the answer, so it must not be able to withhold
+it: it is pruned before it is opened, and every subtree that can affect the answer still raises.
 
 ### What each of these answered before the fix
 
