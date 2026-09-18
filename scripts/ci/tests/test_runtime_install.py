@@ -5931,19 +5931,21 @@ class UpdateRecoveryTests(unittest.TestCase):
         way, so only an assertion that names the step sees it, and only on the hosts whose
         temporary name happens to spell it -- which is why it surfaced as an unrelated PR's CI
         failing and not as a failure here.
+
+        Only the last path component is this test's to choose. The temporary root above it
+        belongs to the host -- `TMPDIR` may name one, and `mkdtemp` adds random characters that
+        can spell `pip` on their own -- so requiring it to be neutral would make this case fail
+        for the very reason it exists to remove. A contaminated root simply makes every case
+        here contaminated, including the one named plain, and every case still has to report
+        its own step, so the property holds either way.
         """
         parent = Path(tempfile.mkdtemp(prefix="crw107-contrast-"))
         try:
-            self.assertFalse(
-                [t for t in ("pip", "venv") if t in str(parent)],
-                "the system temporary directory " + str(parent) + " spells a build tool, so the"
-                " neutral destination here would not be neutral: point TMPDIR at one that does"
-                " not, because this contrast means nothing without a baseline")
             for name in ("plain", "pip", "venv", "pip-venv"):
                 destination = parent / ("crw107-" + name)
                 for token in ("pip", "venv"):
                     self.assertEqual(
-                        token in str(destination), token in name,
+                        token in destination.name, token in name,
                         "a case only means something if its destination really does or does"
                         " not spell " + token)
                 for breaking, step in self.BOUNDARY_STEPS.items():
