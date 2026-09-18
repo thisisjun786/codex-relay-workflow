@@ -1,4 +1,6 @@
 import os
+import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -8,7 +10,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts/install.py"
 NAMES = ("crw-check", "crw-define", "crw-logic", "crw-loop", "crw-next", "crw-plan", "crw-run")
-SOURCES = [ROOT / "skills" / name for name in NAMES]
+MANIFEST = ROOT / "plugins/crw/.codex-plugin/plugin.json"
+SKILLS = (MANIFEST.parent.parent / json.loads(MANIFEST.read_text(encoding="utf-8"))["skills"]).resolve()
+SOURCES = [SKILLS / name for name in NAMES]
 
 
 class InstallerTests(unittest.TestCase):
@@ -79,6 +83,49 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.run_cli("--apply", explicit=False).returncode, 0)
         self.assert_links(Path(self.env["CODEX_HOME"]) / "skills")
         self.assertFalse(self.dest.exists())
+
+    def test_links_that_name_the_previous_skill_path_are_kept(self):
+        # Installations made before the skills moved under the plugin root point at
+        # ROOT/skills/<name>. The repository keeps that path as a link to the packaged
+        # location, so those installations must still read as installed and untouched.
+        legacy_root = ROOT / "skills"
+        self.assertTrue(legacy_root.is_symlink())
+        self.dest.mkdir(parents=True)
+        for name in NAMES:
+            (self.dest / name).symlink_to(legacy_root / name, target_is_directory=True)
+        before = {p.name: (p.lstat().st_ino, p.readlink()) for p in self.dest.iterdir()}
+        check = self.run_cli("--check")
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertIn("LINKED", check.stdout)
+        self.assertEqual(self.run_cli("--apply").returncode, 0)
+        self.assertEqual(before, {p.name: (p.lstat().st_ino, p.readlink()) for p in self.dest.iterdir()})
+        for name in NAMES:
+            self.assertTrue((self.dest / name / "SKILL.md").is_file())
+
+    def test_declared_skills_path_must_stay_inside_the_plugin(self):
+        # The manifest decides where the skills live, so a path that escapes the
+        # plugin root, lexically or through a symlink, must stop the installer.
+        install = importlib.util.module_from_spec(
+            importlib.util.spec_from_file_location("crw_install", SCRIPT))
+        importlib.util.spec_from_file_location("crw_install", SCRIPT).loader.exec_module(install)
+        with tempfile.TemporaryDirectory() as folder:
+            plugin_root = Path(folder) / "plugins/crw"
+            manifest_path = plugin_root / ".codex-plugin/plugin.json"
+            manifest_path.parent.mkdir(parents=True)
+            (plugin_root / "skills").mkdir()
+            outside = Path(folder) / "outside"
+            outside.mkdir()
+            (plugin_root / "escape").symlink_to(outside, target_is_directory=True)
+            for declared, expected in (("../outside/", "relative"), ("/abs/skills/", "relative"),
+                                       ("skills/", "relative"), ("./../outside/", "inside"),
+                                       ("./escape/", "outside"), ("./missing/", "does not exist")):
+                with self.subTest(declared=declared):
+                    manifest_path.write_text(json.dumps({"skills": declared}), encoding="utf-8")
+                    with self.assertRaises(ValueError) as caught:
+                        install.declared_skills(manifest_path)
+                    self.assertIn(expected, str(caught.exception))
+            manifest_path.write_text(json.dumps({"skills": "./skills/"}), encoding="utf-8")
+            self.assertEqual(install.declared_skills(manifest_path), (plugin_root / "skills").resolve())
 
     def assert_retired_entry_preserved(self, name):
         for kind in ("file", "directory", "live-link", "dangling-link", "other-checkout"):

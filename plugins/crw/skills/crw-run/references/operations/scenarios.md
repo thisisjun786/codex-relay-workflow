@@ -139,7 +139,8 @@ checkout for that task either exists or must be created.
 
 Clauses: OPS-5.1, OPS-5.2, OPS-5.3, OPS-5.4.
 
-Action: place the checkout at `/home/jun/code-worktrees/<original-project>/<task>` with branch
+Action: place the checkout at `<worktree-root>/<original-project>/<task>`, the worktree root the
+operator's applicable working instructions name, with branch
 `codex/<task>`, deriving the project segment from the original repository rather than from the
 directory name of the checkout currently open, and reuse an existing checkout belonging to the same
 task instead of creating a second one. Record the ownership columns separately from the path: who

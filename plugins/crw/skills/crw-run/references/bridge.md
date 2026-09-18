@@ -133,7 +133,8 @@ when an existing owned checkout is available.
 
 ### Placement and ownership of a retained worktree
 
-Place it at `/home/jun/code-worktrees/<original-project>/<task>`, taking the
+Place it at `<worktree-root>/<original-project>/<task>`, where `<worktree-root>` is the
+worktree root the operator's applicable working instructions name, taking the
 project segment from the original repository's project name rather than the
 directory name of whatever checkout is currently open, and using a short
 kebab-case task segment with the branch `codex/<task>`. Reuse the existing
