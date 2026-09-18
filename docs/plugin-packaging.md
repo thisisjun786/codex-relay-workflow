@@ -12,6 +12,7 @@ completion hook keep their own installer and are not bundled here.
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, version, and the declared skills path |
 | `plugins/crw/skills/` | The seven skills, the only declared component |
+| `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the two launchers they start |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 | `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
 
@@ -19,13 +20,13 @@ Edit the skills at `plugins/crw/skills/`; the root `skills` link is a compatibil
 path, not a second copy, and it is a Git symlink, so a checkout without symlink
 support turns it into a plain text file. The supported platform is Linux x86_64.
 
-Only those three entries may sit in the plugin root. Installation copies that
-directory verbatim, including untracked and ignored files, so anything left there
-is published. `python3 scripts/ci/plugin.py` enforces the rule.
-
-Everything that ships also has to sit inside the declared skills path, beside the
-files under `.codex-plugin/` and `LICENSE`, because a file outside it would install
-without ever being validated as a skill. The manifest itself may carry only the keys
+What may sit in the plugin root is whatever the manifest declares, plus
+`.codex-plugin/` and `LICENSE`. Installation copies that directory verbatim,
+including untracked and ignored files, so anything left there is published, and a
+component nobody declared installs without ever loading. `python3 scripts/ci/plugin.py`
+derives the permitted roots from the manifest, refuses a declaration naming a file the
+package does not ship, and checks the hook and server documents against the shapes that
+were measured to load. The manifest itself may carry only the keys
 the ingestion validator knows, and optional presentation fields are checked against
 its shapes: URLs that begin with `https://`, a `#RRGGBB` brand colour, and `./`
 relative asset paths the package actually ships.
@@ -94,6 +95,31 @@ codex plugin add crw@crw
 Installing creates no credential. The marketplace entry sets
 `authentication: ON_USE`, so Linear and repository access are checked when a skill
 needs them, and a skill says so and stops when they are missing.
+
+## Turning the wired surfaces on
+
+Installing the package installs the skills, and registers nothing else that works on
+its own. The declared MCP server and Stop hook both reach a runtime this package does
+not carry, and each needs a step the installation cannot take for you.
+
+1. Install the runtime, if this host has none:
+   `python3 scripts/runtime_install.py install --dest <destination> --apply`.
+2. Write the two records the launchers read. Neither registers anything itself:
+   `register-mcp --owner plugin --bridge-command <destination>/current/bin/codex-thread-bridge --apply`
+   and `hook --adapter completion --owner plugin --dest <destination> --apply`.
+   Each refuses when the same surface is already registered the other way, because the
+   two together would run two bridges, or two hooks on every Stop.
+3. Trust the hook. Until it is trusted nothing fires, and no command in this repository
+   grants that: installing writes no trust, and a session without it runs the hook zero
+   times and says so nowhere.
+
+Step 3 is what makes an installed hook look broken while it is working exactly as
+installed. Steps 1 and 2 may run in either order; step 3 is last, because it is trust in
+the hook as it then stands.
+
+None of this starts a daemon. The server is a stdio process Codex spawns per session,
+the hook runs on a Stop and exits, and the completion hook installs in `observe` mode,
+which classifies and records and never holds a turn.
 
 The linked installation in [README](../README.md#install) still works and is
 unchanged. Both installations read the same source: `scripts/install.py` links the
