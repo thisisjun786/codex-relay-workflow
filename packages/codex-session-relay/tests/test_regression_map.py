@@ -1171,7 +1171,11 @@ def _pairs(target, value):
             return None
         found = []
         for element, reaching in zip(target.elts, value.elts):
-            element = element.value if isinstance(element, ast.Starred) else element
+            if isinstance(element, ast.Starred):
+                # *store.fault_hook, other = [None, 1] hands the hook the LIST [None], not
+                # the scalar. Stripping the star paired it with None and read an arming as a
+                # disarming, so the whole structure is unreadable instead.
+                return None
             inner = _pairs(element, reaching)
             if inner is None:
                 return None
@@ -1237,7 +1241,9 @@ def _injection_sites_in(tree, module):
         isinstance(node, ast.arg) and node.arg == HELPER for node in ast.walk(tree)
     ) or any(
         isinstance(node, (ast.Import, ast.ImportFrom))
-        and any(alias.name.split(".")[-1] == HELPER and not alias.asname
+        # The name this import BINDS, not the name it reads. An alias import of something
+        # else under the helper's name is the competing binding that actually runs.
+        and any((alias.asname or alias.name.split(".")[-1]) == HELPER
                 for alias in node.names)
         and not (isinstance(node, ast.ImportFrom) and node.level == 1
                  and node.module == "support")
@@ -1529,6 +1535,9 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
             # The shapes differ one level in: Python hands the hook the whole (None, cb)
             # tuple, and a flat zip used to hand it the inner None and see a disarming.
             f"def t(store, cb, pair):\n    store.{HOOK}, (a, b) = (None, cb), pair\n",
+            # A starred target takes a LIST, so pairing it with a scalar would read an
+            # arming as a disarming.
+            f"def t(store):\n    *store.{HOOK}, other = [None, 1]\n",
         ):
             sites, leftover = self.read(source)
             self.assertEqual(sites, [], source)
@@ -1625,6 +1634,9 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
              + f"def t(store):\n    {HELPER}(store)\n"),
             ("a later rebinding of the name",
              self.IMPORT + f"{HELPER} = None\ndef t(store):\n    {HELPER}(store)\n"),
+            ("something else imported under the helper's name",
+             self.IMPORT + f"from other import replacement as {HELPER}\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
             ("parameter shadow",
              self.IMPORT + f"def t(store, {HELPER}):\n    {HELPER}(store)\n"),
             ("class shadow",
