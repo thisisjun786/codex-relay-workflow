@@ -8119,6 +8119,49 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
             hostrecord.pointer_entry_for(withdrawn, "/dest/current")),
             "and the withdrawn one is an entry about this path that records no placement,"
             " which is a different answer from having none at all")
+
+    def test_the_resume_does_not_refuse_on_an_entry_about_another_path(self):
+        """The binding rule at the site that broke it, not only at the helper.
+
+        _finish_promotion is handed its pointer path by the caller and rereads the record under
+        its own lock, so the two can name different places. Read unbound, the withdrawal guard
+        asked "does this record record a placement" of an entry that was about somewhere else,
+        and refused a resume on the strength of it -- a judgment about one path taken from a
+        reading of another.
+
+        Called directly with the two disagreeing, because that state is what the window between
+        the caller's derivation and this lock produces and it is not reachable through the
+        shared fixture. It is red at the commit before this one, which refuses here.
+
+        It does NOT cover the stale path itself: this run still writes the path it was handed.
+        That is the PROMOTION_FRESH defect this branch reports rather than absorbs.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # The record's entry is about SOMEWHERE ELSE and records no placement there -- the
+            # state a rollback at that other path leaves. Unbound, the guard read "no placement
+            # recorded" off it and refused THIS path on the strength of it.
+            record = hostrecord.load(host.record_path,
+                                     host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(host.root / "elsewhere" / "current")}
+            hostrecord.save(host.record_path, record)
+            # ... while the record selects this environment and a link this record accounts for
+            # sits at the path this call was handed.
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.previous_site / c["module"])
+                                      for c in host.data["components"]})
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install._finish_promotion(
+                    host.record_path, host.data, host.previous, host.pointer_path,
+                    {"command": "install", "applied": False}, issue="CRW-95", reported={})
+
+        self.assertEqual(code, 0, json.dumps(emitted[-1])[:900])
+        self.assertNotIn("not this run's to replace", json.dumps(emitted[-1]),
+                         "an entry about another path is not evidence about this one, and"
+                         " refusing on it is a judgment taken from the wrong reading")
         import runtime_install
 
         real_update = hostrecord.update
