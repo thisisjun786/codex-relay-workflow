@@ -1009,9 +1009,11 @@ class TheSweepDerivesItsOwnReachRatherThanClaimingIt(unittest.TestCase):
 # breaks things on purpose, which is the other way a case can assert nothing. The store's
 # fault hook is global and fires just before every COMMIT, so an arming reaches whichever
 # transaction runs first rather than the one the case is named for - and a case can then
-# pass in a situation its own name does not describe. Every arming this reader RECOGNISES
-# is enumerated from source and carries the interval it reaches and a reading, and the
-# next paragraph says how far recognition goes, because that word is doing real work.
+# pass in a situation its own name does not describe. Every hook-shaped CANDIDATE this
+# reader recognises is enumerated from source and carries the interval it reaches and a
+# reading. Candidate, not arming: this reader cannot tell a Store from anything else, so it
+# over-reports on purpose in the one direction that is safe, and the paragraph below says
+# how far recognition goes.
 #
 # What this is, and what it does NOT claim. The claim was rewritten four times under review
 # and was wrong three of them, which is the best argument for stating it exactly.
@@ -1020,9 +1022,11 @@ class TheSweepDerivesItsOwnReachRatherThanClaimingIt(unittest.TestCase):
 # recognises: an attribute assignment whose attribute is the hook; a call whose callee names
 # the helper; a call to setattr, exec, eval or __setattr__; a __dict__ subscript assignment;
 # a string containing the hook's name; a read of the hook; the helper named without being
-# called; and a binding of the helper or of setattr, exec or eval to some other name,
-# whether by assignment, tuple, walrus or import-as. Every one of those becomes a site or an
-# unaccounted occurrence, and THAT is the only totality claimed.
+# called; and a binding of the helper or of setattr, exec or eval to some other name, read
+# one level down an assignment, an annotated assignment, a walrus or an import-as. Every one
+# of those becomes a site or an unaccounted occurrence, and THAT is the only totality
+# claimed. Over-reporting is deliberate where it happens: a hook-named attribute on an
+# unrelated object costs somebody a declaration, and missing one hides an arming.
 #
 # It deliberately does not follow a binding. Resolving aliases is what an earlier version
 # did, and it answered wrongly twice: once reporting a raw reflective arming as a helper site
@@ -1140,6 +1144,18 @@ def _binds_a_tracked_name(node):
     return found
 
 
+def _flatten(node):
+    """Every leaf of an assignment target or value, tuples and lists opened recursively."""
+    if isinstance(node, (ast.Tuple, ast.List)):
+        leaves = []
+        for element in node.elts:
+            leaves.extend(
+                _flatten(element.value if isinstance(element, ast.Starred) else element)
+            )
+        return leaves
+    return [node]
+
+
 def _predicate_of(call):
     """The writing predicate a helper call passes, or that it cannot be read."""
     writing = None
@@ -1177,13 +1193,13 @@ def _injection_sites_in(tree, module):
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
     }
     accounted = set()
-    # Provenance for the helper name. A bare call to it is only the helper when this module
-    # imported it; a parameter, a class or a foreign import that happens to share the name is
-    # something else, and guessing which is how this reader answered wrongly twice before.
+    # Provenance for the helper name, and it is the exact import or nothing. A bare call is
+    # only the helper when this module did "from .support import killed_before_commit"; a
+    # parameter, a class, a local def or an import from anywhere else is a different object
+    # that happens to share a name, and guessing which is how this reader answered wrongly.
     imported = any(
-        isinstance(node, (ast.Import, ast.ImportFrom))
-        and any(alias.name.split(".")[-1] == HELPER and not alias.asname
-                for alias in node.names)
+        isinstance(node, ast.ImportFrom) and node.level == 1 and node.module == "support"
+        and any(alias.name == HELPER and not alias.asname for alias in node.names)
         for node in ast.walk(tree)
     )
     shadowed = any(
@@ -1206,29 +1222,34 @@ def _injection_sites_in(tree, module):
             targets = node.targets
         elif isinstance(node, ast.AnnAssign):
             targets = [node.target]
-        flat = []
         for target in targets:
-            # store.fault_hook, other = die, x is still an arming. Without flattening, the
-            # attribute fell through to the read pass and was reported as "reads the hook".
-            if isinstance(target, (ast.Tuple, ast.List)):
-                flat.extend(
-                    element.value if isinstance(element, ast.Starred) else element
-                    for element in target.elts
-                )
-            else:
-                flat.append(target)
-        for target in flat:
-            if isinstance(target, ast.Attribute) and target.attr == HOOK:
-                accounted.add(id(target))
-                value = node.value
-                if value is None:
-                    # A bare annotation binds nothing, so it arms nothing.
+            # store.fault_hook, other = die, 1 is an arming and ... = None, 1 is not, so the
+            # target has to be paired with the value that reaches it. Without that, the
+            # attribute fell through to the read pass and came back as "reads the hook", and
+            # a tuple disarming was reported as an arming.
+            leaves = _flatten(target)
+            values = _flatten(node.value) if node.value is not None else []
+            paired = dict(zip(leaves, values)) if len(leaves) == len(values) else {}
+            for leaf in leaves:
+                if isinstance(leaf, ast.Subscript) and _referred(leaf.value) == "__dict__":
+                    leftover.append(
+                        (module, owner.get(node, "<module>"), "assigns through __dict__")
+                    )
+                if not (isinstance(leaf, ast.Attribute) and leaf.attr == HOOK):
                     continue
-                if isinstance(value, ast.Constant) and value.value is None:
+                accounted.add(id(leaf))
+                if node.value is None:
+                    continue           # a bare annotation binds nothing, so it arms nothing
+                if len(leaves) != len(values):
+                    leftover.append(
+                        (module, owner.get(node, "<module>"),
+                         "assigns the hook from a value this reader cannot pair")
+                    )
                     continue
+                reaching = paired[leaf]
+                if isinstance(reaching, ast.Constant) and reaching.value is None:
+                    continue           # disarming
                 sites.append((module, owner.get(node, "<module>"), "raw", None))
-            if isinstance(target, ast.Subscript) and _referred(target.value) == "__dict__":
-                leftover.append((module, owner.get(node, "<module>"), "assigns through __dict__"))
         if isinstance(node, ast.Call):
             callee = _referred(node.func)
             if isinstance(node.func, ast.Name) and callee == HELPER:
@@ -1444,6 +1465,8 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
             f"def t(store, die):\n    store.{HOOK} = die\n",
             f"def t(store, die):\n    store.{HOOK}: object = die\n",
             f"def t(store, die):\n    store.{HOOK}, other = die, 1\n",
+            f"def t(store, die):\n    [store.{HOOK}] = [die]\n",
+            f"def t(store, die):\n    (store.{HOOK}, a), b = (die, 1), 2\n",
         ):
             sites, _leftover = self.read(source)
             self.assertEqual(sites, [("probe.py", "t", "raw", None)], source)
@@ -1453,10 +1476,20 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
         for source in (
             f"def t(store):\n    store.{HOOK} = None\n",
             f"def t(store):\n    store.{HOOK}: object\n",
+            f"def t(store):\n    store.{HOOK}, other = None, 1\n",
         ):
             sites, leftover = self.read(source)
             self.assertEqual(sites, [], source)
             self.assertEqual(leftover, [], source)
+
+    def test_a_value_this_reader_cannot_pair_is_a_leftover_not_a_site(self):
+        """The target names the hook and the value cannot be matched to it, so the reader
+        declines to say which it is rather than guessing arming or disarming."""
+        sites, leftover = self.read(f"def t(store, pair):\n    store.{HOOK}, other = pair\n")
+        self.assertEqual(sites, [])
+        self.assertIn(
+            "assigns the hook from a value this reader cannot pair", self.kinds(leftover),
+        )
 
     def test_a_direct_helper_call_carries_the_predicate_it_passes(self):
         sites, _leftover = self.read(
@@ -1537,6 +1570,10 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
         for label, source in (
             ("no import at all",
              f"def t(store):\n    {HELPER}(store)\n"),
+            ("an import from somewhere else",
+             f"from other import {HELPER}\ndef t(store):\n    {HELPER}(store)\n"),
+            ("a plain module import",
+             f"import {HELPER}\ndef t(store):\n    {HELPER}(store)\n"),
             ("parameter shadow",
              self.IMPORT + f"def t(store, {HELPER}):\n    {HELPER}(store)\n"),
             ("class shadow",
