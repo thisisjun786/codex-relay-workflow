@@ -1460,30 +1460,36 @@ def _hands_on(tree, spelled):
     """
     places = _places(tree)
     bound = {}
-    # Every place a call in this file can name: a module-level function, a method, a nested
-    # helper. Keyed by the last name in the chain, because that is how a call spells it.
-    mine = {}
+    # Every place a call in this file can name, kept under its whole chain rather than its last
+    # name. Two helpers are allowed to share a terminal name, so resolving by the last one alone
+    # would send one scope's call to the other scope's helper and lose whichever of the two
+    # actually hands something back.
+    defined = {places.get(id(node), (MODULE_LEVEL, None))[0]
+               for node in ast.walk(tree)
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def resolve(caller, named):
+        """The place a call names, looked up outwards from the scope that made it."""
+        chain = [] if caller == MODULE_LEVEL else caller.split(".")
+        while chain:
+            candidate = ".".join(chain + [named])
+            if candidate in defined:
+                return candidate
+            chain.pop()
+        return named if named in defined else None
+
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            mine.setdefault(node.name, places.get(id(node), (MODULE_LEVEL, None))[0])
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            if node.value is None:
+                continue
             function, klass = places.get(id(node), (MODULE_LEVEL, None))
             if _reachable(node.value, spelled, klass, bound.get(function, set())):
-                for target in node.targets:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
                     if isinstance(target, ast.Name):
                         bound.setdefault(function, set()).add(target.id)
 
-    carriers = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Return) or node.value is None:
-            continue
-        function, klass = places.get(id(node), (MODULE_LEVEL, None))
-        if function != MODULE_LEVEL and _reachable(node.value, spelled, klass,
-                                                   bound.get(function, set())):
-            carriers.add(function)
-
-    calls = {}
+    calls, returned = {}, {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -1494,27 +1500,55 @@ def _hands_on(tree, spelled):
             named = node.func.attr
         else:
             continue
-        if named not in mine:
+        function, _klass = places.get(id(node), (MODULE_LEVEL, None))
+        reached = resolve(function, named)
+        if reached is not None:
+            calls.setdefault(function, []).append((reached, node.lineno))
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Return) or node.value is None:
             continue
         function, _klass = places.get(id(node), (MODULE_LEVEL, None))
-        calls.setdefault(function, []).append((mine[named], node.lineno))
+        for inner in ast.walk(node.value):
+            if isinstance(inner, ast.Call):
+                returned.setdefault(function, []).append((inner, node.value))
 
-    handed, growing = set(carriers), True
+    # A function hands the thing back when its returned expression IS the thing, and it keeps
+    # handing it back when a call that hands it back flows into that expression. Calling one
+    # somewhere in the body is not enough: a helper answering {"value": helper()} builds a
+    # payload, and treating that as handing it on would drag every caller of every payload
+    # builder in, which is the fan-out that gets a sweep deleted.
+    carriers = set()
+    growing = True
     while growing:
         growing = False
-        for function, made in calls.items():
-            if function == MODULE_LEVEL or function in handed:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Return) or node.value is None:
                 continue
-            if any(name in handed for name, _line in made):
-                handed.add(function)
+            function, klass = places.get(id(node), (MODULE_LEVEL, None))
+            if function == MODULE_LEVEL or function in carriers:
+                continue
+
+            def hands(expression, klass=klass, function=function):
+                if isinstance(expression, ast.Call):
+                    named = (expression.func.id if isinstance(expression.func, ast.Name)
+                             else expression.func.attr
+                             if isinstance(expression.func, ast.Attribute)
+                             and _dotted(expression.func.value) == "self" else None)
+                    if named is not None and resolve(function, named) in carriers:
+                        return "through " + named
+                return spelled(expression, klass)
+
+            if _reachable(node.value, hands, klass, bound.get(function, set())):
+                carriers.add(function)
                 growing = True
 
     taken = []
     for function, made in calls.items():
-        if function == MODULE_LEVEL or function in carriers or function not in handed:
+        if function == MODULE_LEVEL or function in carriers:
             continue
         for name, line in made:
-            if name in handed:
+            if name in carriers:
                 taken.append((False, function, line, "through " + name))
     return carriers, taken
 
