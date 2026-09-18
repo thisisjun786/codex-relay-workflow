@@ -8203,6 +8203,47 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
         self.assertEqual(payload["pointerRestored"]["ownership"],
                          runtime_install_module.OWNERSHIP_DROPPED)
 
+    def test_the_selection_rollback_still_runs_when_the_ownership_write_raises(self):
+        """The bookkeeping write must not take the rollback that matters more down with it.
+
+        hostrecord.update can raise: Locked reports Busy for a lock another run holds, and the
+        atomic save re-raises whatever the filesystem did. Let that out of _restore_pointer and
+        the caller never reaches _restore_selection -- the pointer is back on the predecessor
+        while the record still selects the candidate, so the candidate is kept, the destination
+        is not retriable, and the run reports a defect in this command instead of the failure
+        that actually happened.
+
+        Raised by an independent review of this pull request. Red at 33d139a for the same
+        reason: the parent's rollback writes the record too, in its one branch that did.
+        """
+        import runtime_install
+
+        real_update = hostrecord.update
+
+        def refuse_the_rollback_write(path, version, **delta):
+            if "drop_pointer" in delta or "restore_pointer" in delta:
+                raise OSError("the record could not be written")
+            return real_update(path, version, **delta)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            found = host.snapshot()
+            self._link_deleted_under_it(host)
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=refuse_the_rollback_write):
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="read the owned pointer back")
+            after = host.snapshot()
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertIsNone(payload.get("internalError"),
+                          "a bookkeeping write that failed is not a defect in this command")
+        self.assertEqual(after["selected"], found["selected"],
+                         "the selection this promotion moved has to go back even when the"
+                         " ownership record could not be written")
+        self.assertEqual(payload["pointer"]["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_UNREADABLE)
+
 
 class LegacyInstallTests(unittest.TestCase):
     """An installation older than claims is not somebody else's directory.

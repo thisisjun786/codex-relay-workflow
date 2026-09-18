@@ -3275,16 +3275,31 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
 
     owned = None
     if settled and record_path is not None:
-        if wanted is None:
-            written = hostrecord.update(record_path, definition_version,
-                                        drop_pointer=str(pointer_path))
+        try:
+            if wanted is None:
+                written = hostrecord.update(record_path, definition_version,
+                                            drop_pointer=str(pointer_path))
+            else:
+                written = hostrecord.update(record_path, definition_version,
+                                            restore_pointer={"wrote": str(pointer_path),
+                                                             "found": wanted})
+        except OSError as error:
+            # Reported, not raised. This bookkeeping is the SMALLER of the two rollbacks a
+            # failed promotion needs and it happens first, so letting it out costs the larger
+            # one: the caller never reaches the selection rollback, the pointer is back on the
+            # predecessor while the record still selects the candidate, and _install_failed
+            # keeps that candidate and reports a defect in this command instead of the failure
+            # that actually happened. The exception type travels in the detail rather than
+            # being read as anything -- a lock this run could not take and a disk that refused
+            # the write are the same answer here, which is that the record does not say what
+            # this rollback meant it to.
+            owned = OWNERSHIP_UNREADABLE
+            detail = (detail + ", but the ownership record could not be written: "
+                      + type(error).__name__ + ": " + str(error))
         else:
-            written = hostrecord.update(record_path, definition_version,
-                                        restore_pointer={"wrote": str(pointer_path),
-                                                         "found": wanted})
-        owned, note = _ownership_answer(written, wanted)
-        if note:
-            detail = detail + ", but " + note
+            owned, note = _ownership_answer(written, wanted)
+            if note:
+                detail = detail + ", but " + note
     return {"restoredTo": restored_to, "verified": verified, "residualPointer": residual,
             "ownership": owned, "detail": detail}
 
