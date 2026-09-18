@@ -16,7 +16,7 @@ assigned result. Do not append workflow labels (including `CXC Loop`), repositor
 PR number, model, CI status, or merge status. Keep the execution mode in the
 packet's `Workflow` field and verify runtime behavior separately. A title or a
 chat link does not establish the task's native PR association; keep PR linkage
-separate from naming. A later explicit user-supplied title takes precedence over
+separate from naming. An explicit user-supplied title takes precedence over
 this default. Each implementation packet names its
 one issue and intended PR. A batch retains separate packets and issue/PR pairs;
 do not use a primary issue to hide a combined delivery. If no issue is linked,
