@@ -28,6 +28,12 @@ import plugin
 
 RUNTIME_INSTALL = ROOT / "scripts" / "runtime_install.py"
 
+try:  # The configuration reader arrived in 3.11 and this repository still supports 3.10.
+    import tomllib  # noqa: F401
+    TOML_READER = True
+except ImportError:
+    TOML_READER = False
+
 
 def run(*arguments):
     """One command, its exit status, and the JSON it emitted. Never one without the others."""
@@ -234,10 +240,21 @@ class BridgeRecordTest(unittest.TestCase):
         self.assertFalse((self.home.codex_home / "config.toml").exists(), output)
 
     def test_plugin_owner_is_refused_when_the_configuration_registers_it(self):
-        self.assertEqual(self.register("--apply")[0], 0)
+        # The entry is written as text rather than by registering it, because registering reads
+        # the file back and that reader arrived in Python 3.11. This case is about the refusal,
+        # and the refusal has to hold on the documented minimum interpreter too.
+        (self.home.codex_home / "config.toml").write_text(
+            "[mcp_servers.codex-thread-bridge]\ncommand = " + json.dumps(str(self.bridge))
+            + "\nargs = []\n", encoding="utf-8")
         status, emitted, output = self.register("--owner", "plugin", "--apply")
         self.assertNotEqual(status, 0, output)
         self.assertFalse(self.record.exists(), "a refused run writes nothing: " + output)
+        if TOML_READER:
+            self.assertIn("already registers", emitted["detail"], output)
+        else:
+            # Without the reader the question was not answered, and an unanswered question
+            # refuses rather than defaulting. That is the same guarantee, stated as itself.
+            self.assertIn("not established", emitted["detail"], output)
 
     def test_a_record_that_says_something_else_is_not_overwritten(self):
         self.assertEqual(self.register("--owner", "plugin", "--apply")[0], 0)
