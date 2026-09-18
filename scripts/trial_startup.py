@@ -321,6 +321,25 @@ def same(left, right):
     return str(left) == str(right)
 
 
+def structurally_same(left, right):
+    """Recursive equality that does not let a bool be a number.
+
+    Python's container equality recurses through ordinary ==, and a bool is an int there, so
+    {"networkAccess": False} equalled {"networkAccess": 0}.
+    """
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left is right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return (set(left) == set(right)
+                and all(structurally_same(left[key], right[key]) for key in left))
+    if isinstance(left, list) and isinstance(right, list):
+        return (len(left) == len(right)
+                and all(structurally_same(a, b) for a, b in zip(left, right)))
+    if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
+        return False
+    return type(left) is type(right) and left == right
+
+
 def same_value(left, right):
     """Equality for a value that may be structured, where str() is not an answer.
 
@@ -331,7 +350,7 @@ def same_value(left, right):
     if left is MISSING or right is MISSING or left is None or right is None:
         return False
     if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
-        return type(left) is type(right) and left == right
+        return structurally_same(left, right)
     if isinstance(left, bool) or isinstance(right, bool):
         return left is right
     return str(left) == str(right)
@@ -562,6 +581,11 @@ def load_start(path, *, environment=None, mode="preflight"):
                       allowanceSeconds=WINDOW_ALLOWANCE)
     number(field(record, "supervisor", "minimumAliveSeconds"), "supervisor.minimumAliveSeconds",
            minimum=0)
+    pid = field(record, "supervisor", "pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        # A float pid is signalled as its truncated self while the witness is compared against the
+        # original, so a witness claiming 5775.5 answered for whatever 5775 is doing.
+        raise Refused("supervisor.pid must be a positive integer", pid=shown(pid))
 
     # Everything the trial writes for itself is confined to the trial root. The assignment file and
     # the dispatch message belong to the child's workspace and are elsewhere by nature, so the rule

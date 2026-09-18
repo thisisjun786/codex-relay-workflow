@@ -2499,5 +2499,26 @@ class TwentyThirdHostedRound(TrialCase):
             cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"], VERIFIED)
 
 
+class TwentyFourthHostedRound(TrialCase):
+    """A pid that is not a pid, and a false that is not a zero."""
+
+    def test_a_non_integral_pid_is_refused(self):
+        for value in (5775.5, "5775", True, 0, -1):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.record["supervisor"]["pid"] = value
+            world.flush()
+            refused = world.refusal()
+            self.assertIsNotNone(refused, repr(value) + " was accepted as a pid")
+            self.assertIn("positive integer", refused.reason)
+
+    def test_a_boolean_inside_a_setting_is_not_a_number(self):
+        self.assertFalse(startup.same_value({"networkAccess": False}, {"networkAccess": 0}))
+        self.assertFalse(startup.same_value({"a": [True]}, {"a": [1]}))
+        self.assertTrue(startup.same_value({"networkAccess": False}, {"networkAccess": False}))
+        self.assertTrue(startup.same_value({"a": [1, "b"]}, {"a": [1, "b"]}))
+        self.assertFalse(startup.same_value({"a": 1}, {"a": 1, "b": 2}))
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
