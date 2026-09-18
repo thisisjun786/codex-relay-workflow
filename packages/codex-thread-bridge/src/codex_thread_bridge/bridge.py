@@ -110,8 +110,9 @@ def page_note(status: str, requested: int, observed: int):
     seen = {
         "not_observed": "No page of turns could be received at all, so only the thread's own "
         "metadata is here.",
-        "not_loaded": "Turns are listed without any items, because no page carrying items would "
-        "fit. Their ids, statuses and timestamps are real; none of their content is here.",
+        "not_loaded": "Turns are listed without their summary items, because no page carrying "
+        "items would fit. Their ids, statuses and timestamps are real, and every turn's items "
+        "field is empty for that reason rather than because the turn had none.",
     }.get(
         status,
         "Turn items are the host's summary view: each turn's user and agent messages, not its "

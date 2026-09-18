@@ -351,7 +351,12 @@ async def test_a_page_too_large_is_narrowed_and_then_dropped_to_ids(
     assert ids["observation"]["itemsView"] == "notLoaded"
     assert [turn["id"] for turn in ids["turnsPage"]["data"]] == ["turn-2", "turn-1"]
     assert all(turn["items"] == [] for turn in ids["turnsPage"]["data"])
-    assert "none of their content is here" in ids["observation"]["note"]
+    # The note must not claim the whole response has no content: item detail is read for the
+    # newest turn even on this rung, and it arrived here.
+    assert "every turn's items field is empty" in ids["observation"]["note"]
+    assert ids["observation"]["detailTurnsObserved"] == 1
+    assert ids["turnsPage"]["data"][0]["itemsDetailStatus"] == "complete"
+    assert ids["turnsPage"]["data"][0]["itemsDetail"][0]["text"] == "second"
 
     fake.oversize = lambda method, params: (
         100 * 1024 if method == "thread/turns/list" else None
