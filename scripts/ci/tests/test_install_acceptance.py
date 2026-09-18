@@ -60,8 +60,6 @@ import runtime_install
 import test_runtime_install as base
 
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
-COMPLETION_SOURCE = ROOT / "scripts" / "crw_runtime" / "completion.py"
-CHECK_SOURCE = ROOT / "scripts" / "crw_runtime" / "check.py"
 HERE = Path(__file__).resolve()
 
 try:
@@ -125,14 +123,31 @@ BESIDE = (
 
 DECLARED = READINGS + BESIDE
 
-# Where a declared producer is resolved. The acceptance module is in this map on the same terms
-# as the runtime modules: a producer this suite owns is checked exactly like one it does not,
-# because a test-side reading exempt from the check is a reading nothing holds to anything.
-PRODUCER_FILES = {
-    "runtime_install": RUNTIME,
-    "completion": COMPLETION_SOURCE,
-    "check": CHECK_SOURCE,
-    "test_install_acceptance": HERE,
+# Where a declared producer is resolved: the module OBJECT, not its file. Reading a file for a
+# definition passes on a name that survives in a comment or an unreachable branch, and for the
+# reading this module performs itself it would have been searching the file that declares the
+# producer for the name it declares -- a check answering its own question. Asking the module
+# yields the callable a caller would actually reach.
+PRODUCER_MODULES = {
+    "runtime_install": runtime_install,
+    "completion": completion,
+    "check": check,
+    "test_install_acceptance": sys.modules[__name__],
+}
+
+# The places left in this module that reach a conclusion by reading source text rather than by
+# asking the thing itself, each with the reason it cannot ask. Declared so the set is visible,
+# and DERIVED from this file by a check, so a new one arrives as a failure instead of as another
+# review round. Everything else that once lived here now asks: the producers are resolved as
+# attributes, the fixture stand-ins are observed while the fixture is applying them, and the
+# declared paths are walked in payloads the sources really produced.
+TEXT_EVIDENCE = {
+    "test_no_cell_is_filled_without_going_through_the_declared_reading":
+        "a style rule about this module's own code has no object to ask: the thing it forbids"
+        " is a line that was never written, so the source is the only witness. It is a lint and"
+        " says so; the property it approximates is proved by the mutation cases instead.",
+    "test_every_text_reading_place_is_declared":
+        "the derivation that polices the others has to read this file to find them.",
 }
 
 # Rows whose reading is a check.field cell and therefore answers in check.VALUES. The others
@@ -803,11 +818,20 @@ class SevenReadingsTests(unittest.TestCase):
         self.maxDiff = None
 
     def test_every_question_has_exactly_one_declared_reading(self):
+        """Asked of the accessor, because two lists agreeing is not a reading being reachable.
+
+        Comparing the table with the list of questions is two declarations agreeing with each
+        other. What the seven actually need is for the accessor to resolve each of them, so each
+        is put through read() and has to come back as itself.
+        """
+        for cell in SEVEN:
+            with self.subTest(cell):
+                self.assertEqual(read(cell, {})["cell"], cell,
+                                 cell + ": the accessor does not resolve a declared reading")
         declared = [row[0] for row in READINGS]
-        self.assertEqual(sorted(declared), sorted(SEVEN),
-                         "a question with no row cannot be answered, and a row nobody asked for"
-                         " is an answer to nothing")
         self.assertEqual(len(set(declared)), len(declared), "each question is answered once")
+        self.assertEqual(set(declared) - set(SEVEN), set(),
+                         "a row nobody asked for is an answer to nothing")
 
     def test_no_two_cells_read_the_same_answer(self):
         places = [(row[1], row[2]) for row in DECLARED]
@@ -815,16 +839,58 @@ class SevenReadingsTests(unittest.TestCase):
                          "two cells reading one place is one reading answering two questions")
 
     def test_every_declared_producer_exists_where_it_is_declared(self):
-        """Including the one this module owns, which is checked on the same terms."""
+        """Asked of the module, not read out of its file.
+
+        A definition found in source text can be a name in a comment or in a branch nothing
+        reaches, and for the producer this module owns the file being searched is the file that
+        declares it -- so the search would have found its own declaration. The module is asked
+        for the attribute instead, which is the thing a caller reaches.
+        """
         for cell, _source, _path, producer in DECLARED:
             module, _, name = producer.rpartition(".")
             with self.subTest(cell):
-                self.assertIn(module, PRODUCER_FILES, cell + ": no file resolves " + module)
-                tree = ast.parse(PRODUCER_FILES[module].read_text(encoding="utf-8"))
-                defined = {node.name for node in ast.walk(tree)
-                           if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-                self.assertIn(name, defined, cell + ": " + producer + " does not exist")
+                self.assertIn(module, PRODUCER_MODULES,
+                              cell + ": nothing resolves " + module)
+                resolved = getattr(PRODUCER_MODULES[module], name, None)
+                self.assertIsNotNone(resolved, cell + ": " + producer + " does not exist")
+                self.assertTrue(callable(resolved),
+                                cell + ": " + producer + " is not something that can produce"
+                                " a reading")
 
+
+    def test_every_text_reading_place_is_declared(self):
+        """The inventory, derived rather than remembered.
+
+        Three times now a check in this module concluded something about behaviour by reading
+        source text, and each time the repair was the instance. The instances share a shape: a
+        claim about what code does, settled by how the code is spelled -- and where the file
+        being read is the file making the claim, the check can be satisfied by its own
+        declaration. AGENTS.md states the rule for this repository: a text-matching test is not
+        proof of behaviour.
+
+        So the places are derived from this file instead of listed by hand. Anything that reads
+        source to reach a conclusion has to be declared with the reason it cannot ask the thing
+        itself, and a new one is a failure here rather than a fourth round.
+        """
+        tree = ast.parse(HERE.read_text(encoding="utf-8"))
+        reading_text = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for inner in ast.walk(node):
+                if (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute)
+                        and inner.func.attr == "parse"
+                        and isinstance(inner.func.value, ast.Name)
+                        and inner.func.value.id == "ast"):
+                    reading_text.add(node.name)
+
+        self.assertEqual(reading_text, set(TEXT_EVIDENCE),
+            "a place that settles a question by reading source text is undeclared, or a"
+            " declaration outlived the place it described: " + json.dumps(sorted(reading_text)))
+        for place, why in TEXT_EVIDENCE.items():
+            with self.subTest(place):
+                self.assertTrue(why.strip(),
+                                place + " is declared without the reason it cannot ask")
     def test_every_declared_path_is_one_its_source_actually_writes(self):
         """A rename fails here, and it is the payload that says so rather than the file text.
 
@@ -1488,21 +1554,37 @@ FAKED_IN_FIXTURE = ("candidate_tables", "classify_component", "emit", "interpret
 
 
 def _stand_ins():
-    """The names the update fixture replaces, read out of its source."""
-    tree = ast.parse((ROOT / "scripts" / "ci" / "tests" / "test_runtime_install.py")
-                     .read_text(encoding="utf-8"))
+    """The names the update fixture replaces, observed while it is replacing them.
+
+    Read out of the fixture's source this was a claim about how the fixture is written. A
+    replacement applied some other way, or one applied conditionally and spelled differently,
+    was simply not seen -- and the provenance record would then understate what stood in for a
+    real thing while still looking derived.
+
+    So the fixture is run and asked. _run calls interpose from inside the patched measurement,
+    which is after every patch in that run has been entered, so the modules can be inspected
+    for the attributes that are not themselves at that moment. The two pointer replacements are
+    only applied for their own injected failures, so those runs are made too and the answers
+    are taken together.
+    """
+    watched = ("subprocess", "definition", "scope", "pointer")
     found = set()
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.ClassDef) and node.name == "UpdateRecoveryTests"):
-            continue
-        for item in node.body:
-            if not (isinstance(item, ast.FunctionDef) and item.name == "_run"):
-                continue
-            for call in ast.walk(item):
-                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-                        and call.func.attr == "object" and len(call.args) >= 2
-                        and isinstance(call.args[1], ast.Constant)):
-                    found.add(call.args[1].value)
+
+    def sample():
+        for name, value in list(vars(runtime_install).items()):
+            if isinstance(value, mock.NonCallableMock):
+                found.add(name)
+        for module_name in watched:
+            module = getattr(runtime_install, module_name, None)
+            for name, value in list(vars(module).items()) if module else []:
+                if isinstance(value, mock.NonCallableMock):
+                    found.add(name)
+
+    for breaking in (None, "replace the owned pointer", "read the owned pointer back"):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = base._Host(temporary)
+            clean(host)
+            install(host, clean_store=True, breaking=breaking, interpose=sample)
     return found
 
 
