@@ -1280,7 +1280,8 @@ def _interpreter_cell(ours):
                               "the registration names its interpreter with the relative path "
                               + first + ", which resolves differently in every workspace; it"
                               " was not probed here", path=first)
-                checked.append({"word": first, "resolved": first, "probe": probe})
+                checked.append({"registration": entry["identity"], "word": first,
+                                "resolved": first, "probe": probe})
                 continue
             resolved = first
         else:
@@ -1290,7 +1291,8 @@ def _interpreter_cell(ours):
         if probe["value"] == reading.PRESENT and not os.access(str(resolved), os.X_OK):
             probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
                           path=str(resolved))
-        checked.append({"word": first, "resolved": str(resolved), "probe": probe})
+        checked.append({"registration": entry["identity"], "word": first,
+                        "resolved": str(resolved), "probe": probe})
     if not checked:
         return _cell(NOT_READ, "no registration named a program to run the adapter")
     unusable = next((one for one in checked if one["probe"]["value"] != reading.PRESENT), None)
@@ -1299,7 +1301,12 @@ def _interpreter_cell(ours):
                  chosen["probe"]["evidence"]
                  + "; this is the first word of the registered command, and a wrapper's own"
                    " target is not followed",
-                 interpreters=[one["resolved"] for one in checked])
+                 interpreters=[one["resolved"] for one in checked],
+                 # The worst probe is the cell's value, and every probe is carried beside it.
+                 # A consumer asking whether THIS host can start the adapter at all has to be
+                 # able to tell one broken registration from every registration being broken,
+                 # and the worst-of value alone answers the second question for the first.
+                 probes=checked)
 
 
 def _journal_cell(config):
@@ -1517,6 +1524,22 @@ def status(codex_home=None, environ=None, event=EVENT):
     # Attached to the settings cell rather than replacing it: the cell above still answers
     # about the one file this command settled on, and this says what every registration named.
     settings["namedSettings"] = named_journals
+    # Startability PER REGISTRATION, paired by the registration's own identity. The two cells
+    # above report the worst probe they took, which answers "is anything broken" and was read
+    # as "is everything broken": one missing target among several registrations then claimed
+    # the hook could not have run while its neighbour was running all along. And the two halves
+    # have to stay paired, because a registration starts only when its adapter AND its
+    # interpreter are both there; flattening them let a present interpreter under a missing
+    # adapter read as something that could start.
+    interpreter_probes = {one["registration"]: one["probe"]["value"]
+                          for one in (interpreter.get("probes") or [])}
+    start_probes = [
+        {"registration": entry["identity"],
+         "adapter": (presence(entry["target"], "the adapter script")["value"]
+                     if os.path.isabs(entry["target"]) else REGISTRATION_RELATIVE_TARGET),
+         "interpreter": interpreter_probes.get(entry["identity"], NOT_READ)}
+        for entry in (ours or [])
+    ]
     # Why there is no record, decided over the cells above and over no reading of its own.
     # 'ours' is None only when the hook file itself could not be read, which is why whether a
     # registration exists is passed as the readability of that file and not as a count of zero.
@@ -1526,8 +1549,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         "relativeSettings": bool(relative),
         "silentRegistrations": silent,
         "namedJournals": named_journals,
-        "targetValue": target["value"],
-        "interpreterValue": interpreter["value"],
+        "startProbes": start_probes,
     })
 
     return {

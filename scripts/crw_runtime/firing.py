@@ -76,10 +76,6 @@ RECORD_ANSWERS = (COUNTED, NO_RECORDS_KEPT, UNESTABLISHED)
 CANNOT_START = (reading.ABSENT, reading.UNREADABLE)
 
 
-def _values(observed, *names):
-    return [observed.get(name) for name in names]
-
-
 def _not_registered(observed):
     if not observed.get("registrationReadable"):
         return NOT_RULED_OUT, ("the hook file could not be read, so whether this adapter is"
@@ -116,59 +112,109 @@ def _adapter_cannot_run(observed):
     Deliberately not downstream of the settings. The host resolves and runs the command before
     the adapter opens anything, so a missing interpreter means no invocation, no decision and
     no journal entry, on a host whose settings may be perfectly fine.
+
+    Counted per registration rather than worst-of. The target and interpreter cells report the
+    worst probe they took, so on a host with two registrations one broken target used to answer
+    for both -- and the whole empty-journal family was then skipped as though nothing could have
+    run, while the working registration was running all along. ANY unstartable registration is a
+    repair and is established as one; only NO startable registration at all makes an empty
+    journal that program's absence, and the journal rules ask that question for themselves.
     """
-    values = _values(observed, "targetValue", "interpreterValue")
-    blocked = [value for value in values if value in CANNOT_START]
+    probes = list(observed.get("startProbes") or [])
+    if not probes:
+        return NOT_RULED_OUT, "no probe of a registered command was made"
+    blocked = [probe for probe in probes if _halves(probe) & set(CANNOT_START)]
+    unjudged = [probe for probe in probes
+                if not (_halves(probe) & set(CANNOT_START)) and not _startable(probe)]
     if blocked:
-        return ESTABLISHED, ("the registered command names an adapter or an interpreter the"
-                             " host cannot start (" + ", ".join(blocked) + "), so it cannot"
-                             " have run and cannot have recorded")
-    if all(value == reading.PRESENT for value in values):
-        return RULED_OUT, "the registered adapter and its interpreter are both there"
-    return NOT_RULED_OUT, ("whether the host can start the registered command was not"
-                           " established: " + ", ".join(str(value) for value in values))
+        return ESTABLISHED, (
+            str(len(blocked)) + " of " + str(len(probes)) + " registrations name an adapter or"
+            " an interpreter the host cannot start ("
+            + "; ".join(str(probe.get("registration")) + ": adapter "
+                        + str(probe.get("adapter")) + ", interpreter "
+                        + str(probe.get("interpreter")) for probe in blocked)
+            + "), so those registrations cannot have run and cannot have recorded")
+    if unjudged:
+        return NOT_RULED_OUT, ("whether the host can start a registered command was not"
+                               " established: "
+                               + ", ".join(sorted({value for probe in unjudged
+                                                   for value in _halves(probe)})))
+    return RULED_OUT, "every registered adapter and interpreter is there"
 
 
-def _settings_states(observed):
-    return [entry.get("settingsState") for entry in (observed.get("namedJournals") or [])]
+def _halves(probe):
+    """A registration's two halves. Both have to be there for the host to start it, so they are
+    read as a pair: a present interpreter under a missing adapter starts nothing."""
+    return {str(probe.get("adapter")), str(probe.get("interpreter"))}
+
+
+def _startable(probe):
+    return _halves(probe) == {reading.PRESENT}
+
+
+def _nothing_can_start(observed):
+    """Whether NO registration names a startable program. The empty-journal causes ask this
+    for themselves rather than taking it off a requirement, because 'one of two registrations
+    is broken' must not suppress what the other one's journal says."""
+    probes = list(observed.get("startProbes") or [])
+    return bool(probes) and not any(_startable(probe) for probe in probes)
+
+
+UNSTARTABLE = ("no registration names a program the host can start, so an empty journal is that"
+               " program's absence rather than a fact about journalling")
 
 
 def _settings_absent(observed):
-    states = _settings_states(observed)
-    if not states:
+    """ANY registration whose settings are gone, not every one of them.
+
+    Every registration runs and reads its own settings, so a peer that is fine says nothing
+    about a peer that is broken. Requiring all of them to be absent meant one good registration
+    suppressed the other's repair entirely: the operator was told the journal was empty and
+    never that a second registration releases every invocation until its settings come back.
+    """
+    entries = observed.get("namedJournals") or []
+    if not entries:
         return NOT_RULED_OUT, "no settings file was named to be read"
-    if all(state == reading.ABSENT for state in states):
-        return ESTABLISHED, ("every settings file the registrations name is established absent,"
-                             " so nothing tells this hook where to record and it keeps no"
-                             " journal")
-    if any(state == reading.ACCESS_ERROR for state in states):
+    gone = [entry["settings"] for entry in entries
+            if entry.get("settingsState") == reading.ABSENT]
+    if gone:
+        return ESTABLISHED, ("these settings files the registrations name are established"
+                             " absent, so those registrations are told nothing about where to"
+                             " record and keep no journal: " + ", ".join(gone))
+    if any(entry.get("settingsState") == reading.ACCESS_ERROR for entry in entries):
         # A permission failure HERE says nothing about what the hook can open in a session.
         return NOT_RULED_OUT, ("a settings file could not be reached from here, which does not"
                                " establish that the hook cannot read it")
-    return RULED_OUT, "a settings file the registrations name exists"
+    return RULED_OUT, "every settings file the registrations name exists"
 
 
 def _settings_unusable(observed):
     """Settings that were read and cannot be acted on. The bytes are the bytes, so unlike a
     permission failure this is established from here: the hook reads the same file, rejects it
-    the same way, releases the turn and writes nothing anywhere."""
+    the same way, releases the turn and writes nothing anywhere.
+
+    ANY such registration, for the same reason absence is: a usable file beside a rejected one
+    is not evidence that the rejected one works.
+    """
     entries = observed.get("namedJournals") or []
     if not entries:
         return NOT_RULED_OUT, "no settings file was named to be read"
-    if any(entry.get("settingsState") == reading.ACCESS_ERROR for entry in entries):
-        return NOT_RULED_OUT, "a settings file could not be reached from here"
     unusable = [entry["settings"] for entry in entries
                 if entry.get("settingsState") != reading.ABSENT and not entry.get("usable")]
-    if unusable and len(unusable) == len([entry for entry in entries
-                                          if entry.get("settingsState") != reading.ABSENT]):
-        return ESTABLISHED, ("every settings file that exists is one this hook's own reader"
-                             " rejects (" + ", ".join(unusable) + "), so every invocation"
-                             " releases without recording")
-    return RULED_OUT, "a settings file the registrations name reads back usable"
+    if unusable:
+        return ESTABLISHED, ("these settings files are ones this hook's own reader rejects ("
+                             + ", ".join(unusable) + "), so every invocation of those"
+                             " registrations releases without recording")
+    if any(entry.get("settingsState") == reading.ACCESS_ERROR for entry in entries):
+        return NOT_RULED_OUT, "a settings file could not be reached from here"
+    return RULED_OUT, "every settings file the registrations name reads back usable"
 
 
 def _record_answers(observed):
-    entries = observed.get("namedJournals") or []
+    # Only registrations whose settings ARE usable. A registration with no settings, or with
+    # settings this reader rejects, has its own cause above; folding it in here would let a
+    # broken peer answer a question about a working one's journal.
+    entries = [entry for entry in (observed.get("namedJournals") or []) if entry.get("usable")]
     holding = [entry for entry in entries
                if entry.get("recordsAnswer") == COUNTED and (entry.get("records") or 0) > 0]
     empty = [entry for entry in entries
@@ -212,6 +258,8 @@ def _recorded_on_another_path(observed):
 
 
 def _journalling_off(observed):
+    if _nothing_can_start(observed):
+        return NOT_EVALUATED, UNSTARTABLE
     _holding, empty, off, unread = _record_answers(observed)
     if off and not empty and not unread and not _holding:
         return ESTABLISHED, ("the settings these registrations name keep no journal, so this"
@@ -230,6 +278,8 @@ def _policy_records_only_faults(observed):
     that never fired looks like. One observation, two explanations, and no reading here
     separates them. Reporting either as established would be choosing.
     """
+    if _nothing_can_start(observed):
+        return NOT_EVALUATED, UNSTARTABLE
     _holding, empty, _off, _unread = _record_answers(observed)
     faults = [entry for entry in empty if entry.get("faultsOnly")]
     if faults:
@@ -247,6 +297,8 @@ def _nothing_recorded(observed):
     and every record failed to be written" are one observation here. This value claims only the
     first half of that sentence, and the cell's note says the rest.
     """
+    if _nothing_can_start(observed):
+        return NOT_EVALUATED, UNSTARTABLE
     holding, empty, _off, unread = _record_answers(observed)
     if holding:
         return RULED_OUT, "a named journal holds records this hook wrote"
@@ -268,14 +320,15 @@ CAUSE_RULES = {
     NOT_REGISTERED: (("registrationReadable", "adapterRegistrations"), _not_registered),
     RECORD_PATH_UNIDENTIFIED: (("relativeSettings", "silentRegistrations"),
                                _record_path_unidentified),
-    ADAPTER_CANNOT_RUN: (("targetValue", "interpreterValue"), _adapter_cannot_run),
+    ADAPTER_CANNOT_RUN: (("startProbes",), _adapter_cannot_run),
     SETTINGS_ABSENT: (("namedJournals",), _settings_absent),
     SETTINGS_UNUSABLE: (("namedJournals",), _settings_unusable),
     RECORDS_FOUND: (("namedJournals",), _records_found),
     RECORDED_ON_ANOTHER_PATH: (("namedJournals",), _recorded_on_another_path),
-    JOURNALLING_OFF: (("namedJournals",), _journalling_off),
-    POLICY_RECORDS_ONLY_FAULTS: (("namedJournals",), _policy_records_only_faults),
-    NOTHING_RECORDED: (("namedJournals",), _nothing_recorded),
+    JOURNALLING_OFF: (("namedJournals", "startProbes"), _journalling_off),
+    POLICY_RECORDS_ONLY_FAULTS: (("namedJournals", "startProbes"),
+                                 _policy_records_only_faults),
+    NOTHING_RECORDED: (("namedJournals", "startProbes"), _nothing_recorded),
 }
 
 # What has to be RULED OUT before a cause's question means anything. Declared rather than
@@ -291,23 +344,21 @@ CAUSE_REQUIRES = {
     ADAPTER_CANNOT_RUN: (NOT_REGISTERED,),
     SETTINGS_ABSENT: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
     SETTINGS_UNUSABLE: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
-    # Records EXISTING is evidence in its own right and is not downstream of whether the
-    # adapter can be started today: a host whose interpreter moved after the hook ran still has
-    # the records it wrote, and refusing to look at them would answer "unreadable" about an
-    # absence that is not there.
-    RECORDS_FOUND: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED, SETTINGS_ABSENT, SETTINGS_UNUSABLE),
-    RECORDED_ON_ANOTHER_PATH: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED, SETTINGS_ABSENT,
-                               SETTINGS_UNUSABLE),
-    # The three that explain an EMPTY journal are downstream of the adapter, because a program
-    # the host cannot start leaves an empty journal as a consequence rather than as a second
-    # cause. Without this, a deleted adapter beside its untouched empty journal was reported as
-    # two causes needing two repairs, when restoring the adapter is the whole repair.
-    JOURNALLING_OFF: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED, ADAPTER_CANNOT_RUN,
-                      SETTINGS_ABSENT, SETTINGS_UNUSABLE),
-    POLICY_RECORDS_ONLY_FAULTS: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED, ADAPTER_CANNOT_RUN,
-                                 SETTINGS_ABSENT, SETTINGS_UNUSABLE),
-    NOTHING_RECORDED: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED, ADAPTER_CANNOT_RUN,
-                       SETTINGS_ABSENT, SETTINGS_UNUSABLE),
+    # The journal causes do NOT require the settings causes to be ruled out. Both sides are now
+    # per-registration, so one registration with missing settings must not suppress what
+    # another registration's journal says: the journal rules read only the entries whose
+    # settings are usable, and a mixed host answers both causes rather than the louder one.
+    #
+    # Nor do the empty-journal causes require ADAPTER_CANNOT_RUN to be ruled out any more. That
+    # requirement was right for the host where nothing can start and wrong for the host where
+    # one of two registrations cannot: it suppressed a working registration's reading. The
+    # three rules ask _nothing_can_start for themselves, which is the condition that actually
+    # makes an empty journal the program's absence.
+    RECORDS_FOUND: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
+    RECORDED_ON_ANOTHER_PATH: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
+    JOURNALLING_OFF: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
+    POLICY_RECORDS_ONLY_FAULTS: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
+    NOTHING_RECORDED: (NOT_REGISTERED, RECORD_PATH_UNIDENTIFIED),
 }
 
 # The order causes are reported in. Their dependencies come from CAUSE_REQUIRES and not from

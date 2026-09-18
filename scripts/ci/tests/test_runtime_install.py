@@ -8989,3 +8989,48 @@ class ResidueNeverNamesLiveWork(unittest.TestCase):
         self.assertFalse(found["read"])
         self.assertEqual(found["entries"], [])
         self.assertTrue(found["unreadable"])
+
+
+class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
+    """Review on PR #52 head ef4d952, raised by both reviewers for the target and by one for
+    the destination boundary."""
+
+    def test_a_target_that_could_not_be_read_is_not_an_absent_one(self):
+        """Path.exists() answers False for a filesystem failure exactly as it does for a file
+        that is not there, so a target behind a symlink loop, an unreadable directory or a
+        transient I/O error was reported as dangling -- and an operator was told to remove a
+        pointer whose target may be perfectly fine. A loop is used because it raises ELOOP for
+        every user, including one that can read anything."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            loop = host.destination / "loop"
+            loop.symlink_to(loop)
+            pointer.place(host.pointer_path, loop / "env")
+            found = _diagnose(host).get("residue", {}).get("pointer", {})
+        # The behaviour first, then the name for it: a command that reports this pointer as
+        # clearable fails on the defect rather than on a constant it does not have.
+        self.assertFalse(found.get("residual"),
+                         "a target nobody could look at is not a target established absent")
+        self.assertEqual(found.get("finding"), residue.UNREADABLE_POINTER_TARGET)
+
+    def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
+        """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
+        can sit under a different destination from the one --dest named. Surveying it here
+        published a cleanup path belonging to another installation while the payload claimed to
+        describe this one."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            elsewhere = Path(temporary) / "other-destination"
+            elsewhere.mkdir()
+            far = pointer.pointer_path(elsewhere)
+            pointer.place(far, elsewhere / "env-that-went-away")
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(far), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host)
+        self.assertEqual(found["residue"]["destination"], str(host.destination))
+        self.assertNotIn(str(far), found["residualPaths"],
+                         "this survey names one destination and listed a path under another")
+        self.assertEqual(found["residue"]["pointer"]["finding"],
+                         residue.POINTER_OUTSIDE_DESTINATION)

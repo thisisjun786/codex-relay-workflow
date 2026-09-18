@@ -1970,6 +1970,81 @@ class TheCauseOfAnAbsence(unittest.TestCase):
         self.assertEqual(cell.get("value"), firing.JOURNALLING_OFF)
 
 
+class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
+    """Review on PR #52 head ef4d952, found independently by both reviewers.
+
+    Every registration runs and reads its own settings, so a peer that is fine says nothing
+    about a peer that is broken. The first cut required EVERY named settings file to be absent
+    before it said so, and collapsed the two adapter probes into a worst-of value, so one good
+    registration hid the other's repair and one bad one claimed the host could not have run.
+    """
+
+    def _host(self, temporary):
+        fake_relay(temporary, stdout=json.dumps(RELEASED))
+        return Path(temporary)
+
+    def test_a_missing_settings_file_beside_a_usable_one_is_still_reported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            second.unlink()
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES,
+                         "one usable settings file answered for a registration whose settings"
+                         " are gone, and that registration releases every invocation until"
+                         " they come back")
+        self.assertEqual(
+            sorted(entry["cause"] for entry in cell.get("candidates") or []),
+            sorted((firing.NOTHING_RECORDED, firing.SETTINGS_ABSENT)))
+
+    def test_a_rejected_settings_file_beside_a_usable_one_is_still_reported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["mode"] = "nonsense"
+            second.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES)
+        self.assertIn(firing.SETTINGS_UNUSABLE,
+                      [entry["cause"] for entry in cell.get("candidates") or []])
+
+    def test_one_unstartable_registration_does_not_answer_for_a_startable_one(self):
+        """The adapter and interpreter cells report their worst probe, which answers "is
+        anything broken" and was read as "is everything broken". The empty journal of the
+        registration that CAN start was then never reported at all."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            second_registration(temporary, "journal-two")
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entries = document["hooks"][completion.EVENT][0]["hooks"]
+            # Only the FIRST registration's adapter is gone. The second is untouched and runs.
+            entries[0]["command"] = entries[0]["command"].replace(
+                str(ENTRY_POINT), str(Path(temporary) / completion.ENTRY_POINT_NAME))
+            path.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.SEVERAL_CAUSES)
+        self.assertEqual(
+            sorted(entry["cause"] for entry in cell.get("candidates") or []),
+            sorted((firing.ADAPTER_CANNOT_RUN, firing.NOTHING_RECORDED)),
+            "a registration the host cannot start is a repair, and it must not silence what"
+            " the registration beside it recorded")
+
+    def test_when_nothing_can_start_the_empty_journal_is_still_not_a_second_cause(self):
+        """The direction the fix must not break: with no startable registration at all, an
+        empty journal is that program's absence and adapter_cannot_run is the whole repair."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            break_the_target(temporary)
+            cell = why_no_record(temporary)
+        self.assertEqual(cell.get("value"), firing.ADAPTER_CANNOT_RUN)
+
+
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition
     is well formed; none of them would have failed on the behaviour CRW-100 reports."""

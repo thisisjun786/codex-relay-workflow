@@ -1790,6 +1790,13 @@ write that fails removes what it left and cannot record its own failure, so "it 
 "it ran and every record failed to be written" are one observation here. **Neither of those is
 resolved by this command, and neither is guessed at.**
 
+A third limit is about cost rather than about truth. `hook-status` now opens every absolute
+settings path a registration names and lists the journal under it, so its work is bounded by
+the number of registrations rather than by one file. That bound is a count and not a clock: a
+journal root on an unavailable network mount makes this command slow, and it has no budget of
+its own to stop at. The hook's own Stop path is unaffected — it reads the one settings file its
+own registration names, under the timeout it is registered with.
+
 This changes what the command answers and not what the acceptance readings are. The hook
 callback row is still answered by `firingJournal`; the cause is detail beside it, and the
 seven readings remain seven.

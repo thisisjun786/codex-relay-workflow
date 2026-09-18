@@ -36,8 +36,11 @@ from . import pointer, staging
 # only names the two questions this module adds around it.
 DANGLING_POINTER = "dangling_pointer"
 FOREIGN_POINTER = "foreign_pointer"
+UNREADABLE_POINTER_TARGET = "unreadable_pointer_target"
+POINTER_OUTSIDE_DESTINATION = "pointer_outside_destination"
 NOT_SCANNED = "not_scanned"
-POINTER_FINDINGS = (DANGLING_POINTER, FOREIGN_POINTER, NOT_SCANNED)
+POINTER_FINDINGS = (DANGLING_POINTER, FOREIGN_POINTER, UNREADABLE_POINTER_TARGET,
+                    POINTER_OUTSIDE_DESTINATION, NOT_SCANNED)
 
 NOTE = ("residue is exactly what the installer's own decision would reclaim (staging.REMOVES),"
         " so what is reported here as clearable and what a later install would take are the"
@@ -49,6 +52,24 @@ def _entry(path, **fields):
     found = {"path": str(path), "decision": None, "reason": None, "residual": False}
     found.update(fields)
     return found
+
+
+def _target_exists(path):
+    """Whether the pointer's target is there. Three answers, because Path.exists() gives two.
+
+    exists() returns False for a filesystem failure just as it does for a file that is not
+    there, so a target behind an unreadable directory, a symlink loop or a transient I/O error
+    read as established absence -- and a pointer whose target may be perfectly fine was named in
+    a list telling an operator to remove it. Only FileNotFoundError establishes absence here.
+    """
+    try:
+        os.stat(str(path))
+    except FileNotFoundError:
+        return False, "the target does not exist"
+    except (OSError, ValueError) as error:
+        return None, ("whether the target exists could not be established: "
+                      + type(error).__name__ + ": " + str(error))
+    return True, "the target exists"
 
 
 def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=None):
@@ -74,7 +95,7 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
     except OSError as error:
         answer["unreadable"].append("the destination could not be listed: "
                                     + type(error).__name__ + ": " + str(error))
-        answer["pointer"] = _pointer_finding(pointer_path, recorded_pointer)
+        answer["pointer"] = _pointer_finding(pointer_path, recorded_pointer, root)
         return answer
     answer["read"] = True
     for path in found:
@@ -126,7 +147,7 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
         elif liveness == staging.UNKNOWN:
             answer["unreadable"].append(str(entry) + ": " + liveness_detail)
 
-    answer["pointer"] = _pointer_finding(pointer_path, recorded_pointer)
+    answer["pointer"] = _pointer_finding(pointer_path, recorded_pointer, root)
     if answer["pointer"].get("residual"):
         answer["residualPaths"].append(answer["pointer"]["path"])
         answer["recoveryRequires"].append(
@@ -136,7 +157,7 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
     return answer
 
 
-def _pointer_finding(pointer_path, recorded_pointer):
+def _pointer_finding(pointer_path, recorded_pointer, destination):
     """Whether the pointer is a residue, which needs OWNERSHIP and not only shape.
 
     pointer.read establishes what is at the path; it does not establish whose it is. A link this
@@ -145,11 +166,22 @@ def _pointer_finding(pointer_path, recorded_pointer):
     link reaches residualPaths only when the host record positively records that path as the
     pointer this command owns. A dangling link the record does not claim is reported under its
     own name and left alone.
+
+    It also has to be THIS destination's pointer. Diagnosis prefers the RECORDED pointer when
+    classifying a runtime, and that pointer can sit under a different destination from the one
+    --dest named; a survey rooted here would then have published a cleanup path belonging to
+    another installation while claiming to describe this one.
     """
     if not pointer_path:
         return {"path": None, "finding": NOT_SCANNED, "residual": False,
                 "detail": "no pointer was named to read"}
     path = str(Path(pointer_path))
+    if destination is not None and Path(path).parent != Path(destination):
+        return {"path": path, "finding": POINTER_OUTSIDE_DESTINATION, "residual": False,
+                "destination": str(destination),
+                "detail": ("this pointer sits under " + str(Path(path).parent) + " and this"
+                           " survey describes " + str(destination) + ", so it belongs to"
+                           " another installation and nothing about it is reported here")}
     read = pointer.read(path)
     claimed = recorded_pointer is not None and str(Path(recorded_pointer)) == path
     found = {"path": path, "state": read["state"], "target": read.get("target"),
@@ -160,7 +192,13 @@ def _pointer_finding(pointer_path, recorded_pointer):
     target = Path(read["target"])
     if not target.is_absolute():
         target = Path(path).parent / target
-    if target.exists():
+    there, detail = _target_exists(target)
+    if there:
+        return found
+    if there is None:
+        found["finding"] = UNREADABLE_POINTER_TARGET
+        found["detail"] = (detail + ", so whether this pointer still reaches a runtime was not"
+                           " established and it is reported rather than listed for removal")
         return found
     found["finding"] = DANGLING_POINTER if claimed else FOREIGN_POINTER
     found["residual"] = claimed
