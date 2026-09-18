@@ -1,0 +1,1287 @@
+#!/usr/bin/env python3
+"""What is confirmed before a live trial starts, and what its interventions cost.
+
+A live trial drives the installed runtime through a real completion, delivery, verdict and
+correction round trip. Three recorded failures of one were all preparation: a supervisor that did
+not survive the shell that launched it, participants created without a turn whose lifecycle no read
+could resolve, and an assignment file read before the new relationship id was in it. This module
+takes the readings that catch those, refuses a dispatch whose identity disagrees with the store, and
+grades the trial's own intervention ledger. The procedure it serves is docs/live-trial.md.
+
+Four rules are the whole of it.
+
+It reads. It does not create a task, register a relationship, emit, deliver, record a verdict, or
+start or stop anything. The only programs it starts are git and the relay entry point that the
+runtime host record names through its owned pointer, and it composes every command line itself from
+parameters: the start record carries no argv, so no record can nominate another program. That is
+not a claim that nothing is written, because every relay command opens the store on construction;
+it is the claim that nothing it runs registers, emits, delivers, records a verdict or changes
+service state, that doctor runs before anything that can construct a store, and that a store which
+did not exist before this process started is a refusal rather than a pass.
+
+A cell is answered when the payload carries the field its predicate reads. Otherwise it is unknown,
+whatever the exit status was, and the exit status is recorded beside the cell rather than
+substituted for the reading. doctor exits non-zero while printing its whole diagnosis when it
+cannot prove a shared store, so a cell reading the status would call a real answer unreadable and a
+cell ignoring the payload would call a refusal a pass.
+
+Four readings are taken here and two are graded. No read-only relay command performs a lifecycle
+read and none returns what a creation receipt echoed, so those two arrive as captures, carry the
+time they were taken, and are labelled as the caller's claim about a read this process did not
+make.
+
+A judgment is any field named passed or met, collected by walking the document that was assembled
+rather than from a list of the kinds that produce them. The exit status comes from that walk and
+from nothing else.
+"""
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+# Before the first import of anything in this repository, so an import cannot write __pycache__
+# beside source belonging to a checkout this command only reads.
+sys.dont_write_bytecode = True
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from crw_runtime import check, definition, hostrecord, reading  # noqa: E402
+
+SOURCE = "live-trial-startup"
+CHECKER_VERSION = 1
+RECORD_VERSION = 1
+
+# The start record may lower these and may not raise them. A record that chose its own ceiling
+# would be choosing how stale its own evidence may be, which is the question the bound exists to
+# take away from it.
+CAPTURE_AGE_CEILING = 900
+ADVANCE_CEILING = 30
+
+RELAY_COMPONENT = "codex-session-relay"
+POINTER_NAME = "current"
+
+# Every relay subcommand this module composes. None of them registers, emits, delivers, records a
+# verdict or changes service state. service is admitted with status and with nothing else, because
+# the neighbouring verbs on that subparser start and stop a daemon.
+RELAY_SUBCOMMANDS = ("doctor", "assignment-find", "criteria-show", "settings-show")
+SERVICE_VERBS = ("status",)
+
+# What a participant's expect must name at minimum. The predicate compares every key the record
+# declares rather than this list, so a settings field added later is compared by declaring it; the
+# minimum is here because a permission that went uncompared passed behind a usable true once.
+REQUIRED_EXPECT = ("model", "reasoningEffort", "sandbox", "approvalPolicy")
+
+# Every fact a later predicate compares a payload against. Declared here and required at ingress,
+# because a comparison between two absent values is an agreement nobody established.
+REQUIRED_FIELDS = (
+    ("relay", "launcher"), ("relay", "launcherSha256"), ("relay", "stateDirectory"),
+    ("relay", "socket"),
+    ("store", "storeId"), ("store", "device"), ("store", "inode"), ("store", "challengeNonce"),
+    ("supervisor", "pid"), ("supervisor", "witness"), ("supervisor", "launchedAt"),
+    ("assignment", "relationshipId"), ("assignment", "parentTaskId"),
+    ("assignment", "childTaskId"), ("assignment", "issueKey"),
+    ("assignment", "executionGeneration"), ("assignment", "assignmentFile"),
+    ("assignment", "dispatchMessageFile"), ("assignment", "criteria", "setDigest"),
+    ("assignment", "criteria", "sourceRef"), ("assignment", "criteria", "count"),
+)
+
+# The three answers a host gives for a participant created without a turn. They are matched by name
+# because each of them is a successful call reporting that there is nothing to read.
+LIFECYCLE_REFUSALS = ("thread not found", "missing source rollout", "no rollout found")
+
+VERIFIED = "verified"
+NOT_VERIFIED = "not_verified"
+UNKNOWN = "unknown"
+NOT_APPLICABLE = "not_applicable"
+
+EXECUTED = "executed"
+READ = "read"
+CAPTURED = "captured"
+
+LEDGER_KINDS = ("segment_start", "segment_end", "window_open", "window_close", "intervention")
+PREPARATION = "preparation"
+WINDOW = "window"
+
+# A reading that was never taken, kept distinct from a reading whose answer was None. Both are
+# falsy and only one of them is an answer.
+MISSING = object()
+
+STARTED = time.time()
+ACTOR = "trial_startup.py pid " + str(os.getpid())
+
+
+class Refused(Exception):
+    """The run cannot be made at all. It prints why and produces no result document."""
+
+    def __init__(self, reason, **detail):
+        super().__init__(reason)
+        self.reason = reason
+        self.detail = detail
+
+    def to_record(self):
+        return {"source": SOURCE, "checkerVersion": CHECKER_VERSION, "refused": self.reason,
+                "detail": self.detail}
+
+
+def moment(value, what):
+    """One timestamp, or a refusal naming what could not be read as one."""
+    if not isinstance(value, str) or not value.strip():
+        raise Refused(what + " is not a timestamp", value=value)
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError as error:
+        raise Refused(what + " is not an ISO-8601 timestamp",
+                      value=value, detail=str(error)) from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
+def maybe_moment(value):
+    """A timestamp where one is optional. None says it could not be read, never a default."""
+    try:
+        return moment(value, "a time")
+    except Refused:
+        return None
+
+
+def stamp(when=None):
+    at = datetime.datetime.fromtimestamp(when if when is not None else time.time(),
+                                         datetime.timezone.utc)
+    return at.isoformat().replace("+00:00", "Z")
+
+
+def absolute(value, what):
+    if not isinstance(value, str) or not value.startswith("/"):
+        raise Refused(what + " must be an absolute path", value=value)
+    return Path(value)
+
+
+def resolve(path):
+    """The path after every symbolic link, because containment compares places and not spellings."""
+    return Path(str(path)).expanduser().resolve()
+
+
+def within(child, parent):
+    try:
+        return resolve(child).is_relative_to(resolve(parent))
+    except (OSError, ValueError):
+        return False
+
+
+def git_worktree_of(path):
+    """The nearest directory holding a .git, or None. Operational state lives in neither."""
+    here = resolve(path)
+    for candidate in (here, *here.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def field(payload, *path):
+    """The value at this path, or MISSING. MISSING is not None: only one of them is an answer."""
+    found = payload
+    for key in path:
+        if isinstance(found, dict) and key in found:
+            found = found[key]
+        elif isinstance(found, list) and isinstance(key, int) and -len(found) <= key < len(found):
+            found = found[key]
+        else:
+            return MISSING
+    return found
+
+
+def carries(payload, *path):
+    """Whether this path holds something truthy. MISSING is an object and objects are truthy, so
+    a predicate testing field(...) directly reads every absent key as present. That is not a
+    hypothetical: it read a healthy lifecycle capture with no error key as one carrying an error."""
+    found = field(payload, *path)
+    return found is not MISSING and bool(found)
+
+
+def shown(value):
+    """A value on its way into evidence or into the document. MISSING never travels there.
+
+    The sentinel is an object, so json.dumps raises on it and str() prints its address. Both are
+    ways for a reading nobody took to reach a reader as though it were one that was.
+    """
+    if value is MISSING:
+        return None
+    if isinstance(value, dict):
+        return {k: shown(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [shown(v) for v in value]
+    return value
+
+
+def same(left, right):
+    """Equality where neither side may be absent or null.
+
+    Two absent values compare equal to each other, which is how a payload carrying no relationship
+    id agreed with a record carrying none either. Absence is never agreement.
+    """
+    if left is MISSING or right is MISSING or left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
+def digest_of(path):
+    reader = hashlib.sha256()
+    with open(str(path), "rb") as handle:
+        for block in iter(lambda: handle.read(65536), b""):
+            reader.update(block)
+    return reader.hexdigest()
+
+
+
+# ------------------------------------------------------------------ the start record
+
+
+def entry_point(environment=None):
+    """The relay entry point the runtime host record names, read from outside the start record.
+
+    The host record's own location comes from the environment rather than from anything the caller
+    hands this command, and the runtime is reached through the owned pointer rather than through
+    PATH or a checkout. So the start record can name a path and cannot choose a program: the path
+    it names is only accepted when it equals one of these.
+
+    What this establishes is agreement with the installed-runtime record, not the provenance of the
+    bytes. That record is a private file the same operator writes, and this module says so rather
+    than reading the comparison as proof of what the launcher is.
+    """
+    console = RELAY_COMPONENT
+    try:
+        for component in definition.load()["components"]:
+            if component["component"] == RELAY_COMPONENT:
+                console = component["consoleScript"]
+                break
+    except (OSError, ValueError, LookupError, TypeError) as error:
+        raise Refused("the component definition could not be read",
+                      detail=type(error).__name__ + ": " + str(error)) from error
+
+    path = hostrecord.record_path(environment)
+    found = reading.read_json(path, "the host record")
+    if not found.usable:
+        raise Refused("the runtime host record could not be read", path=str(path),
+                      state=found.state, detail=found.detail)
+    if found.state == reading.ABSENT or not isinstance(found.value, dict):
+        raise Refused("there is no runtime host record, so no installed relay is named here",
+                      path=str(path))
+    installs = field(found.value, "components", RELAY_COMPONENT, "installs")
+    if installs is MISSING or not isinstance(installs, list) or not installs:
+        raise Refused("the host record names no install for " + RELAY_COMPONENT, path=str(path))
+    locations = [i.get("location") for i in installs if isinstance(i, dict) and i.get("location")]
+    return {"hostRecord": str(path), "consoleScript": console, "locations": locations,
+            "pointers": [str(Path(location) / POINTER_NAME / "bin" / console)
+                         for location in locations]}
+
+
+def anchored_launcher(record, environment=None):
+    """The launcher, accepted only where the host record already names it."""
+    declared = absolute(field(record, "relay", "launcher"), "relay.launcher")
+    named = entry_point(environment)
+    if not any(resolve(pointer) == resolve(declared) for pointer in named["pointers"]):
+        raise Refused("the launcher is not the entry point the host record names",
+                      launcher=str(declared), named=named["pointers"],
+                      hostRecord=named["hostRecord"])
+    if not declared.is_file():
+        raise Refused("the launcher is not a regular file", launcher=str(declared))
+    if within(declared, field(record, "trialRoot")):
+        raise Refused("the launcher is inside the trial root", launcher=str(declared))
+    expected = field(record, "relay", "launcherSha256")
+    try:
+        actual = digest_of(declared)
+    except OSError as error:
+        raise Refused("the launcher could not be read", launcher=str(declared),
+                      detail=type(error).__name__ + ": " + str(error)) from error
+    if actual != expected:
+        raise Refused("the launcher's bytes changed since the record was written",
+                      launcher=str(declared), recorded=expected, measured=actual)
+    return {"launcher": str(declared), "sha256": actual, "hostRecord": named["hostRecord"],
+            "namedBy": named["pointers"]}
+
+
+def load_start(path, *, environment=None):
+    """Read the record, or refuse. Nothing after this is reached on a record that cannot be used."""
+    start = absolute(path, "--start")
+    found = reading.read_json(start, "the start record")
+    if not found.usable or found.state == reading.ABSENT:
+        raise Refused("the start record could not be read", path=str(start), state=found.state,
+                      detail=found.detail)
+    record = found.value
+    if not isinstance(record, dict):
+        raise Refused("the start record is not a JSON object", path=str(start))
+    if record.get("source") != "live-trial-start":
+        raise Refused("this file does not stamp itself as a live trial start record",
+                      path=str(start), source=record.get("source"))
+    if record.get("recordVersion") != RECORD_VERSION:
+        raise Refused("unsupported record version", path=str(start),
+                      recordVersion=record.get("recordVersion"))
+
+    trial_root = absolute(record.get("trialRoot"), "trialRoot")
+    if not trial_root.is_dir():
+        raise Refused("the trial root is not a directory", trialRoot=str(trial_root))
+    worktree = git_worktree_of(trial_root)
+    if worktree is not None:
+        raise Refused("the trial root is inside a git worktree, and operational state never lives"
+                      " inside a repository", trialRoot=str(trial_root), worktree=str(worktree))
+    if not within(start, trial_root):
+        raise Refused("the start record itself is outside the trial root", path=str(start),
+                      trialRoot=str(trial_root))
+
+    age = record.get("captureMaxAgeSeconds")
+    if not isinstance(age, (int, float)) or age <= 0 or age > CAPTURE_AGE_CEILING:
+        raise Refused("captureMaxAgeSeconds must be positive and at most the ceiling",
+                      captureMaxAgeSeconds=age, ceiling=CAPTURE_AGE_CEILING)
+    advance = field(record, "supervisor", "witnessAdvanceSeconds")
+    if not isinstance(advance, (int, float)) or advance < 0 or advance > ADVANCE_CEILING:
+        raise Refused("supervisor.witnessAdvanceSeconds must be between zero and the ceiling",
+                      witnessAdvanceSeconds=advance, ceiling=ADVANCE_CEILING)
+
+    # Every fact a predicate later compares against, required here rather than where it is read.
+    # A record that declares nothing and a payload that carries nothing agree with each other, and
+    # a reading assembled from two absences reports a precondition nobody established.
+    for path in REQUIRED_FIELDS:
+        found = field(record, *path)
+        if found is MISSING or found is None or (isinstance(found, str) and not found.strip()):
+            raise Refused("the start record does not state " + ".".join(str(p) for p in path),
+                          value=shown(found))
+    if not isinstance(field(record, "assignment", "artifacts"), list):
+        raise Refused("assignment.artifacts must be a list")
+    if not isinstance(field(record, "captures"), dict):
+        raise Refused("captures must be an object of capture kinds",
+                      captures=type(record.get("captures")).__name__)
+    if not isinstance(record.get("boundaries"), list) or len(record["boundaries"]) < 2:
+        raise Refused("a live trial declares at least two boundaries",
+                      boundaries=len(record.get("boundaries") or []))
+    launched = moment(field(record, "supervisor", "launchedAt"), "supervisor.launchedAt")
+    if launched.timestamp() > time.time():
+        raise Refused("the supervisor's launchedAt is in the future",
+                      launchedAt=field(record, "supervisor", "launchedAt"))
+    minimum = field(record, "supervisor", "minimumAliveSeconds")
+    if not isinstance(minimum, (int, float)) or minimum < 0:
+        raise Refused("supervisor.minimumAliveSeconds must be a number", minimumAliveSeconds=shown(minimum))
+
+    # Everything the trial writes for itself is confined to the trial root. The assignment file and
+    # the dispatch message belong to the child's workspace and are elsewhere by nature, so the rule
+    # for those two is only that they are not inside this repository.
+    private = [absolute(field(record, "supervisor", "witness"), "supervisor.witness")]
+    for kind, entries in sorted((record.get("captures") or {}).items()):
+        if not isinstance(entries, dict):
+            raise Refused("captures." + kind + " is not an object of captures")
+        for name, entry in sorted(entries.items()):
+            what = "captures." + kind + "." + name
+            if not isinstance(entry, dict):
+                raise Refused(what + " is not a capture", entry=type(entry).__name__)
+            private.append(absolute(field(entry, "path"), what + ".path"))
+            moment(field(entry, "capturedAt"), what + ".capturedAt")
+    for item in private:
+        if not within(item, trial_root):
+            raise Refused("a private trial record is outside the trial root", path=str(item),
+                          trialRoot=str(trial_root))
+    for key in ("assignmentFile", "dispatchMessageFile"):
+        item = absolute(field(record, "assignment", key), "assignment." + key)
+        if within(item, ROOT):
+            raise Refused("an input path is inside this repository", path=str(item),
+                          repository=str(ROOT))
+
+    for index, boundary in enumerate(record.get("boundaries") or []):
+        if not isinstance(boundary, dict) or not isinstance(boundary.get("participants"), list):
+            raise Refused("a boundary carries no participants", index=index)
+        for participant in boundary.get("participants") or []:
+            expect = participant.get("expect")
+            if not isinstance(expect, dict) or any(k not in expect for k in REQUIRED_EXPECT):
+                raise Refused("a participant's expect does not name every required setting",
+                              boundary=boundary.get("name"), taskId=participant.get("taskId"),
+                              required=list(REQUIRED_EXPECT))
+            if not str(participant.get("taskId") or "").strip():
+                raise Refused("a participant has no task id", boundary=boundary.get("name"))
+            absolute(participant.get("cwd"), "a participant cwd")
+        absolute(boundary.get("repositoryRoot"), "a boundary repositoryRoot")
+        if not boundary.get("name"):
+            raise Refused("a boundary has no name to key its registration receipt by",
+                          index=index)
+
+    record["_start"] = str(start)
+    record["_relay"] = anchored_launcher(record, environment)
+    return record
+
+
+
+# ------------------------------------------------------------------------ probes
+
+
+def run(argv, *, cwd, timeout=60):
+    """One subprocess, and every way it can fail becoming a field instead of an exception."""
+    at = time.time()
+    try:
+        done = subprocess.run([str(a) for a in argv], cwd=str(cwd), capture_output=True,
+                              text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"argv": [str(a) for a in argv], "exitCode": None, "payload": None,
+                "stdout": "", "measuredAt": stamp(at),
+                "detail": type(error).__name__ + ": " + str(error)}
+    payload = None
+    try:
+        parsed = json.loads(done.stdout)
+        payload = parsed if isinstance(parsed, dict) else None
+    except ValueError:
+        payload = None
+    return {"argv": [str(a) for a in argv], "exitCode": done.returncode, "payload": payload,
+            "stdout": done.stdout.strip()[-400:], "measuredAt": stamp(at),
+            "detail": None if payload is not None else "the output was not a JSON object"}
+
+
+class Relay:
+    """The only two programs this module starts, and the only argv it will carry.
+
+    The subcommand is checked against the allowlist before the process exists, so a subcommand that
+    is not on it is refused rather than run and judged.
+    """
+
+    def __init__(self, record):
+        self.launcher = record["_relay"]["launcher"]
+        self.state = field(record, "relay", "stateDirectory")
+        self.socket = field(record, "relay", "socket")
+        self.cwd = field(record, "trialRoot")
+
+    def relay(self, subcommand, *arguments):
+        if subcommand == "service":
+            if not arguments or arguments[0] not in SERVICE_VERBS:
+                raise Refused("service is admitted with status and nothing else",
+                              verb=arguments[0] if arguments else None)
+        elif subcommand not in RELAY_SUBCOMMANDS:
+            raise Refused("this relay subcommand is not one this module composes",
+                          subcommand=subcommand)
+        argv = [self.launcher, "--state", self.state, "--socket", self.socket, subcommand]
+        argv.extend(arguments)
+        return run(argv, cwd=self.cwd)
+
+    @staticmethod
+    def git(cwd, *arguments):
+        if not arguments or arguments[0] != "rev-parse":
+            raise Refused("git is composed as rev-parse and nothing else",
+                          subcommand=arguments[0] if arguments else None)
+        return run(["git", "-C", str(cwd), *arguments], cwd=cwd)
+
+
+def cell(name, value, *, evidence, provenance, probe=None, detail=None, measured_at=None):
+    """One reading in the OPS-6.2 shape, with the boolean the judgment walk collects.
+
+    measuredAt is when the observation was actually made, or unknown. A plausible time is never
+    supplied to satisfy the shape and another cell's time is never copied into this one.
+    """
+    command = None
+    if probe is not None:
+        command = " ".join(probe["argv"])
+        measured_at = measured_at or probe.get("measuredAt")
+    answer = check.field(value, evidence, command=command, acting_process=ACTOR,
+                         measured_at=measured_at or "unknown")
+    answer["cell"] = name
+    answer["provenance"] = provenance
+    answer["met"] = value in (VERIFIED, NOT_APPLICABLE)
+    if probe is not None:
+        answer["exitCode"] = probe["exitCode"]
+    if detail:
+        answer["detail"] = detail
+    return answer
+
+
+def graded(name, found, ok, *, evidence, provenance, probe=None, unreadable, detail=None,
+           measured_at=None):
+    """The one place a cell decides between unknown and an answer.
+
+    MISSING means the payload does not carry the field this predicate reads, which is unknown
+    whatever the exit status was. Anything else is an answer, and false is reserved for it.
+    """
+    if found is MISSING:
+        return cell(name, UNKNOWN, evidence=unreadable, provenance=provenance, probe=probe,
+                    detail=detail, measured_at=measured_at)
+    return cell(name, VERIFIED if ok else NOT_VERIFIED, evidence=evidence, provenance=provenance,
+                probe=probe, detail=detail, measured_at=measured_at)
+
+
+def capture(record, kind, name):
+    """A payload recorded elsewhere, with its own age. It is never read as a live observation."""
+    entry = field(record, "captures", kind, name)
+    if entry is MISSING:
+        return None, "no capture is declared for " + kind + " " + name
+    path = field(entry, "path")
+    taken = moment(field(entry, "capturedAt"), "captures." + kind + "." + name + ".capturedAt")
+    now = record["_now"]
+    if taken > now:
+        raise Refused("a capture is dated in the future", kind=kind, name=name,
+                      capturedAt=stamp(taken.timestamp()), now=stamp(now.timestamp()))
+    age = (now - taken).total_seconds()
+    if age > record["captureMaxAgeSeconds"]:
+        return None, ("the capture is " + str(int(age)) + " seconds old, past the record's bound of "
+                      + str(int(record["captureMaxAgeSeconds"])))
+    found = reading.read_json(path, "a captured payload")
+    if not found.usable or found.state == reading.ABSENT or not isinstance(found.value, dict):
+        return None, "the capture at " + str(path) + " could not be read (" + str(found.state) + ")"
+    return {"payload": found.value, "path": str(path), "capturedAt": stamp(taken.timestamp())}, None
+
+
+# ---------------------------------------------------------------------- readings
+
+
+def read_witness(path):
+    """The supervisor's last line: the pid it claims and the counter it advances."""
+    found = reading.read_text(path, "the supervisor witness")
+    if not found.usable or found.state == reading.ABSENT:
+        return None
+    lines = [line for line in (found.value or "").splitlines() if line.strip()]
+    if not lines:
+        return None
+    try:
+        last = json.loads(lines[-1])
+    except ValueError:
+        return None
+    return last if isinstance(last, dict) else None
+
+
+def alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OverflowError, TypeError, ValueError):
+        # A process this user may not signal still exists; anything unreadable is not an answer.
+        return None
+
+
+def session_of(pid):
+    try:
+        return os.getsid(int(pid))
+    except (ProcessLookupError, PermissionError, OSError, TypeError, ValueError):
+        return None
+
+
+def reading_process(record, relay, sleeper=time.sleep):
+    """Alive, detached from this caller, and still making progress. Three questions, not one."""
+    supervisor = record["supervisor"]
+    pid = supervisor.get("pid")
+    witness_path = supervisor.get("witness")
+    seconds = supervisor.get("witnessAdvanceSeconds")
+    cells = []
+
+    first_alive, first_witness = alive(pid), read_witness(witness_path)
+    sleeper(seconds)
+    second_alive, second_witness = alive(pid), read_witness(witness_path)
+
+    launched = moment(supervisor.get("launchedAt"), "supervisor.launchedAt")
+    lived = time.time() - launched.timestamp()
+    minimum = supervisor.get("minimumAliveSeconds")
+    cells.append(cell("uptime", VERIFIED if lived >= minimum else NOT_VERIFIED, provenance=READ,
+                      evidence=("the supervisor was launched " + str(int(lived)) + " seconds ago"
+                                " against a declared minimum of " + str(minimum) + ". A process"
+                                " that has not yet outlived the shell that started it has not"
+                                " shown that it will"),
+                      measured_at=stamp()))
+
+    if first_alive is None or second_alive is None:
+        cells.append(cell("alive", UNKNOWN, evidence="whether pid " + str(pid) + " exists could not"
+                          " be established", provenance=READ))
+    else:
+        caller, theirs = os.getsid(0), session_of(pid)
+        detached = theirs is not None and theirs != caller
+        ok = first_alive and second_alive and detached
+        cells.append(cell("alive", VERIFIED if ok else NOT_VERIFIED,
+                          evidence=("pid " + str(pid) + " alive at both observations, session "
+                                    + str(theirs) + " against this caller's " + str(caller)),
+                          provenance=READ, measured_at=stamp()))
+
+    if first_witness is None or second_witness is None:
+        cells.append(cell("witnessAdvance", UNKNOWN,
+                          evidence="the witness at " + str(witness_path) + " could not be read as a"
+                          " JSON line carrying a pid and a progress counter", provenance=READ))
+    else:
+        named = str(first_witness.get("pid")) == str(pid) and str(second_witness.get("pid")) == str(pid)
+        before, after = first_witness.get("progress"), second_witness.get("progress")
+        advanced = isinstance(before, (int, float)) and isinstance(after, (int, float)) and after > before
+        cells.append(cell("witnessAdvance", VERIFIED if (named and advanced) else NOT_VERIFIED,
+                          evidence=("the witness names pid " + str(first_witness.get("pid"))
+                                    + " and its counter went " + str(before) + " to " + str(after)
+                                    + " across " + str(seconds) + " seconds"),
+                          provenance=READ, measured_at=stamp()))
+
+    if not supervisor.get("service"):
+        cells.append(cell("service", NOT_APPLICABLE,
+                          evidence="this trial supervises a bounded run of its own rather than the"
+                          " relay's service, so there is no service record to read",
+                          provenance=READ))
+    else:
+        probe = relay.relay("service", "status")
+        payload = probe["payload"] or {}
+        lock = field(payload, "lock")
+        ok = (lock == "held" and field(payload, "staleRecord") is False
+              and same(field(payload, "pid"), pid)
+              and field(payload, "ownership") == "ours"
+              and same(field(payload, "storeId"), field(record, "store", "storeId")))
+        cells.append(graded("service", lock, ok, probe=probe, provenance=EXECUTED,
+                            unreadable="service status did not report a lock",
+                            evidence=("lock " + str(lock) + ", ownership "
+                                      + str(shown(field(payload, "ownership"))) + ", pid "
+                                      + str(shown(field(payload, "pid"))) + ", staleRecord "
+                                      + str(shown(field(payload, "staleRecord"))))))
+    return cells
+
+
+def reading_lifecycle(record):
+    """Per parent, a captured host response. A creation receipt is not one of these."""
+    cells = []
+    for boundary in record.get("boundaries") or []:
+        for participant in boundary.get("participants") or []:
+            if participant.get("role") != "parent":
+                continue
+            task = participant.get("taskId")
+            found, why = capture(record, "parentLifecycle", task)
+            if found is None:
+                cells.append(cell("parentLifecycle:" + str(task), UNKNOWN, evidence=why,
+                                  provenance=CAPTURED))
+                continue
+            payload = found["payload"]
+            refusal = next((text for text in LIFECYCLE_REFUSALS
+                            if text in json.dumps(payload).lower()), None)
+            status = field(payload, "status")
+            names = (same(field(payload, "threadId"), task)
+                     or same(field(payload, "taskId"), task))
+            if status is MISSING and refusal is None:
+                cells.append(cell("parentLifecycle:" + str(task), UNKNOWN,
+                                  evidence="the capture carries no thread status to read",
+                                  provenance=CAPTURED, measured_at=found["capturedAt"]))
+                continue
+            ok = (refusal is None and names and isinstance(status, str) and bool(status.strip())
+                  and not carries(payload, "error") and not carries(payload, "isError"))
+            cells.append(cell("parentLifecycle:" + str(task), VERIFIED if ok else NOT_VERIFIED,
+                              evidence=("the host resolved this thread with status " + str(status)
+                                        if refusal is None else
+                                        "the host answered " + refusal + ", which is a participant"
+                                        " with no rollout to read"),
+                              provenance=CAPTURED, measured_at=found["capturedAt"],
+                              detail=found["path"]))
+    return cells
+
+
+
+def reading_capability(record, relay):
+    """Two halves per participant: what the host echoed, and what the store holds."""
+    cells = []
+    for boundary in record.get("boundaries") or []:
+        for participant in boundary.get("participants") or []:
+            task = participant.get("taskId")
+            expect = participant.get("expect") or {}
+            found, why = capture(record, "creationReceipt", task)
+            if found is None:
+                cells.append(cell("receiptEcho:" + str(task), UNKNOWN, evidence=why,
+                                  provenance=CAPTURED))
+            else:
+                actual = field(found["payload"], "settings", "actual")
+                findings = field(found["payload"], "settings", "findings")
+                if findings is MISSING:
+                    findings = field(found["payload"], "findings")
+                names = same(field(found["payload"], "taskId"), task)
+                disagreed = [] if actual is MISSING else [
+                    key for key, value in sorted(expect.items())
+                    if not same(field(actual, key), value)
+                ]
+                ok = (names and not disagreed and isinstance(findings, list) and not findings
+                      and actual is not MISSING)
+                cells.append(graded("receiptEcho:" + str(task), actual, ok, provenance=CAPTURED,
+                                    measured_at=found["capturedAt"],
+                                    unreadable="the receipt carries no settings the host echoed",
+                                    evidence=("the host echoed every declared setting and reported"
+                                              " no findings" if ok else
+                                              "this receipt names task "
+                                              + str(shown(field(found["payload"], "taskId")))
+                                              + ", disagrees at " + ", ".join(disagreed)
+                                              + " and reports findings "
+                                              + json.dumps(shown(findings))),
+                                    detail=found["path"]))
+
+            probe = relay.relay("settings-show", "--task", task)
+            payload = probe["payload"] or {}
+            usable = field(payload, "usable")
+            settings = field(payload, "settings")
+            differs = [] if settings is MISSING or settings is None else [
+                key for key, value in sorted(expect.items())
+                if not same(field(settings, key), value)
+            ]
+            # settings-show always reports missing, so an absent one is a payload this predicate
+            # cannot read as complete rather than an empty list it may assume.
+            ok = (usable is True and field(payload, "missing") == [] and not differs
+                  and settings not in (MISSING, None)
+                  and same(field(payload, "task"), task))
+            # The cell is answered only where BOTH fields its predicate reads are there. usable
+            # alone let a payload carrying no settings at all report agreement with every expect.
+            answered = usable if settings not in (MISSING,) else MISSING
+            cells.append(graded("recordedSettings:" + str(task), answered, ok, probe=probe,
+                                provenance=EXECUTED,
+                                unreadable="settings-show did not report both whether the record is"
+                                           " usable and the settings it holds",
+                                evidence=("the store's settings are usable, complete and carry every"
+                                          " declared value" if ok else
+                                          "task " + str(shown(field(payload, "task"))) + ", usable "
+                                          + str(shown(usable)) + ", missing "
+                                          + json.dumps(shown(field(payload, "missing")))
+                                          + ", disagreeing " + json.dumps(differs))))
+    return cells
+
+
+def reading_store(record, relay):
+    """The relay's own same-store verdict, not a comparison rebuilt here."""
+    cells = []
+    store = record.get("store") or {}
+    probe = relay.relay("doctor", "--expect-store", store.get("storeId"),
+                        "--expect-inode", str(store.get("device")) + ":" + str(store.get("inode")),
+                        "--expect-nonce", store.get("challengeNonce"))
+    payload = probe["payload"] or {}
+    verdict = field(payload, "sameStore")
+    cells.append(graded("sameStore", verdict, verdict == "proven", probe=probe, provenance=EXECUTED,
+                        unreadable="doctor did not report a same-store verdict",
+                        evidence=("the relay grades this as " + str(shown(verdict)) + ". A matching"
+                                  " store id and inode alone is unproven: proof takes the nonce"
+                                  " another participant wrote, found beside an agreeing device and"
+                                  " inode")))
+
+    created = field(payload, "store", "createdAt")
+    when = maybe_moment(created) if created is not MISSING else None
+    if created is MISSING:
+        cells.append(cell("storeAge", UNKNOWN, probe=probe, provenance=EXECUTED,
+                          evidence="doctor did not report when the store was created"))
+    elif when is None:
+        cells.append(cell("storeAge", UNKNOWN, probe=probe, provenance=EXECUTED,
+                          evidence="the store's createdAt could not be read as a time: "
+                                   + str(created)))
+    else:
+        # Against this process's real start, never against a pinned clock: a run given --now could
+        # otherwise pass a store its own first command had just created.
+        before = when.timestamp() < STARTED
+        cells.append(cell("storeAge", VERIFIED if before else NOT_VERIFIED, probe=probe,
+                          provenance=EXECUTED,
+                          evidence=("the store was created at " + str(created) + " and this run"
+                                    " started at " + stamp(STARTED))))
+
+    configured = field(payload, "ledger", "configured")
+    if configured is False:
+        cells.append(cell("ledgerSplit", NOT_APPLICABLE, probe=probe, provenance=EXECUTED,
+                          evidence="no socket is configured, so there is no transport ledger to"
+                                   " place beside this store"))
+    else:
+        split = field(payload, "ledger", "split")
+        cells.append(graded("ledgerSplit", split, split is False, probe=probe, provenance=EXECUTED,
+                            unreadable="doctor did not report where the transport ledger lives",
+                            evidence=("the transport ledger sits beside this store" if split is False
+                                      else "the transport ledger is split from this store, so the"
+                                           " record that suppresses duplicate delivery lives"
+                                           " somewhere else")))
+
+    # The peers are the participants, not whichever captures happened to be supplied. Enumerating
+    # the captures made an empty peerDoctor object a storeIdentity that passed with no peer at all.
+    for name in participants_of(record):
+        found, why = capture(record, "peerDoctor", name)
+        if found is None:
+            cells.append(cell("peer:" + name, UNKNOWN, evidence=why, provenance=CAPTURED))
+            continue
+        peer = found["payload"]
+        peer_same = field(peer, "sameStore")
+        agrees = (same(field(peer, "store", "storeId"), store.get("storeId"))
+                  and same(field(peer, "store", "device"), store.get("device"))
+                  and same(field(peer, "store", "inode"), store.get("inode")))
+        cells.append(graded("peer:" + name, peer_same, peer_same == "proven" and agrees,
+                            provenance=CAPTURED, measured_at=found["capturedAt"],
+                            unreadable="this peer's doctor payload carries no same-store verdict",
+                            evidence=("this peer reports " + str(shown(peer_same)) + " and its own"
+                                      " store identity "
+                                      + ("agrees with" if agrees else "disagrees with")
+                                      + " the record. A verdict alone speaks only for whatever"
+                                      " arguments produced it"),
+                            detail=found["path"]))
+    return cells
+
+
+def participants_of(record):
+    """Every declared participant, in a stable order. The roster is what a per-participant reading
+    is required to cover, so a missing one is unknown rather than absent from the count."""
+    found = []
+    for boundary in record.get("boundaries") or []:
+        for participant in boundary.get("participants") or []:
+            task = str(participant.get("taskId"))
+            if task not in found:
+                found.append(task)
+    return found
+
+
+def reading_boundaries(record, relay):
+    """Two identities, confirmed against the registration that created them."""
+    cells = []
+    boundaries = record.get("boundaries") or []
+    keys = [b.get("issueKey") for b in boundaries]
+    scopes = [b.get("scopeRef") for b in boundaries]
+    roots = [str(resolve(b.get("repositoryRoot"))) for b in boundaries]
+    distinct = (len(boundaries) >= 2 and len(set(keys)) == len(keys)
+                and len(set(scopes)) == len(scopes) and len(set(roots)) == len(roots))
+    cells.append(cell("declaration", VERIFIED if distinct else NOT_VERIFIED, provenance=READ,
+                      evidence=(str(len(boundaries)) + " boundaries declared, issue keys "
+                                + json.dumps(keys) + ", scope references " + json.dumps(scopes)
+                                + ", repository roots " + json.dumps(roots)
+                                + ". Two boundaries in one repository are not two repository"
+                                  " identities"),
+                      measured_at=stamp()))
+
+    for boundary in boundaries:
+        name = boundary.get("name")
+        found, why = capture(record, "registration", str(name))
+        if found is None:
+            cells.append(cell("registration:" + str(name), UNKNOWN, evidence=why,
+                              provenance=CAPTURED))
+        else:
+            receipt = found["payload"]
+            scope = field(receipt, "authorizedScope", "scopeRef")
+            child = next((p for p in boundary.get("participants") or []
+                          if p.get("role") == "child"), {})
+            ok = (same(scope, boundary.get("scopeRef"))
+                  and same(field(receipt, "child", "taskId"), child.get("taskId"))
+                  and (child.get("cwd") is None
+                       or resolve(str(field(receipt, "child", "cwd"))) == resolve(child.get("cwd"))))
+            cells.append(graded("registration:" + str(name), scope, ok, provenance=CAPTURED,
+                                measured_at=found["capturedAt"],
+                                unreadable="this registration receipt carries no authorised scope",
+                                evidence=("the registration names scope " + str(shown(scope))
+                                          + ", child "
+                                          + str(shown(field(receipt, "child", "taskId"))) + " at "
+                                          + str(shown(field(receipt, "child", "cwd")))),
+                                detail=found["path"]))
+
+        for participant in boundary.get("participants") or []:
+            probe = relay.git(participant.get("cwd"), "rev-parse", "--show-toplevel")
+            top = (probe["stdout"] or "").strip()
+            ok = bool(top) and resolve(top) == resolve(boundary.get("repositoryRoot"))
+            cells.append(graded("toplevel:" + str(name) + ":" + str(participant.get("taskId")),
+                                top if top else MISSING, ok, probe=probe, provenance=EXECUTED,
+                                unreadable="git did not report a toplevel for this directory",
+                                evidence=("this directory is in " + str(top) + ", declared "
+                                          + str(boundary.get("repositoryRoot")))))
+    return cells
+
+
+def reading_assignment(record, relay):
+    """What the store says about this issue right now, and which criteria are registered."""
+    assignment = record.get("assignment") or {}
+    cells = []
+    probe = relay.relay("assignment-find", "--issue", assignment.get("issueKey"))
+    payload = probe["payload"] or {}
+    responsible = field(payload, "responsibleRelationship")
+    entries = field(payload, "assignments")
+    entry = MISSING
+    if isinstance(entries, list):
+        entry = next((e for e in entries
+                      if isinstance(e, dict)
+                      and e.get("relationshipId") == assignment.get("relationshipId")), MISSING)
+    ok = (same(responsible, assignment.get("relationshipId")) and entry is not MISSING
+          and field(entry, "relationshipStatus") == "active"
+          and same(field(entry, "childTaskId"), assignment.get("childTaskId"))
+          and same(field(entry, "executionGeneration"), assignment.get("executionGeneration")))
+    cells.append(graded("relationship", responsible, ok, probe=probe, provenance=EXECUTED,
+                        unreadable="the store did not answer which relationship owns this issue",
+                        evidence=("the responsible relationship is " + str(shown(responsible))
+                                  + ", status " + str(shown(field(entry, "relationshipStatus")))
+                                  + ", child " + str(shown(field(entry, "childTaskId")))
+                                  + ", generation "
+                                  + str(shown(field(entry, "executionGeneration"))))))
+
+    wanted = assignment.get("criteria") or {}
+    criteria_probe = relay.relay("criteria-show", "--relationship", assignment.get("relationshipId"))
+    criteria = criteria_probe["payload"] or {}
+    registered = field(criteria, "criteria")
+    count = len(registered) if isinstance(registered, list) else None
+    ok = (same(field(criteria, "setDigest"), wanted.get("setDigest"))
+          and same(field(criteria, "sourceRef"), wanted.get("sourceRef"))
+          and same(count, wanted.get("count")))
+    cells.append(graded("criteria", field(criteria, "setDigest"), ok, probe=criteria_probe,
+                        provenance=EXECUTED,
+                        unreadable="criteria-show did not report a registered set",
+                        evidence=("digest " + str(shown(field(criteria, "setDigest")))
+                                  + ", source " + str(shown(field(criteria, "sourceRef"))) + ", "
+                                  + str(count) + " criteria. A non-empty set is not the intended"
+                                  " set")))
+    return cells, payload, entry
+
+
+
+# --------------------------------------------------------------------- the gate
+
+
+def order_gate(record, store_payload, entry):
+    """The file, the store and the message, compared before the message is sent.
+
+    A file written for a previous relationship carries that relationship's id, which is what
+    emitted against an archived one. This refuses the dispatch and names the field that disagreed;
+    it does not make the race impossible, because it reads at one moment and the child reads at a
+    later one. What makes it impossible is the order, and the relay's own refusal remains the guard.
+    """
+    assignment = record.get("assignment") or {}
+    comparisons = []
+    file_found = reading.read_json(assignment.get("assignmentFile"), "the child's assignment file")
+    if not file_found.usable or file_found.state == reading.ABSENT or not isinstance(file_found.value, dict):
+        return {"passed": False, "unreadable": True,
+                "detail": "the assignment file at " + str(assignment.get("assignmentFile"))
+                          + " could not be read (" + str(file_found.state) + ")",
+                "comparisons": []}
+    in_file = file_found.value
+
+    def compare(name, left, right, left_source, right_source):
+        agrees = same(left, right)
+        comparisons.append({"field": name, "agrees": agrees, "left": shown(left),
+                            "right": shown(right), "leftSource": left_source,
+                            "rightSource": right_source})
+        return agrees
+
+    compare("relationshipId", in_file.get("relationshipId"),
+            field(store_payload, "responsibleRelationship"),
+            "the assignment file", "assignment-find")
+    compare("relationshipId", in_file.get("relationshipId"), assignment.get("relationshipId"),
+            "the assignment file", "the start record")
+    compare("childTaskId", in_file.get("childTaskId"), field(entry, "childTaskId"),
+            "the assignment file", "assignment-find")
+    compare("executionGeneration", in_file.get("executionGeneration"),
+            field(entry, "executionGeneration"), "the assignment file", "assignment-find")
+    compare("relationshipStatus", field(entry, "relationshipStatus"), "active",
+            "assignment-find", "this gate")
+    if entry is MISSING:
+        comparisons.append({"field": "assignmentEntry", "agrees": False, "left": None,
+                            "right": shown(assignment.get("relationshipId")),
+                            "leftSource": "assignment-find returned no entry for this relationship",
+                            "rightSource": "the start record"})
+
+    roots, roots_source = MISSING, None
+    owning = next((b for b in record.get("boundaries") or []
+                   if b.get("issueKey") == assignment.get("issueKey")),
+                  (record.get("boundaries") or [{}])[0])
+    found, why = capture(record, "registration", str(owning.get("name")))
+    if found is not None:
+        roots = field(found["payload"], "authorizedScope", "artifactRoots")
+        roots_source = found["path"]
+    artifacts = in_file.get("artifacts") or assignment.get("artifacts") or []
+    if roots is MISSING or not isinstance(roots, list):
+        comparisons.append({"field": "artifactRoots", "agrees": None,
+                            "left": shown(artifacts), "right": None,
+                            "leftSource": "the assignment file",
+                            "rightSource": "no registration receipt was readable, and no read-only"
+                                           " command returns the authorised roots"})
+    else:
+        for artifact in artifacts:
+            inside = any(within(artifact, root) for root in roots)
+            comparisons.append({"field": "artifact", "agrees": inside, "left": shown(artifact),
+                                "right": shown(roots), "leftSource": "the assignment file",
+                                "rightSource": roots_source})
+
+    message = reading.read_text(assignment.get("dispatchMessageFile"), "the dispatch message")
+    if not message.usable or message.state == reading.ABSENT:
+        comparisons.append({"field": "message", "agrees": None, "left": None, "right": None,
+                            "leftSource": str(assignment.get("dispatchMessageFile")),
+                            "rightSource": "the message could not be read ("
+                                           + str(message.state) + ")"})
+    else:
+        text = message.value or ""
+        carried = str(assignment.get("relationshipId")) in text
+        comparisons.append({"field": "messageCarriesRelationship", "agrees": carried,
+                            "left": shown(assignment.get("relationshipId")),
+                            "right": "the message text",
+                            "leftSource": "the start record",
+                            "rightSource": str(assignment.get("dispatchMessageFile"))})
+        for artifact in artifacts:
+            comparisons.append({"field": "messageCarriesArtifact",
+                                "agrees": str(artifact) in text, "left": shown(artifact),
+                                "right": "the message text", "leftSource": "the assignment file",
+                                "rightSource": str(assignment.get("dispatchMessageFile"))})
+
+    unresolved = [c for c in comparisons if c["agrees"] is None]
+    return {"passed": all(c["agrees"] for c in comparisons if c["agrees"] is not None)
+                      and not unresolved,
+            "unreadable": bool(unresolved), "comparisons": comparisons,
+            "note": "the equality is the race check. The authorised roots come from the captured"
+                    " registration receipt because no read-only command returns them, and what"
+                    " enforces them is the manifest emit builds"}
+
+
+# ------------------------------------------------------------------- the ledger
+
+
+def ledger_report(record):
+    """Preparation and the window, separated by timestamp rather than by what a record called itself."""
+    path = Path(field(record, "trialRoot")) / "ledger.jsonl"
+    found = reading.read_text(path, "the intervention ledger")
+    if not found.usable or found.state == reading.ABSENT:
+        raise Refused("the ledger could not be read", path=str(path), state=found.state)
+
+    entries = []
+    for number, line in enumerate(found.value.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError as error:
+            raise Refused("a ledger line is not JSON", line=number, detail=str(error)) from error
+        if not isinstance(entry, dict) or entry.get("kind") not in LEDGER_KINDS:
+            raise Refused("a ledger line carries no known kind", line=number,
+                          kind=entry.get("kind") if isinstance(entry, dict) else None)
+        entry["_at"] = moment(entry.get("at"), "a ledger line's at")
+        entry["_line"] = number
+        entries.append(entry)
+
+    opens = [e for e in entries if e["kind"] == "window_open"]
+    closes = [e for e in entries if e["kind"] == "window_close"]
+    if len(opens) > 1 or len(closes) > 1:
+        raise Refused("a trial has one window", opened=len(opens), closed=len(closes))
+    if not opens or not closes:
+        raise Refused("the window is not bounded in this ledger", opened=len(opens),
+                      closed=len(closes))
+    opened, closed = opens[0]["_at"], closes[0]["_at"]
+    if closed < opened:
+        raise Refused("the window closes before it opens", opensAt=opens[0].get("at"),
+                      closesAt=closes[0].get("at"))
+
+    # Segments are intervals, built from their own timestamps and then checked for intersection.
+    # Pairing them by the order their lines happen to sit in accepted two segments that overlap in
+    # time, and counted one intervention inside both of them.
+    segments = {}
+    for entry in entries:
+        if entry["kind"] not in ("segment_start", "segment_end"):
+            continue
+        name = entry.get("segment")
+        if not name:
+            raise Refused("a segment boundary names no segment", line=entry["_line"])
+        found = segments.setdefault(name, {"name": name, "opensAt": None, "closesAt": None,
+                                           "_from": None, "_to": None, "outcome": None,
+                                           "interventions": []})
+        if entry["kind"] == "segment_start":
+            if found["_from"] is not None:
+                raise Refused("a segment starts twice", segment=name, line=entry["_line"])
+            found["_from"], found["opensAt"] = entry["_at"], entry.get("at")
+        else:
+            if found["_to"] is not None:
+                raise Refused("a segment ends twice", segment=name, line=entry["_line"])
+            found["_to"], found["closesAt"] = entry["_at"], entry.get("at")
+            found["outcome"] = entry.get("outcome")
+    ordered = sorted(segments.values(), key=lambda s: (s["_from"] is None, s["_from"]))
+    for segment in ordered:
+        if segment["_from"] is None:
+            raise Refused("a segment ends without starting", segment=segment["name"])
+        if segment["_to"] is not None and segment["_to"] < segment["_from"]:
+            raise Refused("a segment closes before it opens", segment=segment["name"])
+    for first, second in zip(ordered, ordered[1:]):
+        if first["_to"] is None or second["_from"] <= first["_to"]:
+            raise Refused("two segments overlap in time", earlier=first["name"],
+                          later=second["name"], earlierClosesAt=first["closesAt"],
+                          laterOpensAt=second["opensAt"])
+    segments = ordered
+
+    preparation, inside = [], []
+    for entry in (e for e in entries if e["kind"] == "intervention"):
+        computed = WINDOW if opened <= entry["_at"] <= closed else PREPARATION
+        claimed = entry.get("claimed")
+        if claimed is not None and claimed != computed:
+            raise Refused("a ledger line's claimed class disagrees with its own timestamp",
+                          line=entry["_line"], at=entry.get("at"), claimed=claimed,
+                          computed=computed)
+        item = {"at": entry.get("at"), "actor": entry.get("actor"), "target": entry.get("target"),
+                "action": entry.get("action"), "class": computed, "line": entry["_line"]}
+        if computed == WINDOW:
+            inside.append(item)
+        else:
+            preparation.append(item)
+            for segment in segments:
+                if segment["_from"] <= entry["_at"] and (segment.get("_to") is None
+                                                         or entry["_at"] <= segment["_to"]):
+                    segment["interventions"].append(item)
+
+    # Corroboration is compared, not accepted. A supplied object that was only carried into the
+    # document would have made a declared boundary read as a measured one, which is the whole
+    # reason this field exists.
+    corroboration = field(record, "window", "corroboration")
+    provenance, compared = "declared", []
+    if corroboration not in (MISSING, None):
+        if not isinstance(corroboration, dict):
+            raise Refused("window.corroboration is not an object of times",
+                          corroboration=shown(corroboration))
+        for key, declared in (("opensAt", opens[0].get("at")), ("closesAt", closes[0].get("at"))):
+            supplied = corroboration.get(key)
+            if supplied is None:
+                continue
+            if moment(supplied, "window.corroboration." + key) != moment(declared, key):
+                raise Refused("a corroborating time disagrees with the window it corroborates",
+                              field=key, corroborating=supplied, declared=declared)
+            compared.append(key)
+        if not compared:
+            raise Refused("window.corroboration names no time to compare")
+        provenance = "corroborated"
+    clean = not inside
+    return {
+        "source": SOURCE, "checkerVersion": CHECKER_VERSION, "ledger": str(path),
+        "preparation": {
+            "interventions": len(preparation), "entries": preparation,
+            "segments": [{"name": s["name"], "opensAt": s["opensAt"],
+                          "closesAt": s.get("closesAt"), "outcome": s["outcome"],
+                          "interventions": len(s["interventions"])} for s in segments],
+            "failedSegments": [s["name"] for s in segments if s["outcome"] == "failed"],
+        },
+        "window": {
+            "opensAt": opens[0].get("at"), "closesAt": closes[0].get("at"),
+            "provenance": provenance, "corroborated": compared,
+            "corroboration": None if corroboration is MISSING else corroboration,
+            "interventions": len(inside), "entries": inside,
+            "windowIsClean": clean, "passed": clean,
+        },
+        "note": "classification is by timestamp and by nothing else, and a window with any"
+                " intervention inside it is not an uninterrupted result. What this cannot see is an"
+                " intervention nobody wrote down.",
+    }
+
+
+
+# --------------------------------------------------------- assembly and judgment
+
+
+def judgments(document):
+    """Every field named passed or met, found by walking what was assembled.
+
+    Built from the document rather than from a list of the kinds of thing that produce judgments,
+    because a list leaves one out and the one it leaves out is a judgment that can fail while the
+    command exits zero.
+    """
+    found = []
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                here = path + "." + str(key) if path else str(key)
+                if key in ("passed", "met") and isinstance(value, bool):
+                    found.append({"at": here, "value": value})
+                else:
+                    walk(value, here)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, path + "[" + str(index) + "]")
+
+    walk(document, "")
+    return found
+
+
+def preflight(record, *, sleeper=time.sleep):
+    """Every reading, then the gate, in one run immediately before the dispatch."""
+    relay = Relay(record)
+    # doctor first, and before anything that constructs a store: opening one creates it, so a store
+    # this run made for itself would otherwise be read as the shared store with a plausible identity.
+    store_cells = reading_store(record, relay)
+    assignment_cells, store_payload, entry = reading_assignment(record, relay)
+    readings = {
+        "storeIdentity": store_cells,
+        "processPersistence": reading_process(record, relay, sleeper=sleeper),
+        "parentLifecycle": reading_lifecycle(record),
+        "capability": reading_capability(record, relay),
+        "boundaries": reading_boundaries(record, relay),
+        "assignmentState": assignment_cells,
+    }
+
+    assembled = {}
+    for name, cells in readings.items():
+        values = [c["value"] for c in cells]
+        if not values:
+            value = UNKNOWN
+        elif UNKNOWN in values:
+            value = UNKNOWN
+        elif NOT_VERIFIED in values:
+            value = NOT_VERIFIED
+        else:
+            value = VERIFIED
+        assembled[name] = {"value": value, "met": value == VERIFIED, "cells": cells}
+
+    gate = order_gate(record, store_payload, entry)
+    document = {
+        "source": SOURCE,
+        "checkerVersion": CHECKER_VERSION,
+        "startRecord": record["_start"],
+        "trialRoot": record.get("trialRoot"),
+        "pythonVersion": sys.version.split()[0],
+        "startedAt": stamp(STARTED),
+        "relay": record["_relay"],
+        "readings": assembled,
+        "orderGate": gate,
+        "readyToStart": all(r["met"] for r in assembled.values()) and gate["passed"],
+        "wroteNothing": "this command writes no file anywhere. Every relay command it composes"
+                        " opens the store on construction, so that is a claim about this process"
+                        " rather than about the store",
+        "standIns": {
+            "capturedLifecycle": "a lifecycle read this process did not make; it carries its own"
+                                 " time and goes stale",
+            "capturedReceipt": "the host's echo, recorded elsewhere. It says the host recorded the"
+                               " request, never that a provider served the model",
+            "supervisorWitness": "a witness at the process boundary. The pid inside it is the"
+                                 " supervisor's own claim; that witness is CRW-102's",
+            "hostRecord": "a trusted inventory. The launcher agrees with the installed-runtime"
+                          " record rather than being proven to be the relay",
+        },
+        "procedure": "docs/live-trial.md",
+    }
+    document["readyToStart"] = bool(document["readyToStart"])
+    counted = judgments(document)
+    document["judgmentsCounted"] = len(counted)
+    document["judgmentsThatFailed"] = [j["at"] for j in counted if not j["value"]]
+    return document
+
+
+def ledger(record):
+    document = ledger_report(record)
+    counted = judgments(document)
+    document["judgmentsCounted"] = len(counted)
+    document["judgmentsThatFailed"] = [j["at"] for j in counted if not j["value"]]
+    return document
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name in ("preflight", "ledger"):
+        one = sub.add_parser(name)
+        one.add_argument("--start", required=True,
+                         help="the start record under the private trial root")
+        one.add_argument("--now", help="pin the clock for capture freshness; it never serves the"
+                                       " comparison against the store's own createdAt")
+    args = parser.parse_args(argv)
+
+    try:
+        record = load_start(args.start)
+        record["_now"] = (moment(args.now, "--now") if args.now
+                          else datetime.datetime.now(datetime.timezone.utc))
+        document = preflight(record) if args.command == "preflight" else ledger(record)
+    except Refused as refused:
+        print(json.dumps(refused.to_record(), indent=2, sort_keys=True))
+        return 2
+    except Exception as error:                                       # noqa: BLE001
+        # Every way this can fail ends in a document. A traceback on stderr with nothing on stdout
+        # is the one outcome a caller cannot tell from a run that never happened, and the raising
+        # location travels with it so a defect here stays locatable rather than becoming a data
+        # problem.
+        print(json.dumps(Refused("this run raised before it could report",
+                                 exception=type(error).__name__, detail=str(error),
+                                 raisedAt=reading.where(error)).to_record(),
+                         indent=2, sort_keys=True))
+        return 2
+    print(json.dumps(document, indent=2, sort_keys=True))
+    return 1 if document["judgmentsThatFailed"] else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
