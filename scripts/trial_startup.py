@@ -1018,8 +1018,8 @@ def reading_store(record, relay):
         twins = [other for other in participants_of(record)
                  if other != name
                  and field(record, "captures", "peerDoctor", other) is not MISSING
-                 and field(record, "captures", "peerDoctor", other, "path")
-                 == field(entry, "path")]
+                 and same_file(field(record, "captures", "peerDoctor", other, "path"),
+                               field(entry, "path"))]
         if twins:
             # One file cannot be several participants' own reading: graded once per name it was
             # listed under, or copied, it would report a shared store on the strength of one peer.
@@ -1593,6 +1593,22 @@ def digest_or_none(path):
         return digest_of(path)
     except (OSError, TypeError):
         return None
+
+
+def same_file(left, right):
+    """Whether two spellings name one file, rather than whether they are the same spelling.
+
+    A link and a second name reach one file under two strings, so comparing the strings let one
+    capture be filed under two participants and read as two.
+    """
+    if left is MISSING or right is MISSING or left is None or right is None:
+        return False
+    if str(left) == str(right):
+        return True
+    try:
+        return os.path.samefile(str(left), str(right))
+    except OSError:
+        return resolve(left) == resolve(right)
 
 
 def launcher_unchanged(record, relay=None):

@@ -2149,5 +2149,27 @@ class FourteenthHostedRound(TrialCase):
         self.assertIn("whitespace", refused.reason)
 
 
+class FifteenthHostedRound(TrialCase):
+    """Two spellings of one file are one file."""
+
+    def test_a_peer_capture_reached_by_a_second_name_is_one_reading(self):
+        for make in ("symlink", "hardlink"):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            first = world.trial / ("doctor-" + World.PARENT_A + ".json")
+            second = world.trial / "doctor-under-another-name.json"
+            if make == "symlink":
+                second.symlink_to(first)
+            else:
+                os.link(str(first), str(second))
+            world.record["captures"]["peerDoctor"][World.CHILD_A]["path"] = str(second)
+            world.flush()
+            document = world.preflight()
+            for task in (World.PARENT_A, World.CHILD_A):
+                cell = cells_of(document, "storeIdentity")["peer:" + task]
+                self.assertEqual(cell["value"], NOT_VERIFIED, make + " for " + task)
+                self.assertIn("counted as", cell["evidence"])
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
