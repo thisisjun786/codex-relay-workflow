@@ -191,6 +191,10 @@ def resolve(path):
 
 
 def within(child, parent):
+    # A relative child would be resolved against whatever directory this process happens to be in,
+    # so containment would answer about a path nobody named. Only an absolute one is a place.
+    if not str(child).startswith("/"):
+        return False
     try:
         return resolve(child).is_relative_to(resolve(parent))
     except (OSError, ValueError):
@@ -372,12 +376,22 @@ def load_start(path, *, environment=None):
                           value=shown(found))
     if not isinstance(field(record, "assignment", "artifacts"), list):
         raise Refused("assignment.artifacts must be a list")
+    for artifact in field(record, "assignment", "artifacts"):
+        absolute(artifact, "an assignment artifact")
     if not isinstance(field(record, "captures"), dict):
         raise Refused("captures must be an object of capture kinds",
                       captures=type(record.get("captures")).__name__)
     if not isinstance(record.get("boundaries"), list) or len(record["boundaries"]) < 2:
         raise Refused("a live trial declares at least two boundaries",
                       boundaries=len(record.get("boundaries") or []))
+    # The assignment being dispatched has to belong to a boundary this record declared. Falling
+    # back to the first one read the wrong boundary's registration and let an assignment outside
+    # every declared repository and project pass every reading.
+    if not any(b.get("issueKey") == field(record, "assignment", "issueKey")
+               for b in record["boundaries"]):
+        raise Refused("the assignment's issue belongs to no declared boundary",
+                      issueKey=field(record, "assignment", "issueKey"),
+                      boundaries=[b.get("issueKey") for b in record["boundaries"]])
     launched = moment(field(record, "supervisor", "launchedAt"), "supervisor.launchedAt")
     if launched.timestamp() > time.time():
         raise Refused("the supervisor's launchedAt is in the future",
@@ -870,7 +884,20 @@ def reading_boundaries(record, relay):
             scope = field(receipt, "authorizedScope", "scopeRef")
             child = next((p for p in boundary.get("participants") or []
                           if p.get("role") == "child"), {})
+            # A receipt is a whole registration, and a stale one agrees on the parts a scope and a
+            # task name while naming another issue, another relationship or a status that is no
+            # longer active.
+            owns = same(field(receipt, "issueKey"), boundary.get("issueKey"))
+            active = field(receipt, "status") == "active"
+            assignment = record.get("assignment") or {}
+            this_one = boundary.get("issueKey") == assignment.get("issueKey")
+            current = (not this_one
+                       or (same(field(receipt, "relationshipId"),
+                                assignment.get("relationshipId"))
+                           and same(field(receipt, "executionGeneration"),
+                                    assignment.get("executionGeneration"))))
             ok = (same(scope, boundary.get("scopeRef"))
+                  and owns and active and current
                   and same(field(receipt, "child", "taskId"), child.get("taskId"))
                   and same(field(receipt, "parent", "taskId"),
                            next((p.get("taskId") for p in boundary.get("participants") or []
@@ -881,6 +908,12 @@ def reading_boundaries(record, relay):
                                 measured_at=found["capturedAt"],
                                 unreadable="this registration receipt carries no authorised scope",
                                 evidence=("the registration names scope " + str(shown(scope))
+                                          + ", issue " + str(shown(field(receipt, "issueKey")))
+                                          + ", status " + str(shown(field(receipt, "status")))
+                                          + ", relationship "
+                                          + str(shown(field(receipt, "relationshipId")))
+                                          + ", generation "
+                                          + str(shown(field(receipt, "executionGeneration")))
                                           + ", child "
                                           + str(shown(field(receipt, "child", "taskId"))) + " at "
                                           + str(shown(field(receipt, "child", "cwd")))
@@ -992,9 +1025,15 @@ def order_gate(record, store_payload, entry):
                             "rightSource": "the start record"})
 
     roots, roots_source = MISSING, None
+    # Load refused a record whose assignment belongs to no declared boundary, so this find always
+    # has one; it is written without a fallback so that it cannot silently read another boundary's
+    # registration if that ever changes.
     owning = next((b for b in record.get("boundaries") or []
-                   if b.get("issueKey") == assignment.get("issueKey")),
-                  (record.get("boundaries") or [{}])[0])
+                   if b.get("issueKey") == assignment.get("issueKey")), None)
+    if owning is None:
+        return {"passed": False, "unreadable": True,
+                "detail": "the assignment's issue belongs to no declared boundary",
+                "comparisons": []}
     found, why = capture(record, "registration", str(owning.get("name")))
     if found is not None:
         roots = field(found["payload"], "authorizedScope", "artifactRoots")
@@ -1017,6 +1056,14 @@ def order_gate(record, store_payload, entry):
                             "leftSource": "the assignment file",
                             "rightSource": "the start record"})
         artifacts = in_file_artifacts
+    for artifact in artifacts:
+        if not str(artifact).startswith("/"):
+            comparisons.append({"field": "artifactIsAbsolute", "agrees": False,
+                                "left": shown(artifact), "right": "an absolute path",
+                                "leftSource": "the assignment file",
+                                "rightSource": "a relative path is resolved against whatever"
+                                               " directory a reader happens to be in, so it names"
+                                               " no place"})
     if roots is MISSING or not isinstance(roots, list):
         comparisons.append({"field": "artifactRoots", "agrees": None,
                             "left": shown(artifacts), "right": None,
@@ -1095,6 +1142,11 @@ def ledger_report(record):
     if closed < opened:
         raise Refused("the window closes before it opens", opensAt=opens[0].get("at"),
                       closesAt=closes[0].get("at"))
+    if closed.timestamp() > time.time():
+        # A window that has not closed cannot be graded: the interventions it would have to be
+        # clean of have not all happened yet.
+        raise Refused("this window has not closed yet, so there is nothing to grade",
+                      closesAt=closes[0].get("at"), now=stamp())
     # The record declares the window and the ledger records it, and they have to be the same
     # window. Grading the ledger's own pair alone let a mistaken boundary move an intervention
     # out of the measured window and report the result as clean.

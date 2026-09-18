@@ -45,7 +45,7 @@ it is stale past the record's own bound, which may not exceed fifteen minutes.
 | `parentLifecycle` | a captured host response per parent | the capture names that task, carries no error, and resolves a thread status. The host answers that status as a structured object rather than a word, so what is required is that it resolved to something, not that it reads as a particular string | a creation receipt. `thread not found`, `missing source rollout` and `no rollout found` are the three answers that fail it by name. A null goal is not one of them: a healthy task without a goal has one |
 | `capability` | the captured creation receipt, and `settings-show` for the same task | each payload names the task it is about, the receipt's `settings.actual` equals every setting the record declares, its `findings` are empty, and the store's own settings record is usable, complete and carries the same values | that a provider served that model. A matching echo says the host recorded the request. `usable` alone is completeness, not agreement |
 | `storeIdentity` | `doctor` with `--expect-store`, `--expect-inode` and `--expect-nonce`, and each peer's captured `doctor` | the relay's own `sameStore` reports `proven` here, and every declared participant has a captured `doctor` of its own reporting `proven` while its own store identity agrees with the record. A participant with no capture is unknown, never absent from the count | an equal path string, or an agreeing store id and inode. The relay grades those as `unproven` on their own: proof takes a nonce another participant wrote, found beside an agreeing device and inode |
-| `boundaries` | the record's declaration, each boundary's captured registration receipt, and `git rev-parse --show-toplevel` in each declared directory | there are at least two boundaries whose issue key, scope reference and resolved repository root are all pairwise distinct, each receipt names that boundary's scope reference, child task and directory, and each directory is the repository it was declared to be | a display name, a title or a working directory, none of which identifies anything ([OPS-7.2](../skills/crw-run/references/operations.md)). Two boundaries in one repository are not two repository identities |
+| `boundaries` | the record's declaration, each boundary's captured registration receipt, and `git rev-parse --show-toplevel` in each declared directory | there are at least two boundaries whose issue key, scope reference and resolved repository root are all pairwise distinct, each receipt names that boundary's issue, an active status, its scope reference, parent task, child task and directory, and for the assignment being dispatched its relationship and generation as well, and each directory is the repository it was declared to be | a display name, a title or a working directory, none of which identifies anything ([OPS-7.2](../skills/crw-run/references/operations.md)). Two boundaries in one repository are not two repository identities |
 | `assignmentState` | `assignment-find --issue` and `criteria-show` | the responsible relationship is the one the record names, its entry carries the same parent task, child task and execution generation with status `active`, and the criteria set matches by digest, source reference and count. The parent is compared because a relationship under another parent delivers to that parent, whatever the trial intended | a relationship id written in a file. A non-empty criteria set is not the intended one |
 
 Every fact a reading later compares a payload against is required in the record itself, before any
@@ -109,7 +109,8 @@ observed failures were checks made too early, or not made.
 A file written for a previous relationship carries that relationship's id, and that is the
 comparison that catches it. The artifacts compared are the file's own: the file is what the child
 reads, so a missing or empty list there is a mismatch rather than an occasion to fall back on what
-the record intended. The artifact roots come from the captured registration receipt, because
+the record intended. Every artifact path is absolute: a relative one is resolved against whichever
+directory a reader happens to be in, so it names no place and containment cannot answer about it. The artifact roots come from the captured registration receipt, because
 no read-only command returns them; what actually enforces them is the manifest `emit` builds, which
 is where it belongs.
 
@@ -129,7 +130,7 @@ goes at <trial root>/ledger.jsonl, and the checker grades it.
      "segment": "<name>", "actor": "operator|user", "target": "<task, store or process>",
      "action": "<what was done>", "claimed": "preparation|window"}
 
-A segment is bounded by its own start and end, which are times rather than positions in the file:
+The window must also have closed: a window whose close is still ahead has not yet had the interventions it would need to be clean of. A segment is bounded by its own start and end, which are times rather than positions in the file:
 segments are built as intervals and two that intersect are a refusal, because a pairing taken from
 line order accepted two overlapping segments and counted one intervention inside both. `segment_end`
 carries `failed` or `succeeded`.

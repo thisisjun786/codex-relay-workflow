@@ -1388,5 +1388,63 @@ class HostedReviewFindings(TrialCase):
         self.assertIn("temporary file", claim)
 
 
+class SecondHostedRound(TrialCase):
+    """The four findings the hosted reviewers returned on the second pushed head."""
+
+    def test_a_relative_artifact_in_the_assignment_file_is_refused(self):
+        self.world.assignment_file.write_text(json.dumps({
+            "relationshipId": World.RELATIONSHIP, "childTaskId": World.CHILD_A,
+            "executionGeneration": 1, "artifacts": ["artifact.py"]}), encoding="utf-8")
+        self.world.record["assignment"]["artifacts"] = ["artifact.py"]
+        self.world.flush()
+        # The record refuses a relative artifact outright, and the gate refuses one that reached it.
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("absolute", refused.reason)
+
+    def test_containment_answers_false_for_a_relative_path(self):
+        self.assertFalse(startup.within("artifact.py", self.world.repos["A"]))
+        self.assertTrue(startup.within(str(self.world.artifact), self.world.repos["A"]))
+
+    def test_a_window_that_has_not_closed_is_refused(self):
+        now = time.time()
+        opened, closed = now - 60, now + 600
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window"},
+        ])
+        with self.assertRaises(startup.Refused) as raised:
+            self.world.run_ledger()
+        self.assertIn("has not closed yet", raised.exception.reason)
+
+    def test_a_registration_naming_another_issue_or_a_closed_one_fails(self):
+        for key, value in (("issueKey", "SOMETHING-ELSE"), ("status", "archived"),
+                           ("relationshipId", "rel-000000000000dead"),
+                           ("executionGeneration", 9)):
+            world = World(self.base)
+            self.addCleanup(world.stop)
+            world.captures["register-A.json"][key] = value
+            world.flush()
+            document = world.preflight()
+            self.assertEqual(cells_of(document, "boundaries")["registration:A"]["value"],
+                             NOT_VERIFIED, key + " did not fail the registration cell")
+
+    def test_a_registration_for_another_boundary_may_carry_another_relationship(self):
+        # Only the boundary owning the dispatched assignment is compared against its relationship
+        # and generation; the other boundary legitimately has its own.
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "boundaries")["registration:B"]["value"], VERIFIED)
+
+    def test_an_assignment_outside_every_declared_boundary_is_refused(self):
+        self.world.record["assignment"]["issueKey"] = "NOT-A-BOUNDARY"
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused)
+        self.assertIn("no declared boundary", refused.reason)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
