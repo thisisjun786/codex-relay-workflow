@@ -7,13 +7,19 @@ mistake. This package already has the answer to that shape - guard.EVALUATION_ST
 checked against the injections that exercise it, so a stage added without being listed
 fails here rather than in review - and this applies it to the map.
 
-What this closes: a citation that no longer resolves, and a criterion whose clock label
-disagrees with the modules it names.
+What this closes: a citation that no longer resolves, a criterion whose clock label
+disagrees with the modules it names, a count the map prints that nothing reads, and - added
+after the sweep this file backs turned out to be narrower than its own sentence - the reach of
+that sweep itself. The boolean-summary inventory below is the third of these derived lists and
+the largest: every boolean the package folds out of more than one input, every place the suite
+measures something with one, and a written verdict beside each of those places.
 
-What it does NOT close, stated so nobody reads more into a green run than is there:
-whether a new test asserts something an existing test already asserts. No scan can answer
-that. The map's reuse column is where that judgement is written down, not where it is
-enforced.
+What it does NOT close, stated so nobody reads more into a green run than is there. Whether a
+new test asserts something an existing test already asserts: no scan can answer that, and the
+map's reuse column is where that judgement is written down rather than enforced. And whether
+any verdict below is the RIGHT reading of its site: the scan supplies the reach and which value
+an assertion pins, a person supplies the verdict, and a wrong verdict fails nothing here. Two
+of them were wrong when this landed and review caught both by mutation rather than by reading.
 """
 
 import ast
