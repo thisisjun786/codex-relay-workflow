@@ -1542,6 +1542,20 @@ def _hands_on(tree, spelled):
         # not a module-level function or another class's method that happens to share the name.
         if klass is not None and "." not in where:
             methods[(klass, where)] = where
+    for node in ast.walk(tree):
+        # carrier = lambda self: ... in a class body binds a method named carrier, and the
+        # lambda's own place is what a call through it reaches.
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        if not isinstance(node.value, ast.Lambda):
+            continue
+        where, klass = places.get(id(node), (MODULE_LEVEL, None))
+        if klass is None or where != MODULE_LEVEL:
+            continue
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+            if isinstance(target, ast.Name):
+                methods[(klass, target.id)] = places.get(id(node.value),
+                                                         (MODULE_LEVEL, None))[0]
 
     def inherited(klass, named, seen=()):
         """The method this class reaches by that name, its own or one it inherits."""
@@ -1584,7 +1598,9 @@ def _hands_on(tree, spelled):
             targets = list(node.targets)
         elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
             targets = [node.target]
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            # A for target binds in the function. A comprehension target does NOT, since
+            # Python 3 gives the comprehension a scope of its own, so it is not collected here.
             targets = [node.target]
         elif isinstance(node, ast.withitem):
             targets = [node.optional_vars] if node.optional_vars else []
@@ -1655,7 +1671,25 @@ def _hands_on(tree, spelled):
             if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
                 continue
             function, _klass = places.get(id(node), (MODULE_LEVEL, None))
-            if isinstance(node.value, ast.Name):
+            def names(expression):
+                """Every place an expression may name, both arms of a conditional included."""
+                if isinstance(expression, ast.IfExp):
+                    return names(expression.body) | names(expression.orelse)
+                if isinstance(expression, ast.Name):
+                    return outwards(function, expression.id, aliases)
+                if isinstance(expression, ast.Lambda):
+                    return {places.get(id(expression), (MODULE_LEVEL, None))[0]}
+                if isinstance(expression, ast.Attribute):
+                    through = _dotted(expression.value)
+                    _where, klass = places.get(id(node), (MODULE_LEVEL, None))
+                    reached = inherited(klass if through in ("self", "cls") else through,
+                                        expression.attr)
+                    return {reached} if reached else set()
+                return set()
+
+            if isinstance(node.value, ast.IfExp):
+                targets = names(node.value)
+            elif isinstance(node.value, ast.Name):
                 targets = outwards(function, node.value.id, aliases)
             elif isinstance(node.value, ast.Attribute):
                 # A bound method put behind a name reaches exactly what calling it directly
@@ -1890,6 +1924,11 @@ def source_spellings(tree):
             return None, None, False
         if "source" in attribute.lower():
             return "its own name says it hands source", None, True
+        own = getattr(value, "__name__", "")
+        if "source" in own.lower():
+            # from inspect import getsource as reader: the local spelling says nothing, and the
+            # callable still says it. Asked of the object, like everything else here.
+            return "the callable it resolves to is named " + own, None, True
         try:
             first = list(inspect.signature(value).parameters)[:1]
         except (ValueError, TypeError):
