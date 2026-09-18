@@ -6,13 +6,15 @@ spending the whole budget, a cancelled assignment leaving the others served, a c
 refused when it is addressed to somebody else's parent. Those are reused and named in
 docs/contention-regression.md rather than repeated here.
 
-What is left is the combination none of them holds. Two parents acting at the same
-instant rather than in turn - so the acknowledgement and the verdict paths are exercised
-under a barrier, with one independent Store connection per thread, the way
-test_registry.py already races a resume against a generation advance. And a parent that is
-stuck at a BOUND rather than stuck on one failure: a held attempt cap and a spent hourly
-allowance are states no tick will retry, which is different from a send that happens to
-fail again.
+What is left is the combination none of them holds. Two parents contending rather than
+taking turns - the acknowledgement and the verdict paths driven from two threads with one
+independent Store connection each, the way test_registry.py already contends a resume
+against a generation advance. The barrier aligns the two starts and nothing more: the
+scheduler may still serialise them, so what is asserted holds under every interleaving,
+which is that each parent's acknowledgement, generation and revision name only its own
+assignment. And a parent stuck at a BOUND rather than on one failure: a held attempt cap
+and a spent hourly allowance are states no tick will retry, which is different from a send
+that happens to fail again.
 
 Also here because nothing else reads it: scope_ref, the Linear reference registration
 accepts and no test has ever asserted survives.

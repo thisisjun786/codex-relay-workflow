@@ -7,10 +7,15 @@ creation response is still outstanding, and then the bind landing afterwards. Th
 coordinator keeps a pending observation for exactly that fold, and nothing asserted it
 survived the bind.
 
-The two racing cases use the barrier construction test_registry.py already established -
-one independent Store per thread, a barrier so both are inside the critical region, joins
-with a timeout, and errors collected rather than raised in a thread nobody is watching.
-Naming a test "concurrent" and then running it sequentially proves the sequential case.
+The two contended cases use the construction test_registry.py already established - one
+independent Store per thread, a barrier, joins with a timeout, and errors collected rather
+than raised in a thread nobody is watching. What a barrier buys is honest to state: it
+aligns the two starts, and the scheduler may still run either call to completion before the
+other enters the contested region. So these assert invariants that must hold under EVERY
+interleaving, including both serial ones - a registration publishes exactly when it was not
+refused as stale, and two binds settle as one winner and one recorded conflict. Overlap
+widens the set of executions reached; it is not something the assertions depend on, and
+claiming it were guaranteed would be claiming more than the construction can deliver.
 
 Criterion 4 of this work is met entirely by evidence that already exists and is named in
 docs/contention-regression.md; nothing here restates it.

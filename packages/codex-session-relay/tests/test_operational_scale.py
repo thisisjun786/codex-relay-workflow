@@ -15,10 +15,12 @@ that answers it - in a real process, in real time, for one short segment.
 
 The scale half declares its load as module constants so a report quotes a number read from
 source. What it establishes: at this size, selection stays inside the ceilings the policy
-declares, the backlog only shrinks, and no parent is served twice before every parent is
-served once. What it does not establish: anything about throughput, about a host under
-real load, or about a size larger than the one written below. Passing here is not support
-for unbounded parallel operation.
+declares, the backlog only shrinks, and every parent is reached in far fewer ticks than
+draining any one of them would take. That last one is a bound on reaching, not a strict
+round: a parent may be served more than once before the last parent is served at all, and
+the test says so in the number it compares against. What none of it establishes: anything
+about throughput, about a host under real load, or about a size larger than the one written
+below. Passing here is not support for unbounded parallel operation.
 """
 
 import json
