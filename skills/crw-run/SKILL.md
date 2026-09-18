@@ -396,6 +396,13 @@ does not stop or complete work; it is not a reason to send the prompt again.
 Observe the host's wait limits and keep the user informed without repeating
 unchanged snapshots.
 
+Apply [OPS-8.1 observation-failure handling](references/operations.md#ops-81-parent-continuation-and-waiting)
+before interpreting either transport's result. Verify the target task/host and
+turn, parse structured results and distinguish read failure from valid waiting
+or terminal work. A missing turn or failed read is unknown, even if `timedOut`
+is true; Git/PR state cannot replace that observation. Use the bridge's
+[assigned-turn procedure](references/bridge.md#observe-the-assigned-turn) when selected.
+
 Describe evidence separately:
 
 | Claim | Evidence required |

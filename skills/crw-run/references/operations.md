@@ -742,6 +742,28 @@ end the parent turn expecting a Stop hook or a relay to restart it; neither is g
 these instructions. If the host releases the turn, preserve recovery evidence and report the
 interruption without calling the run complete.
 
+Treat observation success separately from the observed work outcome. A successful
+read may find running, completed, failed or interrupted work; a wait timeout may
+carry a valid nonterminal snapshot. A tool/RPC error, unreadable or incomplete
+response, missing target, or task/turn mismatch is an **observation failure**:
+the assigned turn's state is unknown. Parse structured fields and verify the
+target's task/host and turn ownership before interpreting a timeout or terminal
+status. For the bridge, use [Observe the assigned turn](bridge.md#observe-the-assigned-turn);
+for native `wait_threads`, inspect each target's poll/error and turn identity,
+not only the batch's `timedOut` or the first target that woke the wait.
+
+Do not end the parent turn on an observation failure as though the child were
+still running, finished, or guaranteed to wake the parent. Preserve the exact
+request, target IDs, error/response and last successful observation; recover the
+dispatch pair, paginate that child's history or retry a repaired read within the
+transport's bounds. Git changes, PR/CI results and a cached status summary do not
+replace a current turn-state observation. Do not resend the assignment, launch a
+replacement child or repeat the same failing read without a recovery reason.
+If bounded recovery cannot establish state, report a capability blocker with
+the owner and exact next recovery step, preserve the assignment and continue
+independent authorized work. A necessary blocked handoff or user interruption
+must say observation is unresolved; it is not completion or verified idle handoff.
+
 Before creating or registering a child for active parent observation, check existing issue
 ownership and whether the installed relay can deliver, acknowledge and settle a receipt while
 that parent remains active. The current relay defers busy recipients, refuses acknowledgement

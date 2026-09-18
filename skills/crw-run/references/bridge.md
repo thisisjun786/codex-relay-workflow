@@ -283,10 +283,37 @@ A permitted replacement uses a new ID; record why and preserve earlier work and
 receipts. A read failure alone does not prove the task never existed.
 Do not delete receipts, reset shared work, or edit a session database to retry.
 
-Read/list/wait are observational and never resume a task. Bridge waiting uses the
-exact returned thread_id and turn_id, at most 50 seconds per call; timeout leaves
-work running. Paginate with the exact returned cursor. A completed turn may have
-failed; inspect status/error and returned artifacts.
+### Observe the assigned turn
+
+Read/list/wait are observational and never resume a task. `wait_thread` requires
+both `thread_id` and `turn_id`; omitting either is a validation error, not a wait.
+Use the exact pair returned by that child's dispatch receipt. If the receipt is
+missing or the pair is disputed, recover the turn from that same thread's paginated
+history before waiting. A turn copied from the coordinator or another child is not
+a substitute, even if it completed. Keep the task/host, turn and dispatch receipt
+associated in the coordination record.
+
+Decode the tool's structured result (including JSON inside an MCP text content
+block) and check tool/RPC errors before interpreting payload fields. Do not scrape
+strings with regex or turn absent fields into a running/completed default. Check
+returned `threadId` and `turnId` against the requested pair and `turn.id` against
+that turn ID; then inspect `observation`, `turn.status` and `turn.error` where
+present. A null turn, identity mismatch, unknown status, malformed response or
+tool/transport error means the assigned turn's state was not established.
+
+| Result for the verified pair | Interpretation and next step |
+| --- | --- |
+| `observation: found`, `turn.status: inProgress`, `timedOut: true` | Valid nonterminal observation. A bounded wait expired, or a zero-second snapshot found no terminal result. The call does not stop the turn; continue bounded observation. |
+| `observation: found`, terminal `turn.status`, `timedOut: false` | Turn ended. Distinguish `completed`, `failed` and `interrupted`; inspect error and artifacts before judging delivery. |
+| `turn: null`, including `timedOut: true` and `not observed in latest 100 turns` | Target not observed, not evidence that it is running or absent. Recover the exact turn through this thread's history. |
+| Error, missing/contradictory fields, or a different identity | Observation failure. Preserve the response and repair the read; do not infer a work outcome. |
+
+Wait at most 50 seconds per call. The current bridge searches only the latest 100
+turns; use `read_thread` with its exact returned cursor for older turns. A page
+that lacks the target is not a terminal result, and `timedOut` alone is not a
+liveness signal. A found in-progress snapshot also does not promise progress after
+that observation. If ownership or state still cannot be recovered, apply the
+observation-failure handling in [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting).
 
 Check app listing independently for visibility/project association. If Desktop
 tools cannot find the task, retain the backend ID and disclose the limitation;
