@@ -1369,6 +1369,11 @@ def journals_named(registrations, already_read=None):
     failure here says nothing about what the hook can open inside a session.
     """
     found = []
+    # One snapshot per JOURNAL, not per registration. Two registrations can name different
+    # settings files that configure the same journalRoot, and listing that one directory twice
+    # let a Stop landing between the reads report two different counts for one directory --
+    # enough to establish "recorded on another path" when there is only one path.
+    scanned = {}
     for registration in registrations:
         if not registration.get("settings"):
             # A relative spelling or no settings at all. There is no file here to open, and
@@ -1389,7 +1394,15 @@ def journals_named(registrations, already_read=None):
                                       else firing.NO_RECORDS_KEPT)
             found.append(entry)
             continue
-        cell = _journal_cell(config)
+        root = config.get("journalRoot")
+        if root in scanned:
+            # The policy is this registration's own; the listing is the directory's, and the
+            # directory is the same one.
+            cell = dict(scanned[root], journalPolicy=config.get("journalPolicy")
+                        or EVERY_INVOCATION)
+        else:
+            cell = _journal_cell(config)
+            scanned[root] = cell
         value = cell["value"]
         entry["journal"] = cell
         entry["journalRoot"] = cell.get("journalRoot")
@@ -1481,8 +1494,16 @@ def status(codex_home=None, environ=None, event=EVENT):
         # same file again for the cause meant two readings of one path in one call: an adapter
         # created or removed between them produced a payload whose target cell said PRESENT
         # while the cause established adapter_cannot_run about the same registration.
-        adapter_probes = {entry["identity"]: presence(entry["target"], "the adapter script")
-                          for entry in firm}
+        # Keyed by the TARGET PATH and mapped back to identities. Two registrations can run one
+        # adapter with different settings arguments, and probing that one file twice let the
+        # payload give them different startability -- a file created or removed between the two
+        # probes establishing adapter_cannot_run for one of two registrations that execute the
+        # same program.
+        by_target = {}
+        for entry in firm:
+            if entry["target"] not in by_target:
+                by_target[entry["target"]] = presence(entry["target"], "the adapter script")
+        adapter_probes = {entry["identity"]: by_target[entry["target"]] for entry in firm}
         probes = [adapter_probes[entry["identity"]] for entry in firm]
         worst = next((probe for probe in probes if probe["value"] != reading.PRESENT), None)
         if worst is not None:

@@ -2252,6 +2252,50 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          "one adapter was probed twice in one status call, so the target cell"
                          " and the cause can disagree about it: " + repr(probes))
 
+    def test_one_journal_is_listed_once_however_many_registrations_name_it(self):
+        """Two settings files can configure the same journalRoot. Listing that one directory
+        twice let a Stop between the reads report two counts for one directory -- enough to
+        establish 'recorded on another path' when there is only one path."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            # A second settings file naming the SAME journal as the first.
+            second_registration(temporary, "journal")
+            roots = []
+            real = completion._journal_cell
+
+            def counting(config):
+                roots.append(str((config or {}).get("journalRoot")))
+                return real(config)
+
+            with mock.patch.object(completion, "_journal_cell", side_effect=counting):
+                completion.status(codex_home=temporary, environ={})
+        self.assertEqual(len(roots), len(set(roots)),
+                         "one journal directory was listed more than once in a single status"
+                         " call, so its two counts can disagree: " + repr(roots))
+
+    def test_one_adapter_is_probed_once_however_many_registrations_run_it(self):
+        """Two registrations can run one adapter with different settings arguments. Probing
+        that one file twice let the payload give them different startability."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            second_registration(temporary, "journal-two")
+            probes = []
+            real = completion.presence
+
+            def counting(path, what, **kwargs):
+                if what == "the adapter script":
+                    probes.append(str(path))
+                return real(path, what, **kwargs)
+
+            with mock.patch.object(completion, "presence", side_effect=counting):
+                completion.status(codex_home=temporary, environ={})
+        self.assertEqual(len(probes), len(set(probes)),
+                         "one adapter target was probed more than once in a single status"
+                         " call, so two registrations running it can be given different"
+                         " startability: " + repr(probes))
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition
