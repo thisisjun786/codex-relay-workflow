@@ -1398,17 +1398,32 @@ python3 scripts/runtime_install.py diagnose --dest <destination> --record <recor
     --turn-thread <turn-thread> --turn-id <turn-id> --dispatch-turn-id <dispatch-turn-id> \
     --recipient-settings <settings-or-@path>
 
-# The hook has to have fired, and the count alone cannot say that it did: hook-status reports
-# what this hook has recorded about itself CUMULATIVELY, so on a host where it fired last week
-# an old nonzero count reads as evidence for a callback that never happened. Read it before and
-# after, and require the difference.
+# The hook has to have fired FOR THIS TURN, and no count can say that. hook-status reports what
+# this hook has recorded about itself cumulatively, so an old nonzero count reads as evidence
+# for a callback that never happened -- and comparing before with after does not repair it,
+# because any other session stopping inside the measurement window moves the same number. A
+# count that went up answers "did this hook fire at all lately", which is a different question
+# from the one this row asks.
+#
+# The record carries sessionId and turnId, so ask with them.
 python3 scripts/runtime_install.py hook --codex-home <codex-home> --adapter completion \
     --dest <destination> --apply
-python3 scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.before.json
 #   ... then end a real turn, and only then:
-python3 scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.after.json
-#   The reading is the change, not the number. An unchanged count is a turn that did not reach
-#   the hook, whatever the count happens to be.
+python3 scripts/runtime_install.py hook-status --codex-home <codex-home> > <receipt>/hook.json
+
+# hook-status names the journal it counted; the records in it name the turn they belong to.
+python3 - <receipt>/hook.json <session-id> <turn-id> <<'PY'
+import json, sys
+from pathlib import Path
+status, session, turn = sys.argv[1], sys.argv[2], sys.argv[3]
+root = Path(json.load(open(status))["firingJournal"]["journalRoot"]).expanduser()
+records = [json.loads(entry.read_text(encoding="utf-8"))
+           for day in sorted(root.glob("*")) if day.is_dir()
+           for entry in sorted(day.glob("*.json"))]
+mine = [r for r in records if r.get("sessionId") == session and r.get("turnId") == turn]
+print(json.dumps({"recordsInJournal": len(records), "recordsForThisTurn": len(mine),
+                  "record": mine[:1]}, indent=2))
+PY
 
 # Afterwards: the other half of the preservation reading. The KEYS, not the file -- the
 # registration above deliberately appended a table, so a whole-file diff reports a change that
@@ -1457,6 +1472,12 @@ establish itself. Without `--observed-tool` the exposure answer is that no tool 
 observed, and before a Stop has reached the hook the callback row is an absence. What none of
 them is, is a failure of the thing they were asked about, and recording them as though the
 questions had been put is the one way this procedure can lie.
+
+`recordsForThisTurn` is the reading. One record naming the session and the turn that was ended
+is a callback this procedure can attribute; zero is not a smaller number of callbacks, it is a
+turn that did not reach the hook, and the row is unreadable for this run whatever
+`recordsInJournal` says. Do not record the count instead -- it is the answer to a question
+nobody asked here, and it is the one piece of this procedure that another session can move.
 
 Stopping is not on that list, because nothing here starts anything. The installer never starts or
 stops a daemon, and a successful install is reported as `alwaysActive: not_verified` however well
