@@ -3463,6 +3463,22 @@ def _install_failed(record_path, definition_version, performed, environment, own
     # retriable was false in the way that matters: the deterministic directory is still there
     # and the next install refuses at the existence check.
     retriable = owned is None or removed
+    # A pointer restoration that did not finish leaves a CLAIM rather than a path. The record
+    # goes on saying this command placed a link where there is now none, and that claim is what
+    # the next promotion reads before replacing whatever has turned up at that path -- so it is
+    # an outstanding thing somebody has to settle, and a result that does not say so is how it
+    # goes unseen.
+    #
+    # It is not folded into 'residualPaths' and it does not move 'retriable'. Nothing is on
+    # disk, and 'retriable' answers whether this DESTINATION can be used again, which the
+    # deterministic directory decides and a record claim does not. Answering either of those
+    # with this would be a cell carrying a reading its own question did not produce, which is
+    # the shape the rest of this change exists to remove.
+    unsettled = (pointer_restored or {}).get("residualOwnership")
+    settle = None if not unsettled else (
+        "settle the host record's pointer ownership for " + str(unsettled) + ": the link this"
+        " run placed was taken away and the record still says this command placed one there,"
+        " so the next update would read a link that appears at that path as its own")
     emit({
         "command": "install", "applied": False, "steps": performed,
         "environment": str(environment),
@@ -3486,12 +3502,19 @@ def _install_failed(record_path, definition_version, performed, environment, own
         "residualPaths": ([str(owned)] if (owned is not None and not removed) else [])
                          + ([(pointer_restored or {}).get("residualPointer")]
                             if (pointer_restored or {}).get("residualPointer") else []),
-        "recoveryRequires": None if retriable else (
-            ("this environment is selected, so it was kept deliberately and the destination"
-             " cannot be retried until the selection moves") if keeping
-            else ("remove " + str(owned) + " by hand; this run created it and could not remove"
-                  " it, so the same destination will keep refusing until it is gone")
-        ),
+        # What this run left behind that is not a path. Reported beside residualPaths rather
+        # than inside it, because a reader looking for a directory to delete and a reader
+        # looking for a record claim to settle are answering different questions.
+        "residualOwnership": unsettled,
+        "recoveryRequires": "; and ".join(part for part in (
+            None if retriable else (
+                ("this environment is selected, so it was kept deliberately and the destination"
+                 " cannot be retried until the selection moves") if keeping
+                else ("remove " + str(owned) + " by hand; this run created it and could not"
+                      " remove it, so the same destination will keep refusing until it is"
+                      " gone")),
+            settle,
+        ) if part) or None,
         "refused": (
             failed_reading.detail if failed_reading is not None else
             ("this command failed in a way it does not model: " + type(failed_error).__name__

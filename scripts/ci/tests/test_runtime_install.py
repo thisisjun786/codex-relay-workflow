@@ -8250,6 +8250,16 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
                          "half a rollback is not a completed one")
         self.assertEqual(restored["residualOwnership"], str(host.pointer_path),
                          "and the path whose claim somebody has to settle is named")
+        # And the result a reader actually sees says so. A cell nothing consumes is the same
+        # silence as no cell at all, which is the shape the rest of this change removes.
+        self.assertEqual(payload["residualOwnership"], str(host.pointer_path))
+        self.assertIn("settle the host record's pointer ownership",
+                      payload["recoveryRequires"] or "",
+                      "an outstanding claim has to reach recoveryRequires, or the run reports"
+                      " a clean retry over an unsettled one")
+        self.assertEqual(payload["residualPaths"], [],
+                         "and it is not a residual PATH: nothing is on disk, so the list a"
+                         " reader deletes from stays about directories")
 
     def test_the_resume_path_refuses_a_stranger_link_after_a_withdrawal_too(self):
         """The withdrawal has to mean the same thing to both readers of the record.
