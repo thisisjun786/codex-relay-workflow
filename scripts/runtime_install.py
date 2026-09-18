@@ -2299,6 +2299,24 @@ def cmd_hook_status(args):
 
 def cmd_install(args):
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    # The issue is EVIDENCE here, not a label. It is written to the ownership entry's recordedBy,
+    # and the predicate that decides whether a link may be replaced requires a value the record
+    # actually states -- so a blank one records ownership this command reads back as somebody
+    # else's, and the very next update refuses the pointer it placed itself. What a writer emits
+    # and what the reader accepts have to be one question, so it is asked of the same helper,
+    # here, before anything is read or written.
+    # Only for a run that will WRITE. A plan reports what an install would do and records
+    # nothing, so it has no evidence to get wrong, and refusing it would be answering a
+    # question this invocation never asks.
+    if args.apply and not hostrecord.stated(args.issue):
+        emit({"command": "install", "applied": False,
+              "refused": "--issue is written into the host record as the evidence that this"
+                         " command placed the owned pointer, so it has to say something. A"
+                         " blank one records an ownership entry this command would read back"
+                         " as somebody else's, and the next update would refuse the pointer"
+                         " this one placed.",
+              "note": "nothing was read, nothing was built and nothing was written."})
+        return EXIT_REFUSED
     try:
         with reading.region(definition.DEFINITION_PATH, "the component definition"):
             data = definition.load()
@@ -3345,18 +3363,27 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
             # could name only one, and telling an operator the link was taken away when it is
             # back sends them looking for something that did not happen.
             residual_claim = str(pointer_path)
-            if restored_to == "absent":
-                settle_claim = (
-                    "settle the host record's pointer ownership for " + str(pointer_path)
-                    + ": the link this run placed was taken away and the record still says this"
-                      " command placed one there, so the next update would read a link that"
-                      " appears at that path as its own")
-            else:
-                settle_claim = (
-                    "settle the host record's pointer ownership for " + str(pointer_path)
-                    + ": the link there was put back to " + str(restored_to or "what was found")
-                    + " and the record still carries this run's stamp on an entry it did not"
-                      " introduce, so the record and the link disagree about who placed it")
+            # Composed from the two readings rather than from one of them. What happened to the
+            # LINK and where the ENTRY came from are separate facts, and a sentence that assumes
+            # either -- that the link went back when the restoration failed, or that the entry
+            # was inherited when this run introduced it over a legacy install -- tells an
+            # operator something that did not happen.
+            link_says = (
+                "the link this run placed was taken away" if restored_to == "absent"
+                else "the link there was put back to " + str(restored_to) if restored_to
+                else "the link could not be put back either, so what is at that path is this"
+                     " run's")
+            record_says = (
+                "the record holds an entry this run introduced" if not ownership
+                else "the record still carries this run's stamp on an entry it did not"
+                     " introduce")
+            reaches = (
+                "so the next update would read a link that appears at that path as its own"
+                if restored_to == "absent"
+                else "so the record and the link disagree about who placed it")
+            settle_claim = ("settle the host record's pointer ownership for "
+                            + str(pointer_path) + ": " + link_says + " and " + record_says
+                            + ", " + reaches)
         elif owned == OWNERSHIP_MOVED_ON:
             # NOT a residual of this run's. Another writer owns the entry now, and the reading
             # that established that also established there is nothing here for this run to put

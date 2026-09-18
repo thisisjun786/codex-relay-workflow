@@ -5760,7 +5760,7 @@ class UpdateRecoveryTests(unittest.TestCase):
     }
 
     def _run(self, host, *, breaking=None, gate=None, interpose=None, probes=None,
-             clean_store=False, dest=None, observe=None):
+             clean_store=False, dest=None, observe=None, issue="CRW-49"):
         import runtime_install
 
         # A retry can be invoked against a DIFFERENT destination, which is the whole of what
@@ -5771,7 +5771,7 @@ class UpdateRecoveryTests(unittest.TestCase):
         emitted = []
         args = argparse.Namespace(
             dest=str(destination), apply=True, record=str(host.record_path),
-            python=sys.executable, socket=None, state=str(host.state), issue="CRW-49",
+            python=sys.executable, socket=None, state=str(host.state), issue=issue,
             codex_home=str(host.codex_home))
 
         # Only the two build steps are simulated. Everything else -- git above all, which
@@ -8318,6 +8318,57 @@ class PointerOwnershipLifetimeTests(unittest.TestCase):
         self.assertNotIn("taken away", link_back["settleOwnership"],
                          "the link is there; saying it was taken away would send an operator"
                          " looking for something that did not happen")
+        self.assertIn("did not introduce", link_back["settleOwnership"],
+                      "and the entry was inherited, which is a different thing to say than"
+                      " one this run introduced")
+
+    def test_the_recovery_text_does_not_claim_a_restoration_that_did_not_happen(self):
+        """SUPPORT. The fallback sentence used to cover two states it was not true of: a link
+        restoration that itself failed, and an entry this run INTRODUCED over a legacy install
+        that had none. Both are composed from their own readings now."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            record_path = root / "record.json"
+            environment = root / "env-new"
+            environment.mkdir()
+            here = root / "current"
+            hostrecord.save(record_path, hostrecord.empty(1))
+
+            # A legacy adoption: no entry existed, so this run introduced one. The link
+            # restoration also fails, so neither half went back.
+            pointer.place(here, environment)
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=OSError("the record could not be written")):
+                with mock.patch.object(runtime_install.pointer, "place",
+                                       side_effect=OSError("read-only filesystem")):
+                    introduced = runtime_install._restore_pointer(
+                        here, {"state": pointer.LINK, "target": str(root / "env-old")},
+                        environment, record_path, 1, None)
+
+        self.assertEqual(introduced["ownership"], runtime_install_module.OWNERSHIP_UNREADABLE)
+        self.assertIsNone(introduced["restoredTo"])
+        self.assertIn("could not be put back either", introduced["settleOwnership"],
+                      "a restoration that failed is not reported as one that happened")
+        self.assertIn("an entry this run introduced", introduced["settleOwnership"],
+                      "and an entry this run created is not reported as one it inherited")
+
+    def test_a_blank_issue_is_refused_before_anything_is_written(self):
+        """SUPPORT. --issue is written into the ownership entry as the evidence that this
+        command placed the pointer, and the predicate that reads it back requires a value the
+        record states. A blank one records ownership this command reads as somebody else's, and
+        the next update refuses the pointer it placed itself."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            before = host.snapshot()
+            code, payload = UpdateRecoveryTests()._run(host, issue="   ")
+            after = host.snapshot()
+
+        self.assertEqual(code, runtime_install_module.EXIT_REFUSED, json.dumps(payload)[:600])
+        self.assertIn("--issue", payload["refused"])
+        self.assertEqual(after["selected"], before["selected"], "and nothing was written")
+        self.assertEqual(after["pointerTarget"], before["pointerTarget"])
 
     def test_the_resume_path_refuses_a_stranger_link_after_a_withdrawal_too(self):
         """The withdrawal has to mean the same thing to both readers of the record.

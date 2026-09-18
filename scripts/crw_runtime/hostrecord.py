@@ -410,13 +410,18 @@ def placement_recorded(entry):
     placed. A guard that reads malformed evidence as evidence fails open, which is the one
     direction this question may not fail in.
     """
-    if not isinstance(entry, dict) or not _stated(entry.get("path")):
+    if not isinstance(entry, dict) or not stated(entry.get("path")):
         return False
-    return all(_stated(entry.get(key)) for key in POINTER_PLACEMENT)
+    return all(stated(entry.get(key)) for key in POINTER_PLACEMENT)
 
 
-def _stated(value):
-    """A value a record actually states: a string with something in it."""
+def stated(value):
+    """A value a record actually STATES: a string with something in it.
+
+    Public because a writer has to be able to ask it. What this module will read back as
+    evidence and what a caller is about to write have to be one question, or a run records
+    ownership its own next run refuses.
+    """
     return isinstance(value, str) and bool(value.strip())
 
 

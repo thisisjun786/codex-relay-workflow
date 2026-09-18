@@ -2178,6 +2178,10 @@ INJECTIONS = {
     "observe": "a list the stubbed classification appends what it was HANDED to: the"
                " registration and pointer readings it would have judged on. It records and"
                " changes nothing.",
+    "issue": "the issue the run records as the evidence that it placed the owned pointer,"
+             " which is an argument the command really accepts. It stands in for nothing: a"
+             " blank one is a real invocation the command has to refuse rather than a state"
+             " the fixture invents.",
     "clean_store": "REFUSED: it reports the store absent and empty to the run while the fixture"
                    " has built a populated one at that path, so what the run is told and what"
                    " the scenario built disagree.",
