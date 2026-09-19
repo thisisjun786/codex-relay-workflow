@@ -1211,7 +1211,11 @@ class Linkage:
         import sqlite3
 
         try:
-            if task_id is not None and scope_key is None:
+            # Only when the task is the ONLY selector. A caller that also named an issue or a
+            # relationship has already said which hierarchy it means, and answering it with an
+            # ambiguity it did not have would ignore the selector it supplied.
+            if (task_id is not None and scope_key is None
+                    and issue_key is None and relationship_id is None):
                 held = [b for b in self._bindings_for(task_id) if b["status"] in LIVE]
                 if len({b["scopeKey"] for b in held}) > 1:
                     # The role contract lets one task own several scopes of one role, so

@@ -863,6 +863,19 @@ class TheObservationsFromTheSameRound(LinkageTestCase):
         self.assertEqual(named["state"], "resolved")
         self.assertEqual(named["levels"][0]["scopeKey"], OTHER_PROJECT)
 
+    def test_an_explicit_selector_is_not_overridden_by_the_ambiguity(self):
+        """The ambiguity fired whenever a task was named, even alongside an issue or a
+        relationship, so a caller that had already said which hierarchy it meant was answered
+        with a question instead."""
+        self.supervise()
+        self.supervise(initiative="INIT-2", project=OTHER_PROJECT, parent=self.parent(),
+                       supervisor=self.supervisor(OTHER_SUPERVISOR), kind=linkage.REFERENCE)
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        answer = self.linkage.up(task_id=PARENT, issue_key=ISSUE)
+        self.assertEqual(answer["state"], "resolved")
+        self.assertEqual(answer["levels"][0]["scopeKey"], ISSUE)
+
     def test_an_unreadable_answer_keeps_the_fault_that_caused_it(self):
         """Every sqlite3.Error collapsed into one word, so corruption, schema drift and a
         query fault were indistinguishable to whoever had to act on them."""
