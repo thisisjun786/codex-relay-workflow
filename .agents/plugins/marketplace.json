@@ -1,0 +1,20 @@
+{
+  "name": "crw",
+  "interface": {
+    "displayName": "CRW"
+  },
+  "plugins": [
+    {
+      "name": "crw",
+      "source": {
+        "source": "local",
+        "path": "./plugins/crw"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
