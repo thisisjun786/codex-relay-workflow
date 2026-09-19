@@ -1054,6 +1054,82 @@ RESOLVES_LIKE_PYTHON = {
          "outer.nested", False,
          "global self makes the name the module's, so the search for a receiver stops there"
          " rather than reaching the method around it."),
+    "a diamond where a class beside another binds the name":
+        (REFUSAL,
+         ("class A:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class B(A):",
+          "    pass",
+          "",
+          "class C(A):",
+          "    carrier = str",
+          "",
+          "class D(B, C):",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", False,
+         "the order is D, B, C, A, so C settles the name before A is reached. Walking B's"
+         " ancestors first reads A, which is a definition the instance never sees."),
+    "a diamond where the class beside another binds nothing":
+        (REFUSAL,
+         ("class Root:",
+          "    carrier = str",
+          "",
+          "class Left(Root):",
+          "    pass",
+          "",
+          "class Right(Root):",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class Child(Left, Right):",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "its pair, and the reason the order has to be computed rather than approximated:"
+         " Root sits behind Right in the line, so stopping at Left's ancestor would lose the"
+         " carrier the instance really reaches."),
+    "a decorator name rebound above a later definition":
+        (REFUSAL,
+         ("prop = property",
+          "",
+          "class First:",
+          "    @prop",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "prop = staticmethod",
+          "",
+          "class Second:",
+          "    @prop",
+          "    def reader():",
+          "        return reading.UNREADABLE",
+          "    def consumer(self):",
+          "        return self.reader"),
+         "consumer", False,
+         "below the rebinding @prop is staticmethod, so reading self.reader hands back the"
+         " function rather than running it. Indexing it as a getter turns an ordinary attribute"
+         " read into a call nobody performs."),
+    "an attribute of a class here spelled like an answer":
+        (REFUSAL,
+         ("class Innocent:",
+          "    UNREADABLE = \"fine\"",
+          "",
+          "def consumer():",
+          "    return Innocent.UNREADABLE"),
+         "consumer", False,
+         "what a class written here binds is known, so the answer comes from that rather than"
+         " from the spelling of the name. Otherwise every class with an attribute named like an"
+         " answer owes a declaration for a value that is not one."),
+    "the module attribute the answers really come from":
+        (REFUSAL,
+         ("def consumer():",
+          "    return reading.UNREADABLE"),
+         "consumer", True,
+         "its pair: the ordinary spelling has to keep being read, so narrowing the qualifier"
+         " must not have narrowed it to nothing."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -1908,6 +1984,43 @@ def _reachable(expression, spelled, klass, bound):
     return False
 
 
+def _linearised(parents):
+    """Each class paired with the classes it searches, in the order Python searches them.
+
+    C3, the order type(...).__mro__ reports. Walking each base's ancestors in turn instead
+    reaches a grandparent before a base written beside it, and answers with a definition the
+    instance never sees: with D(B, C) where B(A) overrides nothing and C binds the name, Python
+    reads C and a depth-first walk reads A.
+
+    A hierarchy C3 cannot linearise is one Python refuses to create, so the declaration order is
+    taken there rather than calling the file unreadable. Bases this file does not define end the
+    line, because what they hold is not a fact about this text.
+    """
+    def of(klass, seen=frozenset()):
+        if klass is None:
+            return []
+        if klass in seen or klass not in parents:
+            return [klass]
+        bases = [base for base in parents.get(klass, ()) if base]
+        chains = [chain for chain in
+                  [list(of(base, seen | {klass})) for base in bases] + [list(bases)] if chain]
+        line = [klass]
+        while chains:
+            head = None
+            for chain in chains:
+                if not any(chain[0] in rest[1:] for rest in chains):
+                    head = chain[0]
+                    break
+            if head is None:
+                head = chains[0][0]
+            line.append(head)
+            chains = [[item for item in chain if item != head] for chain in chains]
+            chains = [chain for chain in chains if chain]
+        return line
+
+    return {klass: of(klass) for klass in parents}
+
+
 def _held_by_class(tree, spelled, over=None):
     """Attribute names a class binds the thing to, so the rest of that class can read one.
 
@@ -1977,15 +2090,16 @@ def _held_by_class(tree, spelled, over=None):
     # An attribute declared on a base is held by everything under it, the way a method is.
     parents = {node.name: [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+    mro = _linearised(parents)
     growing = True
     while growing:
         growing = False
-        for klass, bases in parents.items():
+        for klass in parents:
             # Lookup stops at the first class that binds the name, so a base written to the
             # left settles it for the ones to its right whether or not what it binds is a
             # refusal. Taking each base independently reads past the class Python stops at.
             settled = set(held.get(klass, ())) | set(rebound.get(klass, ()))
-            for base in bases:
+            for base in mro.get(klass, (klass,))[1:]:
                 gained = held.get(base, set()) - settled
                 if gained:
                     held.setdefault(klass, set()).update(gained)
@@ -2012,6 +2126,7 @@ def _hands_on(tree, spelled):
     parents = {node.name: [(_dotted(base) or "").rpartition(".")[2]
                            for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+    mro = _linearised(parents)
     # A class body is a scope of its own, and it is not the module: a class written inside a
     # function has one too, and two class bodies do not share their names.
     class_scope = {}
@@ -2038,39 +2153,50 @@ def _hands_on(tree, spelled):
 
     is_method = {id(inner) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
                  for inner in in_body(node.body)}
-    def decorator_names(seed):
-        """Every name that reaches one of these decorators here, aliases included.
+    # Module-level bindings in the order the module makes them. A decorator name means what the
+    # last binding ABOVE it gave, so prop = property followed later by prop = staticmethod
+    # leaves the getters above the rebinding getters and the definitions below it static
+    # methods. One module-wide set cannot say that, and reading a static method as a getter
+    # makes an ordinary attribute read look like a call nobody performs.
+    #
+    # Module level only. A name bound inside a function is that function's, and treating one as
+    # the decorator everywhere would suppress a receiver a method really has.
+    module_bindings = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if places.get(id(node), (MODULE_LEVEL, None))[0] != MODULE_LEVEL:
+            continue
+        spelling = (_dotted(node.value) or "").rpartition(".")[2]
+        for target in node.targets:
+            module_bindings += [(node.lineno, inner.id, spelling)
+                                for inner in ast.walk(target)
+                                if isinstance(inner, ast.Name)
+                                and isinstance(inner.ctx, ast.Store)]
 
-        Spelled out, a decorator is recognised by its name; bound to another name first --
-        sm = staticmethod, prop = property -- it is the same decorator applied the same way, and
-        an alias is a name like any other rather than something out of reach. To a fixpoint,
-        because an alias of an alias is still the decorator.
+    def means(name, seed, at, followed=0):
+        """Whether this decorator name reaches one of these builtins at that line.
+
+        A static method has no receiver, so reading its first parameter as the instance credits
+        it with every carrier the class holds. A property is called by being read, so missing
+        one loses the reader entirely. An alias of an alias is followed, to a bounded depth,
+        because a cycle written at module level would not have run either.
         """
-        names, widening = set(seed), True
-        while widening:
-            widening = False
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Assign):
-                    continue
-                # Module level only. A name bound inside a function is that function's, and
-                # treating one as the decorator everywhere would suppress a receiver a method
-                # really has and lose the consumer entirely.
-                if places.get(id(node), (MODULE_LEVEL, None))[0] != MODULE_LEVEL:
-                    continue
-                if (_dotted(node.value) or "").rpartition(".")[2] not in names:
-                    continue
-                bound_to = {inner.id for target in node.targets for inner in ast.walk(target)
-                            if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store)}
-                if not bound_to <= names:
-                    names |= bound_to
-                    widening = True
-        return names
+        if name in seed:
+            return True
+        if followed > len(module_bindings):
+            return False
+        above = sorted((line, value) for line, bound, value in module_bindings
+                       if bound == name and line < at)
+        if not above:
+            return False
+        line, value = above[-1]
+        return means(value, seed, line, followed + 1)
 
-    # A static method has no receiver, so reading its first parameter as the instance credits it
-    # with every carrier the class holds. A property is called by being read, so missing one
-    # loses the reader entirely.
-    means_standalone = decorator_names(("staticmethod",))
-    means_property = decorator_names(("property", "cached_property"))
+    def decorated_by(node, seed):
+        """Whether any decorator on this definition reaches one of these builtins."""
+        return any(means((_dotted(mark) or "").rpartition(".")[2], seed, mark.lineno)
+                   for mark in getattr(node, "decorator_list", []))
     defined, methods, plain, receivers, properties = set(), {}, set(), {}, {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -2084,8 +2210,7 @@ def _hands_on(tree, spelled):
         # And the instance is whatever the first parameter is called: self is a convention.
         args = node.args
         first = (args.posonlyargs + args.args)[:1]
-        standalone = any((_dotted(mark) or "").rpartition(".")[2] in means_standalone
-                         for mark in getattr(node, "decorator_list", []))
+        standalone = decorated_by(node, ("staticmethod",))
         if id(node) in is_method and first and not standalone:
             receivers[where] = first[0].arg
         # Which class a method belongs to, because self.name reaches a method of THIS class and
@@ -2093,8 +2218,7 @@ def _hands_on(tree, spelled):
         if id(node) in is_method:
             methods.setdefault((klass, where.rpartition(".")[2]), where)
             # A property is called by being read, so an attribute access naming one is a call.
-            if any((_dotted(mark) or "").rpartition(".")[2] in means_property
-                   for mark in getattr(node, "decorator_list", [])):
+            if decorated_by(node, ("property", "cached_property")):
                 properties.setdefault((klass, where.rpartition(".")[2]), where)
     # The places that ARE getters, so a class alias naming one can be recognised as naming a
     # property rather than an ordinary method.
@@ -2194,51 +2318,30 @@ def _hands_on(tree, spelled):
             chain.pop()
         return set()
 
-    def stops_at(klass, named, seen=()):
-        """Whether attribute lookup for this name ends inside this class or its own bases.
-
-        Told apart from finding nothing, because with class Child(Left, Right) a name Left binds
-        to something this reader cannot follow is what the instance reaches, and searching Right
-        after it would attribute a carrier nobody touches.
-        """
-        if klass is None or klass in seen:
-            return False
-        if (klass, named) in methods or named in class_bound.get(klass, {}):
-            return True
-        return any(stops_at(base, named, tuple(seen) + (klass,))
-                   for base in parents.get(klass, ()))
-
     def inherited(klass, named, seen=(), aliases=None):
         """The method this class reaches by that name, its own or one it inherits.
 
-        An alias made in the class body binds the same method object, so self.alias() reaches
-        what self.carrier() does.
+        Walked in the order Python searches, so a class settles the name for everything after it
+        in the line and finding nothing in one is not the same answer as finding a binding this
+        reader cannot follow. An alias made in a class body binds the same method object, so
+        self.alias() reaches what self.carrier() does.
         """
-        if klass is None or klass in seen:
+        if klass is None:
             return set()
-        if (klass, named) in methods:
-            return {methods[(klass, named)]}
-        for scope, _around in class_scope.get(klass, ()):
-            held_alias = (aliases or {}).get(scope, {}).get(named)
-            if held_alias:
-                # Every method the alias may name: a conditional one names both arms, and
-                # answering with the first would lose whichever of them is the carrier.
-                return set(held_alias)
-        if named in class_bound.get(klass, {}):
-            # This class binds the name to something this reader cannot follow -- carrier = str.
-            # Attribute lookup stops at the first class that binds the name, so the bases are
-            # never consulted and crediting the inherited carrier here would invent a call
-            # nobody makes. What the binding holds instead is a question for whatever follows
-            # names, and where that ends is already written down as out of reach.
-            return set()
-        for base in parents.get(klass, ()):
-            reached = inherited(base, named, tuple(seen) + (klass,), aliases)
-            if reached:
-                return reached
-            if stops_at(base, named, tuple(seen) + (klass,)):
-                # A base that binds the name ends the lookup there, and the bases written to
-                # its right are never consulted. Finding nothing in a base and finding a
-                # binding this reader cannot follow are different answers.
+        for reached_in in mro.get(klass, (klass,)):
+            if (reached_in, named) in methods:
+                return {methods[(reached_in, named)]}
+            for scope, _around in class_scope.get(reached_in, ()):
+                held_alias = (aliases or {}).get(scope, {}).get(named)
+                if held_alias:
+                    # Every method the alias may name: a conditional one names both arms, and
+                    # answering with the first would lose whichever of them is the carrier.
+                    return set(held_alias)
+            if named in class_bound.get(reached_in, {}):
+                # Bound to something this reader cannot follow -- carrier = str. Lookup ends
+                # here, and the classes after it in the line are never reached. What the
+                # binding holds instead is a question for whatever follows names, and where
+                # that ends is already written down as out of reach.
                 return set()
         return set()
 
@@ -2429,25 +2532,20 @@ def _hands_on(tree, spelled):
 
     def a_property(klass, named, seen=()):
         """The property this class reaches by that name, its own or one it inherits."""
-        if klass is None or klass in seen:
+        if klass is None:
             return None
-        if (klass, named) in properties:
-            return properties[(klass, named)]
-        for scope, _around in class_scope.get(klass, ()):
-            # alias = carrier in the class body is a second name for the same getter, and
-            # reading self.alias runs it exactly as reading self.carrier does.
-            for reached in sorted((aliases or {}).get(scope, {}).get(named) or ()):
-                if reached in property_places:
-                    return reached
-        if named in class_bound.get(klass, {}):
-            # A subclass method or binding of the same name stands in front of the inherited
-            # descriptor, so the base getter never runs and the bases are not searched.
-            return None
-        for base in parents.get(klass, ()):
-            reached = a_property(base, named, tuple(seen) + (klass,))
-            if reached:
-                return reached
-            if stops_at(base, named, tuple(seen) + (klass,)):
+        for reached_in in mro.get(klass, (klass,)):
+            if (reached_in, named) in properties:
+                return properties[(reached_in, named)]
+            for scope, _around in class_scope.get(reached_in, ()):
+                # alias = carrier in the class body is a second name for the same getter, and
+                # reading self.alias runs it exactly as reading self.carrier does.
+                for reached in sorted((aliases or {}).get(scope, {}).get(named) or ()):
+                    if reached in property_places:
+                        return reached
+            if named in class_bound.get(reached_in, {}):
+                # A method or a binding of the same name stands in front of the descriptor, so
+                # the getter never runs and the classes after it are not reached.
                 return None
         return None
 
@@ -2807,7 +2905,7 @@ def source_spellings(tree):
     return frozenset(handles), hands_source, undecided, frozenset(called)
 
 
-def _refusal_spelled(spellings, held):
+def _refusal_spelled(spellings, held, classes=()):
     """The matcher: which node is a refusal, spelled any of the derived ways."""
     answers = spellings["answer"]
     attributes = spellings["module attribute"] | spellings["collection"]
@@ -2822,6 +2920,12 @@ def _refusal_spelled(spellings, held):
                       else (through or "").rpartition(".")[2] or None)
             if reader is not None and node.attr in held.get(reader, ()):
                 return (through or "") + "." + node.attr
+            if reader in classes:
+                # A class written here is asked through the table above, which knows what it
+                # binds. Falling through would match on the attribute name alone, and then any
+                # class with an attribute spelled like an answer would hold one -- a spurious
+                # declaration owed for a value that is not a refusal.
+                return None
             return "." + node.attr if node.attr in attributes else None
         if isinstance(node, ast.Name) and node.id in names:
             return node.id
@@ -2968,14 +3072,18 @@ def refusals_reached(source):
     """Every occurrence of a refusal in this source, and the spellings the derivation used."""
     tree = ast.parse(source)
     spellings = refusal_spellings()
+    # Which names in this source are classes written here, so an attribute read off one is
+    # answered by what the class binds rather than by the spelling of its name.
+    classes = frozenset(node.name for node in ast.walk(tree)
+                        if isinstance(node, ast.ClassDef))
     # To a fixpoint, because self.second = self.first holds the refusal only once the pass
     # knows that self.first does.
     held, growing = {}, True
     while growing:
-        wider = _held_by_class(tree, _refusal_spelled(spellings, held), held)
+        wider = _held_by_class(tree, _refusal_spelled(spellings, held, classes), held)
         growing = wider != held
         held = wider
-    return _occurrences(tree, _refusal_spelled(spellings, held)), spellings
+    return _occurrences(tree, _refusal_spelled(spellings, held, classes)), spellings
 
 
 def source_text_reached(source):
@@ -4295,6 +4403,7 @@ HANDED = {
     "_reachable": NOTHING,
     "_bindings": NOTHING,
     "_binds_locally": NOTHING,
+    "_linearised": NOTHING,
     "places_reached": NOTHING,
     "_owned_by_a_class": NOTHING,
     "_held_by_class": NOTHING,
