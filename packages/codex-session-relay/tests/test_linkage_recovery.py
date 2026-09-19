@@ -89,6 +89,7 @@ class AnExistingStoreKeepsWhatItHad(LinkageTestCase):
 
     def test_an_in_flight_delivery_and_attempt_survive_the_new_schema(self):
         from codex_session_relay.delivery import DeliveryService
+        from codex_session_relay.fakehost import FakeHostAdapter
 
         relationship = self.register()
         path = self.artifact("out.txt", "the deliverable")
@@ -96,11 +97,20 @@ class AnExistingStoreKeepsWhatItHad(LinkageTestCase):
         self.accept(payload)
         delivery = DeliveryService(self.store, self.registry, self.intake, self.clock)
         delivery.enqueue(payload["eventId"])
+        # An attempt has to EXIST before it can be said to survive. Enqueuing alone leaves the
+        # attempts table empty, so this case asserted nothing about attempts until the delivery
+        # was actually attempted against a host.
+        adapter = FakeHostAdapter(self.clock)
+        adapter.add_thread(PARENT)
+        adapter.add_thread(CHILD)
+        delivery.attempt(payload["eventId"], adapter)
         before = self.snapshot(
             "deliveries", ("event_id", "relationship_id", "kind", "recipient_task_id",
                            "state", "attempt_count", "hold_reason"))
-        self.assertEqual([row[4] for row in before], ["queued"],
-                         "the fixture did not leave a delivery in flight")
+        attempts_before = self.snapshot(
+            "attempts", ("request_id", "event_id", "attempt_no", "kind", "internal_state",
+                         "state", "sealed"))
+        self.assertTrue(attempts_before, "the fixture produced no attempt to preserve")
         self.reopen_without_the_new_tables()
         self.assertEqual(
             self.snapshot("deliveries", ("event_id", "relationship_id", "kind",
@@ -108,6 +118,11 @@ class AnExistingStoreKeepsWhatItHad(LinkageTestCase):
                                          "hold_reason")),
             before,
             "an in-flight delivery changed across the schema upgrade")
+        self.assertEqual(
+            self.snapshot("attempts", ("request_id", "event_id", "attempt_no", "kind",
+                                       "internal_state", "state", "sealed")),
+            attempts_before,
+            "an unfinished attempt changed across the schema upgrade")
 
     def test_an_assignment_registered_before_scoping_can_be_attached_afterwards(self):
         relationship = self.register()
@@ -273,6 +288,45 @@ class NothingPartialSurvivesARefusal(LinkageTestCase):
         self.assertEqual(answer["state"], "resolved")
         self.assertIn("issue_without_child", [gap["gap"] for gap in answer["gaps"]])
 
+    def test_a_failure_partway_through_the_transition_leaves_nothing_behind(self):
+        """A write failure AFTER the first table is written, at a named point.
+
+        attach_in writes three tables in the caller's transaction: the child binding, the
+        scope row, and the project to issue edge. This lets it complete all three and then
+        fails the transaction, which is the shape a crash between two of those writes has. No
+        fault hook is armed - the exception is raised by this test inside the transaction, and
+        Store.transaction rolls back on any exception including this one.
+        """
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+
+        class TransitionInterrupted(Exception):
+            pass
+
+        with self.assertRaises(TransitionInterrupted):
+            with self.store.transaction() as db:
+                row = db.execute(
+                    "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
+                ).fetchone()
+                self.assertIsNone(self.linkage.attach_in(db, row, PROJECT))
+                # Everything the transition writes is now in this transaction and none of it
+                # is committed.
+                self.assertIsNotNone(db.execute(
+                    "SELECT 1 FROM relationship_scope WHERE relationship_id = ?", (rid,)
+                ).fetchone())
+                raise TransitionInterrupted("the writer stopped partway through")
+
+        self.assertEqual(
+            len(self.store.all("SELECT 1 FROM relationship_scope WHERE relationship_id = ?",
+                               (rid,))), 0)
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+        self.assertIsNone(self.linkage.link(
+            link_id(linkage.EXECUTION, linkage.PROJECT, PROJECT, linkage.ISSUE, ISSUE)))
+        # And the transition is still available afterwards rather than half-applied.
+        self.linkage.attach_issue(rid, PROJECT)
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
+
 
 class ConcurrentAttachment(LinkageTestCase):
     def test_concurrent_attachment_of_one_issue_settles_as_one_project(self):
@@ -312,4 +366,3 @@ class ConcurrentAttachment(LinkageTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -55,6 +55,12 @@ OFFLINE_COMMANDS = (
     "criteria-show", "doctor", "emit", "generation-bind", "generation-open", "register",
     "relationship-resume", "relationship-status", "revision-head", "settings-record",
     "settings-show", "show", "status", "store-challenge", "store-identity", "verdict",
+    # The linkage surface reads and writes the store and never calls the host, so every one of
+    # these works without an App Server. Leaving them out made doctor under-report what an
+    # operator can actually run offline.
+    "linkage-attach", "linkage-bind", "linkage-counterpart", "linkage-directive",
+    "linkage-down", "linkage-handover", "linkage-outstanding", "linkage-peer",
+    "linkage-settle", "linkage-supervise", "linkage-up",
     "service status", "service enable", "service disable", "service stop",
 ) + MARKER_COMMANDS_BY_NAME
 

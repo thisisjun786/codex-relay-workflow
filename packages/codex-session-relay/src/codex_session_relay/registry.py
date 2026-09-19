@@ -160,11 +160,51 @@ class Registry:
                 )
             refusal = None
             with self.store.transaction() as db:
-                refusal = self.linkage.attach_in(db, existing, project_key)
+                # Re-read inside the transaction. The row above was read before BEGIN
+                # IMMEDIATE, so another writer could have archived or superseded it in
+                # between, and attaching from a stale row would bind a child to an
+                # assignment that no longer owns its issue.
+                fresh = db.execute(
+                    "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
+                ).fetchone()
+                if fresh is None:
+                    raise RegistrationError(
+                        RefusalReason.UNREGISTERED_RELATIONSHIP, f"no relationship {rid!r}")
+                refusal = self.linkage.attach_in(db, fresh, project_key)
+                if refusal is not None:
+                    self.linkage.record_conflict_in(db, refusal, at=self.clock.iso())
             if refusal is not None:
                 raise refusal.error()
             return self.get(rid)
         now = self.clock.iso()
+        if project_key is not None:
+            # Decide the lower level BEFORE anything is inserted, in a transaction that writes
+            # only the contest if there is one. Inserting the relationship first and then
+            # discovering its project is foreign would roll the relationship back AND lose the
+            # conflict row with it, which is the one thing a refusal must not do.
+            # A replacement takes over the issue scope from the assignment it supersedes, so
+            # that outgoing child is not a rival. Named explicitly rather than inferred, so
+            # anyone ELSE holding the scope is still a refusal.
+            outgoing = None
+            if supersedes:
+                previous = self.store.one(
+                    "SELECT child_task_id FROM relationships WHERE relationship_id = ?",
+                    (supersedes,))
+                outgoing = previous["child_task_id"] if previous else None
+            pending = None
+            with self.store.transaction() as db:
+                candidate = {
+                    "relationship_id": rid, "issue_key": issue_key, "status": ACTIVE,
+                    "superseded_by": None, "parent_task_id": parent.task_id,
+                    "child_task_id": child.task_id, "child_host_id": child.host_id,
+                    "child_cwd": child.cwd, "child_cxc_session": child.cxc_session,
+                }
+                _plan, pending = self.linkage.attach_refusal(
+                    db, candidate, project_key, replacing=outgoing)
+                if pending is not None:
+                    self.linkage.record_conflict_in(db, pending, at=now)
+            if pending is not None:
+                raise pending.error()
         with self.store.transaction() as db:
             # One issue, one responsible child, decided in the SAME transaction as the insert.
             # Checked beforehand, two connections could both see no rival and then insert
@@ -228,7 +268,12 @@ class Registry:
                 fresh = db.execute(
                     "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
                 ).fetchone()
-                refusal = self.linkage.attach_in(db, fresh, project_key, at=now)
+                # Re-decided inside the transaction that did the inserts, so a racing writer
+                # cannot slip between the pre-check and the write. A refusal here raises and
+                # rolls the whole registration back, which is correct: the contest was already
+                # recorded by the pre-check below, in a transaction that wrote nothing else.
+                refusal = self.linkage.attach_in(db, fresh, project_key, at=now,
+                                                 replacing=outgoing if supersedes else None)
                 if refusal is not None:
                     raise refusal.error()
         return self.get(rid)

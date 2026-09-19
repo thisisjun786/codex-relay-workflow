@@ -495,5 +495,120 @@ class Contention(LinkageTestCase):
         self.assertEqual(errors[0].reason, RefusalReason.DUPLICATE_SCOPE_OWNER)
 
 
+class ReviewFoundTheseByReproducingThem(LinkageTestCase):
+    """Each case pins a defect an independent review reproduced in the delivered code.
+
+    They are grouped rather than scattered so the next reader can see what was actually wrong
+    and what now stops it, instead of inferring it from a diff.
+    """
+
+    def test_a_handover_decides_inside_the_transaction_it_writes_in(self):
+        """The owner and the outstanding work were read before BEGIN IMMEDIATE.
+
+        Two callers could each see the same outgoing owner, each find the outstanding set
+        unchanged, and both write - leaving one scope with two live owners. Reading inside the
+        transaction is what serialises them, and the second caller now sees the first one's
+        write and is refused for naming an owner that no longer holds the scope.
+        """
+        self.supervise()
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[],
+            evidence="the first handover", actor="test")
+        # A second caller still holding the pre-handover reading.
+        self.assertRefused(
+            RefusalReason.HANDOVER_UNCONFIRMED,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.parent("01parent-three"), acknowledged=[],
+            evidence="a stale second handover", actor="test")
+        live = self.store.all(
+            "SELECT task_id FROM scope_bindings WHERE scope_key = ? AND role = ?"
+            "  AND status IN ('active','paused')",
+            (PROJECT, linkage.PARENT))
+        self.assertEqual([row["task_id"] for row in live], [OTHER_PARENT])
+
+    def test_a_handover_is_not_a_way_to_hold_two_roles(self):
+        """It bypassed binding_plan, so the incoming owner skipped the role rule."""
+        self.supervise()
+        self.assertRefused(
+            RefusalReason.SCOPE_ROLE_MISMATCH,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.supervisor(SUPERVISOR_TASK),
+            acknowledged=[], evidence="the supervisor tried to take the project",
+            actor="test")
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], PARENT)
+
+    def test_a_replayed_supervision_must_agree_about_hosts(self):
+        """The replay compared task ids only, so a different host returned success."""
+        self.supervise()
+        self.assertRefused(
+            RefusalReason.LINK_CONFLICT, self.linkage.register_supervision,
+            initiative_key=INITIATIVE, project_key=PROJECT,
+            supervisor=self.supervisor(),
+            parent=Endpoint(PARENT, "some-other-host", cwd="/parent"),
+        )
+        self.assertEqual(
+            self.linkage.owner(linkage.PROJECT, PROJECT)["hostId"], HOST)
+
+    def test_a_replayed_directive_is_not_a_way_past_validation(self):
+        """The derived id returned an existing row BEFORE anything was checked.
+
+        Replaying the same digest with a task that owns nothing and a link that joins nothing
+        was accepted, because only the id had to match.
+        """
+        execution = self.supervise()
+        self.linkage.record_directive(
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-one")
+        self.assertRefused(
+            RefusalReason.SCOPE_ROLE_MISMATCH, self.linkage.record_directive,
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id="01nobody",
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-one")
+
+    def test_a_directive_must_come_from_the_links_own_upper_endpoint(self):
+        self.supervise()
+        self.supervise(initiative="INIT-2", project=OTHER_PROJECT,
+                       supervisor=self.supervisor(OTHER_SUPERVISOR),
+                       parent=self.parent(OTHER_PARENT))
+        other = link_id(linkage.EXECUTION, linkage.INITIATIVE, "INIT-2",
+                        linkage.PROJECT, OTHER_PROJECT)
+        self.assertRefused(
+            RefusalReason.UNREGISTERED_SCOPE, self.linkage.record_directive,
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=other, digest="d-two")
+
+    def test_a_scope_nobody_registered_reads_as_unregistered(self):
+        """down() always appended a level, so its unregistered branch was unreachable."""
+        answer = self.linkage.down(linkage.INITIATIVE, "INIT-NEVER-SEEN")
+        self.assertEqual(answer["state"], "unregistered")
+        self.assertIs(answer["readable"], True)
+        self.assertEqual(answer["levels"], [])
+        self.assertEqual([gap["gap"] for gap in answer["gaps"]],
+                         ["initiative_without_supervisor"])
+
+    def test_an_upward_walk_reports_the_same_contention_a_downward_one_does(self):
+        """Upward omitted instruction conflicts and drift, so the same store answered
+        differently depending on which way it was read."""
+        execution = self.supervise()
+        reference = self.supervise(
+            initiative="INIT-2", supervisor=self.supervisor(OTHER_SUPERVISOR),
+            kind=linkage.REFERENCE)
+        self.linkage.record_directive(
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-one")
+        self.linkage.record_directive(
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=OTHER_SUPERVISOR,
+            from_scope_key="INIT-2", link_id_value=reference["linkId"], digest="d-two")
+        downward = self.linkage.down(linkage.PROJECT, PROJECT)
+        upward = self.linkage.up(task_id=PARENT)
+        self.assertEqual(
+            len([row for row in downward["contention"]
+                 if row.get("contention") == "instruction_conflict"]),
+            len([row for row in upward["contention"]
+                 if row.get("contention") == "instruction_conflict"]),
+        )
+        self.assertTrue([row for row in upward["contention"]
+                         if row.get("contention") == "instruction_conflict"])
+
 if __name__ == "__main__":
     unittest.main()

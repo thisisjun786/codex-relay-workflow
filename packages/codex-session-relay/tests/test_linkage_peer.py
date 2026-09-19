@@ -77,9 +77,20 @@ class PeerLinks(LinkageTestCase):
             len(self.store.all("SELECT link_id FROM scope_links WHERE link_kind = 'peer'")), 1)
 
     def test_a_peer_link_adds_no_level_to_the_hierarchy(self):
-        before = self.execution_edges()
+        """The walk itself, not the rows it reads from.
+
+        Comparing execution rows would pass even if up() and down() traversed peer edges,
+        because adding a peer row does not change the execution rows. So this compares the
+        answers the walk actually gives.
+        """
+        rows_before = self.execution_edges()
+        down_before = self.linkage.down(linkage.INITIATIVE, INITIATIVE)
+        up_before = self.linkage.up(task_id=PARENT)
+        self.assertTrue(down_before["levels"], "the fixture produced no hierarchy to compare")
         self.peer()
-        self.assertEqual(self.execution_edges(), before)
+        self.assertEqual(self.execution_edges(), rows_before)
+        self.assertEqual(self.linkage.down(linkage.INITIATIVE, INITIATIVE), down_before)
+        self.assertEqual(self.linkage.up(task_id=PARENT), up_before)
 
     def test_two_parents_under_one_supervisor_keep_one_execution_owner_each(self):
         self.peer()
@@ -158,6 +169,21 @@ class WhatAMessageCanEstablish(LinkageTestCase):
         answer = self.linkage.counterpart(PARENT, OTHER_PARENT, quoted_scope="PROJ-NOPE")
         self.assertIn("foreign_scope", answer["findings"])
 
+    def test_a_message_from_a_replaced_owner_is_told_so_too(self):
+        """Staleness was checked on the recipient only.
+
+        A message FROM a task that no longer owns its scope is exactly as misrouted as one
+        addressed to a replaced owner, and reporting only the recipient let an archived sender
+        read as a healthy relationship with no findings at all.
+        """
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(THIRD_PARENT), acknowledged=[],
+            evidence="the sending project changed hands", actor="test",
+        )
+        answer = self.linkage.counterpart(PARENT, OTHER_PARENT)
+        self.assertIn("stale_sender", answer["findings"])
+
     def test_a_supervisor_addressing_a_child_directly_is_a_wrong_role(self):
         relationship = self.register()
         self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
@@ -188,4 +214,3 @@ class WhatAMessageCanEstablish(LinkageTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

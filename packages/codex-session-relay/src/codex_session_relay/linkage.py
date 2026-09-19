@@ -206,7 +206,7 @@ class Linkage:
             raise refusal.error()
         return self.binding(bid)
 
-    def binding_plan(self, db, *, role, scope_key, endpoint):
+    def binding_plan(self, db, *, role, scope_key, endpoint, replacing=None):
         """Decide a binding WITHOUT writing it. Returns (plan, refusal).
 
         Split from the write deliberately. An operation that binds two scopes and then links
@@ -231,7 +231,8 @@ class Linkage:
                 )
             action = "present" if current["status"] in LIVE else "reactivate"
             return (bid, action, role, scope_kind, scope_key, endpoint), None
-        refusal = self._binding_refusal(db, role, scope_kind, scope_key, endpoint)
+        refusal = self._binding_refusal(db, role, scope_kind, scope_key, endpoint,
+                                        replacing=replacing)
         if refusal is not None:
             return None, refusal
         return (bid, "insert", role, scope_kind, scope_key, endpoint), None
@@ -250,14 +251,20 @@ class Linkage:
             self.store.journal("scope_rebound", bid, {"scopeKey": scope_key}, at=at)
         return bid
 
-    def _binding_refusal(self, db, role, scope_kind, scope_key, endpoint):
-        """Every competition and role read, before anything is written."""
+    def _binding_refusal(self, db, role, scope_kind, scope_key, endpoint, *, replacing=None):
+        """Every competition and role read, before anything is written.
+
+        replacing names the outgoing owner of a handover. That task is the incumbent by
+        definition, so counting it as a rival would refuse the very operation that replaces it;
+        excluding it keeps the rival check meaningful for everybody else, including a SECOND
+        handover racing the first, which still sees a live owner it did not name.
+        """
         rival = db.execute(
             "SELECT binding_id, task_id, status FROM scope_bindings"
             "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
             "    AND status IN ('active','paused') AND superseded_by IS NULL"
-            "    AND task_id != ?",
-            (scope_kind, scope_key, role, endpoint.task_id),
+            "    AND task_id != ? AND task_id IS NOT ?",
+            (scope_kind, scope_key, role, endpoint.task_id, replacing),
         ).fetchone()
         if rival is not None:
             return _Refusal(
@@ -357,7 +364,20 @@ class Linkage:
                     and replay["upper_task_id"] == supervisor.task_id:
                 # Runs BEFORE the ownership check below, which would otherwise refuse a link
                 # being re-registered against itself and turn convergence into a refusal.
-                return self._link_record(replay)
+                # The HOSTS have to agree too: a replay is the same registration repeated, and
+                # the same tasks reached on a different host is a different claim, which
+                # binding_plan refuses rather than silently keeping the old host.
+                for role_name, scope, endpoint in (
+                    (SUPERVISOR, initiative_key, supervisor), (PARENT, project_key, parent),
+                ):
+                    _plan, host_refusal = self.binding_plan(
+                        db, role=role_name, scope_key=scope, endpoint=endpoint)
+                    if host_refusal is not None:
+                        self._record_conflict_in(db, host_refusal, at=now)
+                        refusal = host_refusal
+                        break
+                if refusal is None:
+                    return self._link_record(replay)
             refusal = self._supervision_refusal(
                 db, lid, initiative_key, project_key, supervisor, parent, link_kind, replay,
             )
@@ -514,37 +534,51 @@ class Linkage:
             raise refusal.error()
         return self.attachment(relationship_id)
 
-    def attach_in(self, db, relationship_row, project_key, *, at=None):
+    def attach_in(self, db, relationship_row, project_key, *, at=None, replacing=None):
         """The ONE path that writes the lower level. Returns a refusal or None.
 
-        Idempotence is computed over all THREE facts - the relationship_scope row, the child
-        binding and the project to issue edge - rather than over the scope row alone. A
-        relationship attached by an older writer, or by a run that stopped between two of them,
-        is COMPLETED here instead of being reported as already done. There is no second,
-        thinner path that writes only some of them.
+        Split into a decision and a write for the reason every other path is: a caller that
+        inserts a relationship and then discovers its project is foreign has already written.
+        attach_refusal is pure reads, so registry.register can take the decision BEFORE its own
+        inserts and record the contest alone.
         """
         at = at or self.clock.iso()
+        plan, refusal = self.attach_refusal(db, relationship_row, project_key,
+                                            replacing=replacing)
+        if refusal is not None:
+            return refusal
+        self.attach_apply(db, relationship_row, project_key, plan, at=at)
+        return None
+
+    def attach_refusal(self, db, relationship_row, project_key, *, replacing=None):
+        """Decide an attachment without writing. Returns (plan, refusal).
+
+        The plan carries what attach_apply must do, so idempotence is decided here over all
+        THREE facts - the relationship_scope row, the child binding and the project to issue
+        edge - rather than over the scope row alone. A relationship attached by an older writer,
+        or by a run that stopped between two of them, is COMPLETED rather than reported done.
+        """
+        from .models import Endpoint
+
         rid = relationship_row["relationship_id"]
         issue_key = relationship_row["issue_key"]
         parent_task = relationship_row["parent_task_id"]
         child_task = relationship_row["child_task_id"]
         _exact(project_key, "a project key")
         if relationship_row["status"] != ACTIVE or relationship_row["superseded_by"]:
-            return _Refusal(
+            return None, _Refusal(
                 RefusalReason.RELATIONSHIP_NOT_ACTIVE,
                 "relationship " + repr(rid) + " is " + repr(relationship_row["status"])
                 + ", so its issue cannot be attached to a project",
                 scope_kind=PROJECT, scope_key=project_key,
-                incumbent=rid, challenger=project_key,
-            )
+                incumbent=rid, challenger=project_key)
         if parent_task == child_task:
-            return _Refusal(
+            return None, _Refusal(
                 RefusalReason.SCOPE_CYCLE,
                 "relationship " + repr(rid) + " has the same task as parent and child, which "
                 "is a self-link rather than a level",
                 scope_kind=ISSUE, scope_key=issue_key,
-                incumbent=parent_task, challenger=child_task,
-            )
+                incumbent=parent_task, challenger=child_task)
         holder = db.execute(
             "SELECT task_id FROM scope_bindings"
             "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
@@ -552,45 +586,49 @@ class Linkage:
             (PROJECT, project_key, PARENT),
         ).fetchone()
         if holder is None:
-            return _Refusal(
+            return None, _Refusal(
                 RefusalReason.UNREGISTERED_SCOPE,
                 "project " + repr(project_key) + " has no registered parent, so an issue "
                 "cannot be attached to it yet",
-                scope_kind=PROJECT, scope_key=project_key,
-                incumbent="", challenger=parent_task,
-            )
+                scope_kind=PROJECT, scope_key=project_key, challenger=parent_task)
         if holder["task_id"] != parent_task:
-            return _Refusal(
+            return None, _Refusal(
                 RefusalReason.FOREIGN_SCOPE,
                 "issue " + repr(issue_key) + " is assigned under parent " + repr(parent_task)
                 + ", but project " + repr(project_key) + " is executed by "
                 + repr(holder["task_id"]) + "; an issue belongs to its own project",
                 scope_kind=PROJECT, scope_key=project_key,
-                incumbent=holder["task_id"], challenger=parent_task,
-            )
+                incumbent=holder["task_id"], challenger=parent_task)
         recorded = db.execute(
             "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", (rid,)
         ).fetchone()
         if recorded is not None and recorded["project_key"] != project_key:
-            return _Refusal(
+            return None, _Refusal(
                 RefusalReason.FOREIGN_SCOPE,
                 "issue " + repr(issue_key) + " is already scoped to project "
                 + repr(recorded["project_key"]) + ", not " + repr(project_key),
                 scope_kind=ISSUE, scope_key=issue_key,
-                incumbent=recorded["project_key"], challenger=project_key,
-            )
-        from .models import Endpoint
-
+                incumbent=recorded["project_key"], challenger=project_key)
         plan, refusal = self.binding_plan(
             db, role=CHILD, scope_key=issue_key,
             endpoint=Endpoint(child_task, relationship_row["child_host_id"],
                               cwd=relationship_row["child_cwd"],
                               cxc_session=relationship_row["child_cxc_session"]),
+            replacing=replacing,
         )
         if refusal is not None:
-            return refusal
-        self.apply_binding_plan(db, plan, at=at)
-        if recorded is None:
+            return None, refusal
+        return (plan, recorded is None), None
+
+    def attach_apply(self, db, relationship_row, project_key, plan, *, at):
+        """Perform an attachment decided earlier. Every refusal is already behind us."""
+        binding, scope_row_missing = plan
+        rid = relationship_row["relationship_id"]
+        issue_key = relationship_row["issue_key"]
+        parent_task = relationship_row["parent_task_id"]
+        child_task = relationship_row["child_task_id"]
+        self.apply_binding_plan(db, binding, at=at)
+        if scope_row_missing:
             db.execute(
                 "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at)"
                 " VALUES (?,?,?) ON CONFLICT(relationship_id) DO NOTHING",
@@ -613,7 +651,10 @@ class Linkage:
             )
             self.store.journal(
                 "scope_link_repointed", lid, {"lowerTaskId": child_task}, at=at)
-        return None
+
+    def record_conflict_in(self, db, refusal, *, at):
+        """Public name for the conflict writer, for callers in other modules."""
+        self._record_conflict_in(db, refusal, at=at)
 
     def attachment(self, relationship_id):
         """What the lower level says about one assignment, or None when it is unscoped."""
@@ -692,10 +733,6 @@ class Linkage:
         """
         _exact(digest, "a directive digest")
         did = directive_id(scope_kind, scope_key, from_scope_key, digest)
-        existing = self.store.one(
-            "SELECT * FROM scope_directives WHERE directive_id = ?", (did,))
-        if existing is not None:
-            return self._directive_record(existing)
         now = self.clock.iso()
         refusal = None
         with self.store.transaction() as db:
@@ -733,7 +770,24 @@ class Linkage:
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=str(link_id_value), challenger=from_scope_key,
                 )
+            elif edge["upper_task_id"] != from_task_id:
+                refusal = _Refusal(
+                    RefusalReason.SCOPE_ROLE_MISMATCH,
+                    "link " + repr(link_id_value) + " records " + repr(edge["upper_task_id"])
+                    + " as its upper endpoint, not " + repr(from_task_id),
+                    scope_kind=scope_kind, scope_key=scope_key,
+                    incumbent=edge["upper_task_id"], challenger=from_task_id,
+                )
             if refusal is None:
+                # The replay check runs AFTER validation, not before it. Returning an existing
+                # row first made the derived id a way past every check: the same digest
+                # replayed with a task that owns nothing and a link that joins nothing was
+                # accepted, because only the id had to match.
+                replay = db.execute(
+                    "SELECT * FROM scope_directives WHERE directive_id = ?", (did,)
+                ).fetchone()
+                if replay is not None:
+                    return self._directive_record(replay)
                 db.execute(
                     "INSERT INTO scope_directives (directive_id, scope_kind, scope_key,"
                     " from_task_id, from_scope_key, link_id, link_kind, digest, reference,"
@@ -846,6 +900,14 @@ class Linkage:
                         challenger=endpoint.task_id,
                     )
                     break
+                # The host is part of the claim, not decoration. binding_plan refuses a task
+                # already bound on a different host, so routing the endpoint through it is
+                # what stops a peer link recording a host nothing agrees with.
+                _plan, host_refusal = self.binding_plan(
+                    db, role=PARENT, scope_key=scope_key, endpoint=endpoint)
+                if host_refusal is not None:
+                    refusal = host_refusal
+                    break
             if refusal is None and replay is not None:
                 return self._link_record(replay)
             if refusal is None:
@@ -883,6 +945,12 @@ class Linkage:
                                           or recipient["supersededBy"]):
                 findings.append("stale_owner")
                 current = self.owner(recipient["scopeKind"], recipient["scopeKey"])
+            # The sender can be stale too. A message FROM a task that no longer owns its scope
+            # is exactly as misrouted as one addressed to a replaced owner, and reporting only
+            # the recipient let an archived sender read as a healthy relationship.
+            if sender is not None and (sender["status"] not in LIVE
+                                       or sender["supersededBy"]):
+                findings.append("stale_sender")
             if sender is None or recipient is None:
                 if recipient is None:
                     findings.append("unregistered_link")
@@ -976,6 +1044,20 @@ class Linkage:
 
         try:
             levels, gaps, contention = [], [], []
+            # An unknown scope is unregistered, not a resolved tree of one empty level.
+            # _descend appends a level unconditionally, so without this the branch below was
+            # unreachable and a scope nobody ever registered read as resolved.
+            if self.owner(scope_kind, scope_key) is None and not self.store.one(
+                "SELECT 1 FROM scope_links"
+                "  WHERE ((upper_kind = ? AND upper_key = ?) OR (lower_kind = ? AND"
+                "         lower_key = ?)) AND status IN ('active','paused')",
+                (scope_kind, scope_key, scope_kind, scope_key),
+            ):
+                return {"state": "unregistered", "readable": True, "levels": [],
+                        "gaps": [{"gap": scope_kind + "_without_"
+                                  + ROLE_SCOPE_OWNER[scope_kind],
+                                  "scopeKind": scope_kind, "scopeKey": scope_key}],
+                        "contention": self.conflicts(scope_kind, scope_key)}
             self._descend(scope_kind, scope_key, levels, gaps, contention, depth=0)
             if not levels:
                 return {"state": "unregistered", "readable": True,
@@ -1041,6 +1123,12 @@ class Linkage:
                                  + ROLE_SCOPE_OWNER[scope_kind],
                                  "scopeKind": scope_kind, "scopeKey": scope_key})
                 contention.extend(self.conflicts(scope_kind, scope_key))
+                for directive in self.contested_directives(scope_kind, scope_key):
+                    contention.append({"contention": "instruction_conflict",
+                                       "scopeKind": scope_kind, "scopeKey": scope_key,
+                                       "directiveId": directive["directiveId"],
+                                       "fromScopeKey": directive["fromScopeKey"],
+                                       "digest": directive["digest"]})
                 row = self.store.one(
                     "SELECT * FROM scope_links"
                     "  WHERE lower_kind = ? AND lower_key = ? AND link_kind = 'execution'"
@@ -1053,6 +1141,12 @@ class Linkage:
                         gaps.append({"gap": "no_supervisor", "scopeKind": PROJECT,
                                      "scopeKey": scope_key})
                     break
+                edge = self._link_record(row)
+                live = self.owner(edge["lower"]["scopeKind"], edge["lower"]["scopeKey"])
+                if live is not None and live["taskId"] != edge["lower"]["taskId"]:
+                    contention.append({"contention": "owner_drift", "linkId": edge["linkId"],
+                                       "recorded": edge["lower"]["taskId"],
+                                       "live": live["taskId"]})
                 scope_kind, scope_key = row["upper_kind"], row["upper_key"]
             return {"state": "resolved", "readable": True, "levels": levels,
                     "gaps": gaps, "contention": contention}
@@ -1127,6 +1221,15 @@ class Linkage:
         registry.resume's discipline: it has to say what it believes it is taking over, and be
         right. A caller that has not read the outstanding work cannot produce the list, which is
         the point - an owner is never taken over silently.
+
+        Every read that decides the outcome happens INSIDE the write transaction. Read
+        beforehand, two callers could each see the same outgoing owner, each find the
+        outstanding set unchanged, and both write, leaving one scope with two live owners. That
+        was measured rather than predicted: a deterministic race produced exactly it before
+        these reads moved inside.
+
+        The incoming owner goes through binding_plan like every other binding, so a handover is
+        not a route around the one-task-one-role rule.
         """
         scope_kind = ROLE_SCOPE.get(role)
         if scope_kind is None:
@@ -1135,57 +1238,91 @@ class Linkage:
         if not str(evidence or "").strip():
             raise LinkageError(
                 RefusalReason.HANDOVER_UNCONFIRMED, "a handover carries its evidence")
-        current = self.owner(scope_kind, scope_key)
-        if current is None:
-            raise LinkageError(
-                RefusalReason.UNREGISTERED_SCOPE,
-                scope_kind + " " + repr(scope_key) + " has no live owner to replace")
-        if current["taskId"] != expect_task_id:
-            raise LinkageError(
-                RefusalReason.HANDOVER_UNCONFIRMED,
-                "this handover expects " + repr(expect_task_id) + " to hold " + repr(scope_key)
-                + ", but it is held by " + repr(current["taskId"])
-                + "; re-read the scope before replacing its owner")
-        unfinished = self.outstanding(scope_key, expect_task_id) if scope_kind == PROJECT else []
         claimed = sorted(set(acknowledged or ()))
-        if claimed != sorted(set(unfinished)):
-            raise LinkageError(
-                RefusalReason.HANDOVER_UNCONFIRMED,
-                "the outstanding work restated by this handover is " + repr(claimed)
-                + " but the store says it is " + repr(sorted(set(unfinished)))
-                + "; a replacement owner confirms the unfinished work it is taking on",
-            )
         now = self.clock.iso()
         new_id = binding_id(role, scope_kind, scope_key, endpoint.task_id)
+        refusal = None
         with self.store.transaction() as db:
-            db.execute(
-                "UPDATE scope_bindings SET status = ?, superseded_by = ?, updated_at = ?"
-                "  WHERE binding_id = ?",
-                (ARCHIVED, new_id, now, current["bindingId"]),
-            )
-            self._insert_binding(
-                db, new_id, role, scope_kind, scope_key, endpoint, ACTIVE,
-                revision=current["revision"] + 1, at=now,
-                supersedes=current["bindingId"], note=evidence,
-            )
-            db.execute(
-                "UPDATE scope_links SET lower_task_id = ?, revision = revision + 1,"
-                " updated_at = ? WHERE lower_kind = ? AND lower_key = ?"
-                "   AND lower_task_id = ? AND status IN ('active','paused')",
-                (endpoint.task_id, now, scope_kind, scope_key, expect_task_id),
-            )
-            db.execute(
-                "UPDATE scope_links SET upper_task_id = ?, revision = revision + 1,"
-                " updated_at = ? WHERE upper_kind = ? AND upper_key = ?"
-                "   AND upper_task_id = ? AND status IN ('active','paused')",
-                (endpoint.task_id, now, scope_kind, scope_key, expect_task_id),
-            )
-            self.store.journal(
-                "scope_handover", new_id,
-                {"scopeKey": scope_key, "from": expect_task_id, "to": endpoint.task_id,
-                 "actor": actor, "acknowledged": claimed},
-                at=now,
-            )
+            row = db.execute(
+                "SELECT * FROM scope_bindings"
+                "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
+                "    AND status IN ('active','paused') AND superseded_by IS NULL"
+                "  ORDER BY revision DESC LIMIT 1",
+                (scope_kind, scope_key, role),
+            ).fetchone()
+            current = self._binding_record(row) if row else None
+            plan = None
+            if current is None:
+                refusal = _Refusal(
+                    RefusalReason.UNREGISTERED_SCOPE,
+                    scope_kind + " " + repr(scope_key) + " has no live owner to replace",
+                    scope_kind=scope_kind, scope_key=scope_key,
+                    challenger=endpoint.task_id)
+            elif current["taskId"] != expect_task_id:
+                refusal = _Refusal(
+                    RefusalReason.HANDOVER_UNCONFIRMED,
+                    "this handover expects " + repr(expect_task_id) + " to hold "
+                    + repr(scope_key) + ", but it is held by " + repr(current["taskId"])
+                    + "; re-read the scope before replacing its owner",
+                    scope_kind=scope_kind, scope_key=scope_key,
+                    incumbent=current["taskId"], challenger=endpoint.task_id)
+            else:
+                unfinished = (self.outstanding(scope_key, expect_task_id)
+                              if scope_kind == PROJECT else [])
+                if claimed != sorted(set(unfinished)):
+                    refusal = _Refusal(
+                        RefusalReason.HANDOVER_UNCONFIRMED,
+                        "the outstanding work restated by this handover is " + repr(claimed)
+                        + " but the store says it is " + repr(sorted(set(unfinished)))
+                        + "; a replacement owner confirms the unfinished work it takes on",
+                        scope_kind=scope_kind, scope_key=scope_key,
+                        incumbent=expect_task_id, challenger=endpoint.task_id)
+            if refusal is None:
+                plan, refusal = self.binding_plan(
+                    db, role=role, scope_key=scope_key, endpoint=endpoint,
+                    replacing=expect_task_id)
+            if refusal is not None:
+                self._record_conflict_in(db, refusal, at=now)
+            else:
+                db.execute(
+                    "UPDATE scope_bindings SET status = ?, superseded_by = ?, updated_at = ?"
+                    "  WHERE binding_id = ?",
+                    (ARCHIVED, new_id, now, current["bindingId"]),
+                )
+                if plan[1] == "insert":
+                    self._insert_binding(
+                        db, new_id, role, scope_kind, scope_key, endpoint, ACTIVE,
+                        revision=current["revision"] + 1, at=now,
+                        supersedes=current["bindingId"], note=evidence,
+                    )
+                else:
+                    db.execute(
+                        "UPDATE scope_bindings SET status = ?, revision = ?, supersedes = ?,"
+                        " handover_note = ?, superseded_by = NULL, updated_at = ?"
+                        "  WHERE binding_id = ?",
+                        (ACTIVE, current["revision"] + 1, current["bindingId"], evidence,
+                         now, new_id),
+                    )
+                db.execute(
+                    "UPDATE scope_links SET lower_task_id = ?, revision = revision + 1,"
+                    " updated_at = ? WHERE lower_kind = ? AND lower_key = ?"
+                    "   AND lower_task_id = ? AND status IN ('active','paused')",
+                    (endpoint.task_id, now, scope_kind, scope_key, expect_task_id),
+                )
+                db.execute(
+                    "UPDATE scope_links SET upper_task_id = ?, revision = revision + 1,"
+                    " updated_at = ? WHERE upper_kind = ? AND upper_key = ?"
+                    "   AND upper_task_id = ? AND status IN ('active','paused')",
+                    (endpoint.task_id, now, scope_kind, scope_key, expect_task_id),
+                )
+                self.store.journal(
+                    "scope_handover", new_id,
+                    {"scopeKey": scope_key, "from": expect_task_id, "to": endpoint.task_id,
+                     "actor": actor, "acknowledged": claimed},
+                    at=now,
+                )
+        if refusal is not None:
+            raise refusal.error()
         return self.binding(new_id)
 
     # ---------------------------------------------------------------- records

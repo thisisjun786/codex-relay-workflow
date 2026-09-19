@@ -166,7 +166,15 @@ class TheAssignmentViewKnowsItsProject(LinkageTestCase):
         # Every pre-existing key keeps its meaning.
         self.assertEqual(record["responsibleChild"], CHILD)
 
-    def test_for_issue_reports_unreadable_rather_than_unscoped(self):
+    def test_the_project_context_reports_unreadable_rather_than_unscoped(self):
+        """Named for the unit it exercises, which is the project lookup and not for_issue.
+
+        for_issue on a closed store raises from its own state() calls long before it reaches
+        this, and that is pre-existing behaviour this work did not change and does not claim
+        to. What IS claimed is narrower and is what this checks: the project lookup added here
+        tells an unreadable store apart from an unscoped assignment instead of reporting the
+        first as the second.
+        """
         self.supervise()
         relationship = self.register()
         self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
@@ -180,4 +188,3 @@ class TheAssignmentViewKnowsItsProject(LinkageTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
