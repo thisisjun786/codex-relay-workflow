@@ -640,9 +640,21 @@ def read_in_flight(document):
     if marker:
         root = Path(marker)
         answer["how"].append("listed " + str(root))
-        if root.is_dir():
-            answer["markerHistory"] = sorted(p.name for p in root.iterdir())[:50]
-            answer["state"] = reading.PRESENT
+        try:
+            if root.is_dir():
+                answer["markerHistory"] = sorted(p.name for p in root.iterdir())[:50]
+                answer["state"] = reading.PRESENT
+        except OSError as error:
+            # A directory whose metadata is visible and whose contents are not, or one that goes
+            # away between the two calls. This reading is informational -- it refuses nothing --
+            # so a failure here is recorded as the state it is rather than raised out of the
+            # snapshot, where it would take the whole host inventory down with it and stop
+            # inspect and the transition before preflight ever decided anything.
+            answer["state"] = reading.ACCESS_ERROR if isinstance(error, PermissionError) \
+                else reading.UNREADABLE
+            answer["markerHistory"] = None
+            answer["detail"] = (str(root) + " could not be listed (" + type(error).__name__
+                                + ": " + str(error) + ")")
     database = document.get("dbPath")
     if database:
         answer["storePath"] = str(database)

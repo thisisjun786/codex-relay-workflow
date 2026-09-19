@@ -3170,6 +3170,25 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("The replacement has to be that same map", answer["results"][0]["detail"])
         self.assertEqual(host.config(), before)
 
+    def test_a_marker_root_that_cannot_be_listed_is_a_reading_not_a_crash(self):
+        """This reading refuses nothing, so a failure in it must not take the inventory down."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import reading
+        from crw_transition import inventory
+
+        unreadable = Path(self.directory) / "marker-nobody-can-list"
+        unreadable.mkdir()
+        (unreadable / "one").write_text("", encoding="utf-8")
+        unreadable.chmod(0o000)
+        self.addCleanup(unreadable.chmod, 0o755)
+        if os.access(str(unreadable), os.R_OK):
+            self.skipTest("this user can list a directory with no permissions")
+        answer = inventory.read_in_flight({"markerRoot": str(unreadable)})
+        self.assertIn(answer["state"], (reading.ACCESS_ERROR, reading.UNREADABLE))
+        self.assertIn("could not be listed", answer["detail"])
+        self.assertIsNone(answer["markerHistory"])
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
