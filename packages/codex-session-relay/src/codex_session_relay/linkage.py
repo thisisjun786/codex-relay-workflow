@@ -156,6 +156,39 @@ class Linkage:
         )
         return self._binding_record(row) if row else None
 
+    def owners(self, scope_kind, scope_key):
+        """EVERY live owner of a scope. Exactly one wherever the index could be installed.
+
+        owner() has to answer with a row, and a store that already broke the live-owner index
+        can hold two. Ordering those and returning the first is the failure this exists to
+        prevent: it turns an unknown into a settled-looking answer, which is worse than an
+        error because nothing downstream can tell it was a guess. The reading paths ask here
+        and report the candidates; the writing paths keep owner(), because they run against a
+        store whose index is installed and they refuse a second owner before it exists.
+        """
+        return [self._binding_record(row) for row in self.store.all(
+            "SELECT * FROM scope_bindings"
+            "  WHERE scope_kind = ? AND scope_key = ? AND status IN ('active','paused')"
+            "    AND superseded_by IS NULL"
+            "  ORDER BY revision DESC, binding_id",
+            (scope_kind, scope_key),
+        )]
+
+    def _sole_owner(self, scope_kind, scope_key, contention):
+        """The one live owner, or None with the contest appended to contention.
+
+        Answering None and saying why is the whole point: a level with no owner is a gap, and
+        a level with two is a contest, and neither is a level with an owner picked by sorting.
+        """
+        held = self.owners(scope_kind, scope_key)
+        if len(held) > 1:
+            contention.append(
+                {"contention": "competing_owners", "scopeKind": scope_kind,
+                 "scopeKey": scope_key,
+                 "candidates": sorted(record["taskId"] for record in held)})
+            return None
+        return held[0] if held else None
+
     def link(self, lid):
         row = self.store.one("SELECT * FROM scope_links WHERE link_id = ?", (lid,))
         return self._link_record(row) if row else None
@@ -849,15 +882,20 @@ class Linkage:
             "SELECT issue_key FROM relationships WHERE relationship_id = ?", (relationship_id,)
         )
         issue_key = relationship["issue_key"] if relationship else None
-        return {
+        contested = []
+        record = {
             "relationshipId": relationship_id,
             "projectKey": row["project_key"],
             "issueKey": issue_key,
-            "child": self.owner(ISSUE, issue_key) if issue_key else None,
-            "parent": self.owner(PROJECT, row["project_key"]),
+            # Same rule as the walks: a scope with two live owners has no owner to report,
+            # and saying which is contested beats naming whichever sorts first.
+            "child": self._sole_owner(ISSUE, issue_key, contested) if issue_key else None,
+            "parent": self._sole_owner(PROJECT, row["project_key"], contested),
             "link": self.link(link_id(EXECUTION, PROJECT, row["project_key"], ISSUE, issue_key))
             if issue_key else None,
         }
+        record["contention"] = contested
+        return record
 
     def apply_relationship_status_in(self, db, relationship_id, status,
                                      *, previous_status=None):
@@ -1339,7 +1377,14 @@ class Linkage:
             if recipient is not None and (recipient["status"] not in LIVE
                                           or recipient["supersededBy"]):
                 findings.append("stale_owner")
-                current = self.owner(recipient["scopeKind"], recipient["scopeKey"])
+                held = self.owners(recipient["scopeKind"], recipient["scopeKey"])
+                if len(held) > 1:
+                    # Two live owners, so there is no "who holds it now" to answer with.
+                    # Naming one of them would tell a stale sender to re-address a message to
+                    # a task picked by sorting.
+                    findings.append("competing_owners")
+                else:
+                    current = held[0] if held else None
             # The sender can be stale too. A message FROM a task that no longer owns its scope
             # is exactly as misrouted as one addressed to a replaced owner.
             if sender is not None and (sender["status"] not in LIVE
@@ -1380,7 +1425,11 @@ class Linkage:
             if quoted_revision is not None and quoted_revision != edge["revision"]:
                 findings.append("stale_revision")
             for side in ("upper", "lower"):
-                live = self.owner(edge[side]["scopeKind"], edge[side]["scopeKey"])
+                held = self.owners(edge[side]["scopeKind"], edge[side]["scopeKey"])
+                if len(held) > 1:
+                    findings.append("competing_owners")
+                    continue
+                live = held[0] if held else None
                 if live is not None and live["taskId"] != edge[side]["taskId"]:
                     findings.append("owner_drift")
             if self.contested_directives(recipient["scopeKind"], recipient["scopeKey"]):
@@ -1477,7 +1526,7 @@ class Linkage:
             # An unknown scope is unregistered, not a resolved tree of one empty level.
             # _descend appends a level unconditionally, so without this the branch below was
             # unreachable and a scope nobody ever registered read as resolved.
-            if self.owner(scope_kind, scope_key) is None and not self.store.one(
+            if not self.owners(scope_kind, scope_key) and not self.store.one(
                 "SELECT 1 FROM scope_links"
                 "  WHERE ((upper_kind = ? AND upper_key = ?) OR (lower_kind = ? AND"
                 "         lower_key = ?)) AND status IN ('active','paused')",
@@ -1499,7 +1548,8 @@ class Linkage:
             # Contested ownership anywhere in the tree makes the whole answer ambiguous, the
             # same word up() uses. Reporting the finding beside a state that called the walk
             # resolved left a consumer free to read past it.
-            contested = any(row.get("contention") == "competing_parents"
+            contested = any(row.get("contention") in ("competing_parents",
+                                                      "competing_owners")
                             for row in contention)
             return {"state": "ambiguous" if contested else "resolved", "readable": True,
                     "levels": levels, "gaps": gaps, "contention": contention}
@@ -1535,10 +1585,13 @@ class Linkage:
                  "candidates": self._incoming_execution(scope_kind, scope_key)})
             return
         seen.add((scope_kind, scope_key))
-        owner = self.owner(scope_kind, scope_key)
+        # A contest is recorded by _sole_owner, and a scope with two owners is not a scope
+        # with none: the gap below would say nobody holds it, which is the opposite of true.
+        marked = len(contention)
+        owner = self._sole_owner(scope_kind, scope_key, contention)
         levels.append({"scopeKind": scope_kind, "scopeKey": scope_key, "owner": owner,
                        "depth": depth})
-        if owner is None:
+        if owner is None and len(contention) == marked:
             gaps.append({"gap": scope_kind + "_without_" + ROLE_SCOPE_OWNER[scope_kind],
                          "scopeKind": scope_kind, "scopeKey": scope_key})
         contention.extend(self.conflicts(scope_kind, scope_key))
@@ -1600,10 +1653,11 @@ class Linkage:
             seen = set()
             while (scope_kind, scope_key) not in seen:
                 seen.add((scope_kind, scope_key))
-                owner = self.owner(scope_kind, scope_key)
+                marked = len(contention)
+                owner = self._sole_owner(scope_kind, scope_key, contention)
                 levels.append({"scopeKind": scope_kind, "scopeKey": scope_key,
                                "owner": owner, "depth": len(levels)})
-                if owner is None:
+                if owner is None and len(contention) == marked:
                     gaps.append({"gap": scope_kind + "_without_"
                                  + ROLE_SCOPE_OWNER[scope_kind],
                                  "scopeKind": scope_kind, "scopeKey": scope_key})
@@ -1646,7 +1700,12 @@ class Linkage:
                                        "recorded": edge["lower"]["taskId"],
                                        "live": live["taskId"]})
                 scope_kind, scope_key = row["upper_kind"], row["upper_key"]
-            return {"state": "resolved", "readable": True, "levels": levels,
+            # Same rule the downward walk follows: a contest anywhere makes the answer
+            # ambiguous rather than a resolved chain with one candidate quietly chosen.
+            return {"state": "ambiguous" if any(
+                        row.get("contention") == "competing_owners" for row in contention
+                    ) else "resolved",
+                    "readable": True, "levels": levels,
                     "gaps": gaps, "contention": contention}
         except sqlite3.Error as fault:
             return {"state": "unreadable", "readable": False, "levels": [], "gaps": [],

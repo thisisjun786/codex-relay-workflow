@@ -190,21 +190,27 @@ separate three answers:
 | `readable: true`, something found | the hierarchy, as recorded |
 | `readable: true`, nothing found | the store answered, and there is nothing |
 | `readable: true`, state `ambiguous` | the store answered with more than one candidate, and the reader will not choose between them. The candidates are returned |
-
-Three things make an answer ambiguous: one scope pair joined by several live edges, one scope
-with several live execution edges into it, and one message whose two endpoints can be paired in
-more than one way because a task keeps the bindings of scopes it used to hold. `up()` reports
-the second as a `competing_parents` entry in `contention` and stops the walk there rather than
-following the highest revision. `counterpart()` reports the first and the third in
-`candidates`, each entry naming a `linkId`, its `kind` and the counterpart `scopeKey`; quoting
-`from_scope` or `quoted_scope` is how a caller resolves it, which is what OPS-7.4 already says
-a message carries.
 | `readable: false` | the store did not answer |
 
 The last is never reported as the second, and neither is reported as completion. An unreadable
 answer carries empty `levels`, `gaps` and `contention`, because a store that could not be read
 has no findings to report. This is the shape `intent.dispatch_generation_state` already uses to
 separate stale from absent.
+
+Four things make an answer ambiguous. One scope pair joined by several live edges, and one
+message whose two endpoints can be paired in more than one way because a task keeps the
+bindings of scopes it used to hold: `counterpart()` reports both in `candidates`, each entry
+naming a `linkId`, its `kind` and the counterpart `scopeKey`. One scope with several live
+execution edges into it: `up()` reports `competing_parents` and stops the walk there rather
+than following the highest revision, and `down()` reports it too, separating the chain it is
+walking from the scopes it has already visited so that a second parent is not mistaken for a
+cycle. And one scope with two live owners, which only a store whose `scope_bindings` unique
+index could not be installed can hold: that level's `owner` is null, `competing_owners` names
+both tasks, and it is not counted as a gap, because two owners is not nobody.
+
+Quoting `from_scope` or `quoted_scope` resolves the message cases, which is what OPS-7.4
+already says a message carries. Nothing resolves the store cases except repairing the store;
+the reader's job is to say so rather than to pick.
 
 `gaps` name what is missing instead of omitting the level: `initiative_without_supervisor`,
 `project_without_parent`, `issue_without_child`, `unscoped_assignment` and `no_supervisor`.
@@ -213,8 +219,9 @@ An unscoped assignment is the compatibility case and is reported, never dropped.
 `counterpart()` findings are independent, so one message can carry several: `wrong_role`,
 `foreign_scope`, `foreign_sender_scope`, `stale_owner` with `currentOwner`, `stale_sender`,
 `stale_revision`, `owner_drift`, `instruction_conflict`, `unregistered_link` and
-`link_contention`. The last accompanies state `ambiguous`, and answering `unlinked` instead
-would deny a linkage that demonstrably exists.
+`link_contention`, plus `competing_owners` when the scope it would name has two live holders.
+`link_contention` accompanies state `ambiguous`, and answering `unlinked` instead would deny
+a linkage that demonstrably exists.
 
 ## Refusals
 

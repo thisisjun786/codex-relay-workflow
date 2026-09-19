@@ -1721,31 +1721,51 @@ class TheThirteenthRoundFoundTheseToo(LinkageTestCase):
         self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
         return relationship["relationshipId"]
 
-    def test_pausing_an_archived_assignment_restores_its_issue(self):
-        """paused is live on both sides of this boundary, but the lifecycle path tested for
-        active alone. An archived assignment paused straight back became a live relationship
-        whose binding stayed archived, so AssignmentView reported a responsible child while
-        linkage reported issue_without_child - one store answering two ways."""
+    def test_an_archived_assignment_cannot_be_paused_back_to_life(self):
+        """paused is live on both sides of this boundary, and set_status is deactivation only.
+
+        The first fix made the lifecycle path restore the lower level for any live target,
+        which removed the split state - a live relationship whose binding stayed archived -
+        and opened a second one: a dead assignment regained its issue without restating the
+        generation or the scope resume() exists to make a caller restate. A status flip does
+        not become a reactivation by choosing a different live word. It is refused, and
+        NEITHER side moves.
+        """
         rid = self.scoped()
         self.registry.set_status(rid, "archived", actor="test")
         self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
-        self.registry.set_status(rid, "paused", actor="test")
-        owner = self.linkage.owner(linkage.ISSUE, ISSUE)
-        self.assertIsNotNone(owner, "the paused assignment was left without its issue")
-        self.assertEqual(owner["taskId"], CHILD)
-        self.assertEqual(owner["status"], "paused")
+        self.assertRefused(
+            RefusalReason.RELATIONSHIP_NOT_ACTIVE, self.registry.set_status,
+            rid, "paused", actor="test")
+        self.assertEqual(self.registry.get(rid)["status"], "archived")
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
 
-    def test_pausing_an_archived_assignment_cannot_take_a_reclaimed_issue(self):
-        """Restoring through paused runs the same ownership checks restoring through active
-        does, rather than being a quieter way back in."""
+    def test_resume_is_the_way_back_and_it_restores_the_issue(self):
+        """The validated route does what the unvalidated one was doing: it restates the
+        generation and the scope, and the binding and the edge come back with it."""
         rid = self.scoped()
         self.registry.set_status(rid, "archived", actor="test")
-        self.linkage.bind_scope(
-            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint("01child-two", HOST))
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+        self.registry.resume(
+            rid, expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+        owner = self.linkage.owner(linkage.ISSUE, ISSUE)
+        self.assertIsNotNone(owner, "the restored assignment was left without its issue")
+        self.assertEqual(owner["taskId"], CHILD)
+        self.assertEqual(
+            self.linkage.attachment(rid)["link"]["status"], "active")
+
+    def test_a_resume_that_misstates_its_scope_restores_nothing(self):
+        """Which is the point of routing it here: the restatement has to be right, and a
+        refused resume leaves the lower level exactly as archived as it found it."""
+        rid = self.scoped()
+        self.registry.set_status(rid, "archived", actor="test")
         self.assertRefused(
-            RefusalReason.DUPLICATE_SCOPE_OWNER, self.registry.set_status,
-            rid, "paused", actor="test")
-        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], "01child-two")
+            RefusalReason.RELATIONSHIP_NOT_ACTIVE, self.registry.resume,
+            rid, expect_generation=7, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+        self.assertEqual(self.registry.get(rid)["status"], "archived")
 
     def test_two_parents_of_one_issue_are_competing_not_a_cycle(self):
         """One global visited set could not tell a back edge from a second parent, so a scope
@@ -1859,6 +1879,60 @@ class TheThirteenthRoundFoundTheseToo(LinkageTestCase):
         # And the reader answers about it rather than the store refusing to exist.
         answer = Linkage(reopened, self.clock).up(task_id="01owner-one")
         self.assertIs(answer["readable"], True)
+
+    def duplicated_store(self):
+        """A store holding two live owners of one project, the way an older writer could.
+
+        The index that forbids it is dropped first, which is the same state a store that
+        could not install it arrives in. This is what the unenforced index above proves can
+        exist, and therefore what these readers have to be able to describe.
+        """
+        import os
+
+        path = os.path.join(self.tmp, "duplicated.sqlite")
+        legacy = Store(path)
+        legacy.db.execute("DROP INDEX scope_bindings_one_live_owner")
+        with legacy.transaction() as db:
+            for task, revision in (("01owner-one", 1), ("01owner-two", 2)):
+                db.execute(
+                    "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key,"
+                    " task_id, host_id, cwd, cxc_session, status, revision, supersedes,"
+                    " superseded_by, handover_note, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,NULL,NULL,'active',?,NULL,NULL,NULL,?,?)",
+                    (binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, task),
+                     linkage.PARENT, linkage.PROJECT, PROJECT, task, HOST, revision,
+                     "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z"))
+        return Linkage(Store(path), self.clock)
+
+    def test_two_live_owners_are_reported_rather_than_resolved(self):
+        """owner() answers with a row, so it ordered the duplicates and returned one - and the
+        walk called that resolved. A deterministic pick is still a guess, and one that looks
+        settled is worse than an error, because nothing downstream can tell. The higher
+        revision is written second here, so the old code would have named 01owner-two.
+        """
+        legacy = self.duplicated_store()
+        answer = legacy.down(linkage.PROJECT, PROJECT)
+        self.assertEqual(answer["state"], "ambiguous")
+        self.assertIs(answer["readable"], True)
+        competing = [row for row in answer["contention"]
+                     if row.get("contention") == "competing_owners"]
+        self.assertEqual(len(competing), 1)
+        self.assertEqual(competing[0]["candidates"], ["01owner-one", "01owner-two"])
+        self.assertIsNone(answer["levels"][0]["owner"])
+        # Two owners is not nobody. The gap would have said the project has no parent.
+        self.assertEqual(answer["gaps"], [])
+
+    def test_the_upward_walk_reports_the_same_contest(self):
+        legacy = self.duplicated_store()
+        answer = legacy.up(task_id="01owner-two")
+        self.assertEqual(answer["state"], "ambiguous")
+        self.assertIsNone(answer["levels"][0]["owner"])
+        self.assertIn("competing_owners",
+                      [row.get("contention") for row in answer["contention"]])
+        # no_supervisor is true and unrelated: this bare store has no initiative edge. What
+        # must NOT appear is a gap saying the project has no parent, when it has two.
+        self.assertNotIn("project_without_parent",
+                         [gap["gap"] for gap in answer["gaps"]])
 
 if __name__ == "__main__":
     unittest.main()

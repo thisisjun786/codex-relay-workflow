@@ -17,6 +17,7 @@ from .models import Endpoint
 ACTIVE = "active"
 STATUSES = ("active", "paused", "cancelled", "archived")
 DEACTIVATIONS = ("paused", "cancelled", "archived")
+LIVE = ("active", "paused")
 ANCHOR_BOUND = "bound"
 ANCHOR_PENDING = "anchor_pending"
 REASONS = ("initial_assignment", "needs_changes_revision")
@@ -571,6 +572,19 @@ class Registry:
             before = db.execute(
                 "SELECT status FROM relationships WHERE relationship_id = ?", (rid,)
             ).fetchone()
+            if before is not None and before["status"] not in LIVE and status in LIVE:
+                # A dead assignment coming back is a reactivation whatever word it arrives
+                # under. set_status says so in its own docstring and then let 'paused' through
+                # because it is spelled like a deactivation: the lower level was restored
+                # without the generation and scope that resume() makes a caller restate, so a
+                # stale assignment regained its issue by naming a different live status.
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_NOT_ACTIVE,
+                    f"{rid!r} is {before['status']!r}, so {status!r} would bring it back to "
+                    "life. Restoring an assignment restates the generation and the scope it "
+                    "re-authorizes, which is relationship-resume; choosing a different live "
+                    "word does not make those checks optional",
+                )
             db.execute(
                 "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?",
                 (status, now, rid),
