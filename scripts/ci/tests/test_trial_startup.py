@@ -320,6 +320,12 @@ class World:
             echo = {key: settings[key] for key in ("model", "reasoningEffort", "sandbox",
                                                    "approvalPolicy", "runtimeWorkspaceRoots")}
             echo["cwd"] = self.payloads["taskCwd"][task]
+            # What the contract carries: approvalPolicy is decided first and alone and is not
+            # one of the settings a creation asks for, so it is absent from requested and from
+            # the list the receipt says it verified.
+            asked = {key: value for key, value in echo.items()
+                     if key in ("cwd", "model", "reasoningEffort", "runtimeWorkspaceRoots",
+                                "sandbox")}
             self.captures["receipt-" + task + ".json"] = {
                 # The bridge names the thread it created at threadId and writes no taskId at
                 # all. The fixture preferred the relay's own word for the same participant, so a
@@ -329,7 +335,8 @@ class World:
                 # expectation is the whole object rather than an id-shaped stand-in.
                 "creation": {"thread": {"id": task, "environments": settings["environments"]},
                              "activePermissionProfile": PROFILE},
-                "settings": {"requested": echo, "actual": echo, "findings": []}}
+                "settings": {"requested": asked, "actual": echo, "findings": [],
+                             "verified": sorted(asked)}}
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
             self.captures["lifecycle-" + task + ".json"] = {
                 "threadId": task, "status": "idle", "goal": None}
@@ -1240,7 +1247,10 @@ class PayloadContract(TrialCase):
         # observable list builds settings.actual and has no environments in it, so the host's
         # environment selection is read from the created thread. That claim is asserted against
         # the bridge's own source in ThirtyFirstHostedRound rather than taken on trust here.
-        own |= {"creation", "thread", "environments"}
+        # verified is the same receipt's own list of the settings it was asked for and answered
+        # on, which is what says empty findings established them; the keys that list can hold
+        # are asserted against the contract's own source in FortyFifthHostedRound.
+        own |= {"creation", "thread", "environments", "verified"}
         # The runtime host record's own shape, which is not a relay payload either: the owned
         # pointer is what says which command a host reaches the runtime through.
         own |= {"pointer"}
@@ -4276,6 +4286,41 @@ class FortyFifthHostedRound(TrialCase):
                    for word in call.keywords}
         self.assertIn("threadId", written)
         self.assertNotIn("taskId", written)
+
+    def test_a_receipt_that_never_asked_for_a_setting_is_not_an_echo_of_it(self):
+        # A field absent from what the creation asked for can never produce a finding, so a
+        # receipt whose requested omits the execution settings reports empty findings while
+        # actual carries whatever the thread inherited. Reading that as an echo confirmed a
+        # model, an effort and a sandbox nobody ever asked the host for.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            asked = {key: value for key, value in capture["settings"]["requested"].items()
+                     if key not in ("model", "reasoningEffort", "sandbox")}
+            capture["settings"]["requested"] = asked
+            capture["settings"]["verified"] = sorted(asked)
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt that never asked for the model was read as echoing it")
+        cell = cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("never asked for", cell["evidence"])
+
+    def test_the_requestable_settings_are_the_contracts_own(self):
+        # Support, and the guard on the seventh copied constant, read as the keys the contract's
+        # own requested property builds rather than as words in a file.
+        source = relay_source("packages", "codex-thread-bridge", "src", "codex_thread_bridge",
+                              "settings.py")
+        node = next(n for n in ast.walk(ast.parse(source))
+                    if isinstance(n, ast.FunctionDef) and n.name == "requested")
+        keys = {target.slice.value for target in ast.walk(node)
+                if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name)
+                and target.value.id == "asked" and isinstance(target.slice, ast.Constant)}
+        self.assertEqual(set(startup.REQUESTABLE_SETTINGS), keys)
+        # And the one deliberately not there: the contract decides the approval policy first and
+        # alone on every receipt, so empty findings do establish that one and requiring it here
+        # would refuse every receipt a bridge writes.
+        self.assertNotIn("approvalPolicy", keys)
 
     def test_the_final_doctor_grades_the_reachability_it_reports(self):
         # The socket and the write access were graded once, at the start. The same payload the

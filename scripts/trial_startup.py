@@ -130,6 +130,15 @@ NON_EMPTY_SETTINGS = ("cwd", "model", "reasoningEffort")
 SETTING_MAXIMUM = 500
 BOUNDED_SETTINGS = ("model", "reasoningEffort")
 
+# The settings a creation can ask for, under the protocol's own names, copied from the bridge's
+# SettingsContract.requested and guarded the same way as the other copies. A field absent from
+# what was asked can never produce a finding, so empty findings say nothing about it: the thread
+# would report whatever it inherited and an echo cell would call that agreement. The receipt
+# names the ones it verified, and that list is what answers this. approvalPolicy is deliberately
+# not among them: the contract decides it first and alone on every receipt, so empty findings do
+# establish that one.
+REQUESTABLE_SETTINGS = ("cwd", "model", "reasoningEffort", "runtimeWorkspaceRoots", "sandbox")
+
 
 def blank_settings(values):
     """Which of those settings are present and are not a non-empty string, in a stable order."""
@@ -1513,6 +1522,19 @@ def reading_capability(record, relay):
                 if identifies is MISSING:
                     identifies = field(found["payload"], "taskId")
                 names = same(identifies, task)
+                verified = field(found["payload"], "settings", "verified")
+                if not isinstance(verified, list):
+                    # A list is the only shape this answer takes. Anything else is a reading
+                    # nobody took rather than a disagreement.
+                    verified = MISSING
+                # A setting the creation never asked for cannot produce a finding, so empty
+                # findings do not establish it: actual reports whatever the thread inherited and
+                # this cell would read that as the host echoing what the record declares. Every
+                # requestable setting the record names has to be one the receipt says it
+                # verified.
+                unasked = [] if verified is MISSING else sorted(
+                    key for key in expect
+                    if key in REQUESTABLE_SETTINGS and key not in verified)
                 disagreed = [] if actual is MISSING else [
                     key for key, value in sorted(expect.items())
                     if not declared_agrees(value, field(actual, key))
@@ -1520,13 +1542,15 @@ def reading_capability(record, relay):
                 added = [] if actual is MISSING else sorted(
                     {key + "." + name for key, value in expect.items()
                      for name in beyond_declaration(value, field(actual, key))})
-                ok = (names and not disagreed and isinstance(findings, list) and not findings
-                      and actual is not MISSING)
+                ok = (names and not disagreed and not unasked
+                      and isinstance(findings, list) and not findings
+                      and actual is not MISSING and verified is not MISSING)
                 # Answerable only where every field its predicate reads is there. A receipt with
                 # no findings key never said whether the host reported any, and grading it a
                 # disagreement says it answered none.
                 absent = [name for name, value in (("the settings the host echoed", actual),
                                                    ("its findings", findings),
+                                                   ("the settings it verified", verified),
                                                    ("the thread it is about", identifies))
                           if value is MISSING]
                 cells.append(graded("receiptEcho:" + str(task), MISSING if absent else actual, ok,
@@ -1534,10 +1558,12 @@ def reading_capability(record, relay):
                                     measured_at=found["capturedAt"],
                                     unreadable="the receipt carries no " + ", no ".join(absent),
                                     evidence=(("the host echoed every declared setting and"
+                                               " verified each one it was asked for, and"
                                                " reported no findings" if ok else
                                                "this receipt names task "
                                                + str(shown(identifies))
                                                + ", disagrees at " + ", ".join(disagreed)
+                                               + ", never asked for " + ", ".join(unasked)
                                                + " and reports findings "
                                                + json.dumps(shown(findings)))
                                               + (". The host also recorded " + ", ".join(added)
