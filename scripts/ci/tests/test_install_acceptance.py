@@ -1384,6 +1384,16 @@ def _places(tree):
 
     def walk(node, chain, klass):
         for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                # A decorator, a default and an annotation are evaluated where the def is
+                # written and not inside it, so they stay in the scope around it.
+                outside = (list(getattr(child, "decorator_list", []))
+                           + list(child.args.defaults)
+                           + [value for value in child.args.kw_defaults if value]
+                           + ([child.returns] if getattr(child, "returns", None) else []))
+                for beside in outside:
+                    found[id(beside)] = (".".join(chain) if chain else MODULE_LEVEL, klass)
+                    walk(beside, chain, klass)
             inner, owner = chain, klass
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 inner = chain + [child.name]
@@ -1398,7 +1408,9 @@ def _places(tree):
                 inner = chain + ["<comprehension@" + str(child.lineno) + ">"]
             elif isinstance(child, ast.ClassDef):
                 owner = child.name
-            found[id(child)] = (".".join(inner) if inner else MODULE_LEVEL, owner)
+            # setdefault, because a default or a decorator was already placed in the scope
+            # that evaluates it and walking into the def must not take it back.
+            found.setdefault(id(child), (".".join(inner) if inner else MODULE_LEVEL, owner))
             walk(child, inner, owner)
 
     walk(tree, [], None)
@@ -1414,12 +1426,16 @@ def _module_statements(tree):
     """
     named = {}
     statements = []
-    for statement in tree.body:
+    def spread(prefix, body):
         # A class body first, so a statement in it is named by the class and what it binds
-        # rather than by the class statement that happens to enclose it.
-        if isinstance(statement, ast.ClassDef):
-            statements += [(statement.name, inner) for inner in statement.body]
-        statements.append((None, statement))
+        # rather than by the class statement that happens to enclose it. Nested classes carry
+        # the whole chain, since Outer.Inner is how a reader spells one.
+        for statement in body:
+            if isinstance(statement, ast.ClassDef):
+                spread((prefix + "." if prefix else "") + statement.name, statement.body)
+            statements.append((prefix, statement))
+
+    spread("", tree.body)
     for klass, statement in statements:
         bound = []
         if isinstance(statement, ast.Assign):
@@ -1429,6 +1445,11 @@ def _module_statements(tree):
             bound += [n.id for n in ast.walk(statement.target) if isinstance(n, ast.Name)]
         elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
             bound = [_dotted(statement.value.func) or "a call"]
+        if not bound and isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                                ast.ClassDef)):
+            # A def evaluates its decorators and defaults out here, so the statement answers
+            # with the name it declares rather than with the kind of node it is.
+            bound = [statement.name]
         name = ", ".join(bound) if bound else type(statement).__name__
         if klass:
             name = klass + "." + name
@@ -1650,6 +1671,13 @@ def _hands_on(tree, spelled):
         bound_here = binds(node)
         if bound_here:
             taken_names.setdefault(where, set()).update(bound_here)
+    for node in ast.walk(tree):
+        # global and nonlocal say the name belongs to another scope, so assigning it here does
+        # not make it this one's own and the search must not stop at it.
+        if not isinstance(node, (ast.Global, ast.Nonlocal)):
+            continue
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
+        taken_names.setdefault(where, set()).difference_update(node.names)
 
     def outwards(caller, named, aliases=None):
         """Every place this name may reach, innermost scope first.
@@ -1823,6 +1851,7 @@ def _hands_on(tree, spelled):
                 carriers.add(function)
                 growing = True
 
+    statements = _module_statements(tree)
     taken = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -1830,10 +1859,11 @@ def _hands_on(tree, spelled):
         function, _klass = places.get(id(node), (MODULE_LEVEL, None))
         # A carrier is reported here too. One that only forwards -- return await helper() --
         # names nothing itself, so skipping it would drop the very hop that made it a carrier.
-        if function == MODULE_LEVEL:
-            continue
+        # And a call made at module level is a place the same way a spelling written there is.
+        at_module = function == MODULE_LEVEL
+        where = statements.get(id(node), "a statement") if at_module else function
         for place in sorted(called(node, function) & carriers):
-            taken.append((False, function, node.lineno, "through " + place))
+            taken.append((at_module, where, node.lineno, "through " + place))
     return carriers, taken
 
 
@@ -2039,7 +2069,8 @@ def _refusal_spelled(spellings, held):
             return repr(node.value) if node.value in answers else None
         if isinstance(node, ast.Attribute):
             through = _dotted(node.value)
-            reader = klass if through in ("self", "cls") else through
+            reader = (klass if through in ("self", "cls")
+                      else (through or "").rpartition(".")[2] or None)
             if reader is not None and node.attr in held.get(reader, ()):
                 return (through or "") + "." + node.attr
             return "." + node.attr if node.attr in attributes else None
@@ -2078,7 +2109,8 @@ def _source_spelled(handles, hands_source, held):
             return node.id if node.id in handles else None
         if isinstance(node, ast.Attribute):
             through = _dotted(node.value)
-            reader = klass if through in ("self", "cls") else through
+            reader = (klass if through in ("self", "cls")
+                      else (through or "").rpartition(".")[2] or None)
             if reader is not None and node.attr in held.get(reader, ()):
                 return (through or "") + "." + node.attr
             return "." + node.attr if node.attr == "__file__" else None
@@ -2096,8 +2128,12 @@ def _source_spelled(handles, hands_source, held):
             # read, which is narrower than the class of ways to get a file's contents. The place
             # itself is accounted either way, because the handle is named there; what a narrower
             # rule costs is the CALLER of a helper that reads some other way.
-            head, _, attribute = (spelling or "").partition(".")
-            return spelling if head in handles and attribute.startswith("read") else None
+            head, _, attribute = (spelling or "").rpartition(".")
+            through, _, last = head.rpartition(".")
+            reader = klass if through in ("self", "cls") else None
+            on_a_handle = head in handles or (reader is not None
+                                              and last in held.get(reader, ()))
+            return spelling if on_a_handle and attribute.startswith("read") else None
         return None
 
     return spelled
