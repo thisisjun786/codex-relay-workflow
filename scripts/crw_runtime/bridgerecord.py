@@ -132,12 +132,31 @@ def owner_of(found):
     return owner if owner in OWNERS else None
 
 
+# What makes two records the same registration: who owns it, what it is called, and what it
+# starts. installedBy is evidence about who wrote the record and changes nothing about what
+# Codex spawns, so a rerun that only carries a different issue is the same registration and
+# has to stay idempotent rather than refuse.
+IDENTITY = ("owner", "serverName", "bridgeExecutable", "args")
+
+
+def identity(found):
+    return {field: (found or {}).get(field) for field in IDENTITY}
+
+
+def same_registration(found, wanted):
+    """Whether these two records describe the same registration."""
+    return isinstance(found, dict) and identity(found) == identity(wanted)
+
+
 def outcome_for(wanted, found):
     if not found.usable:
         return found.state
     if found.state == reading.ABSENT:
         return WOULD_CREATE
-    return UNCHANGED if found.value == wanted else DIFFERS
+    # Compared on identity, and on identity alone, so this and the ownership check that runs
+    # before it cannot disagree about what counts as the same record. An existing installedBy
+    # is left where it is rather than rewritten, which is what keeps the rerun idempotent.
+    return UNCHANGED if same_registration(found.value, wanted) else DIFFERS
 
 
 def write(path, wanted, *, apply=False):

@@ -3964,6 +3964,28 @@ def _starts_this_bridge(command, executable):
     return Path(command).name == BRIDGE
 
 
+def _other_bridge_tables(configuration, name, wanted):
+    """Tables that start this bridge under some name other than the one being registered.
+
+    None means the configuration could not be read, which is not an empty answer: it is the
+    question going unanswered, and both owners refuse on it rather than defaulting.
+
+    name is the table this run is registering, or None when it registers none. It is excluded
+    because a legacy registration acquiring its ownership record is the supported migration:
+    the entry is already there and this run adds no second one. Every other bridge table would
+    be joined rather than replaced.
+    """
+    try:
+        view = codexconfig.scan(configuration)
+    except reading.Refused:
+        return None
+    if not view.readable:
+        return None
+    return sorted(table for table, entry in view.servers.items()
+                  if table != name and _starts_this_bridge(entry.get("command"),
+                                                           (wanted or {}).get("bridgeExecutable")))
+
+
 def _mcp_ownership(record_path, owner, configuration, name, wanted):
     """Why this owner may not register the bridge, given what this host already holds.
 
@@ -4002,19 +4024,33 @@ def _mcp_ownership(record_path, owner, configuration, name, wanted):
                     " package already declares it; a configuration entry beside it would run a"
                     " second bridge. Register with --owner " + bridgerecord.OWNER_PLUGIN
                     + ", or remove that record first")
-        if found is not None and found != wanted:
+        if found is not None and not bridgerecord.same_registration(found, wanted):
             # Compared against the whole document, the same comparison the write makes, so this
             # check and that write cannot disagree about what counts as the same record. A
             # differing serverName is the case that hurts most -- the registration would append
             # a table under one name while the record kept naming another -- but a differing
             # command or argument list leaves the same split between the two artifacts.
-            differing = sorted(field for field in set(found) | set(wanted)
+            differing = sorted(field for field in bridgerecord.IDENTITY
                                if found.get(field) != wanted.get(field))
             return ("the record at " + str(record_path) + " is already installed and says"
                     " something else (" + ", ".join(differing) + "); this command does not"
                     " overwrite it. Registering now would append a second table to the Codex"
                     " configuration while the record went on naming the first, and the host"
                     " would start two bridges. Repair or remove that record first")
+        # A host that registered before the record existed has the configuration as its only
+        # evidence, and this path is the migration route: the requested table may already be
+        # there and acquire its record, but a bridge sitting under any OTHER name would be
+        # joined by a second table rather than replaced by one.
+        legacy = _other_bridge_tables(configuration, name, wanted)
+        if legacy is None:
+            return ("the Codex configuration could not be read, so whether this bridge is"
+                    " already registered under another name was not established")
+        if legacy:
+            return ("the Codex configuration already starts this bridge as "
+                    + ", ".join(repr(table) for table in legacy) + ", under a name this run is"
+                    " not registering; adding " + repr(name) + " beside it would leave two"
+                    " tables starting the same bridge. Register under that name to give it an"
+                    " ownership record, or remove the entry first")
         return None
     try:
         with reading.region(record_path, "the Codex configuration"):
@@ -4025,9 +4061,10 @@ def _mcp_ownership(record_path, owner, configuration, name, wanted):
     if not view.readable:
         return ("the Codex configuration could not be read, so whether this server is already"
                 " registered was not established")
-    aliased = sorted(table for table, entry in view.servers.items()
-                     if _starts_this_bridge(entry.get("command"),
-                                            (wanted or {}).get("bridgeExecutable")))
+    aliased = _other_bridge_tables(configuration, None, wanted)
+    if aliased is None:
+        return ("the Codex configuration could not be read, so whether this server is already"
+                " registered was not established")
     if aliased:
         # Found by what it starts rather than by what it is called. A host that registered
         # this bridge before the ownership record existed has the configuration as its only

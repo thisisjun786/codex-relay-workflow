@@ -383,6 +383,57 @@ class BridgeRecordTest(unittest.TestCase):
         self.assertEqual(status, 0, output)
         self.assertTrue(self.record.exists(), output)
 
+    @unittest.skipUnless(TOML_READER, "reading the configuration needs Python 3.11")
+    def test_the_user_owner_is_refused_a_second_name_for_a_legacy_bridge(self):
+        """The same scan the plugin owner got. A legacy alias carries no record either way."""
+        self.configuration().write_text(
+            "[mcp_servers.team-bridge]\ncommand = " + json.dumps(str(self.bridge))
+            + "\nargs = []\n", encoding="utf-8")
+        before = self.configuration().read_bytes()
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("team-bridge", emitted["detail"], output)
+        self.assertEqual(self.configuration().read_bytes(), before, output)
+        self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "reading the configuration needs Python 3.11")
+    def test_a_legacy_registration_can_acquire_its_own_record(self):
+        """The migration route has to stay open: registering under the name already there
+        adds no second table, so it is the one bridge entry that must not refuse."""
+        self.configuration().write_text(
+            "[mcp_servers.team-bridge]\ncommand = " + json.dumps(str(self.bridge))
+            + "\nargs = []\n", encoding="utf-8")
+        status, emitted, output = self.register("--name", "team-bridge", "--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.sections(), ["team-bridge"], output)
+        self.assertEqual(json.loads(self.record.read_text())["serverName"], "team-bridge")
+
+    @unittest.skipUnless(TOML_READER, "reading the configuration needs Python 3.11")
+    def test_a_different_issue_does_not_break_an_unchanged_registration(self):
+        """installedBy is evidence about who wrote the record, not part of what Codex starts."""
+        self.assertEqual(self.register("--apply")[0], 0)
+        before = self.record.read_bytes()
+        status, emitted, output = self.register("--issue", "CRW-200", "--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["record"]["outcome"], bridgerecord.UNCHANGED, output)
+        self.assertEqual(self.record.read_bytes(), before,
+                         "the recorded issue is left where it is: " + output)
+
+    def test_the_record_identity_is_what_codex_starts(self):
+        base = bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                     name="codex-thread-bridge", issue="CRW-114")
+        relabelled = bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                           name="codex-thread-bridge", issue="CRW-200")
+        self.assertTrue(bridgerecord.same_registration(base, relabelled))
+        for changed in (bridgerecord.document(command="/opt/y/bin/codex-thread-bridge",
+                                              name="codex-thread-bridge"),
+                        bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                              name="alias"),
+                        bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",
+                                              name="codex-thread-bridge",
+                                              arguments=["--socket", "/tmp/s"])):
+            self.assertFalse(bridgerecord.same_registration(base, changed), changed)
+
     # ------------------------------------------------------------ the record decides first
 
     def configuration(self):
