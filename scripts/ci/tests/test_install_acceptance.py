@@ -2227,12 +2227,69 @@ RESOLVES_LIKE_PYTHON = {
           "def helper():",
           "    return os.open(HERE).read()",
           "",
-          "def consumer():",
-          "    return helper()"),
-         "consumer", False,
-         "its qualified pair. Accepting any module attribute spelled open would make the"
-         " descriptor call a source read, which is the direct-import case over again on the"
-         " qualified side."),
+         "def consumer():",
+         "    return helper()"),
+        "consumer", False,
+        "its qualified pair. Accepting any module attribute spelled open would make the"
+        " descriptor call a source read, which is the direct-import case over again on the"
+        " qualified side."),
+    "a name a nested def binds in the function around it":
+        (REFUSAL,
+         ("def outer():",
+          "    def CHANGED():",
+          "        return \"fine\"",
+          "    def consumer():",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", False,
+         "a def takes its name in the scope that WRITES it, so the closure under it reads that"
+         " function rather than the module constant. Filing the name under the scope the"
+         " definition OPENS makes a function shadow itself and leaves the scope that really"
+         " binds it holding nothing."),
+    "a name a nested class binds in the function around it":
+        (REFUSAL,
+         ("def outer():",
+          "    class CHANGED:",
+          "        pass",
+          "    def consumer():",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", False,
+         "the same binding written as a class. A reader that follows one and not the other"
+         " answers two ways about one rule, which is how these tables drift apart."),
+    "a name a def binds where the read is written beside it":
+        (REFUSAL,
+         ("def outer():",
+          "    def CHANGED():",
+          "        return \"fine\"",
+          "    return CHANGED"),
+         "outer", False,
+         "the read in the defining scope rather than in a closure under it. The two tables"
+         " disagreed about exactly this: one left definitions out and the other filed them one"
+         " scope too deep, so the name was reachable from neither position or from both."),
+    "a name a def binds under an if in the function around it":
+        (REFUSAL,
+         ("def outer():",
+          "    if True:",
+          "        def CHANGED():",
+          "            return \"fine\"",
+          "    def consumer():",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", False,
+         "a def under an if is still written in the function, so the binding has to be found"
+         " through the statements that open no scope. Reading only a body's direct statements"
+         " would cover the case above and miss this one."),
+    "a name nothing between the read and the module binds":
+        (REFUSAL,
+         ("def outer():",
+          "    def consumer():",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the pair the four above must not break: with no definition taking the name, the"
+         " closure really does read the module constant, and counting definitions as bindings"
+         " sits one line from stopping every outward lookup."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3158,6 +3215,42 @@ def _class_aliases(tree):
     return named
 
 
+def _defined_in_scope(tree, places):
+    """Which scope each def and each class name is bound in: the one that WRITES it.
+
+    _places labels a definition with the scope it OPENS. That is the right answer for its
+    parameters and the wrong one for its own name. `def CHANGED()` inside outer() binds CHANGED
+    in outer, so a closure under it reads that rather than the module's, and filing the name
+    under the definition's own scope makes a function shadow itself while the scope that really
+    binds it holds nothing.
+
+    Derived once and read by both tables that ask the question, because the two had drifted
+    apart: one left definitions out altogether and the other filed them one scope too deep.
+
+    A class body is not the function around it, so a def written in one is that body's and is
+    not reported here.
+    """
+    def defined_here(body):
+        """Every def or class name this body takes, down through the statements that open no
+        scope of their own. A def under an if is still written here; one inside another def
+        belongs to that def."""
+        for statement in body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                yield statement.name
+                continue
+            for child in ast.iter_child_nodes(statement):
+                yield from defined_here([child])
+
+    bound = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
+        for named in defined_here(node.body):
+            bound.setdefault(where, set()).add(named)
+    return bound
+
+
 def _bound_around(taken, scope, name):
     """Whether this scope or one enclosing it binds that name.
 
@@ -3381,6 +3474,12 @@ def _shadowing_names(tree):
                 # assignment under that declaration is the module's.
                 if named not in said_global.get(where, ()):
                     taken.setdefault(where, set()).add(named)
+    # A def or a class written in a function takes that name IN the function, which is why the
+    # loop above leaves definitions to the table that knows which scope writes them.
+    for where, names in _defined_in_scope(tree, places).items():
+        for named in names:
+            if named not in said_global.get(where, ()):
+                taken.setdefault(where, set()).add(named)
     shadowed = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Name):
@@ -4052,9 +4151,15 @@ def _hands_on(tree, spelled):
             # the class is written in would stop the outward lookup for everything after the
             # class, which is not what Python does with a class attribute.
             continue
-        bound_here = _binds_locally(node)
+        # A definition's name belongs to the scope that writes it rather than to the one it
+        # opens, so it is left to _defined_in_scope below.
+        bound_here = (set() if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                                 ast.ClassDef))
+                      else _binds_locally(node))
         if bound_here:
             taken_names.setdefault(where, set()).update(bound_here)
+    for where, names in _defined_in_scope(tree, places).items():
+        taken_names.setdefault(where, set()).update(names)
     for node in ast.walk(tree):
         # global and nonlocal say the name belongs to another scope, so assigning it here does
         # not make it this one's own and the search must not stop at it.
@@ -6389,6 +6494,7 @@ HANDED = {
     "_class_aliases": NOTHING,
     "_base_named": NOTHING,
     "_bound_around": NOTHING,
+    "_defined_in_scope": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
     "_class_spellings": NOTHING,
