@@ -3196,12 +3196,18 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
 
     absent = current is not None and current.state == reading.ABSENT
 
-    # Whether this environment is the one a host reaches, DECIDED by the snapshot rather than
-    # asserted. Both promoted exits report it and a consumer keys "do not release this" on it,
-    # so writing True without reading would be the habit this whole function exists to remove.
-    # A promotion another run superseded between the lock releasing and this line is exactly
-    # the case that makes it false, and a snapshot nobody could take makes it unknown.
-    in_service = None if (selected is None or names is None) else bool(selected and names)
+    # Whether a consumer must keep this destination. Read from the snapshot and never asserted
+    # -- a promotion another run superseded between the lock releasing and this line is exactly
+    # the case that makes it false -- but FALSE ONLY WHERE THE READINGS SAY SO.
+    #
+    # A three-valued answer was wrong here in the one direction that matters. This cell is
+    # exported as "do not release this destination", JSON null is falsey in most things that
+    # will read it, and an unreadable snapshot does not establish that an environment is out
+    # of service: the promotion placed and read back its pointer before this function ran. So
+    # a snapshot nobody could take keeps the environment, which is the same shape
+    # protected_environment itself uses and for the same reason -- the cost of keeping a
+    # directory is a report, and the cost of releasing a live one is the accident.
+    in_service = protected is not False
 
     # Ordered as staging.decide() orders it, because that is whose behaviour this describes:
     # an unreadable claim is answered before the state is consulted at all, and only then does

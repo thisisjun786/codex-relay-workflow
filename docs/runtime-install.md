@@ -589,7 +589,7 @@ rather than folded into one.
 | Field | Answers |
 | --- | --- |
 | `promoted` | whether THIS run replaced a runtime. A resumed promotion did; adopting bookkeeping for an installation the record already selected did not |
-| `inService` | the record selects this environment and the owned pointer names it. This is the fact that makes releasing the destination wrong, and every promoted exit carries it |
+| `inService` | whether this destination must be kept. True while the record selects this environment or the owned pointer names it, and true when that could not be read at all, because an environment nobody could establish as free is not one that is free. False only when the readings say so |
 | `claimSettled` | whether the claim recording it was written |
 | `claim` | the claim's own two outcomes -- `settled` for the record landing, `released` for the call finishing -- with the readback and the selection snapshot that decided them, any residual path, and what raised |
 | `recoveryRequires` | what has to be done next, under the same key a refusal reports it |
@@ -598,8 +598,8 @@ So `install` has three exit statuses rather than two:
 
 | Status | The runtime | The record | What it means |
 | --- | --- | --- | --- |
-| `0` | in service | written | the update finished |
-| `3` | in service | not written | the host reaches this runtime; only the bookkeeping is missing |
+| `0` | changed by this run | written | the update finished |
+| `3` | changed by this run | not written | this run's change to the host landed and the record of it did not |
 | `1` | untouched by this run | not written | this run replaced nothing and recorded nothing; whatever the host selected and reached before it, it still does |
 
 Exit 1 says what this run did, not that the host is consistent. A resume refuses with it when
@@ -611,10 +611,14 @@ nothing; the disagreement it found was already there, and the result names it.
 **Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of
 what it means everywhere else in this command: the candidate was promoted, it is selected, the
 owned pointer names it, and a host is running out of it. A wrapper that reads every non-zero
-install status as "nothing changed" would report the old runtime as selected, or clean up the
-environment now in service. Only exit 1 releases a candidate. Tell the two apart by the status
-itself, or by `inService`, which every promoted exit carries. Read `promoted` for the narrower
-question of whether this run replaced anything: an adoption reports `inService` without it.
+install status as "nothing changed" would report the old runtime as selected, or clean up an
+environment that is still in service. Only exit 1 releases a candidate.
+
+The status says what this run did; it does not promise what is true when you read it. A
+competing install can supersede this environment between the promotion and the result, and
+then status 3 is still correct about this run while `inService` is `false`. Key a cleanup
+decision on `inService` and never on the status alone, and read `promoted` for the narrower
+question of whether this run replaced anything: an adoption reports neither.
 
 Which accident happened, and what to do about it, is in `recoveryRequires` -- derived from the
 claim as it reads back and from a selection snapshot taken under the promotion lock, never from

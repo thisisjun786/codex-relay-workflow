@@ -6526,6 +6526,27 @@ class SettledRecordTests(unittest.TestCase):
                       "and one a later promotion superseded is not, whatever this run did: "
                       + json.dumps(superseded.get("claim") or {})[:400])
 
+    def test_an_unreadable_snapshot_keeps_the_destination(self):
+        """The one direction this cell may not fail in.
+
+        'inService' is exported as "do not release this destination". A snapshot that could
+        not be taken does not establish that an environment is out of service -- the promotion
+        placed and read back its pointer before any of this ran -- and JSON null is falsey in
+        most things that will read it, so a three-valued answer turns an unreadable safety
+        check into permission to clean up.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim with the promotion lock unusable")
+            selection = (payload.get("claim") or {}).get("selection") or {}
+
+        self.assertIsNone(selection.get("selects"),
+                          "the snapshot really could not be taken")
+        self.assertIs(payload.get("inService"), True,
+                      "and an environment nobody could establish as free is not free: "
+                      + json.dumps(payload.get("claim") or {})[:400])
+
     def test_a_pointer_that_does_not_agree_is_not_a_bookkeeping_only_retry(self):
         """The selection alone does not make a rerun bookkeeping.
 
