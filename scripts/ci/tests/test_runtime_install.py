@@ -5984,6 +5984,49 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=busy_after_moving_on))
+        if breaking == "settle the staging claim with only part of it selected":
+            # One configured component inside this environment and the other elsewhere.
+            # protected_environment folds with any() and reads "selected"; _names_environment
+            # requires all of them and a resume refuses.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def split_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    parts = list(host.data["components"])
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={parts[0]["component"]:
+                                str(Path(environment) / "site" / parts[0]["module"]),
+                                parts[1]["component"]:
+                                str(host.previous_site / parts[1]["module"])})
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=split_then_fail))
+        if breaking == "settle the staging claim unreadably with no snapshot":
+            # The claim cannot be read AND the selection could not be established: unknown,
+            # which is not the same as superseded.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+            real_exclusive = runtime_install.hostrecord.Exclusive
+            taken = []
+
+            def corrupt_only(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    staging.claim_path(environment).write_text("{ not json", encoding="utf-8")
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            def exclusive_then_unusable(path, **kwargs):                      # noqa: F811
+                taken.append(path)
+                if len(taken) > 1:
+                    raise OSError("the lock directory is read-only")
+                return real_exclusive(path, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=corrupt_only))
+            patches.append(mock.patch.object(runtime_install.hostrecord, "Exclusive",
+                                             side_effect=exclusive_then_unusable))
         if breaking == "supersede after the claim becomes unreadable":
             # Ownership cannot be established AND the environment is superseded. decide()
             # answers KEEP for every unreadable claim, so the guard must agree.
@@ -6585,6 +6628,52 @@ class SettledRecordTests(unittest.TestCase):
         self.assertIs(superseded.get("inService"), False,
                       "and one a later promotion superseded is not, whatever this run did: "
                       + json.dumps(superseded.get("claim") or {})[:400])
+
+    def test_an_unknown_selection_is_not_reported_as_a_superseded_one(self):
+        """None is a third answer here, and it was being folded into False.
+
+        The superseded arm reads a record that positively selects nothing here. A snapshot
+        that could not be taken says nothing at all, and telling an operator to leave an
+        unreadable claim alone is wrong if this environment is in fact still the selected one:
+        that case needs the claim repaired before a rerun can finish anything.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            unknown = _advice(UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim unreadably with no snapshot")[1], host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            superseded = _advice(UpdateRecoveryTests()._run(
+                other, breaking="supersede after the claim becomes unreadable")[1], other)
+
+        self.assertTrue(superseded, "the contrast needs the other case to say something")
+        self.assertNotEqual(unknown, superseded,
+                            "an unestablished selection must not be told what a positively"
+                            " superseded one is told: " + unknown[:300])
+
+    def test_a_partly_selected_environment_is_not_promised_a_bookkeeping_retry(self):
+        """recordSelectsIt folds with any(); _finish_promotion requires all of them.
+
+        One component here and the other elsewhere reads as selected -- rightly, for keeping
+        the directory -- while a resume refuses, so promising a bookkeeping-only rerun would
+        promise something that cannot happen.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            split = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim with only part of it selected")[1]
+            partly = _advice(split, host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            whole = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim")[1], other)
+
+        self.assertIs(((split.get("claim") or {}).get("selection") or {}).get("selects"), True,
+                      "the directory is still kept, which is what any() is right about")
+        self.assertTrue(whole, "the contrast needs the other case to say something")
+        self.assertNotEqual(partly, whole,
+                            "but a rerun cannot finish a promotion split across two"
+                            " environments, and must not be promised one: " + partly[:300])
 
     def test_unreadable_claim_advice_accounts_for_supersession(self):
         """What the prescribed repair leads to depends on the selection it must consult.

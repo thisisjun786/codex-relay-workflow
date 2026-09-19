@@ -640,9 +640,12 @@ the exception alone:
 | --- | --- | --- |
 | `settled` true, `released` false | the claim landed and the call failed on its way out | nothing about the record; any lock file left behind is named, and the next claim write clears one older than `STALE_LOCK_SECONDS` |
 | the record still selects this environment | the write failed and the promotion stands | clear what stopped the write, then rerun: the next run reads an interrupted promotion and records it, rebuilding nothing. Rerunning before the write can succeed returns this same result and changes nothing |
+| the record selects only part of this environment | the selection is split across two environments | read the record before rerunning; a resume requires every configured component in the same place and refuses otherwise, so there is no single promotion here to finish |
 | the record selects elsewhere but something still reaches this environment | a promotion moved on, or died before its pointer | leave the directory alone; the next run keeps and reports it rather than repairing it |
 | the record selects elsewhere and nothing reaches it | a later promotion superseded this staging | nothing; do not rerun here to settle it, because the next run reads an abandoned staging and would remove and rebuild it |
-| the claim could not be read | the claim at that path is unreadable | make it readable or remove it first; an unreadable claim is not one this command may act on, so a rerun reports the directory and leaves it |
+| the claim could not be read, and the record still selects this environment | the claim at that path is unreadable | make it readable or remove it first; an unreadable claim is not one this command may act on, so a rerun reports the directory and leaves it |
+| the claim could not be read, and the record selects elsewhere | the claim is unreadable for a staging that has been superseded | leave it alone. Repairing it as `STAGING` has the next run read an abandoned staging and rebuild the directory, and removing it leaves one populated and claimless that every later install refuses as somebody else's |
+| the claim could not be read, and the selection could not be either | both readings failed | read the host record first; which of the two rows above applies depends on it, and nothing is at risk meanwhile because a claim this command cannot read is one it leaves alone |
 | the host record is gone | the authority for what this host selected was lost | restore the record before rerunning, and do not remove the environment: the owned pointer may still reach it |
 | the selection could not be established | the snapshot could not be taken | read the host record before acting; it decides whether a rerun records, keeps or rebuilds |
 

@@ -3184,16 +3184,24 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
                     current.value, environment, environment.parent, data,
                     pointer_path=(current.value.get("pointer") or {}).get("path"))
                 selected = protection["recordSelectsIt"]
+                # A SECOND question, and it is not this one. recordSelectsIt folds the entries
+                # with any(), so one component inside this environment answers True while the
+                # others point elsewhere -- the right reading for "must this directory be
+                # kept", and the wrong one for "would a resume finish the promotion here".
+                # _finish_promotion requires EVERY configured component through
+                # _names_environment and refuses otherwise, so an arm promising a
+                # bookkeeping-only rerun has to ask the question that path actually asks.
+                finishable = _names_environment(current.value, environment, data)
+                names = protection["pointerNamesIt"]
             else:
-                protected, selected = None, None
-            names = None if not current.ok else protection["pointerNamesIt"]
+                protected, selected, names, finishable = None, None, None, None
     except reading.READ_FAILURES as error:
         # Not OSError alone. A host record this command ACCEPTS can carry a truthy non-path in
         # an unrelated 'selected' entry, and protected_environment hands it to Path(), which
         # raises TypeError -- escaping into cmd_install's generic handler and reporting exit 1
         # for a promotion whose selection, pointer and claim had all landed. Every shape a
         # reading can fail in belongs here, which is the set reading already declares.
-        current, protected, selected, names = None, None, None, None
+        current, protected, selected, names, finishable = None, None, None, None, None
         snapshot_detail = ("a consistent snapshot of what this host selects could not be"
                            " taken: " + type(error).__name__ + ": " + error.__str__())
     else:
@@ -3234,7 +3242,7 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
     # as anywhere else, and the lock this call lost is said alongside rather than instead.
     if settled:
         record_requires = None
-    elif not left.usable and selected is not True:
+    elif not left.usable and selected is False:
         # An unreadable claim AND a selection that has moved on. decide() keeps this directory
         # either way -- a claim it cannot read is not one it may act on -- but the repair the
         # arm below prescribes is wrong here, because what follows from it depends on the
@@ -3267,6 +3275,19 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " empty record, finds nothing selecting this environment and keeps the directory"
             " rather than repairing it, so rerunning alone settles nothing. The owned pointer"
             " may still reach this environment and a process may still be running out of it.")
+    elif not left.usable and selected is None:
+        # Unknown is not superseded. The arm above reads a record that positively selects
+        # nothing here; this one could not read one at all, and the repair that fits depends
+        # on which it turns out to be.
+        record_requires = (
+            "read " + str(record_path) + " before touching the claim at " + str(path) + ". It"
+            " cannot be read, and what this host selects could not be established either, so"
+            " which repair applies is unknown: if this environment is still selected the claim"
+            " has to be made readable or removed before a rerun can finish the promotion, and"
+            " if it has been superseded then repairing it would have the next run rebuild the"
+            " directory and removing it would leave one no install will touch again. Nothing"
+            " here is at risk meanwhile -- a claim this command cannot read is one it leaves"
+            " alone.")
     elif selected is None:
         record_requires = (
             "read " + str(record_path) + " before acting on this"
@@ -3276,7 +3297,7 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " between finishing the missing bookkeeping, leaving the directory alone, and"
             " removing and rebuilding it. Do not rerun to settle the record until that reading"
             " succeeds.")
-    elif selected is True and names is not True:
+    elif finishable is True and names is not True:
         # The record still selects this environment and the LINK does not agree, or could not
         # be read. A rerun is not bookkeeping then: _finish_promotion replaces the pointer
         # before it writes the claim, and refuses outright for a link this record does not
@@ -3292,7 +3313,18 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " replaces that link before it writes the claim, and refuses outright if the link"
             " is one this record does not account for. Nothing is at risk meanwhile -- this"
             " environment stays selected and nothing removes it.")
-    elif selected is True:
+    elif finishable is not True and selected is True:
+        # Some of this environment is selected and some is not. protected_environment answers
+        # with any(), so this reads as selected and the directory is rightly kept -- but
+        # _finish_promotion requires every configured component and refuses, so promising a
+        # bookkeeping-only rerun here would promise something that cannot happen.
+        record_requires = (
+            "read " + str(record_path) + " before rerunning. It selects part of this"
+            " environment and part of another, so there is no single promotion here to finish:"
+            " a rerun refuses, because finishing one requires the record to select every"
+            " configured component in the same place. The directory is kept and nothing is at"
+            " risk; what needs deciding is which environment this host is meant to be on.")
+    elif finishable is True:
         record_requires = (
             "clear whatever stopped the write at " + str(path) + " -- the error is in"
             " 'detail' -- and then run install again against the same destination. The"
