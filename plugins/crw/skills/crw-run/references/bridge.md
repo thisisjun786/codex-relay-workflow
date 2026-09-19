@@ -241,8 +241,9 @@ task's policy, and a policy that is not the declared one refuses before any turn
 which is how a task whose state moved under you is caught rather than written to.
 Declaring an interactive policy buys delivery, not approval servicing: the bridge grants no
 approval, refuses every approval request, and has no route to that task's own approver, so
-anything the task needs approved stays undone. Receiving a report and running code are
-separate, and only the first is claimed.
+nothing it does turns such a request into an approval. Whether the host surfaces the same
+request to the client that owns the task is not established, so do not read this either way.
+Receiving a report and running code are separate, and only the first is claimed.
 
 The `settings` receipt describes what the host reported at creation or at the
 resume, not a guarantee about the dispatched turn: no host-side exclusivity is

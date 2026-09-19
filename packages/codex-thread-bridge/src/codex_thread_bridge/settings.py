@@ -134,10 +134,12 @@ APPROVAL_LIMITS = (
     "This bridge services no approval. It answers every server-to-client request with a refusal, "
     "so it never grants one and a report message never stands in for an approval that was not "
     "given. It also holds no route back to the thread's own approver: the protocol has no method "
-    "by which a second client hands an approval request to the client that owns the thread, so an "
-    "approval refused here is not shown to that approver either. Delivering a report and "
-    "servicing the code execution a report may provoke are separate capabilities, and only the "
-    "first one is claimed."
+    "by which a second client hands an approval request to the client that owns the thread. "
+    "That is a fact about this bridge, and it is where the statement stops: whether the host "
+    "independently surfaces the same request to the owning client is NOT established here, so "
+    "nothing here says the approver saw it and nothing here says they did not. Delivering a "
+    "report and servicing the code execution a report may provoke are separate capabilities, "
+    "and only the first one is claimed."
 )
 
 # thread/read reports model, reasoningEffort, cwd, environments and projectId, and nothing about
@@ -495,8 +497,8 @@ class SettingsContract:
             "onApprovalRequest": "refused_not_routed",
             "meaning": (
                 "This thread may ask for an approval during the turn. This bridge refuses every "
-                "such request and cannot hand it to the thread's own approver, so that work stays "
-                "undone rather than becoming approved."
+                "such request and has no route for handing it to the thread's own approver, so "
+                "nothing this bridge does can turn such a request into an approval."
                 if interactive
                 else "Nothing on this thread can ask for an approval, so delivery and approval "
                 "cannot be confused here."

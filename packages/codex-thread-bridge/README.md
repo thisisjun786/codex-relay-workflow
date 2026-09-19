@@ -368,8 +368,11 @@ Declaring an interactive policy buys delivery, not approval servicing. Unsupport
 client-side tool and approval requests receive an explicit error, so this bridge grants
 none of them, and it holds no route to the thread's own approver: the protocol has no
 method by which a second client hands an approval request to the client that owns the
-thread. Work that needs an approval therefore stays undone rather than becoming
-approved; continue those tasks in the client that owns the thread.
+thread. That is a statement about this bridge, and it stops there: whether the host
+independently surfaces the same request to the owning client is not established, so
+nothing here claims the approver saw it or that they did not. What is certain is that
+nothing this bridge does turns such a request into an approval; continue those tasks in
+the client that owns the thread.
 Concurrent external clients can still change a thread between those
 steps; the App Server remains authoritative. Nothing steers or interrupts on its own.
 

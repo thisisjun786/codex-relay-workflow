@@ -210,11 +210,12 @@ def make_server(bridge: Bridge):
         Declaring an interactive policy buys delivery, not approval servicing. This bridge
         services no approval: it answers every approval request with a refusal, never grants one,
         and has NO route to the thread's own approver, because the protocol offers no way for a
-        second client to hand an approval request to the client that owns the thread. So a
-        supervisor that receives a report and then tries to run something is denied, and that work
-        stays undone rather than becoming approved. Receiving a report and running code are
-        separate capabilities and only the first is claimed; "approvals" on the receipt and
-        get_capabilities both say so.
+        second client to hand an approval request to the client that owns the thread. That is a
+        statement about this bridge and it stops there: whether the host independently surfaces
+        the same request to the owning client is not established, so read nothing either way from
+        it. What is certain is that nothing this bridge does turns such a request into an
+        approval. Receiving a report and running code are separate capabilities and only the
+        first is claimed; "approvals" on the receipt and get_capabilities both say so.
 
         "delivery" says what happened to the message itself, derived from what actually went out:
         not_delivered (no turn/start left this process -- the same logical message may be sent once
