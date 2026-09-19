@@ -666,18 +666,21 @@ class StopLauncherTest(unittest.TestCase):
         self.assertEqual((done.returncode, done.stdout, done.stderr), (0, "", ""))
         self.assertFalse(self.seen.exists())
 
-    def test_the_settings_override_is_settled_the_way_the_installer_settles_it(self):
-        """A ~ in the override is a path, not a directory named ~, and this hook runs from the
-        session's own workspace where either reading would otherwise be plausible."""
+    def test_an_inherited_settings_override_does_not_redirect_the_launcher(self):
+        """Installation can only refuse the environment it sees; a session starts under
+        another one. Reading a single path is what makes the location an invariant."""
         self.settings()
-        done = subprocess.run(
-            [sys.executable, str(self.LAUNCHER)], input=self.PAYLOAD, capture_output=True,
-            text=True, cwd="/",
-            env={"PATH": os.environ["PATH"], "HOME": str(self.home),
-                 "CODEX_HOME": "/nonexistent",
-                 "CRW_COMPLETION_HOOK_CONFIG": "~/crw-completion-hook.json"})
-        self.assertEqual(done.returncode, 0)
-        self.assertEqual(done.stdout, '{"decision": "block"}', done.stderr)
+        for override in ("elsewhere/settings.json", str(self.home / "elsewhere.json"),
+                         "~/crw-completion-hook.json"):
+            done = subprocess.run(
+                [sys.executable, str(self.LAUNCHER)], input=self.PAYLOAD, capture_output=True,
+                text=True, cwd="/",
+                env={"PATH": os.environ["PATH"], "HOME": str(self.home),
+                     "CODEX_HOME": str(self.home),
+                     "CRW_COMPLETION_HOOK_CONFIG": override})
+            self.assertEqual(done.returncode, 0, override)
+            self.assertEqual(done.stdout, '{"decision": "block"}',
+                             override + " redirected the launcher: " + done.stderr)
 
     def test_an_adapter_that_crashes_still_costs_nothing(self):
         self.adapter.write_text("raise SystemExit(2)\n", encoding="utf-8")

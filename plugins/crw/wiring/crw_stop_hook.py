@@ -33,7 +33,6 @@ import sys
 from pathlib import Path
 
 SETTINGS_NAME = "crw-completion-hook.json"
-SETTINGS_ENV = "CRW_COMPLETION_HOOK_CONFIG"
 PLUGIN_OWNER = "plugin"
 # Kept under the timeout this hook is registered with, so the host does not kill the adapter
 # in the middle of recording why it could not answer.
@@ -47,20 +46,22 @@ MAX_SECONDS = 9
 
 
 def settings_path():
-    """Where this hook's settings live, resolved the way the measured environment allows.
+    """Where this hook's settings live: the one place the installer is made to write them.
 
     A plugin-declared hook command runs through a shell and its process carries CODEX_HOME, so
-    the home is read rather than guessed. The explicit override comes first because a caller
-    that set it has already decided which file this hook reads.
+    the home is read rather than guessed.
 
-    The override is settled to an absolute path before it is used. This hook runs with the
-    session's own workspace as its directory, so a relative value would name one file where the
-    install ran and a different one, or none, at every Stop -- and a Stop that cannot find its
-    settings releases in silence, which is the failure that looks like nothing happening.
+    What this deliberately does NOT read is the settings override the rest of this repository
+    honours. A plugin declaration carries no settings argument, so nothing ties the environment
+    an install ran under to the environment a session starts under, and those are two different
+    environments: refusing the override at installation only settles the first one. A session
+    that inherits the variable from a shell profile or a legacy user-owned setup would be sent
+    somewhere the installer never wrote, and a Stop that cannot find its settings releases in
+    silence -- the failure that looks exactly like nothing happening.
+
+    So the install refuses an override and this reads one path. Together those make the
+    location an invariant instead of a value two sides have to agree about.
     """
-    override = os.environ.get(SETTINGS_ENV)
-    if override:
-        return Path(os.path.abspath(str(Path(override).expanduser())))
     home = os.environ.get("CODEX_HOME")
     return Path(home if home else Path.home() / ".codex") / SETTINGS_NAME
 
