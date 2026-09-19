@@ -664,6 +664,29 @@ def with_policy_defaults(declared):
     return dict(POLICY_DEFAULTS[kind], **declared)
 
 
+def authorizes_state_directory(policy, state_directory):
+    """Whether a task holding this sandbox policy could open the store at all.
+
+    OPS-3.5: a task reaches the store only if the state directory is inside its writable roots,
+    and every relay command opens the store read-write on construction -- so a participant whose
+    policy does not authorise it cannot run even doctor, however healthy every other cell beside
+    it looks. The coordinator passes the state directory as an explicit writable root, so that is
+    what is looked for; containment in a workspace is not what the rule says.
+
+    Absence is not authorisation. A policy this cannot read in full answers no, and the cell
+    above it reports that as unread rather than as a refusal.
+    """
+    merged = with_policy_defaults(policy if isinstance(policy, dict) else {})
+    if not isinstance(merged, dict) or not isinstance(state_directory, str):
+        return False
+    if merged.get("type") == "dangerFullAccess":
+        return True
+    roots = merged.get("writableRoots")
+    if not isinstance(roots, list):
+        return False
+    return any(isinstance(root, str) and within(state_directory, root) for root in roots)
+
+
 def beyond_declaration(declared, found):
     """The keys a payload carries that the record never named, in a stable order."""
     if isinstance(declared, dict) and isinstance(found, dict):
@@ -1762,6 +1785,8 @@ def reading_capability(record, relay):
     """
     cells = []
     seen = {}
+    # The packet's own state directory, which every participant has to be able to write.
+    declared_state_directory = field(record, "relay", "stateDirectory")
     for boundary in record.get("boundaries") or []:
         for participant in boundary.get("participants") or []:
             task = participant.get("taskId")
@@ -1893,6 +1918,32 @@ def reading_capability(record, relay):
                                                  " does not compare" if added else "")),
                                     detail=found["path"]))
 
+                # And whether the policy that thread actually holds lets it reach the store.
+                # OPS-3.5 settles this when the task is created rather than widening it later to
+                # make a send connect, so a participant without the state directory in its
+                # writable roots is one this trial can clear and cannot use: every relay command
+                # opens the store read-write on construction. Read from the policy the host
+                # echoed rather than from the record's declaration, because the declaration can
+                # name a mode while the thread holds the resolved policy, and it is the resolved
+                # one the dispatched turn is restored under.
+                echoed = field(actual, "sandbox") if actual is not MISSING else MISSING
+                reaches = authorizes_state_directory(echoed, declared_state_directory)
+                cells.append(graded("stateReachable:" + str(task),
+                                    MISSING if echoed is MISSING else shown(echoed),
+                                    reaches, provenance=CAPTURED,
+                                    measured_at=found["capturedAt"],
+                                    unreadable="this receipt does not say which sandbox policy"
+                                               " the host gave that thread, so whether it can"
+                                               " open the store is not a question it settles",
+                                    evidence=("the policy this thread holds authorises "
+                                              + str(declared_state_directory)
+                                              if reaches else
+                                              "the policy this thread holds does not authorise "
+                                              + str(declared_state_directory)
+                                              + ", and every relay command opens the store"
+                                              " read-write on construction, so this participant"
+                                              " could not run even doctor"),
+                                    detail=found["path"]))
             probe = relay.relay("settings-show", "--task", task)
             payload = probe["payload"] or {}
             usable = field(payload, "usable")
@@ -2194,6 +2245,20 @@ def reading_store(record, relay):
         # trip however completely its store identity agrees, and the store comparison is decided
         # on the database and says nothing about the socket the delivery uses.
         peer_socket = field(peer, "actorReachability", "socketConnect")
+        # OPS-3.4: proof is doctor from each participating process reporting the packet's own
+        # stateDirectory. The store's own source says why the rest does not reach it -- a store id
+        # is minted once and copied with the bytes, and an agreeing device and inode is
+        # insufficient because one inode is reachable at more than one pathname while SQLite
+        # derives the write-ahead log from the pathname a connection opens. A peer proving this
+        # database through a second name is a peer writing a different log beside it.
+        #
+        # The pathname is read from the store's own dbPath, which probe() fills from the
+        # selection on every doctor payload. It is not read from stateSelection: cmd_store_identity
+        # builds that one, and requiring it of a doctor capture would refuse every genuine peer.
+        peer_state = field(peer, "store", "dbPath")
+        declared_state = field(record, "relay", "stateDirectory")
+        state_agrees = (isinstance(peer_state, str)
+                        and within(peer_state, declared_state))
         # OPS-3.3, asked of every participant rather than only of the boundary this process runs
         # in. The flag moves the store and the environment moves the adapter's ledger, so a peer
         # that sets one without the other keeps the record which suppresses duplicate delivery
@@ -2221,6 +2286,7 @@ def reading_store(record, relay):
                                or peer_writable is MISSING
                                or peer_db is MISSING
                                or peer_socket is MISSING
+                               or not isinstance(peer_state, str)
                                or ledger_unread
                                or field(peer, "store", "storeId") is MISSING
                                or field(peer, "store", "device") is MISSING
@@ -2235,13 +2301,13 @@ def reading_store(record, relay):
         cells.append(graded("peer:" + name, answered,
                             peer_same == "proven" and agrees and nonce_agrees
                             and peer_writable is True and peer_db is True
-                            and peer_socket == "ok" and ledger_beside,
+                            and peer_socket == "ok" and ledger_beside and state_agrees,
                             provenance=CAPTURED, measured_at=found["capturedAt"],
                             unreadable="this peer's doctor payload carries no same-store verdict"
                                        " and the challenge it was asked about, or does not say"
                                        " whether it can write the state directory or reach the"
                                        " socket its delivery would use, or where its transport"
-                                       " ledger lives",
+                                       " ledger lives, or which state directory it selected",
                             evidence=("this peer reports " + str(shown(peer_same)) + " and its own"
                                       " store identity "
                                       + ("agrees with" if agrees else "disagrees with")
@@ -2252,6 +2318,13 @@ def reading_store(record, relay):
                                       + " with its database openable for writing: "
                                       + str(shown(peer_db))
                                       + ". It " + ledger_said
+                                      + ", and it selected " + str(shown(peer_state))
+                                      + (" which is the state directory this record declares"
+                                         if state_agrees else
+                                         ", which is not the state directory this record"
+                                         " declares: one database is reachable at more than one"
+                                         " pathname and the write-ahead log follows the pathname"
+                                         " a connection opens")
                                       + ". A verdict speaks only for the nonce it was given"
                                       + (", and this payload is identical to " + ", ".join(alike)
                                          + ", which doctor cannot tell apart because it does not"

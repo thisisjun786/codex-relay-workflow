@@ -383,6 +383,11 @@ class World:
                 "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE,
                           "inode": self.INODE,
+                          # OPS-3.4: proof is doctor from each participating process reporting
+                          # the packet's own stateDirectory. probe() fills this from the
+                          # selection, so every doctor payload says which database that process
+                          # would open.
+                          "dbPath": str(self.state / "relay" / "operations.sqlite3"),
                           "observedAccess": {"read": True, "write": True,
                                              "directoryWritable": True}},
                 # OPS-3.3, which doctor answers for every acting process it runs in: the report
@@ -839,6 +844,7 @@ class StoreIdentity(TrialCase):
             "sameStore": "proven",
             "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
             "store": {"storeId": "another-store", "device": 1, "inode": 2,
+                      "dbPath": str(self.world.state / "relay" / "operations.sqlite3"),
                       "observedAccess": {"read": True, "write": True,
                                          "directoryWritable": True}},
             "ledger": {"configured": True, "split": False},
@@ -1237,7 +1243,7 @@ class PayloadContract(TrialCase):
         ("cli.py", "cmd_doctor"): ("ledger", "nonce", "actorReachability"),
         ("cli.py", "_reachability"): ("socketConnect", "stateDirectoryWritable"),
         ("cli.py", "_ledger_location"): ("configured", "split"),
-        ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode"),
+        ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode", "dbPath"),
         ("cli.py", "_access_receipt"): ("observedAccess", "write"),
         ("store.py", "compare_store"): ("sameStore",),
         ("service.py", "status"): ("lock", "staleRecord", "ownership", "pid", "storeId",
@@ -1310,6 +1316,10 @@ class PayloadContract(TrialCase):
         # that list is built from; the keys either can hold are asserted against the contract's
         # own source in FortyFifthHostedRound.
         own |= {"creation", "thread", "environments", "verified", "requested"}
+        # And the policy inside that receipt, read to answer whether the thread the host created
+        # can reach the store at all. It is a settings value carried by a capture rather than a
+        # field of any relay payload.
+        own |= {"sandbox"}
         # The runtime host record's own shape, which is not a relay payload either: the owned
         # pointer is what says which command a host reaches the runtime through.
         own |= {"pointer"}
@@ -3501,9 +3511,14 @@ class ThirtyFifthHostedRound(TrialCase):
         return self.world.preflight()
 
     def test_a_declared_type_agrees_with_the_policy_the_host_recorded(self):
-        normalised = {"type": "workspaceWrite", "networkAccess": False, "writableRoots": [],
+        # The root is here because OPS-3.5 requires it of any participant a trial can actually
+        # use: every relay command opens the store read-write, so a thread whose policy does not
+        # authorise the state directory could not run even doctor. A ready path therefore carries
+        # it, and the widened-default case below is what keeps the declaration honest.
+        normalised = {"type": "workspaceWrite", "networkAccess": False,
+                      "writableRoots": [str(self.world.state / "relay")],
                       "excludeTmpdirEnvVar": False, "excludeSlashTmp": False}
-        document = self.declare({"type": "workspaceWrite"}, normalised)
+        document = self.declare(dict(normalised), normalised)
         cells = cells_of(document, "capability")
         self.assertEqual(cells["receiptEcho:" + World.PARENT_A]["value"], VERIFIED)
         self.assertEqual(cells["recordedSettings:" + World.PARENT_A]["value"], VERIFIED)
@@ -3580,6 +3595,38 @@ class ThirtyFifthHostedRound(TrialCase):
         self.assertEqual(cell["value"], VERIFIED)
         self.assertIn("The host also recorded", cell["evidence"])
         self.assertIn("sandbox.somethingThisCheckerDoesNotKnow", cell["evidence"])
+
+    def test_a_policy_that_does_not_authorise_the_state_directory_cannot_reach_the_store(self):
+        # OPS-3.5: a task reaches the store only if the state directory is inside its writable
+        # roots, and that is settled when the task is created rather than widened afterwards to
+        # make a later send connect. Every relay command opens the store read-write on
+        # construction, so a participant whose policy does not authorise it could not run even
+        # doctor -- while every other cell about that participant reads healthy, which is why the
+        # readiness verdict was stronger than anything behind it.
+        normalised = {"type": "workspaceWrite", "networkAccess": False,
+                      "writableRoots": [str(self.world.root / "workspace")],
+                      "excludeTmpdirEnvVar": False, "excludeSlashTmp": False}
+        document = self.declare(dict(normalised), normalised)
+        cells = cells_of(document, "capability")
+        self.assertFalse(document["readyToStart"],
+                         "a participant that could not open the store was read as ready")
+        # A real root that simply is not the one the trial needs, so nothing here passes or fails
+        # for want of a readable policy.
+        self.assertEqual(cells["receiptEcho:" + World.PARENT_A]["value"], VERIFIED)
+        self.assertEqual(cells["stateReachable:" + World.PARENT_A]["value"], NOT_VERIFIED)
+
+    def test_a_receipt_that_never_said_which_policy_the_thread_holds_is_unread(self):
+        # Support: absence is not authorisation. A receipt that does not carry the policy the host
+        # gave that thread does not settle whether it can open the store.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["receipt-" + task + ".json"]["settings"]["actual"].pop("sandbox")
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt that never named a policy was read as ready")
+        self.assertEqual(cells_of(document, "capability")["stateReachable:" + World.PARENT_A][
+            "value"], UNKNOWN)
 
     def test_the_policy_defaults_are_the_relays_own(self):
         # Support, and the guard on the one place this checker copies another lane's contract:
@@ -5171,6 +5218,37 @@ class FortyFifthHostedRound(TrialCase):
                          "a peer reaching its socket with no ledger was read as ready")
         self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
                          NOT_VERIFIED)
+
+    def test_a_peer_that_opened_this_database_by_another_name_is_not_verified(self):
+        # OPS-3.4: proof is doctor from each participating process reporting the packet's own
+        # stateDirectory. The store's own source says why the rest does not reach it: a store id
+        # is minted once and copied with the bytes, and an agreeing device and inode is
+        # insufficient because one inode is reachable at more than one pathname while SQLite
+        # derives the write-ahead log from the pathname a connection opens. So a peer whose id,
+        # nonce, device and inode all agree can still be a peer writing a different log.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            store = self.world.captures["doctor-" + task + ".json"]["store"]
+            store["dbPath"] = "/elsewhere/relay/operations.sqlite3"
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a peer that opened this database by another name was read as ready")
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
+                         NOT_VERIFIED)
+
+    def test_a_peer_that_never_said_which_database_it_opened_is_unread(self):
+        # Support, on the same terms as the other fields this cell reads: probe() fills dbPath on
+        # every doctor payload, so a capture without it did not answer rather than disagreeing.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["doctor-" + task + ".json"]["store"].pop("dbPath")
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
+                         UNKNOWN)
+        self.assertFalse(document["readyToStart"],
+                         "a peer that never said which database it opened was read as ready")
 
     def test_one_file_cannot_be_two_kinds_of_evidence(self):
         # This procedure is explicit that a creation receipt never establishes lifecycle. Pointing
