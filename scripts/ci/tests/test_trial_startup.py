@@ -1629,7 +1629,7 @@ class ThirdHostedRound(TrialCase):
         # fresh for as long as the run took. The witness delay is real time inside one preflight.
         self.world.start_supervisor()
         self.world.record["captureMaxAgeSeconds"] = 1
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 2
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 1.2
         self.world.record["captures"]["parentLifecycle"][World.PARENT_A]["capturedAt"] = (
             startup.stamp(time.time() - 0.5))
         self.world.flush()
@@ -2418,9 +2418,9 @@ class EighteenthHostedRound(TrialCase):
     def test_readiness_is_refused_when_the_window_opens_during_the_run(self):
         # A window a moment ahead, and a witness observation longer than that moment.
         self.world.start_supervisor()
-        self.world.record["window"] = {"opensAt": startup.stamp(time.time() + 1),
+        self.world.record["window"] = {"opensAt": startup.stamp(time.time() + 0.5),
                                        "closesAt": startup.stamp(time.time() + 600)}
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 2
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 1.2
         self.world.flush()
         document = startup.preflight(
             startup.load_start(str(self.world.trial / "start.json"),
@@ -2571,8 +2571,8 @@ class TwentySecondHostedRound(TrialCase):
 
     def test_a_capture_that_expires_during_the_run_fails_at_the_end(self):
         self.world.start_supervisor()
-        self.world.record["captureMaxAgeSeconds"] = 2
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 3
+        self.world.record["captureMaxAgeSeconds"] = 1
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 1.5
         for kind in ("parentLifecycle", "creationReceipt", "registration", "peerDoctor"):
             for name in self.world.record["captures"][kind]:
                 self.world.record["captures"][kind][name]["capturedAt"] = startup.stamp(
@@ -3308,8 +3308,10 @@ class ThirtyFourthHostedRound(TrialCase):
         self.assertEqual(before.count("criteria-show"), 2)
         # And everything after it is the confirmation that no read moved while it ran, the
         # relationship included: leaving that one out left the value the gate compares unguarded.
+        # The store's own identity is asked last of all, after every probe that opened it, because
+        # a database replaced while the readings ran is the one the confirmation pass itself used.
         self.assertEqual(sorted(set(after)),
-                         ["assignment-find", "criteria-show", "settings-show"])
+                         ["assignment-find", "criteria-show", "doctor", "settings-show"])
 
     def test_a_relationship_archived_during_the_confirmation_is_caught(self):
         # Two assignment asks happen before the confirmation's own, so the third is its.
@@ -4132,6 +4134,98 @@ class FortyThirdHostedRound(TrialCase):
         source = relay_source("packages", "codex-thread-bridge", "src", "codex_thread_bridge",
                               "execution.py")
         self.assertEqual(startup.SETTING_MAXIMUM, assigned_literal(source, "MAXIMUM"))
+
+
+class FortyFourthHostedRound(TrialCase):
+    """Three readings whose answers could expire before the gate they fed."""
+
+    def test_a_supervisor_that_leaves_after_its_reading_is_caught_at_the_gate(self):
+        # The process reading is taken near the start of the pass and every probe after it takes
+        # real time. A supervisor that exits while they run left all of those cells verified and
+        # published readiness for a trial with nothing polling, which is the staged-delivery
+        # failure this preflight exists to prevent.
+        self.world.start_supervisor()
+        original = startup.reading_lifecycle
+
+        def stop_the_supervisor_then_read(record):
+            if self.world.supervisor is not None:
+                self.world.supervisor.terminate()
+                self.world.supervisor.wait(timeout=5)
+                self.world.supervisor = None
+            return original(record)
+
+        startup.reading_lifecycle = stop_the_supervisor_then_read
+        self.addCleanup(setattr, startup, "reading_lifecycle", original)
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "readiness was published for a trial whose poller had already exited")
+        self.assertIn("supervisorStillRunning.passed", document["judgmentsThatFailed"])
+        # The reading taken at the start still says what it saw, which is why nothing before this
+        # noticed: it was true when it was taken.
+        self.assertEqual(document["readings"]["processPersistence"]["value"], VERIFIED)
+
+    def test_a_store_replaced_after_its_reading_is_caught_at_the_gate(self):
+        # doctor runs first, before anything else constructs a store, and every settings,
+        # criteria and assignment probe after it opens whatever the state directory names then.
+        # A copy carries the same store id, the same challenge nonce and the same rows, and a
+        # device and inode of its own.
+        copied = json.loads(json.dumps(self.world.payloads["doctor"]["payload"]))
+        copied["sameStore"] = "unproven"
+        copied["store"]["inode"] = World.INODE + 1
+        self.world.payloads["after"] = {"subcommand": "doctor", "calls": 1,
+                                        "payloads": {"doctor": {"payload": copied}}}
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "readiness was published against a store the probes had stopped using")
+        self.assertIn("storeStillTheSame.passed", document["judgmentsThatFailed"])
+        self.assertEqual(document["storeStillTheSame"]["before"], "proven")
+        self.assertEqual(document["readings"]["storeIdentity"]["value"], VERIFIED)
+
+    def test_the_window_is_read_on_one_clock(self):
+        # Two readings of the clock a moment apart called a window that opened between them both
+        # still ahead and inside the allowance, and then dated that answer at a moment the window
+        # had already opened.
+        opens = time.time() + 60
+        self.world.record["window"]["opensAt"] = startup.stamp(opens)
+        self.world.record["window"]["closesAt"] = startup.stamp(opens + 600)
+        self.world.start_supervisor()
+
+        class Straddling:
+            """Real time, except for the readings the window check itself takes."""
+
+            def __init__(self):
+                self.armed = False
+                self.values = [opens - 0.1, opens + 0.1, opens + 0.1]
+
+            def time(self):
+                if self.armed and self.values:
+                    return self.values.pop(0)
+                return time.time()
+
+            def __getattr__(self, name):
+                return getattr(time, name)
+
+        clock = Straddling()
+        original = startup.captures_still_fresh
+
+        def arm_the_clock_then_read(record):
+            # The reading immediately before the window check in every version of this run, and
+            # it takes no clock reading of its own, so the scripted values reach that check.
+            answer = original(record)
+            clock.armed = True
+            return answer
+
+        startup.time = clock
+        startup.captures_still_fresh = arm_the_clock_then_read
+        self.addCleanup(setattr, startup, "captures_still_fresh", original)
+        self.addCleanup(setattr, startup, "time", time)
+        document = self.world.preflight()
+        window = document["windowStillAhead"]
+        self.assertTrue(window["passed"], "the fixture never reached the straddle it is about")
+        self.assertLess(startup.moment(window["readAt"], "readAt"),
+                        startup.moment(window["opensAt"], "window.opensAt"),
+                        "the window check passed at a moment the window had already opened")
 
 
 if __name__ == "__main__":                                           # pragma: no cover

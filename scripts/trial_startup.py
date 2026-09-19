@@ -1218,6 +1218,18 @@ def read_witness(path):
     return last if isinstance(last, dict) else None
 
 
+def witness_counter(value):
+    """A witness counter as a number, or None for anything that is not one.
+
+    A bool is an int in Python, so False to True would be an advance nobody made, and a NaN
+    compares false against every bound at once. Both readings of this counter ask here, so the
+    one taken at the end of the run cannot be more permissive than the one taken at the start.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if finite(value) else None
+
+
 def alive(pid):
     try:
         os.kill(int(pid), 0)
@@ -1323,11 +1335,8 @@ def reading_process(record, relay, sleeper=time.sleep):
     else:
         named = same(first_witness.get("pid"), pid) and same(second_witness.get("pid"), pid)
         before, after = first_witness.get("progress"), second_witness.get("progress")
-        # A bool is an int here, and False to True is not progress anybody made.
-        advanced = (isinstance(before, (int, float)) and isinstance(after, (int, float))
-                    and not isinstance(before, bool) and not isinstance(after, bool)
-                    and finite(before) and finite(after)
-                    and after > before)
+        moved, held = witness_counter(before), witness_counter(after)
+        advanced = moved is not None and held is not None and held > moved
         cells.append(cell("witnessAdvance", VERIFIED if (named and advanced) else NOT_VERIFIED,
                           evidence=("the witness names pid " + str(first_witness.get("pid"))
                                     + " and its counter went " + str(before) + " to " + str(after)
@@ -1362,6 +1371,11 @@ def reading_process(record, relay, sleeper=time.sleep):
                                       + str(shown(field(payload, "ownership"))) + ", pid "
                                       + str(shown(field(payload, "pid"))) + ", staleRecord "
                                       + str(shown(field(payload, "staleRecord"))))))
+    # What the final gate compares against. Every reading after this one takes real time, and a
+    # supervisor that leaves while they run leaves all of them verified.
+    record["_supervisor"] = {"pid": pid, "witness": witness_path, "advanceSeconds": seconds,
+                             "progress": (second_witness or {}).get("progress"),
+                             "at": time.time()}
     return cells
 
 
@@ -1655,6 +1669,9 @@ def reading_store(record, relay):
                         "--expect-nonce", store.get("challengeNonce"))
     payload = probe["payload"] or {}
     verdict = field(payload, "sameStore")
+    # What the final gate compares against. This verdict was taken before any other command
+    # opened a store, and every probe after it opens whatever the state directory names then.
+    record["_sameStore"] = shown(verdict)
     cells.append(graded("sameStore", verdict, verdict == "proven", probe=probe, provenance=EXECUTED,
                         unreadable="doctor did not report a same-store verdict",
                         evidence=("the relay grades this as " + str(shown(verdict)) + ". A matching"
@@ -2598,6 +2615,79 @@ def same_file(left, right):
         return False
 
 
+def supervisor_still_running(record):
+    """The poller read once more, after every probe that follows the process reading.
+
+    That reading is taken near the start of the pass, and the lifecycle, boundary, capability,
+    criteria and assignment probes after it take real time. A supervisor that exits while they
+    run leaves every one of those cells verified and publishes readiness for a trial with
+    nothing polling, which is the staged-delivery failure this preflight exists to prevent,
+    arriving as a pass.
+
+    Liveness and detachment are asked again. The counter is held to the interval the record
+    itself declares: across at least witnessAdvanceSeconds it has to move, which is what the
+    first reading established, and under that interval a poller that has not ticked yet is not a
+    stopped one, so there only a regression refuses -- a counter going backwards, or a witness
+    naming another pid, which is what a replaced supervisor leaves behind.
+    """
+    anchor = record.get("_supervisor")
+    if not anchor:
+        return {"passed": False, "readAt": stamp(),
+                "detail": "the process reading recorded nothing for this to compare against, so"
+                          " there is nothing here that would notice a supervisor leaving"}
+    pid = anchor.get("pid")
+    still, theirs, caller = alive(pid), session_of(pid), os.getsid(0)
+    detached = theirs is not None and theirs != caller
+    found = read_witness(anchor.get("witness"))
+    after = found.get("progress") if isinstance(found, dict) else None
+    named = isinstance(found, dict) and same(found.get("pid"), pid)
+    moved, held = witness_counter(anchor.get("progress")), witness_counter(after)
+    elapsed = time.time() - anchor["at"]
+    declared = witness_counter(anchor.get("advanceSeconds"))
+    must_advance = declared is not None and elapsed >= declared
+    if moved is None or held is None:
+        advanced = False
+    else:
+        advanced = held > moved if must_advance else held >= moved
+    return {"passed": still is True and detached and named and advanced,
+            "pid": pid, "aliveAgain": still, "detached": detached, "namesTheSamePid": named,
+            "progressBefore": shown(anchor.get("progress")), "progressAfter": shown(after),
+            "elapsedSeconds": round(elapsed, 3), "advanceRequired": must_advance,
+            "readAt": stamp(),
+            "detail": "a supervisor that exits while the probes run leaves every cell those"
+                      " probes filled verified, so liveness and the counter are read again here."
+                      " The counter is held to the advance the record declares for it when that"
+                      " long has passed, and to not going backwards when it has not"}
+
+
+def store_still_the_same(record, relay):
+    """The store's identity asked again, after every probe that used it.
+
+    doctor runs first, before anything else constructs a store, and every settings, criteria and
+    assignment probe after it opens whatever database the state directory names at the moment it
+    runs. A file replaced between them leaves storeIdentity verified from the one the first
+    command opened while the delivery this preflight clears uses the other. A copy carries the
+    same store id, the same challenge nonce and the same rows, and a different device and inode,
+    so the peer captures proved access to a store that is no longer the one being read.
+
+    The relay grades store identity, so this asks it the same question with the same
+    expectations rather than rebuilding that comparison here.
+    """
+    store = record.get("store") or {}
+    probe = relay.relay("doctor", "--expect-store", store.get("storeId"),
+                        "--expect-inode", str(store.get("device")) + ":" + str(store.get("inode")),
+                        "--expect-nonce", store.get("challengeNonce"))
+    payload = probe["payload"] or {}
+    verdict = field(payload, "sameStore")
+    return {"passed": verdict == "proven", "before": record.get("_sameStore"),
+            "after": shown(verdict), "command": " ".join(probe["argv"]),
+            "exitCode": probe["exitCode"], "readAt": probe.get("measuredAt") or stamp(),
+            "detail": "the first doctor ran before any other command opened a store, and every"
+                      " probe after it used whatever the state directory named then. This asks"
+                      " the same question at the end, and a replacement answers it differently"
+                      " because its own device and inode are not the ones the record expects"}
+
+
 def captures_still_fresh(record):
     """Every capture that contributed to readiness, aged once more at the end of the run."""
     bound = record.get("captureMaxAgeSeconds")
@@ -2691,17 +2781,26 @@ def preflight(record, *, sleeper=time.sleep):
         assembled[name] = {"value": value, "met": value == VERIFIED, "cells": cells}
 
     gate = order_gate(record, store_payload, entry)
+    # The store's identity, asked again now that every probe that used it has run, and before
+    # the launcher is read, so the spawn this makes is covered by that reading too.
+    store_held = store_still_the_same(record, relay)
     launcher = launcher_unchanged(record, relay)
+    # The last reading taken, because its answer is the one that expires soonest: everything
+    # above is graded on cells filled while a poller was alive near the start of the pass.
+    supervisor = supervisor_still_running(record)
     captures = captures_still_fresh(record)
     # The window was ahead when the record was read; the witness delay and the probes take real
     # time, so it is read again here. A run that publishes readiness after the window has opened
     # sends the dispatch into an interval already being measured.
     opens = moment(field(record, "window", "opensAt"), "window.opensAt")
-    window_ahead = {"passed": (time.time() < opens.timestamp()
-                               <= time.time() + WINDOW_ALLOWANCE),
+    # One reading of the clock answers both bounds and dates the answer. Two readings a moment
+    # apart called a window that opened between them both still ahead and inside the allowance,
+    # and the moment they reported it at was already past it.
+    now = time.time()
+    window_ahead = {"passed": now < opens.timestamp() <= now + WINDOW_ALLOWANCE,
                     "opensAt": shown(field(record, "window", "opensAt")),
                     "allowanceSeconds": WINDOW_ALLOWANCE,
-                    "readAt": stamp(),
+                    "readAt": stamp(now),
                     "detail": "the dispatch this preflight precedes is what opens the window"}
     document = {
         "source": SOURCE,
@@ -2712,6 +2811,8 @@ def preflight(record, *, sleeper=time.sleep):
         "startedAt": stamp(STARTED),
         "relay": record["_relay"],
         "launcherStillTheSameBytes": launcher,
+        "storeStillTheSame": store_held,
+        "supervisorStillRunning": supervisor,
         "readings": assembled,
         "orderGate": gate,
         "windowStillAhead": window_ahead,
