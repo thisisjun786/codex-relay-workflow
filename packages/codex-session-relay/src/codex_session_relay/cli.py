@@ -408,7 +408,8 @@ def cmd_linkage_down(services, args) -> dict:
 
 def cmd_linkage_up(services, args) -> dict:
     return services.linkage.up(
-        task_id=args.task, issue_key=args.issue, relationship_id=args.relationship)
+        task_id=args.task, issue_key=args.issue, relationship_id=args.relationship,
+        scope_key=args.scope)
 
 
 def cmd_linkage_counterpart(services, args) -> dict:
@@ -1962,6 +1963,10 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--task")
     up.add_argument("--issue")
     up.add_argument("--relationship")
+    up.add_argument("--scope",
+                    help="which scope to walk from when --task owns more than one. Without"
+                         " it a task holding several scopes is answered as ambiguous rather"
+                         " than resolved down one arbitrary branch")
     up.set_defaults(handler=cmd_linkage_up)
 
     counterpart = subparsers.add_parser("linkage-counterpart")
