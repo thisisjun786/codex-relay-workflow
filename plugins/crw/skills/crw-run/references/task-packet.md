@@ -303,7 +303,11 @@ parent's own project is in that initiative's approved set, and that the two valu
 states it was written from, that membership, the completion boundary, and the designation's limits and exclusions, are the ones
 the record carries now. The limits are compared for the same reason as the rest: a handoff that
 omits a narrowing the designation made, by forgery, mistake or age, reads as ordinary authority to
-a parent that already holds it, and the later refusal only catches authority being widened. The handoff states both, with the revision it read them at, so the receiver has each
+a parent that already holds it, and the later refusal only catches authority being widened. For the
+same reason the handoff's two statements of those limits are compared with each other: Authority
+says what this parent may do and Scope as read says what the record said, so a handoff whose
+Authority is wider than its own Scope as read is inconsistent on its face, and it is refused and
+raised rather than followed at whichever of the two is more convenient. The handoff states both, with the revision it read them at, so the receiver has each
 side of the comparison; the test is those values and not revision equality: an authorized edit elsewhere in the initiative moves the revision
 without moving them, and refusing a handoff over that would turn ordinary record-keeping into a
 stall. Where those values have moved, the handoff is out of date, and what it needs is the scope

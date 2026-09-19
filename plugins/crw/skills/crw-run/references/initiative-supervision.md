@@ -151,9 +151,13 @@ On finding one, the later binding stops there: it sends no further handoffs, tel
 already handed projects to that its handoff is withdrawn and names the owner, and hands its record
 over. A parent settles that change the way it settled the first handoff, from the record rather
 than from the message: finding the initiative record now naming a supervisor other than the one its
-own record holds, it takes the recorded owner, updates its own record, and leaves its children,
-results and pull requests exactly as they are, because the supervision changed and the project's
-work did not. A withdrawal, or a replacement handoff from the other side, is what prompts that
+own record holds, it takes the recorded owner and updates its own record. Its children, results and
+pull requests are preserved rather than discarded, and they are also re-read against the owner's
+scope before they carry on: two designations need not describe the same execution, so work begun
+under the losing one can sit outside the winning approved set or outside its limits. Where it does,
+that work stops and is raised with an account of what was already done, rather than running on
+under a scope nobody approved. Where the scope agrees it simply continues, because the supervision
+changed and the project's work did not. A withdrawal, or a replacement handoff from the other side, is what prompts that
 read; neither is what settles it, which is also why forging either achieves nothing. That does not prevent an overlap; it bounds one to the work already started, which can be
 reconciled, instead of letting an initiative run to completion under two owners. A busy parent, an unreachable record or an
 uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
@@ -304,10 +308,15 @@ Preserved: the limit, and a result the user can act on without repeating the inv
 Observed: the designation authorizes execution but forbids creating tasks, and some projects
 already have parents while others do not.
 Clauses: [OPS-7.3](operations.md#ops-73-isolation-between-parents).
-Action: hand each existing parent its project and keep going through it. No-create removes
-creation authority, not the execution the designation already carries, and reusing a verified
-existing owner is what the project level does already when a creation path is unavailable. Report
-only the projects that would need a parent created, naming that one missing permission.
+Action: settle who supervises first. Where a supervisor already exists, or this task is free to
+take the binding, hand each existing parent its project and keep going through it: no-create
+removes creation authority, not the execution the designation already carries, and reusing a
+verified existing owner is what the project level does already when a creation path is
+unavailable. Report only the projects that would need a parent created, naming that one missing
+permission. Where no supervisor exists and this task is already bound, so the binding can be
+neither taken here nor created elsewhere, nothing holds it: return every brief unsent with that
+missing permission, because a handoff nobody supervises is one each receiver would have to
+downgrade to a peer request anyway.
 Preserved: the creation limit, and every project whose owner already exists still moving rather
 than collapsed into a report nobody asked for.
 
