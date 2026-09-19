@@ -626,9 +626,10 @@ active child ownership, explicit execution limits, old installation contents and
 ## S28 Three levels run, and each one reads the level below by result
 
 Observed: an initiative has a supervisor bound to its stable ID, two of its projects each have one
-parent, and each parent has one child per ready issue. A child reports its pull request merged into
-dev. Its parent verifies the landing, records the issue, and reports the project's progress upward.
-The supervisor holds no checkout of its own and sees no implementation diff.
+parent, and each parent has one child per ready issue. A child reports its pull request ready: the
+current head's required checks and reviews have finished and no blocking finding remains. Its parent
+verifies that head, merges it, verifies the landing, records the issue, and reports the project's
+progress upward. The supervisor holds no checkout of its own and sees no implementation diff.
 
 Clauses: OPS-7.4, OPS-9.3, OPS-10.1; role semantics belong to
 [the shared role contract](../../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
@@ -636,7 +637,8 @@ Clauses: OPS-7.4, OPS-9.3, OPS-10.1; role semantics belong to
 Action: the supervisor verifies the reported project outcome against the initiative's finish
 condition and stops there. It does not re-open the issue investigation its parent already did, does
 not re-review the child's diff, and does not instruct that child. The parent performs and verifies
-its own merges. Child delivery, parent acceptance, the merge, installation, live behaviour, project
+its own merges, and the child's work ends at that reviewed handoff rather than waiting to be woken
+for a landing it does not own. Child delivery, parent acceptance, the merge, installation, live behaviour, project
 completion and initiative completion stay seven separate claims, so no level reports the level
 above as finished on the strength of one landing.
 
