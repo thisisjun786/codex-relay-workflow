@@ -2456,6 +2456,43 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("except", answer["detail"])
         self.assertIn("restored by hand", answer["detail"])
 
+    def test_a_budget_the_launcher_cannot_outlast_is_refused(self):
+        """The launcher's cap eats its own margin above ceiling minus margin."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json",
+                                           timeoutSeconds=steps.MAX_GUARD_SECONDS + 1)
+        host.install_plugin()
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("leaves it no margin", answer["results"][0]["detail"])
+        self.assertIn(str(steps.MAX_GUARD_SECONDS), answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_the_limit_is_derived_from_the_launcher_this_package_ships(self):
+        """Neither file can import the other, so the agreement is asserted rather than assumed."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import completion
+        from crw_transition import steps
+
+        source = (ROOT / "plugins" / "crw" / "wiring" / "crw_stop_hook.py").read_text(
+            encoding="utf-8")
+        numbers = {}
+        for line in source.splitlines():
+            for name in ("MARGIN_SECONDS", "MAX_SECONDS"):
+                if line.startswith(name + " = "):
+                    numbers[name] = int(line.split("=", 1)[1].strip())
+        self.assertEqual(sorted(numbers), ["MARGIN_SECONDS", "MAX_SECONDS"], json.dumps(numbers))
+        self.assertEqual(numbers["MAX_SECONDS"], completion.LAUNCHER_CEILING_SECONDS)
+        self.assertEqual(numbers["MARGIN_SECONDS"], steps.LAUNCHER_MARGIN_SECONDS)
+        self.assertEqual(steps.MAX_GUARD_SECONDS,
+                         numbers["MAX_SECONDS"] - numbers["MARGIN_SECONDS"])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

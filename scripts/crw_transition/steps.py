@@ -31,6 +31,16 @@ NOT_REACHED = "not_reached"
 # "converged" and "did the work" are different answers and a rerun has to be able to say which.
 DONE = (SETTLED, ALREADY)
 
+# The packaged launcher waits min(timeoutSeconds + MARGIN, MAX) seconds, with MARGIN 2 and MAX the
+# number completion.py calls LAUNCHER_CEILING_SECONDS. So a budget at the ceiling is not the
+# problem the ceiling was written for: every budget above MAX - MARGIN collapses the margin the
+# launcher exists to keep, and at 8.999 the launcher's deadline arrives first and discards the
+# record the adapter was in the middle of writing. What a plugin-owned document may record is
+# therefore the ceiling minus the margin, and this is where that is enforced, because the
+# validation the two adapters share lives in a module this branch does not own.
+LAUNCHER_MARGIN_SECONDS = 2
+MAX_GUARD_SECONDS = completion.LAUNCHER_CEILING_SECONDS - LAUNCHER_MARGIN_SECONDS
+
 
 def stamp():
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -449,15 +459,18 @@ def preflight(host, options):
     document, _source = registered_settings(host)
     budget = (document or {}).get("timeoutSeconds")
     if isinstance(budget, (int, float)) and not isinstance(budget, bool) \
-            and budget >= completion.LAUNCHER_CEILING_SECONDS:
+            and budget > MAX_GUARD_SECONDS:
         # Checked here rather than at the write. The packaged launcher caps its own deadline at
         # that ceiling and has to outlast the adapter it runs, so these settings cannot become
         # plugin-owned -- and finding that out after the registration has been removed would leave
         # the host with no completion hook and a refusal.
         refusals.append("the settings record a guard budget of " + str(budget) + "s, and a"
-                        " plugin-owned document has to stay under "
-                        + str(completion.LAUNCHER_CEILING_SECONDS) + "s so the packaged launcher"
-                        " outlasts the adapter it runs. Lower it before transitioning")
+                        " plugin-owned document has to stay at or under "
+                        + str(MAX_GUARD_SECONDS) + "s: the packaged launcher waits the budget"
+                        " plus " + str(LAUNCHER_MARGIN_SECONDS) + "s capped at "
+                        + str(completion.LAUNCHER_CEILING_SECONDS) + "s, so anything above that"
+                        " leaves it no margin and its deadline arrives while the adapter is still"
+                        " recording. Lower it before transitioning")
     policy = (document or {}).get("journalPolicy")
     if policy and policy != completion.EVERY_INVOCATION:
         refusals.append("the settings record journalPolicy " + str(policy) + ", and the document"
@@ -839,11 +852,14 @@ def settings_install(host, options, *, apply=False, previous=None):
                        + completion.EVERY_INVOCATION + ". Transitioning would change what this"
                        " host records without being asked, so it stops here")
     timeout = source.get("timeoutSeconds") or completion.DEFAULT_TIMEOUT_SECONDS
-    if timeout >= completion.LAUNCHER_CEILING_SECONDS:
+    if timeout > MAX_GUARD_SECONDS:
         return _answer("settings install", REFUSED,
                        "the previous guard budget is " + str(timeout) + "s, and a plugin-owned"
-                       " document has to stay under " + str(completion.LAUNCHER_CEILING_SECONDS)
-                       + "s so the packaged launcher outlasts the adapter it runs")
+                       " document has to stay at or under " + str(MAX_GUARD_SECONDS) + "s: the"
+                       " packaged launcher waits the budget plus "
+                       + str(LAUNCHER_MARGIN_SECONDS) + "s capped at "
+                       + str(completion.LAUNCHER_CEILING_SECONDS) + "s, so anything above that"
+                       " leaves it no margin to outlast the adapter it runs")
     try:
         wanted = completion.configuration(
             destination=host["destination"], marker_root=source.get("markerRoot"),
