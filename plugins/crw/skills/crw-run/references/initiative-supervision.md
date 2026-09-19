@@ -122,9 +122,17 @@ remains after it. Where nothing records these relationships that convergence is 
 a guarantee, so a task that had to create the supervision reads the initiative record once more
 before its first handoff. If another supervisor recorded itself for the same initiative, the
 earlier recorded binding stands, and the later one stops there: it sends nothing, preserves its own
-record and hands over the briefs it has not sent. Reconciling a duplicate before any handoff is
-what keeps one initiative from splitting across two owners, because a parent that has accepted a
-handoff has already begun work for whoever sent it. A busy parent, an unreachable record or an
+record and hands over the briefs it has not sent.
+
+That reread narrows the window without closing it. Two tasks can still interleave a write, a read
+and a first handoff so that each sees only itself, because none of this is an atomic claim: an
+atomic one needs a store that records the relationship and refuses the second, which the bundled
+relay does not have and which belongs to the work that owns registration. So the parent is the
+second place a split is caught rather than the supervisor being the only one. A parent already
+holding an accepted handoff for this project from a different supervisor treats a second one as a
+conflict to raise, not as a newer instruction to follow, and neither supervisor settles that by
+sending again. Caught there, a duplicate surfaces at the point where it would do damage instead of
+being inferred later from divergent work. A busy parent, an unreachable record or an
 uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
 
 ## Hand a project to its parent

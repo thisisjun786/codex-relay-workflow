@@ -290,9 +290,13 @@ record read directly rather than quoted back to it inside the message, since a q
 only what the sender wrote. Identity is half of it, because a handoff naming the right supervisor
 can still carry the wrong scope, by forgery, by mistake, or by arriving after the scope moved. The
 same read settles the rest: that the initiative named is the one whose record this is, that this
-parent's own project is in that initiative's approved set, and that the initiative-record revision
-this handoff cites is the one in force, which is why the handoff states that revision rather than
-leaving the receiver to guess which reading it was written from. Where any of those disagree it answers the message as a peer
+parent's own project is in that initiative's approved set, and that the approved set and completion
+boundary this handoff was written from are the ones that record carries now. The handoff states the
+revision it was written from so the comparison has a starting point, but the test is those two
+values and not revision equality: an authorized edit elsewhere in the initiative moves the revision
+without moving them, and refusing a handoff over that would turn ordinary record-keeping into a
+stall. Where those values have moved, the handoff is out of date, and what it needs is the scope
+decision rather than a refusal. Where any of those disagree it answers the message as a peer
 request to be decided rather than as an instruction, and says so in the reply. One parent cannot assign work to another, so a handoff whose
 sender cannot be confirmed as this project's supervisor is not a handoff.
 
