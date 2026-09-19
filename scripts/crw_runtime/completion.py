@@ -1661,15 +1661,19 @@ def _interpreter_question():
 # report "startable" and an unestablished reading does not. The last case never reaches this
 # function: its caller answers it, because a gap that produces no verdict is read as a clean
 # one.
-def _end_the_session(started):
+def _end_the_session(started, session):
     """Kill everything the probe started, not only the process it made.
 
     A wrapper that forks and then hangs leaves its own children running when the direct child
     is killed, so each timeout left a descendant of this diagnosis behind. The probe opens its
     own session for exactly this, and the whole group goes.
+
+    The group is the one taken when the process was STARTED. Asking for it now would ask about
+    a leader that may already have exited while a child of its own holds the pipes open --
+    which is precisely the shape that times out -- and the lookup fails just when it is needed.
     """
     try:
-        os.killpg(os.getpgid(started.pid), signal.SIGKILL)
+        os.killpg(session, signal.SIGKILL)
     except (OSError, ValueError):
         try:
             started.kill()
@@ -1728,10 +1732,15 @@ def _answers_as_an_interpreter(resolved, label):
         return _cell(firing.COULD_NOT_BE_RUN, label + " could not be run: " + str(error),
                      path=str(resolved),
                      errno=errno.errorcode.get(error.errno, error.errno))
+    # Taken NOW, while the leader is certainly alive and is certainly the group leader.
+    try:
+        session = os.getpgid(started.pid)
+    except (OSError, ValueError):
+        session = started.pid
     try:
         spoke, _complained = started.communicate(timeout=INTERPRETER_PROBE_SECONDS)
     except subprocess.TimeoutExpired:
-        _end_the_session(started)
+        _end_the_session(started, session)
         return _cell(NOT_READ, label + " did not answer within "
                      + str(INTERPRETER_PROBE_SECONDS) + "s, so whether it runs was not"
                      " established", path=str(resolved))
@@ -1962,8 +1971,18 @@ def journals_named(registrations, already_read=None, pinned=None):
         # descriptor it was read through was closed before this call began, so its identity is
         # exactly this recyclable too, and seeding it unheld left one entry skipping the rule
         # every other entry follows.
-        for taken in (already_read or {}).values():
-            _keep(taken, read_by)
+        for spelling, taken in (already_read or {}).items():
+            bound = (pinned or {}).get(str(spelling))
+            if bound is not None:
+                # The CALLER pinned this one and holds it for longer than this call lives, so
+                # its identity is a key already. Going through _keep instead asked for a holder
+                # the caller never took -- it read through the pin rather than asking for one
+                # -- so the seed was reachable by its exact spelling and by nothing else, and
+                # an alias of that same file read it again. An in-place rewrite between the two
+                # then gave one file two contents in one answer.
+                read_by[bound[1]] = taken
+            else:
+                _keep(taken, read_by)
         _read_named(registrations, already_read, read_by, held, found, scanned, aliases,
                     pinned)
     finally:

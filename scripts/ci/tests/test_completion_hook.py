@@ -3820,6 +3820,50 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
                          " journals, so a diagnosis can send the operator to a path that was"
                          " never another path: " + repr(sorted(roots)))
 
+    def test_an_alias_reuses_the_carried_snapshot_rather_than_reading_again(self):
+        """The caller's reading was reachable by its exact spelling and by nothing else.
+
+        status() reads the settings it settled on THROUGH a pin, so it never asks for a holder
+        of its own -- and the seed went through the gate that requires one, which quietly
+        declined to make it reachable by identity. An alias of that same file therefore read it
+        a second time, and an in-place rewrite between the two gave one file two contents in
+        one answer: the same split the carried reading exists to prevent, arriving through the
+        spelling instead of through the object.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = Path(temporary)
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            register(temporary)
+            named = completion.configuration_path(host)
+            alias = host / "an-alias-of-the-settings.json"
+            alias.symlink_to(named)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = dict(written["hooks"][completion.EVENT][0]["hooks"][0])
+            entry["command"] = entry["command"].replace(str(named), str(alias))
+            written["hooks"][completion.EVENT][0]["hooks"].append(entry)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+
+            elsewhere = host / "journal-somewhere-else"
+            elsewhere.mkdir()
+            real = completion.journals_named
+
+            def rewritten_in_place_before_the_entries(*passed, **keywords):
+                document = json.loads(named.read_text(encoding="utf-8"))
+                document["journalRoot"] = str(elsewhere)
+                # IN PLACE: the same object, new bytes, so every pin still reaches it.
+                named.write_text(json.dumps(document), encoding="utf-8")
+                return real(*passed, **keywords)
+
+            with mock.patch.object(completion, "journals_named",
+                                   side_effect=rewritten_in_place_before_the_entries):
+                found = completion.status(codex_home=temporary, environ={})
+
+        roots = {one["journalRoot"] for one in found["configuration"]["namedSettings"]}
+        self.assertEqual(len(roots), 1,
+                         "one settings file was read twice -- once carried and once through an"
+                         " alias -- and the two readings disagreed: " + repr(sorted(roots)))
+
     def test_a_pinned_spelling_that_is_unlinked_is_still_read(self):
         """Asking the PATH again undoes the reason the descriptor was pinned.
 
