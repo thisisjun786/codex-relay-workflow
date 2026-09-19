@@ -627,7 +627,8 @@ active child ownership, explicit execution limits, old installation contents and
 
 Observed: an initiative has a supervisor bound to its stable ID, two of its projects each have one
 parent, and each parent has one child per ready issue. A child reports its pull request ready: the
-current head's required checks and reviews have finished and no blocking finding remains. Its parent
+current head's required checks have PASSED, its required reviews have finished and no blocking
+finding remains, which is the only reading of OPS-9.2 that is not also true of a failed check. Its parent
 verifies that head, merges it, verifies the landing, records the issue, and reports the project's
 progress upward. The supervisor holds no checkout of its own and sees no implementation diff.
 

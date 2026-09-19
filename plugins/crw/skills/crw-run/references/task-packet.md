@@ -54,7 +54,9 @@ Task: [one issue ID and bounded result]
 Parent: [one Linear project ID and verified coordinator task ID, or no project
   for a standalone issue; retain the real coordinator task ID if delegated.
   Initiative membership does not assign another project]
-Supervisor: [initiative ID and supervisor task ID, when the initiative has one; context only.
+Supervisor: [the initiative ID and task ID of THIS project's designated execution supervisor,
+  where one exists; context only. A project contributing to several initiatives still has exactly
+  one, and the others are not named here because they only reference its outcome.
   A supervisor works through your parent and is not a route into this task]
 Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
   or existing PR URL; related issues are dependencies, not additional deliveries.
