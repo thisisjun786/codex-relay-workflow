@@ -2623,7 +2623,28 @@ class TwentyFifthHostedRound(TrialCase):
                 participant["taskId"] = tasks[(name, participant["role"])]
                 participant["cwd"] = str(world.repos[name])
                 participant["expect"] = dict(expect)
-        documented["captures"] = world.record["captures"]
+        # The documented captures keep their own shape too, for the same reason: substituting the
+        # whole object hid a map that named one receipt and one registration for four
+        # participants and two boundaries, which an operator following it would have read as
+        # unknown cells and a refused start.
+        names = {"<parent A>": World.PARENT_A, "<child A>": World.CHILD_A,
+                 "<parent B>": World.PARENT_B, "<child B>": World.CHILD_B}
+        real = world.record["captures"]
+        captures = {}
+        for kind, entries in documented["captures"].items():
+            self.assertIsInstance(entries, dict, kind + " is not documented as a map of captures")
+            captures[kind] = {}
+            for key in entries:
+                name = names.get(key, key)
+                self.assertIn(name, real[kind],
+                              kind + " documents a capture for " + key + ", which is not one of"
+                              " this record's participants or boundaries")
+                captures[kind][name] = dict(real[kind][name])
+            self.assertEqual(sorted(captures[kind]), sorted(real[kind]),
+                             kind + " documents captures for " + str(sorted(entries))
+                             + ", so an operator following it would have a reading with no"
+                             " capture of its own")
+        documented["captures"] = captures
         documented["window"] = dict(world.record["window"])
         self.assertEqual(documented["source"], "live-trial-start")
         self.assertEqual(documented["recordVersion"], 1)
@@ -2820,6 +2841,91 @@ class LinkedWorktreesAreOneRepository(TrialCase):
         cells = cells_of(self.world.preflight(), "boundaries")
         self.assertEqual(cells["repositoryIdentity:B"]["value"], UNKNOWN)
         self.assertFalse(cells["repositoryIdentity:B"]["met"])
+
+
+class TwentyNinthHostedRound(TrialCase):
+    """A gate graded from an answer taken before the delay, and absences graded as disagreements.
+
+    The order gate is the last thing between this run and a dispatch, and it was comparing
+    against the assignment read taken before the witness delay and every probe after it. A
+    relationship archived while those seconds passed was approved from state already stale,
+    which is the race this whole procedure exists to close.
+    """
+
+    def during_the_delay(self, change):
+        """Run the preflight with the store changing underneath it, the way it really can."""
+        self.world.start_supervisor()
+
+        def sleeper(seconds):
+            change()
+            self.world.flush()
+            time.sleep(min(seconds, 0.4))
+
+        return self.world.preflight_with(sleeper)
+
+    def test_a_relationship_archived_during_the_run_refuses_the_start(self):
+        def archive():
+            self.world.payloads["assignment-find"]["payload"]["assignments"][0][
+                "relationshipStatus"] = "archived"
+
+        document = self.during_the_delay(archive)
+        # Readiness first: it is the defect itself, and it is answerable whether or not a reading
+        # of its own exists to name it.
+        self.assertFalse(document["readyToStart"],
+                         "a relationship archived while the run was working was approved anyway")
+        cell = cells_of(document, "assignmentState")["relationshipStillCurrent"]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+
+    def test_the_gate_compares_the_store_as_it_is_when_the_gate_runs(self):
+        def reassign():
+            self.world.payloads["assignment-find"]["payload"]["assignments"][0][
+                "childTaskId"] = "another-child"
+
+        document = self.during_the_delay(reassign)
+        self.assertFalse(document["orderGate"]["passed"])
+        self.assertTrue([c for c in document["orderGate"]["comparisons"]
+                         if c["field"] == "childTaskId" and c["agrees"] is False],
+                        "the gate compared against the answer taken before the delay")
+
+    def test_the_store_is_asked_again_where_the_gate_is(self):
+        self.world.start_supervisor()
+        self.world.preflight()
+        asked = [line for line in self.world.calls.read_text().splitlines()
+                 if line.strip() and json.loads(line)["subcommand"] == "assignment-find"]
+        self.assertEqual(len(asked), 2,
+                         "the store was asked once and the gate reused that answer")
+
+    def test_an_absent_field_is_unknown_rather_than_a_disagreement(self):
+        """Each compound cell, answerable only where every field its predicate reads is there."""
+        def drop_findings(world):
+            world.captures["receipt-" + World.PARENT_A + ".json"]["settings"].pop("findings")
+
+        def drop_ownership(world):
+            world.record["supervisor"]["service"] = True
+            world.payloads["service status"]["payload"].pop("ownership")
+
+        def drop_status(world):
+            world.payloads["assignment-find"]["payload"]["assignments"][0].pop(
+                "relationshipStatus")
+
+        def drop_source(world):
+            world.payloads["criteria-show"]["payload"].pop("sourceRef")
+
+        for change, reading, name in ((drop_findings, "capability",
+                                       "receiptEcho:" + World.PARENT_A),
+                                      (drop_ownership, "processPersistence", "service"),
+                                      (drop_status, "assignmentState", "relationship"),
+                                      (drop_source, "assignmentState", "criteria")):
+            with self.subTest(cell=name):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                change(world)
+                world.start_supervisor()
+                world.flush()
+                cell = cells_of(world.preflight(), reading)[name]
+                self.assertEqual(cell["value"], UNKNOWN,
+                                 name + " read an absent field as a disagreement")
+                self.assertFalse(cell["met"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover

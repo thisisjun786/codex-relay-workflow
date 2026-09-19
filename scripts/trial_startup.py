@@ -968,8 +968,17 @@ def reading_process(record, relay, sleeper=time.sleep):
               and same(field(payload, "pid"), pid)
               and field(payload, "ownership") == "ours"
               and same(field(payload, "storeId"), field(record, "store", "storeId")))
-        cells.append(graded("service", lock, ok, probe=probe, provenance=EXECUTED,
-                            unreadable="service status did not report a lock",
+        # Answerable only where every field its predicate reads is there. A status carrying a
+        # lock and nothing else never said whose it was, and a disagreement would say it did.
+        absent = [name for name, value in (("a lock", lock),
+                                           ("staleRecord", field(payload, "staleRecord")),
+                                           ("a pid", field(payload, "pid")),
+                                           ("ownership", field(payload, "ownership")),
+                                           ("a store id", field(payload, "storeId")))
+                  if value is MISSING]
+        cells.append(graded("service", MISSING if absent else lock, ok, probe=probe,
+                            provenance=EXECUTED,
+                            unreadable="service status did not report " + ", ".join(absent),
                             evidence=("lock " + str(lock) + ", ownership "
                                       + str(shown(field(payload, "ownership"))) + ", pid "
                                       + str(shown(field(payload, "pid"))) + ", staleRecord "
@@ -1084,9 +1093,18 @@ def reading_capability(record, relay):
                 ]
                 ok = (names and not disagreed and isinstance(findings, list) and not findings
                       and actual is not MISSING)
-                cells.append(graded("receiptEcho:" + str(task), actual, ok, provenance=CAPTURED,
+                # Answerable only where every field its predicate reads is there. A receipt with
+                # no findings key never said whether the host reported any, and grading it a
+                # disagreement says it answered none.
+                absent = [name for name, value in (("the settings the host echoed", actual),
+                                                   ("its findings", findings),
+                                                   ("the task it is about",
+                                                    field(found["payload"], "taskId")))
+                          if value is MISSING]
+                cells.append(graded("receiptEcho:" + str(task), MISSING if absent else actual, ok,
+                                    provenance=CAPTURED,
                                     measured_at=found["capturedAt"],
-                                    unreadable="the receipt carries no settings the host echoed",
+                                    unreadable="the receipt carries no " + ", no ".join(absent),
                                     evidence=("the host echoed every declared setting and reported"
                                               " no findings" if ok else
                                               "this receipt names task "
@@ -1375,7 +1393,9 @@ def reading_boundaries(record, relay):
                   and all(answer is True for answer in workspaces))
             # The cell is answerable only where every field its predicate reads is there.
             answered = (MISSING if (scope is MISSING or MISSING in workspaces
-                                    or current is MISSING) else scope)
+                                    or current is MISSING
+                                    or field(receipt, "child", "taskId") is MISSING
+                                    or field(receipt, "parent", "taskId") is MISSING) else scope)
             cells.append(graded("registration:" + str(name), answered, ok, provenance=CAPTURED,
                                 measured_at=found["capturedAt"],
                                 unreadable="this registration receipt does not carry both the"
@@ -1425,8 +1445,17 @@ def reading_assignment(record, relay):
           and same(field(entry, "childTaskId"), assignment.get("childTaskId"))
           and same(field(entry, "parentTaskId"), assignment.get("parentTaskId"))
           and same(field(entry, "executionGeneration"), assignment.get("executionGeneration")))
-    cells.append(graded("relationship", responsible, ok, probe=probe, provenance=EXECUTED,
-                        unreadable="the store did not answer which relationship owns this issue",
+    # Answerable only where every field its predicate reads is there. An entry naming a
+    # relationship and nothing else never said whether it was active or whose generation it was.
+    absent = [name for name, value in (("which relationship owns this issue", responsible),
+                                       ("its status", field(entry, "relationshipStatus")),
+                                       ("its child", field(entry, "childTaskId")),
+                                       ("its parent", field(entry, "parentTaskId")),
+                                       ("its generation", field(entry, "executionGeneration")))
+              if value is MISSING]
+    cells.append(graded("relationship", MISSING if absent else responsible, ok, probe=probe,
+                        provenance=EXECUTED,
+                        unreadable="the store did not answer " + ", ".join(absent),
                         evidence=("the responsible relationship is " + str(shown(responsible))
                                   + ", status " + str(shown(field(entry, "relationshipStatus")))
                                   + ", child " + str(shown(field(entry, "childTaskId")))
@@ -1442,14 +1471,61 @@ def reading_assignment(record, relay):
     ok = (same(field(criteria, "setDigest"), wanted.get("setDigest"))
           and same(field(criteria, "sourceRef"), wanted.get("sourceRef"))
           and same(count, wanted.get("count")))
-    cells.append(graded("criteria", field(criteria, "setDigest"), ok, probe=criteria_probe,
+    absent = [name for name, value in (("a set digest", field(criteria, "setDigest")),
+                                       ("a source reference", field(criteria, "sourceRef")),
+                                       ("a registered set", registered))
+              if value is MISSING]
+    cells.append(graded("criteria", MISSING if absent else field(criteria, "setDigest"), ok,
+                        probe=criteria_probe,
                         provenance=EXECUTED,
-                        unreadable="criteria-show did not report a registered set",
+                        unreadable="criteria-show did not report " + ", ".join(absent),
                         evidence=("digest " + str(shown(field(criteria, "setDigest")))
                                   + ", source " + str(shown(field(criteria, "sourceRef"))) + ", "
                                   + str(count) + " criteria. A non-empty set is not the intended"
                                   " set")))
     return cells, payload, entry
+
+
+def assignment_now(record, relay):
+    """The store's answer about this issue, read again immediately before the gate.
+
+    reading_assignment runs before the witness delay and before every probe that follows it, and
+    the gate is the last thing between this run and a dispatch. A relationship archived or
+    reassigned while those seconds passed left the gate comparing a file and a message against an
+    answer taken minutes earlier, and readiness was published from it. The relay's own refusal
+    stays the guard that makes the race impossible; this closes the window the checker opened by
+    reading once and reusing it.
+    """
+    assignment = record.get("assignment") or {}
+    probe = relay.relay("assignment-find", "--issue", assignment.get("issueKey"))
+    payload = probe["payload"] or {}
+    entries = field(payload, "assignments")
+    entry = MISSING
+    if isinstance(entries, list):
+        entry = next((e for e in entries
+                      if isinstance(e, dict)
+                      and e.get("relationshipId") == assignment.get("relationshipId")), MISSING)
+    responsible = field(payload, "responsibleRelationship")
+    status = field(entry, "relationshipStatus")
+    generation = field(entry, "executionGeneration")
+    still = (same(responsible, assignment.get("relationshipId")) and status == "active"
+             and same(field(entry, "childTaskId"), assignment.get("childTaskId"))
+             and same(field(entry, "parentTaskId"), assignment.get("parentTaskId"))
+             and same(generation, assignment.get("executionGeneration")))
+    answered = MISSING if (responsible is MISSING or entry is MISSING
+                           or status is MISSING or generation is MISSING) else responsible
+    cell_now = graded("relationshipStillCurrent", answered, still, probe=probe,
+                      provenance=EXECUTED,
+                      unreadable="the store did not answer which relationship owns this issue at"
+                                 " the moment the gate runs",
+                      evidence=("read again after every other reading rather than before them:"
+                                " the responsible relationship is " + str(shown(responsible))
+                                + ", status " + str(shown(status)) + ", generation "
+                                + str(shown(generation)) + ". The first read is separated from"
+                                " the gate by the witness delay and every probe between them,"
+                                " and a relationship archived while those ran would have been"
+                                " graded from an answer that was already stale"))
+    return cell_now, payload, entry
 
 
 
@@ -1908,6 +1984,11 @@ def preflight(record, *, sleeper=time.sleep):
         "boundaries": reading_boundaries(record, relay),
         "assignmentState": assignment_cells,
     }
+
+    # Everything above took real time: the witness delay sits inside it, and so does every probe
+    # after it. The gate is graded against a fresh read rather than the one taken before them.
+    current, store_payload, entry = assignment_now(record, relay)
+    assignment_cells.append(current)
 
     assembled = {}
     for name, cells in readings.items():
