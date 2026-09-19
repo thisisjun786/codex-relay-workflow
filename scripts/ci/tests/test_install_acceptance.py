@@ -1416,6 +1416,11 @@ def _places(tree):
                 inner = chain + ["<lambda@" + str(child.lineno) + ">"]
             elif isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp,
                                     ast.GeneratorExp)):
+                # A walrus inside a comprehension binds in the scope AROUND it, which is the
+                # one special case Python carved out of comprehension scoping.
+                for inner in ast.walk(child):
+                    if isinstance(inner, ast.NamedExpr):
+                        found[id(inner)] = (".".join(chain) if chain else MODULE_LEVEL, klass)
                 # A comprehension has a scope of its own on Python 3: its target shadows an
                 # outer name INSIDE it and not after it. Its first iterable is the exception,
                 # evaluated outside before that scope exists.
@@ -1474,6 +1479,30 @@ def _module_statements(tree):
         for node in ast.walk(statement):
             named.setdefault(id(node), name)
     return named
+
+
+def _bindings(node):
+    """Each name a statement binds paired with what it is given, unpacking included.
+
+    alias, other = carrier, str gives each name its own value; reading the tuple as one would
+    give both names both values and lose which is which.
+    """
+    if isinstance(node, ast.NamedExpr):
+        holders, answer = [node.target], node.value
+    elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+        holders = node.targets if isinstance(node, ast.Assign) else [node.target]
+        answer = node.value
+    else:
+        return []
+    paired = []
+    for holder in holders:
+        if (isinstance(holder, (ast.Tuple, ast.List))
+                and isinstance(answer, (ast.Tuple, ast.List))
+                and len(holder.elts) == len(answer.elts)):
+            paired += list(zip(holder.elts, answer.elts))
+        else:
+            paired.append((holder, answer))
+    return paired
 
 
 def _reachable(expression, spelled, klass, bound):
@@ -1535,17 +1564,13 @@ def _held_by_class(tree, spelled, over=None):
                     spreading = True
 
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-            continue
         function, klass = places.get(id(node), (MODULE_LEVEL, None))
-        through_class = any(
-            isinstance(target, ast.Attribute) and _dotted(target.value) not in (None, "self",
-                                                                                "cls")
-            for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))
-        if node.value is None or (klass is None and not through_class) or not _reachable(
-                node.value, spelled, klass, bound.get(function, set())):
-            continue
-        for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+        for target, value in _bindings(node):
+            through_class = (isinstance(target, ast.Attribute)
+                             and _dotted(target.value) not in (None, "self", "cls"))
+            if (klass is None and not through_class) or not _reachable(
+                    value, spelled, klass, bound.get(function, set())):
+                continue
             if isinstance(target, ast.Attribute):
                 through = _dotted(target.value)
                 # Example.unread = ... names the class as statically as self.unread does.
@@ -1924,20 +1949,11 @@ def _hands_on(tree, spelled):
         while spreading:
             spreading = False
             for node in ast.walk(tree):
-                if isinstance(node, ast.NamedExpr):
-                    holders, answer = [node.target], node.value
-                elif (isinstance(node, (ast.Assign, ast.AnnAssign))
-                        and node.value is not None):
-                    holders = (node.targets if isinstance(node, ast.Assign)
-                               else [node.target])
-                    answer = node.value
-                else:
-                    continue
                 function, klass = places.get(id(node), (MODULE_LEVEL, None))
                 held = bound.setdefault(function, set())
-                if not _reachable(answer, reaching(function, klass), klass, held):
-                    continue
-                for named in holders:
+                for named, value in _bindings(node):
+                    if not _reachable(value, reaching(function, klass), klass, held):
+                        continue
                     if isinstance(named, ast.Name) and named.id not in held:
                         held.add(named.id)
                         spreading = True
@@ -2235,11 +2251,9 @@ def _handle_names(tree, handles):
     while growing:
         growing = False
         for node in ast.walk(tree):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
-                continue
-            if _dotted(node.value) not in known:
-                continue
-            for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+            for target, value in _bindings(node):
+                if _dotted(value) not in known:
+                    continue
                 named = _dotted(target)
                 if named and named not in known:
                     known.add(named)
@@ -3618,6 +3632,7 @@ HANDED = {
     "_places": NOTHING,
     "_module_statements": NOTHING,
     "_reachable": NOTHING,
+    "_bindings": NOTHING,
     "_held_by_class": NOTHING,
     "_hands_on": NOTHING,
     "_occurrences": NOTHING,
