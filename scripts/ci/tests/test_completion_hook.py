@@ -4055,6 +4055,12 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
             target = unreadable / ENTRY_POINT.name
             target.write_text("", encoding="utf-8")
             target.chmod(0)
+            if os.access(str(target), os.R_OK):
+                # Running as root, where mode 000 denies nothing. The host this case is about
+                # cannot be built here, and saying so is the honest answer: asserting anyway
+                # would fail for a reason that is not the defect.
+                self.skipTest("this user can read a file with mode 000, so the unreadable"
+                              " script this case is about was never built")
             hook_file = Path(temporary) / "hooks.json"
             written = json.loads(hook_file.read_text(encoding="utf-8"))
             entry = written["hooks"][completion.EVENT][0]["hooks"][0]
@@ -4068,6 +4074,38 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          firing.ESTABLISHED,
                          "an adapter script the interpreter cannot open was read as startable"
                          " because a regular file exists at its path")
+
+    def test_a_wrapper_around_an_interpreter_is_left_unjudged(self):
+        """Refusing the question and answering it wrongly are different facts.
+
+        A registration whose first word is a wrapper -- /usr/bin/env python3 ... -- starts the
+        adapter perfectly well through the words that follow, which this command deliberately
+        does not follow. Running the wrapper with an interpreter's own option makes it reject
+        the option and exit non-zero, and reading that as "not an interpreter" condemned a
+        working registration: a definite repair for a host that has none, which is the
+        strongest form of the answer this issue exists to prevent.
+
+        The family the probe is for does the opposite -- it exits 0 and says nothing -- so the
+        two are separable, and the one that cannot be established says so.
+        """
+        if not Path("/usr/bin/env").exists():
+            self.skipTest("this host has no /usr/bin/env, so the wrapper this case is about"
+                          " cannot be built")
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            hook_file = Path(temporary) / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(
+                sys.executable, "/usr/bin/env " + shlex.quote(sys.executable), 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                            firing.ESTABLISHED,
+                            "a wrapper that starts the adapter was reported as a launcher the"
+                            " host cannot start, because it declined an option meant for the"
+                            " interpreter behind it")
 
     def test_a_python_below_the_floor_is_not_a_startable_interpreter(self):
         """Being a Python is not the whole question, and the installer already knew that.

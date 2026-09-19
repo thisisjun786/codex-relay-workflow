@@ -1649,6 +1649,16 @@ def _answers_as_an_interpreter(resolved, label):
                      errno=errno.errorcode.get(error.errno, error.errno))
     answered = _text(finished.stdout).strip().split(" ")
     version = _python_said(answered[1]) if len(answered) == 2 else None
+    if finished.returncode != 0:
+        # It REFUSED the question rather than answering it wrongly, and those are different
+        # facts. A wrapper -- env, a shell, a launcher script -- rejects an option meant for an
+        # interpreter and exits non-zero while starting the adapter perfectly well through the
+        # words that follow it, which this command deliberately does not follow. Establishing
+        # "not an interpreter" from that condemned a working registration. The family this
+        # probe exists to catch does the opposite: it exits 0 and says nothing.
+        return _cell(NOT_READ, label + " did not accept the question, which is also what a"
+                     " wrapper around an interpreter does, so whether it runs Python was not"
+                     " established here", path=str(resolved))
     if finished.returncode == 0 and answered[0] == expected and version is not None:
         if version < SUPPORTED_PYTHON:
             return _cell(firing.BELOW_SUPPORTED_PYTHON, label + " runs Python "
