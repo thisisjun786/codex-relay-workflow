@@ -1771,6 +1771,21 @@ def reading_capability(record, relay):
                     key for key, value in expect.items()
                     if key in REQUESTABLE_SETTINGS
                     and not declared_agrees(value, field(requested, key)))
+                # And every setting the request carries is compared against what the host
+                # answered, not only the ones the record declares. The contract compares each
+                # requested field with the response, so empty findings beside a request and an
+                # answer that differ is a receipt no bridge wrote: a cwd asking for one
+                # directory while the thread reports another escaped entirely, because the
+                # record names a participant's workspace beside its expect rather than in it.
+                unanswered = [] if (requested is MISSING or actual is MISSING) else sorted(
+                    key for key, value in requested.items()
+                    if not declared_agrees(value, field(actual, key)))
+                # The workspace is declared on the participant, so it is compared from there.
+                workspace = participant.get("cwd")
+                if (requested is not MISSING and workspace is not None
+                        and field(requested, "cwd") is not MISSING
+                        and not same(field(requested, "cwd"), workspace)):
+                    unanswered = sorted(set(unanswered) | {"cwd"})
                 disagreed = [] if actual is MISSING else [
                     key for key, value in sorted(expect.items())
                     if not declared_agrees(value, field(actual, key))
@@ -1779,6 +1794,7 @@ def reading_capability(record, relay):
                     {key + "." + name for key, value in expect.items()
                      for name in beyond_declaration(value, field(actual, key))})
                 ok = (names and not disagreed and not unasked and not unrequested and not beyond
+                      and not unanswered
                       and not inconsistent and requested is not MISSING
                       and isinstance(findings, list) and not findings
                       and actual is not MISSING and verified is not MISSING)
@@ -2837,6 +2853,15 @@ def ledger_report(record):
                           computed=computed)
         item = {"at": entry.get("at"), "actor": entry.get("actor"), "target": entry.get("target"),
                 "action": entry.get("action"), "class": computed, "line": entry["_line"]}
+        # These four are the operator's own words and they are written into the report, so they
+        # travel as words. A structured value here would be copied in whole, and the judgment
+        # walk reads every passed and met it finds anywhere in the document: a ledger line
+        # carrying {"passed": false} under its actor would have added a verdict of its own to a
+        # run it is only evidence for.
+        for name in ("at", "actor", "target", "action"):
+            if not isinstance(item[name], str):
+                raise Refused("a ledger line's " + name + " has to be written as text",
+                              line=entry["_line"], found=json.dumps(shown(item[name])))
         if computed == WINDOW:
             inside.append(item)
         else:
@@ -3023,6 +3048,9 @@ def supervisor_still_running(record, relay=None, sleeper=time.sleep):
             "progressBefore": shown(anchor.get("progress")), "progressAfter": shown(after),
             "elapsedSeconds": round(elapsed, 3), "advanced": advanced,
             "declaredAdvanceSeconds": declared,
+            # When this reading was taken, so the one after the last probe can say how much of
+            # the counter's interval has passed since. Stripped before the document is written.
+            "_readAt": time.monotonic(),
             "service": shown(service),
             "readAt": stamp(),
             "detail": "a supervisor that exits while the probes run leaves every cell those"
@@ -3032,22 +3060,46 @@ def supervisor_still_running(record, relay=None, sleeper=time.sleep):
                       " for the counter rather than for the clock"}
 
 
-def supervisor_still_alive(record, answer):
+def supervisor_still_alive(record, answer, sleeper=time.sleep):
     """The poller read once more, after the last command this run starts.
 
     Every probe is a subprocess that can take as long as its timeout allows, so a verdict about
     a process taken before one of them is a verdict about a moment that has passed. This adds no
-    probe of its own: it is a signal and a session lookup, taken after the last thing that could
-    have outlived the answer beside it.
+    probe of its own: a signal, a session lookup and a file read, taken after the last thing that
+    could have outlived the answer beside it.
+
+    The counter is read again for the same reason liveness is. A supervisor that stops advancing
+    during a long final probe stays alive and in a running state, and the advance observed before
+    that probe says nothing about the interval that has passed since. Where that interval is at
+    least the one the record declares, the counter has to have moved again; where it is shorter,
+    the poller has not been given its interval and is not asked for one.
     """
     anchor = record.get("_supervisor") or {}
     pid = anchor.get("pid")
     if not anchor or not answer.get("passed"):
-        return answer
+        return {k: v for k, v in answer.items() if not k.startswith("_")}
     still, theirs = alive(pid), session_of(pid)
     detached = theirs is not None and theirs != os.getsid(0)
-    return dict(answer, passed=still is True and detached,
-                aliveAfterTheLastProbe=still, detachedAfterTheLastProbe=detached)
+    seen = witness_counter(answer.get("progressAfter"))
+    declared = witness_counter(anchor.get("advanceSeconds"))
+    since = time.monotonic() - answer.get("_readAt", time.monotonic())
+    held, moved_again = seen, True
+    if seen is not None and declared is not None and since >= declared:
+        deadline = time.monotonic() + max(declared - (since - declared), 0)
+        found = read_witness(anchor.get("witness"))
+        held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
+        while not (held is not None and held > seen) and time.monotonic() < deadline:
+            sleeper(min(WITNESS_POLL, max(deadline - time.monotonic(), 0)))
+            found = read_witness(anchor.get("witness"))
+            held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
+        moved_again = held is not None and held > seen
+        still, theirs = alive(pid), session_of(pid)
+        detached = theirs is not None and theirs != os.getsid(0)
+    answered = dict(answer, passed=still is True and detached and moved_again,
+                    aliveAfterTheLastProbe=still, detachedAfterTheLastProbe=detached,
+                    progressAfterTheLastProbe=shown(held),
+                    secondsSinceTheGatesOwnReading=round(since, 3))
+    return {k: v for k, v in answered.items() if not k.startswith("_")}
 
 
 def store_still_the_same(record, relay):
@@ -3197,7 +3249,7 @@ def preflight(record, *, sleeper=time.sleep):
     # verdict was taken before a subprocess that can take a minute, so ordering them against each
     # other only moves which one is stale. The store's identity is the last question the relay is
     # asked, and this is the last observation of any kind before the document is assembled.
-    supervisor = supervisor_still_alive(record, supervisor)
+    supervisor = supervisor_still_alive(record, supervisor, sleeper=sleeper)
     launcher = launcher_unchanged(record, relay)
     captures = captures_still_fresh(record)
     # The window was ahead when the record was read; the witness delay and the probes take real

@@ -5068,6 +5068,97 @@ class FortyFifthHostedRound(TrialCase):
             cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
             NOT_VERIFIED)
 
+    def test_a_request_the_host_did_not_answer_is_compared_too(self):
+        # The comparison ran over the settings the record declares, so a request the record does
+        # not name escaped it. The workspace is the one that matters: it is declared beside the
+        # expect rather than in it, so a receipt asking for one directory while the thread
+        # reports another was never compared at all.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            settings = self.world.captures["receipt-" + task + ".json"]["settings"]
+            settings["requested"] = dict(settings["requested"], cwd="/somewhere/else")
+            settings["verified"] = sorted(settings["requested"])
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a request the host answered differently was never compared")
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_a_counter_that_stops_during_the_last_probe_is_caught(self):
+        # The last probe can take as long as its timeout allows, and a supervisor that stops
+        # advancing during it stays alive and in a running state. The advance seen before that
+        # probe says nothing about the interval that has passed since.
+        if process_state_of(os.getpid()) is None:
+            raise unittest.SkipTest("this host does not report a process state to read")
+        witness = self.world.trial / "supervisor.jsonl"
+        # Alive, detached and in a running state throughout, which is the arrangement this is
+        # about: the counter stops, the process does not.
+        quiet = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                 start_new_session=True,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(quiet.wait)
+        self.addCleanup(quiet.terminate)
+
+        def advance(progress):
+            witness.write_text("".join(json.dumps({"pid": quiet.pid, "progress": n}) + "\n"
+                                       for n in range(1, progress + 1)), encoding="utf-8")
+
+        advance(1)
+        self.world.record["supervisor"]["pid"] = quiet.pid
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.2
+        self.world.record["supervisor"]["minimumAliveSeconds"] = 0.05
+        self.world.flush()
+        pauses = {"count": 0}
+
+        def pause(seconds):
+            pauses["count"] += 1
+            advance(1 + pauses["count"])
+
+        original = startup.store_still_the_same
+
+        def take_longer_than_the_counters_interval(record, relay):
+            answer = original(record, relay)
+            time.sleep(0.4)
+            return answer
+
+        startup.store_still_the_same = take_longer_than_the_counters_interval
+        self.addCleanup(setattr, startup, "store_still_the_same", original)
+        document = self.world.preflight_with(pause)
+        answer = document["supervisorStillRunning"]
+        self.assertFalse(document["readyToStart"],
+                         "a counter that stopped during the last probe was read as advancing")
+        self.assertTrue(answer["advanced"],
+                        "the gate's own reading did not see the advance this case needs")
+        self.assertTrue(answer["aliveAfterTheLastProbe"],
+                        "this case is about a process that stays, not one that leaves")
+
+    def test_a_ledger_line_cannot_write_a_verdict_into_the_report(self):
+        # These four fields are the operator's own words and they are copied into the report. A
+        # structured value would travel whole, and the judgment walk reads every passed it finds
+        # anywhere in the document, so a ledger line could add a verdict to a run it is only
+        # evidence for.
+        now = time.time()
+        opened, closed = now - 60, now - 5
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": startup.stamp(now - 300), "kind": "segment_start", "segment": "window-1"},
+            {"at": startup.stamp(now - 280), "kind": "intervention", "segment": "window-1",
+             "actor": {"passed": False}, "target": "process",
+             "action": "restarted the supervisor"},
+            {"at": startup.stamp(now - 200), "kind": "segment_end", "segment": "window-1",
+             "outcome": "failed"},
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window-4"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window-4"},
+        ])
+        code, payload, stderr = self.world.run_cli("ledger")
+        self.assertIn("written as text", json.dumps(payload),
+                      "a ledger line carrying a structured actor was accepted")
+        self.assertEqual(code, 2, stderr)
+
     def test_a_root_is_judged_as_the_bytes_the_relay_receives(self):
         # The bound on that refusal: a root that is absolute without anything being taken off it
         # is still a root, trailing characters and all, because the relay compares it the same
