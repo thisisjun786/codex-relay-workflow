@@ -3121,12 +3121,65 @@ RESOLVES_LIKE_PYTHON = {
           "    stream = fopen(HERE)",
           "    return stream.read()",
           "",
+         "def consumer():",
+         "    return helper()"),
+        "consumer", True,
+        "the import binds the name in the scope that wrote it exactly as an assignment does,"
+        " so that scope is not shadowing the opener it has just taken. Recording only"
+        " assignments left the function importing the opener rejected as having hidden it."),
+    "a source reader a scope names for itself":
+        (TEXT,
+         ("def helper():",
+          "    reader = ast.parse",
+          "    return reader(HERE.read_text())",
+          "",
           "def consumer():",
           "    return helper()"),
          "consumer", True,
-         "the import binds the name in the scope that wrote it exactly as an assignment does,"
-         " so that scope is not shadowing the opener it has just taken. Recording only"
-         " assignments left the function importing the opener rejected as having hidden it."),
+         "reader = ast.parse written in the scope that calls it IS the reader, not a shadow of"
+         " one. Rejecting every local binding of the name throws away the binding that made it"
+         " a reader in the first place."),
+    "a refusal import an inner parameter takes back":
+        (REFUSAL,
+         ("def outer():",
+          "    from crw_runtime.reading import UNREADABLE as answer",
+          "    def consumer(answer):",
+          "        return answer",
+          "    return consumer"),
+         "outer.consumer", False,
+         "the exemption for a scope that imports the answer is a fact about THAT scope. A"
+         " parameter written nearer the read is a fact about this one and wins, so an outer"
+         " import must not survive an inner function taking the name from its caller."),
+    "a refusal import nothing nearer takes":
+        (REFUSAL,
+         ("def outer():",
+          "    from crw_runtime.reading import UNREADABLE as answer",
+          "    def consumer():",
+          "        return answer",
+          "    return consumer"),
+         "outer.consumer", True,
+         "its pair: with nothing nearer binding the name the closure really does read what the"
+         " outer import left, so measuring distance must not have cancelled the exemption"
+         " altogether."),
+    "a qualified refusal import an inner parameter takes back":
+        (REFUSAL,
+         ("def outer():",
+          "    import crw_runtime.reading as r",
+          "    def consumer(r):",
+          "        return r.UNREADABLE",
+          "    return consumer"),
+         "outer.consumer", False,
+         "the qualified spelling of the case above, and it needed saying separately because"
+         " each of these rules has needed its other spelling checked on its own."),
+    "a qualified refusal import nothing nearer takes":
+        (REFUSAL,
+         ("def outer():",
+          "    import crw_runtime.reading as r",
+          "    def consumer():",
+          "        return r.UNREADABLE",
+          "    return consumer"),
+         "outer.consumer", True,
+         "and its pair, for the same reason."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4228,6 +4281,24 @@ def _names_module(qualifies, scope, spelled_as, fallback):
     return frozenset(found) if found else frozenset({fallback} if fallback else ())
 
 
+def _nearest(bound, scope, name):
+    """How near the innermost scope binding that name is, counted outward from the module.
+
+    An exemption keyed to an enclosing scope is a fact about THAT scope. A parameter written
+    closer to the read is a fact about this one, and it wins: an outer import of a refusal does
+    not survive an inner function taking the same name from its caller. -1 when nothing binds
+    it, so an exemption with no shadow beside it still stands.
+    """
+    depth = 0 if name in bound.get(MODULE_LEVEL, ()) else -1
+    reach = [] if scope == MODULE_LEVEL else scope.split(".")
+    here = []
+    for part in reach:
+        here.append(part)
+        if name in bound.get(".".join(here), ()):
+            depth = len(here)
+    return depth
+
+
 def _bound_around(taken, scope, name):
     """Whether this scope or one enclosing it binds that name.
 
@@ -4524,7 +4595,7 @@ def _shadowing_names(tree):
             reach.pop()
         if hidden:
             shadowed.add(id(node))
-    return frozenset(shadowed)
+    return frozenset(shadowed), taken
 
 
 def _linearised(parents):
@@ -5857,7 +5928,7 @@ def source_spellings(tree):
 
 def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), built=(),
                      imported_answers=(), known_keys=(), qualifies=None, places=None,
-                     answers_at=None):
+                     answers_at=None, taken_at=None):
     """The matcher: which node is a refusal, spelled any of the derived ways."""
     answers = spellings["answer"]
     attributes = spellings["module attribute"] | spellings["collection"]
@@ -5866,6 +5937,7 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
     qualifies = qualifies or {}
     places = places or {}
     answers_at = answers_at or {}
+    taken_at = taken_at or {}
 
     def spelled(node, klass):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -5882,7 +5954,13 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
                     and id(node.value) in shadowed and id(node.value) not in built
                     and not (_names_module(qualifies,
                                            places.get(id(node), (MODULE_LEVEL, None))[0],
-                                           through, None) & owners)):
+                                           through, None) & owners
+                             and _nearest(qualifies,
+                                          places.get(id(node), (MODULE_LEVEL, None))[0],
+                                          through)
+                             >= _nearest(taken_at,
+                                         places.get(id(node), (MODULE_LEVEL, None))[0],
+                                         through))):
                 # The scope binds that qualifier itself, so neither an imported module nor an
                 # instance bound at module level under the same spelling is what this reads.
                 # Unless what binds it is an import of the module that owns the answer: a
@@ -5918,8 +5996,11 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
             # Unless what binds it is the import that made it an answer: a function writing
             # from completion import NOT_READ as answer binds answer locally, and that local
             # binding IS the refusal rather than something wearing its name.
-            if id(node) in shadowed and not _bound_around(
-                    answers_at, places.get(id(node), (MODULE_LEVEL, None))[0], node.id):
+            where = places.get(id(node), (MODULE_LEVEL, None))[0]
+            if id(node) in shadowed and not (
+                    _bound_around(answers_at, where, node.id)
+                    and _nearest(answers_at, where, node.id)
+                    >= _nearest(taken_at, where, node.id)):
                 return None
             return node.id
         return None
@@ -6095,10 +6176,12 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
 
 
 def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), declared=(),
-                    astray=(), built=(), opens_a_file=True, openers=None, places=None):
+                    astray=(), built=(), opens_a_file=True, openers=None, places=None,
+                    reader_at=None, taken_at=None):
     """The matcher: which node reaches the text of a source file, spelled any of the derived ways."""
     bare, dotted, rebound = openers or (frozenset({builtins.open.__name__}), frozenset(), {})
     places = places or {}
+    reader_at, taken_at = reader_at or {}, taken_at or {}
 
     def spelled(node, klass):
         if isinstance(node, ast.Name):
@@ -6132,13 +6215,18 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             root = node.func
             while isinstance(root, ast.Attribute):
                 root = root.value
-            if (spelling in hands_source
-                    and not (isinstance(root, ast.Name) and id(root) in shadowed)):
+            at = places.get(id(node), (MODULE_LEVEL, None))[0]
+            hidden = (isinstance(root, ast.Name) and id(root) in shadowed
+                      and _nearest(reader_at, at, root.id)
+                      < _nearest(taken_at, at, root.id))
+            if spelling in hands_source and not hidden:
                 # Unless the scope binds that name itself: a parameter called reader holds
                 # whatever its caller passed, and a call through it says nothing about this
                 # module's source. The spelling table is this module's; the binding is the
                 # analysed scope's. Asked of the ROOT of the chain, because a parameter called
-                # parser shadows parser.parse exactly as one called reader shadows reader.
+                # parser shadows parser.parse exactly as one called reader shadows reader --
+                # and unless the binding IS the alias, because reader = ast.parse written in
+                # the scope that calls it is the reader rather than a shadow of one.
                 return spelling
             # A READ taken on a handle hands source text back: a helper answering
             # HERE.read_text() gives its caller the text as surely as one answering ast.parse.
@@ -6267,7 +6355,7 @@ def refusals_reached(source):
     # Which names in this source are classes written here, so an attribute read off one is
     # answered by what the class binds rather than by the spelling of its name.
     classes, as_class, built = _instance_classes(tree)
-    shadowed = _shadowing_names(tree)
+    shadowed, taken_at = _shadowing_names(tree)
     places = _places(tree)
     known_keys = frozenset(places.get(id(node), (MODULE_LEVEL, None))[1]
                            for node in ast.walk(tree) if isinstance(node, ast.ClassDef))
@@ -6351,12 +6439,12 @@ def refusals_reached(source):
         wider = _held_by_class(
             tree, _refusal_spelled(spellings, held, classes, as_class, shadowed, built,
                                    imported_answers, known_keys, qualifies, places,
-                                   answers_at), held)
+                                   answers_at, taken_at), held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _refusal_spelled(spellings, held, classes, as_class, shadowed,
                                                 built, imported_answers, known_keys,
-                                                qualifies, places, answers_at)),
+                                                qualifies, places, answers_at, taken_at)),
             spellings)
 
 
@@ -6365,7 +6453,7 @@ def source_text_reached(source):
     tree = ast.parse(source)
     handles, hands_source, undecided, called = source_spellings(tree)
     declared = frozenset(handles)
-    shadowed = _shadowing_names(tree)
+    shadowed, taken_at = _shadowing_names(tree)
     # Whether open is the builtin here. A module that defines its own open has shadowed it, and
     # what that one answers with is a question about the run rather than a file's text.
     opens_a_file = not any(
@@ -6379,6 +6467,25 @@ def source_text_reached(source):
     places = _places(tree)
     openers = _opener_spellings(tree, places)
     handles, where_from = _handle_names(tree, handles, shadowed, opens_a_file, openers)
+    # Which scope gives a name to something that hands source back. reader = ast.parse binds
+    # the name in the scope that wrote it, so that scope is not shadowing the reader it just
+    # named -- the same rule the opener alias already follows.
+    reader_at = {}
+    for node in ast.walk(tree):
+        binding = _assigned(node)
+        if binding is None:
+            continue
+        targets, value = binding
+        # Through the pass-through vocabulary as well as the dotted spelling, the same way the
+        # opener alias walk reads its value: reader = ast.parse is dotted, and a name handed
+        # through a branch is not.
+        if not ({(_dotted(value) or "")}
+                | {source.id for source in _passed_through(value)}) & set(hands_source):
+            continue
+        at = places.get(id(node), (MODULE_LEVEL, None))[0]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                reader_at.setdefault(at, set()).add(target.id)
 
     def inside(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
@@ -6395,13 +6502,15 @@ def source_text_reached(source):
     while growing:
         wider = _held_by_class(
             tree, _source_spelled(handles, hands_source, held, as_class, shadowed, declared,
-                                  astray, built, opens_a_file, openers, places),
+                                  astray, built, opens_a_file, openers, places, reader_at,
+                                  taken_at),
             held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _source_spelled(handles, hands_source, held, as_class,
                                                shadowed, declared, astray, built,
-                                               opens_a_file, openers, places)),
+                                               opens_a_file, openers, places, reader_at,
+                                               taken_at)),
             {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
 
 
@@ -7976,6 +8085,7 @@ HANDED = {
     "_class_aliases": NOTHING,
     "_base_named": NOTHING,
     "_bound_around": NOTHING,
+    "_nearest": NOTHING,
     "_defined_in_scope": NOTHING,
     "_assigned": NOTHING,
     "_names_module": NOTHING,
