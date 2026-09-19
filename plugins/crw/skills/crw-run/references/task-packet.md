@@ -282,25 +282,31 @@ only remaining routes are the ones this workflow forbids, and write the generati
 verdict is about to open rather than the one still current as you write. Those two are
 never the same on a correction, and the child acts on the one it was given.
 
-Put it in the first finding. That is a precaution and not a guarantee, and the
-difference matters here. The renderer decides what of a verdict the child sees, it can
-carry fewer findings than the verdict holds, it need not say it dropped any, and on the
-measured version a size budget can drop the findings section entirely;
-[codex-session-relay](relay.md#the-parent-verifies) records what that version does.
-The verdict is also one transaction that has already opened the next generation by the
-time anything could discover the block missing.
+Declare which finding carries it, and put it in the first one. The declaration is what
+makes a failure visible; the position is what makes failure unlikely, and the two are
+different jobs. A relay that recognises the declaration refuses a correction it cannot
+carry BEFORE that correction opens the next generation, so the transaction the coordinator
+used to be unable to get back to is one it can now simply not enter;
+[codex-session-relay](relay.md#the-parent-verifies) records the flag and the outcomes it
+names.
 
-So delivery of the block is a claim that needs evidence rather than a consequence of
-placement. Confirm it from a dispatched attempt and what the child actually received,
-never from a queued rendering, which is the bytes a next attempt would send rather than
-proof of a send. Where the block did not arrive, say so plainly: there is no supported
-way to send it again, because the verdict does not resend and the parallel route stays
-forbidden. Record it as an undelivered correction on that assignment and hand it to the
-coordinator, whose decision it is — to let the child proceed on the context it has, or
-to change the relay so the section cannot be dropped. Do not invent a transport to close
-the gap, and do not describe that correction as delivered. Whether an installed relay
-can carry a restoration block at all is a property of that package and `unmeasured` for
-any version but the one relay.md names.
+What that establishes is what the relay will put in the bytes, which is a different claim
+from the child having read them, so delivery of the block still needs evidence rather than
+following from placement. Confirm it from a dispatched attempt and what the child actually
+received, never from a queued rendering, which is the bytes a next attempt would send rather
+than proof of a send. A relay that records what each attempt froze reports that as
+`restoration_attempted` beside the bytes, which is the one measurement about a send rather
+than about the next one. Where the block did not arrive, say so plainly: there is still no
+supported way to send it again, because the verdict does not resend and the parallel route
+stays forbidden. Record it as an undelivered correction on that assignment and hand it to the
+coordinator, whose decision it is: to let the child proceed on the context it has, or to
+change the relay. Do not invent a transport to close the gap, and do not describe that
+correction as delivered. Whether an installed relay recognises a declared restoration block
+at all is a property of that installation, and it is asked rather than assumed: the command
+either offers the declaration or rejects it as unknown, which is what
+[codex-session-relay](relay.md#the-parent-verifies) tells you to check before relying on it.
+A version cannot answer, since it stays the same while contents change, so `unmeasured`
+belongs to an installation nobody asked, not to every installation but one.
 
 ## Coordination record
 

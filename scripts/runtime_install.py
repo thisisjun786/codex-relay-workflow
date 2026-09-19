@@ -90,8 +90,13 @@ SIGNAL_READINGS = {
     # The digest is read inside a region, so a filesystem failure is a named refusal rather
     # than a classification. Only a returned None reaches the comparison.
     "digest_matches": (SIGNAL_REFUSED, (("definition", "ops12_digest", None),)),
-    # An entry point that is not there really is absent; that is an answer, not a gap.
-    "entry_point_recorded": (SIGNAL_NEGATIVE, (("runtime_install", "resolve_entry_point", None),)),
+    # An entry point that is not there really is absent; that is an answer, not a gap. TWO
+    # readings fill this cell -- where the entry point resolves, and whether the interpreter the
+    # record names for it is in a recorded path -- and both are named, because a cell is
+    # answered by every reading written into it and not by the first one somebody declared.
+    "entry_point_recorded": (SIGNAL_NEGATIVE,
+                             (("runtime_install", "resolve_entry_point", None),
+                              ("runtime_install", "interpreter_in_recorded_path", None))),
     # Read and reported beside the tree, never used as the identity test (OPS-1.5).
     "commit_matches": (SIGNAL_NOT_A_READING, ()),
     # Conflict cells: the reading answers with a state or a list, and finding none really is
@@ -133,8 +138,8 @@ CONFLICT_READINGS = ("registration", "links", "pointer")
 # Declared rather than remembered, because the previous three got in exactly where nothing was
 # looking. The check reads this set, finds the promotion critical section, and fails any member
 # that is read there without having been assigned there.
-PROMOTION_FRESH = ("fresh", "previous_selection", "gate", "before", "pointer_read",
-                   "pointer_path")
+PROMOTION_FRESH = ("fresh", "previous_selection", "gate", "before", "owned_before",
+                   "pointer_read", "pointer_path")
 
 # Every answer this command gives about a state as it was FOUND, and the operation each one
 # says "there was nothing there" with.
@@ -412,6 +417,10 @@ def protected_environment(record, environment, destination, data):
 # no schema script, so asking the question does not create the store the question is about.
 # Absence is established by looking at the path FIRST: a failed open also answers for a
 # permission failure and for a locked database, and neither of those means nothing is there.
+#
+# WHAT is asked is swapgate's and is embedded here rather than written again. The two sides of
+# this comparison asking different questions would arrive as a schema difference and be refused
+# as one, so the question is one value with two readers rather than two copies kept equal by hand.
 _STORE_TABLES_PROGRAM = """
 import json, os, sys
 from codex_session_relay.store import resolve_state_dir, read_only_rows
@@ -429,33 +438,27 @@ except OSError as error:
                       "tables": None,
                       "detail": type(error).__name__ + ": " + str(error)}))
     raise SystemExit(0)
-answer = read_only_rows(
-    selection,
-    "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
-    " AND name NOT LIKE 'sqlite_%' ORDER BY name",
-)
+answer = read_only_rows(selection, """ + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """)
 if not answer["readable"] or answer["detail"]:
     print(json.dumps({"readable": False, "present": True, "dbPath": str(database),
                       "tables": None,
                       "detail": answer["detail"] or "the store could not be read"}))
     raise SystemExit(0)
 print(json.dumps({"readable": True, "present": True, "dbPath": str(database),
-                  "tables": {row["name"]: row["sql"] for row in answer["rows"]},
+                  "tables": {row["object"]: row["sql"] for row in answer["rows"]},
                   "detail": None}))
 """
 
-# The candidate's tables come from its own DDL applied to an in-memory database, so nothing is
-# created anywhere and the answer is the schema that relay would actually install.
+# The candidate's schema comes from its own DDL applied to an in-memory database, so nothing is
+# created anywhere and the answer is the schema that relay would actually install. It asks the
+# same question the store side asks, from the same value.
 _CANDIDATE_TABLES_PROGRAM = """
 import json, sqlite3
 from codex_session_relay import store
 
 database = sqlite3.connect(":memory:")
 database.executescript(store.DDL)
-rows = database.execute(
-    "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
-    " AND name NOT LIKE 'sqlite_%' ORDER BY name",
-).fetchall()
+rows = database.execute(""" + repr(swapgate.SCHEMA_OBJECTS_QUERY) + """).fetchall()
 print(json.dumps({"readable": True, "tables": {row[0]: row[1] for row in rows},
                   "schemaVersion": store.SCHEMA_VERSION, "detail": None}))
 """
@@ -516,10 +519,14 @@ def store_presence(interpreter, state=None, socket_path=None):
 
 
 def store_tables(interpreter, state=None, socket_path=None):
-    """The tables the store actually holds, read under the relay that owns the rule.
+    """The schema objects the store actually holds, read under the relay that owns the rule.
 
     Asked of this checkout instead, the answer would describe a copy of a schema the selected
     installation owns rather than the schema it will run.
+
+    Every object the catalog reports, keyed by kind and name: a store's indexes, triggers and
+    views are part of its schema and an update that replaces the runtime over them has to see
+    them.
     """
     argv = [str(interpreter), "-c", _STORE_TABLES_PROGRAM, str(state or ""),
             str(socket_path or "")]
@@ -527,7 +534,7 @@ def store_tables(interpreter, state=None, socket_path=None):
 
 
 def candidate_tables(interpreter):
-    """The tables the candidate declares, read under the candidate's own interpreter."""
+    """The schema objects the candidate declares, read under the candidate's own interpreter."""
     argv = [str(interpreter), "-c", _CANDIDATE_TABLES_PROGRAM]
     return _asked(argv, "the candidate's declared tables")
 
@@ -666,6 +673,15 @@ def recorded_install_for(record, name, entry_point):
     return innermost[0], None
 
 
+# Where interpreter_for's answer came from. Declared rather than spelled at each site, because
+# one consumer decides an OWNERSHIP cell on the difference between them: an interpreter the
+# record names was written by the run that installed it, and a first line is whatever somebody
+# put in a file.
+INTERPRETER_RECORDED = "recorded with the install"
+INTERPRETER_FROM_ENVIRONMENT = "the recorded environment"
+INTERPRETER_FROM_SHEBANG = "the script's first line"
+
+
 def interpreter_for(record, name, entry_point):
     """The interpreter a console script runs under, and where that answer came from.
 
@@ -691,13 +707,34 @@ def interpreter_for(record, name, entry_point):
     if install:
         recorded = install.get("interpreterPath")
         if recorded:
-            return str(recorded), "recorded with the install"
+            return str(recorded), INTERPRETER_RECORDED
         environment = install.get("environment")
         if environment:
             # Records written before interpreterPath existed still name the environment, and
             # the interpreter of an environment this command built is the one it created there.
-            return str(Path(environment) / "bin" / "python"), "the recorded environment"
-    return interpreter_of(entry_point), "the script's first line"
+            return str(Path(environment) / "bin" / "python"), INTERPRETER_FROM_ENVIRONMENT
+    return interpreter_of(entry_point), INTERPRETER_FROM_SHEBANG
+
+
+# The interpreter sources the RECORD stands behind. Both were written by a run of this command
+# into the host record; the first line of a script was not, and a wrapper this command never
+# created carries whatever first line its author wrote.
+RECORDED_INTERPRETER_SOURCES = (INTERPRETER_RECORDED, INTERPRETER_FROM_ENVIRONMENT)
+
+
+def interpreter_in_recorded_path(python, roots):
+    """Whether the interpreter a console script runs under lives in a recorded path.
+
+    Its own reading, and named, because it fills the same cell resolve_entry_point fills. A
+    cell is answered by the readings it declares, and this one was a second write site nobody
+    had to declare: an entry point outside every recorded root reached the ownership cell
+    through it on the strength of a first line, which interpreter_of already says is the
+    fallback rather than the answer.
+    """
+    with reading.region("the installed entry point", "the interpreter it names",
+                        field="shebang"):
+        interpreter_path = Path(python).resolve()
+    return any(within(interpreter_path, r) for r in roots)
 
 
 # The checkout artifacts this command EXECUTES to produce a component's exercise, named as
@@ -751,11 +788,13 @@ def classify_component(component, *, record, entry_override=None, registration=N
     if resolved and python is None and interpreter_from:
         # An ambiguous record is a signal that could not be read, not a reason to pick one.
         unreadable.append(interpreter_from)
-    if resolved and not entry_recorded and python:
-        with reading.region("the installed entry point", "the interpreter it names",
-                            field="shebang"):
-            interpreter_path = Path(python).resolve()
-        entry_recorded = any(within(interpreter_path, r) for r in roots)
+    if (resolved and not entry_recorded and python
+            and interpreter_from in RECORDED_INTERPRETER_SOURCES):
+        # The second write site of this cell, and it answers only from an interpreter the
+        # RECORD names. Reached from the fallback first line it let an external wrapper decide
+        # ownership: a script outside every recorded root, whose author wrote a shebang naming
+        # an interpreter inside a recorded environment, classified as this installation.
+        entry_recorded = interpreter_in_recorded_path(python, roots)
 
     if python is None and resolved is None:
         python = sys.executable
@@ -1280,6 +1319,29 @@ SETTINGS_PREDICATE = ("codex_session_relay.settings", "TaskSettings", "require_u
 # inputs it governs below and asked of the relay's own code, never restated here.
 RELAY_TURN_ID = ("codex_session_relay.registry", "validated_turn_id")
 
+# The relay's own containment test for an artifact root. Named as the second half of the pair
+# AuthorizedFile asks -- normalise the declared path, then ask which root holds it -- because
+# asking only the first half answers only half the question, and the half left over is the one
+# this command had been answering itself.
+#
+# Relational, unlike every predicate above: a root is not acceptable or unacceptable on its
+# own, it is acceptable FOR the artifacts declared with it. A member declaring this one names
+# the member that supplies the other operand.
+RELAY_WITHIN = ("codex_session_relay.scope", "assert_within")
+
+# The relay's own test for whether a task may receive a completion. Relational for the same
+# reason: a recipient is authorised FOR a relationship's allowed set, never on its own.
+RELAY_RECIPIENT = ("codex_session_relay.scope", "check_recipient")
+
+# A member whose consumer applies a rule that is reachable through no read-only callable. The
+# receipt's thread check lives inside a method that needs a store, so the rule is restated in
+# the gate -- and the pair records WHERE it lives in the consumer's source, so a check fails
+# when the consumer stops holding it there. Every layer of this class has been made of
+# restatements nobody checked; a restatement that is declared and checked is not one of them.
+RESTATED_HERE = "restated-here"
+RELAY_TURN_THREAD = (RESTATED_HERE, "codex_session_relay.receipts", "ReceiptIntake",
+                     "_check_turn_identity")
+
 # This command's own minimum for a flag that was supplied: a value with something in it.
 NON_BLANK = "non-blank"
 
@@ -1293,15 +1355,23 @@ NON_BLANK = "non-blank"
 # family rather than for the two members a reviewer named, and a member whose consumer applies
 # a stricter rule names that rule so it can be asked of the consumer's own code.
 #
+# Carrying A predicate is not carrying the RIGHT one. NON_BLANK is this command's own minimum
+# and nothing more, so a member left on it has every further question about its value answered
+# here -- which is how the artifact root came to be judged by a second copy of the relay's
+# containment rule. That copy disagreed with the relay in both directions: it refused a root
+# the relay accepts end to end, and for a root the relay refuses it blamed the deliverable
+# rather than the root. A member carries the STRONGEST predicate its consumer applies, and
+# where that predicate is relational it names the member supplying the other operand.
+#
 # Split in two because the two halves are checked differently, and saying so here is what keeps
 # the check itself free of a literal naming one member of the set it is iterating.
 TRIAL_REQUIRED_INPUTS = {
     "issue": ("--issue", NON_BLANK),
     "parent_task": ("--parent-task", NON_BLANK),
     "child_task": ("--child-task", NON_BLANK),
-    "recipient": ("--recipient", NON_BLANK),
-    "artifact_root": ("--artifact-root", NON_BLANK),
-    "turn_thread": ("--turn-thread", NON_BLANK),
+    "recipient": ("--recipient", RELAY_RECIPIENT, "parent_task"),
+    "artifact_root": ("--artifact-root", RELAY_WITHIN, "artifact"),
+    "turn_thread": ("--turn-thread", RELAY_TURN_THREAD, "child_task"),
     "artifact": ("--artifact", NON_BLANK),
     "turn_id": ("--turn-id", RELAY_TURN_ID),
     "dispatch_turn_id": ("--dispatch-turn-id", RELAY_TURN_ID),
@@ -1315,7 +1385,8 @@ TRIAL_PREFLIGHT_INPUTS = dict(TRIAL_REQUIRED_INPUTS, **TRIAL_ACKNOWLEDGED_INPUTS
 # A probe running sys.executable asks this checkout instead, and a checkout whose rule differs
 # from the installed relay's accepts what the relay refuses -- after four mutating steps.
 PREFLIGHT_PROBES = ("settings_usable", "values_usable", "_relay_normalizes",
-                    "store_presence", "store_tables", "candidate_tables")
+                    "_relay_contains", "_relay_admits", "store_presence", "store_tables",
+                    "candidate_tables")
 
 # Every presence question this command asks, paired with the reader whose own sentinel answers
 # it. Deciding presence here instead means deciding it by whatever predicate this module wrote,
@@ -1334,6 +1405,20 @@ def _supplied(value):
     if isinstance(value, (list, tuple)):
         return bool(value) and all(_supplied(item) for item in value)
     return bool(str(value).strip())
+
+
+def _relational(pair):
+    """Whether a member's predicate is asked about it TOGETHER with another member's value.
+
+    Containment is the case that needs it. An artifact root cannot be judged on its own: it is
+    judged for the artifacts declared with it, and a pair able to carry only a single-value
+    predicate would have to leave that question here. Leaving it here is what produced a second
+    copy of a rule the relay owns.
+
+    The third slot names the member supplying the other operand, so the gate reads it from the
+    declaration instead of knowing which members go together.
+    """
+    return len(pair) > 2
 
 
 def _settings_program():
@@ -1570,12 +1655,101 @@ def _relay_normalizes(paths, interpreter):
         return {}, "the relay's normalizer returned nothing readable"
 
 
+def _relay_contains(paths, root, interpreter):
+    """Whether the relay would hold each artifact inside this root, asked of the relay.
+
+    The pair AuthorizedFile asks, in the order it asks them: the declared path is normalised,
+    then the roots are asked which of them holds it. Deciding it here is what the member's
+    predicate had been left free to allow, and the copy written here disagreed with the relay in
+    both directions -- it refused a root the relay accepts end to end, and where the relay
+    refuses a root it named the deliverable as the thing at fault.
+
+    The root itself is never normalised, because the relay does not normalise one. is_within
+    compares normalised forms without requiring the recorded root to already be in one, so
+    asking more of the root here than the relay asks would refuse a registration it performs.
+
+    Returns (refusals, reason). A reason means the question could not be asked, which is a
+    refusal of its own and never a fall back to a rule of this command's making.
+    """
+    if not interpreter:
+        return {}, ("the relay's interpreter could not be resolved, so its own containment rule"
+                    " could not be asked here. Pass --relay-command naming an installed entry"
+                    " point, or record the install first")
+    module, containment = RELAY_WITHIN
+    probe = "\n".join([
+        "import json, sys",
+        "from " + module + " import normalize_declared_path, " + containment,
+        "root, out = sys.argv[1], {}",
+        "for path in json.loads(sys.argv[2]):",
+        "    try:",
+        "        " + containment + "(normalize_declared_path(path), [root])",
+        "    except Exception as error:",
+        "        out[path] = type(error).__name__ + ': ' + str(error)",
+        "print(json.dumps(out))",
+        "",
+    ])
+    argv = [str(interpreter), "-B", "-c", probe, str(root), json.dumps(list(paths))]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return {}, "the relay's containment rule could not be run: " + type(error).__name__
+    if done.returncode != 0:
+        return {}, ("the relay's containment rule could not be asked: "
+                    + (done.stderr or "").strip()[-200:])
+    try:
+        return json.loads(done.stdout), None
+    except ValueError:
+        return {}, "the relay's containment rule returned nothing readable"
+
+
+def _relay_admits(predicate, subject, allowed, interpreter):
+    """Whether the relay's own rule admits this subject against this allowed value.
+
+    The shape every relational rule here has: a value, and the set it must belong to. Asked of
+    the relay, in the runtime that will act on the answer, for the same reason the single-value
+    predicates are. A rule restated here is a rule that drifts, and the drift is discovered
+    after the rows the refusal was meant to prevent.
+
+    Returns (refusal, reason). Both None means admitted; a reason means the question could not
+    be asked, which is a refusal of its own.
+    """
+    if not interpreter:
+        return None, ("the relay's interpreter could not be resolved, so its own rule for "
+                      + predicate[-1] + " could not be asked here. Pass --relay-command naming"
+                      " an installed entry point, or record the install first")
+    module, callable_name = predicate
+    probe = "\n".join([
+        "import json, sys",
+        "from " + module + " import " + callable_name,
+        "try:",
+        "    " + callable_name + "(sys.argv[1], [sys.argv[2]])",
+        "except BaseException as error:",
+        "    print(json.dumps(type(error).__name__ + ': ' + str(error)))",
+        "else:",
+        "    print(json.dumps(None))",
+        "",
+    ])
+    argv = [str(interpreter), "-B", "-c", probe, str(subject), str(allowed)]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, "the relay's rule could not be run: " + type(error).__name__
+    if done.returncode != 0:
+        return None, ("the relay's rule could not be asked: "
+                      + (done.stderr or "").strip()[-200:])
+    try:
+        return json.loads(done.stdout), None
+    except ValueError:
+        return None, "the relay's rule returned nothing readable"
+
+
 def _unusable_artifacts(artifacts, root, interpreter):
     """Why the relay would refuse each artifact, checked before anything is written.
 
-    The path shape is the relay's own rule, asked of the relay's own function. What remains
-    here is what that function deliberately does not cover: the file has to exist, be a regular
-    file with no symbolic link at any component, be readable, and be inside the declared root.
+    Both path questions belong to the relay and both are asked of it: the shape of a declared
+    path, and whether the declared root holds it. What remains here is what neither of those
+    covers: the file has to exist, be a regular file with no symbolic link at any component,
+    and be readable.
     """
     paths = [str(raw) for raw in (artifacts or [])]
     if not paths:
@@ -1583,9 +1757,11 @@ def _unusable_artifacts(artifacts, root, interpreter):
     refusals, reason = _relay_normalizes(paths, interpreter)
     if reason:
         return [reason + "; artifacts are not checked against a second copy of the rule"]
+    outside, unasked = _relay_contains(paths, root, interpreter)
+    if unasked:
+        return [unasked + "; the artifact root is not checked against a second copy of the rule"]
 
     problems = []
-    base = Path(str(root))
     for raw in paths:
         if raw in refusals:
             problems.append(raw + ": " + refusals[raw])
@@ -1605,11 +1781,9 @@ def _unusable_artifacts(artifacts, root, interpreter):
         except OSError as error:
             problems.append(raw + " could not be read: " + type(error).__name__)
             continue
-        try:
-            if not (path == base or base in path.parents):
-                problems.append(raw + " is not inside the artifact root " + str(base))
-        except (OSError, ValueError):
-            problems.append(raw + " could not be compared with the artifact root")
+        if raw in outside:
+            problems.append("the artifact root " + str(root) + " does not hold " + raw + ": "
+                            + outside[raw])
     return problems
 
 
@@ -1630,7 +1804,7 @@ def _trial(args, relay_executable, relay_interpreter=None):
     # applies rather than by whatever this gate would otherwise invent. A reviewable receipt
     # with an empty manifest is refused and a generation with no anchor cannot be emitted
     # against; both were discovered at the relay, after the trial had written rows.
-    blank = sorted(flag for name, (flag, _) in TRIAL_REQUIRED_INPUTS.items()
+    blank = sorted(pair[0] for name, pair in TRIAL_REQUIRED_INPUTS.items()
                    if not _supplied(getattr(args, name, None)))
     if blank:
         return check.field(
@@ -1642,12 +1816,14 @@ def _trial(args, relay_executable, relay_interpreter=None):
             acting_process=acting_process(), measured_at=now(),
         )
     # The members whose consumer applies a stricter rule than "supplied", asked of that
-    # consumer's own code in the runtime that will act on the answer.
+    # consumer's own code in the runtime that will act on the answer. A relational member is
+    # not asked here: its predicate takes the value it is judged WITH, so it is asked where
+    # that other value is, and asking it with one operand would be a third rule again.
     for predicate in sorted({pair[1] for pair in TRIAL_REQUIRED_INPUTS.values()
-                             if pair[1] != NON_BLANK}):
-        governed = {flag: str(getattr(args, name))
-                    for name, (flag, declared) in TRIAL_REQUIRED_INPUTS.items()
-                    if declared == predicate}
+                             if pair[1] != NON_BLANK and not _relational(pair)}):
+        governed = {pair[0]: str(getattr(args, name))
+                    for name, pair in TRIAL_REQUIRED_INPUTS.items()
+                    if pair[1] == predicate and not _relational(pair)}
         answer = values_usable(predicate, governed, relay_interpreter)
         if not answer.get("usable"):
             return check.field(
@@ -1657,15 +1833,30 @@ def _trial(args, relay_executable, relay_interpreter=None):
                 " asked before the first mutating step. Nothing was written.",
                 acting_process=acting_process(), measured_at=now(),
             )
-    if args.recipient != args.parent_task:
-        return check.field(
-            "not_verified",
-            "the recipient " + str(args.recipient) + " is not the parent task "
-            + str(args.parent_task) + ". A completion is queued to the relationship parent and"
-            " that parent must be an allowed recipient, so this combination can only be"
-            " refused after the store has been written to.",
-            acting_process=acting_process(), measured_at=now(),
-        )
+    # The relational members whose consumer exposes an askable rule. Which member is judged
+    # WITH which comes off the declaration, so this loop does not know that a recipient goes
+    # with a parent task. A member whose operand is a list is asked by the probe that reads
+    # that list, because the question needs its members and they are read there.
+    for name, pair in sorted(TRIAL_REQUIRED_INPUTS.items()):
+        if not _relational(pair) or pair[1][0] == RESTATED_HERE:
+            continue
+        operand = getattr(args, pair[2])
+        if isinstance(operand, (list, tuple)):
+            continue
+        refusal, unasked = _relay_admits(pair[1], str(operand), str(getattr(args, name)),
+                                         relay_interpreter)
+        if unasked or refusal:
+            return check.field(
+                "not_verified",
+                str(pair[0]) + " and " + str(TRIAL_REQUIRED_INPUTS[pair[2]][0]) + " are not a"
+                " combination " + pair[1][-1] + " accepts: " + str(unasked or refusal)
+                + ". This is the relay's own rule for them, asked before the first mutating"
+                " step. Nothing was written.",
+                acting_process=acting_process(), measured_at=now(),
+            )
+    # The one rule the consumer holds in a method that needs a store, so there is nowhere to
+    # ask it. Restated here, and declared as restated by RELAY_TURN_THREAD, which names the
+    # place in the consumer's source a check reads back.
     if str(args.turn_thread) != str(args.child_task):
         return check.field(
             "not_verified",
@@ -1679,7 +1870,8 @@ def _trial(args, relay_executable, relay_interpreter=None):
     if unusable:
         return check.field(
             "not_verified",
-            "these artifacts do not satisfy what the relay requires of a manifest entry: "
+            "the declared root and its artifacts do not satisfy what the relay requires of a"
+            " manifest entry: "
             + "; ".join(unusable) + ". They are checked here because the relay checks them"
             " while building the manifest, which happens after four mutating steps.",
             acting_process=acting_process(), measured_at=now(),
@@ -1908,6 +2100,34 @@ def _trial(args, relay_executable, relay_interpreter=None):
 
 # ------------------------------------------------------------------------- hook
 
+def _hook_busy(adapter, path, error, *, settings, locked):
+    """Another run holds the hook file. Nothing about this hook was established.
+
+    The answer install, register-mcp and release_candidate already give for the same event.
+    Left to escape, a competing run was reported as an internalError -- a claim that this
+    command has a defect, which is about the code rather than about the host and sends whoever
+    reads it somewhere that has nothing wrong with it.
+
+    Whether the settings were written is carried rather than decided: they are written before
+    the hook, so a lock taken between the two leaves them on disk and saying otherwise would be
+    a second false claim on top of the first.
+
+    The file this command was installing into and the file whose lock it could not take are two
+    facts, and two of the writes here take DIFFERENT locks. Reporting the locked resource as
+    hookFile named the settings file as the hook being installed, which is this change's own
+    subject one more time: a field filled by a value other than the reading its own question
+    produced. Review found it, which is the point of review.
+    """
+    emit({"command": "hook", "adapter": adapter, "hookFile": str(path),
+          "lockedPath": str(locked), "outcome": BUSY,
+          "settings": settings, "result": None, "applied": False, "wrote": False,
+          "refused": "another run holds " + str(locked) + ": " + str(error),
+          "note": ("nothing about this hook was established and no hook was appended. What"
+                   " happened to the settings is reported above and is not changed by this"
+                   " refusal.")})
+    return EXIT_REFUSED
+
+
 def cmd_hook(args):
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     path = codex_home / "hooks.json"
@@ -1971,8 +2191,11 @@ def cmd_hook(args):
         # Preconditions are settled. Now the writes, settings before the hook that reads them:
         # a hook registered against settings that are not there releases on every Stop and says
         # so nowhere, while settings with no hook cost nothing at all.
-        settings = completion.write_configuration(
-            configuration, wanted, apply=args.apply)
+        try:
+            settings = completion.write_configuration(
+                configuration, wanted, apply=args.apply)
+        except hostrecord.Busy as error:
+            return _hook_busy(adapter, path, error, settings=None, locked=configuration)
         if settings["outcome"] not in completion.CONFIG_SETTLED:
             emit({"command": "hook", "adapter": adapter, "settings": settings,
                   "hookFile": str(path), "result": None,
@@ -1984,7 +2207,10 @@ def cmd_hook(args):
         command = args.hook_command
         event = args.event or SESSION_START
     hook = {"type": "command", "command": command, "timeout": args.timeout}
-    result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
+    try:
+        result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
+    except hostrecord.Busy as error:
+        return _hook_busy(adapter, path, error, settings=settings, locked=path)
     landed = None
     if adapter == COMPLETION and args.apply:
         # Read back after the append, because the duplicate check above and the append itself
@@ -2073,6 +2299,24 @@ def cmd_hook_status(args):
 
 def cmd_install(args):
     codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    # The issue is EVIDENCE here, not a label. It is written to the ownership entry's recordedBy,
+    # and the predicate that decides whether a link may be replaced requires a value the record
+    # actually states -- so a blank one records ownership this command reads back as somebody
+    # else's, and the very next update refuses the pointer it placed itself. What a writer emits
+    # and what the reader accepts have to be one question, so it is asked of the same helper,
+    # here, before anything is read or written.
+    # Only for a run that will WRITE. A plan reports what an install would do and records
+    # nothing, so it has no evidence to get wrong, and refusing it would be answering a
+    # question this invocation never asks.
+    if args.apply and not hostrecord.stated(args.issue):
+        emit({"command": "install", "applied": False,
+              "refused": "--issue is written into the host record as the evidence that this"
+                         " command placed the owned pointer, so it has to say something. A"
+                         " blank one records an ownership entry this command would read back"
+                         " as somebody else's, and the next update would refuse the pointer"
+                         " this one placed.",
+              "note": "nothing was read, nothing was built and nothing was written."})
+        return EXIT_REFUSED
     try:
         with reading.region(definition.DEFINITION_PATH, "the component definition"):
             data = definition.load()
@@ -2167,7 +2411,7 @@ def cmd_install(args):
     holder = None
     try:
         taking = hostrecord.Locked(environment).__enter__()
-    except TimeoutError as error:
+    except hostrecord.Busy as error:
         # A lock another run holds establishes nothing about this directory, which is the same
         # answer release_candidate gives for a record it cannot read. Letting it out would
         # report a competing run as an internal defect in this command.
@@ -2444,7 +2688,13 @@ def cmd_install(args):
                 # swap reads, guards and replaces is not the link a host reaches through.
                 # Assigned before the refusal below reports it, so the member is read fresh
                 # everywhere in this section.
-                pointer_path = Path(((fresh.value or {}).get("pointer") or {}).get("path")
+                # The ownership entry as this run FOUND it, read where the path is derived from
+                # it and before anything is written. Whether this promotion INTRODUCES that
+                # entry or refreshes one that was already there is the whole of what its
+                # rollback may take away, and the write below is a merge that erases the
+                # difference -- so the difference is read here and carried to the rollback.
+                owned_before = (fresh.value or {}).get("pointer")
+                pointer_path = Path((owned_before or {}).get("path")
                                     or pointer.pointer_path(destination))
                 if not fresh.usable:
                     return _install_failed(record_path, data["definitionVersion"], performed,
@@ -2493,8 +2743,13 @@ def cmd_install(args):
                 # succeeds whoever made it, so ownership is established from the record: a
                 # pointer this command placed is recorded when it is placed, and a link nobody
                 # recorded belongs to somebody else.
-                recorded_pointer = (fresh.value.get("pointer") or {}).get("path")
-                if before["state"] == pointer.LINK and not recorded_pointer:
+                # The question is whether a link this command PLACED is recorded at that path,
+                # which is not the question of which path the record names. A rollback that
+                # established the link was gone keeps the path -- the registration depends on it
+                # -- and withdraws the placement, so a link that turns up there afterwards is
+                # still somebody else's and is still refused here.
+                if before["state"] == pointer.LINK and not hostrecord.placement_recorded(
+                        owned_before):
                     performed.append({"step": "establish the pointer is this command's",
                                       "ok": False,
                                       "detail": "a symbolic link is already at "
@@ -2593,7 +2848,7 @@ def cmd_install(args):
                     # place() can fail with the link already replaced, so the same restoration
                     # answers this branch: whatever is there now goes back to what was found.
                     put_back = _restore_pointer(pointer_path, before, environment, record_path,
-                                                data["definitionVersion"])
+                                                data["definitionVersion"], owned_before)
                     performed.append({"step": "put the pointer back", "ok": put_back["verified"],
                                       "detail": put_back["detail"]})
                     return _install_failed(
@@ -2610,7 +2865,7 @@ def cmd_install(args):
                     performed.append({"step": "read the owned pointer back", "ok": False,
                                       "detail": pointer.read(pointer_path).get("detail")})
                     put_back = _restore_pointer(pointer_path, before, environment, record_path,
-                                                data["definitionVersion"])
+                                                data["definitionVersion"], owned_before)
                     performed.append({"step": "put the pointer back", "ok": put_back["verified"],
                                       "detail": put_back["detail"]})
                     return _install_failed(
@@ -2624,7 +2879,7 @@ def cmd_install(args):
                                   "target": str(environment)})
         except reading.Refused:
             raise
-        except TimeoutError as error:
+        except hostrecord.Busy as error:
             # Another run holds the promotion. A lock this run could not take establishes
             # nothing, so the candidate is released and nothing owned is touched.
             performed.append({"step": "take the promotion lock", "ok": False,
@@ -2717,6 +2972,10 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
             emit(dict(standing, refused="the host record no longer selects this environment, so"
                                         " there is no promotion here to finish"))
             return EXIT_REFUSED
+        # The ownership entry as this call found it, read before the write below merges over it
+        # and before either question about the link is asked of it. Two things depend on it: what
+        # this call's rollback may take away, and whether there is a link here it may replace.
+        owned_before = (current.value or {}).get("pointer")
         before = pointer.read(pointer_path)
         if not pointer.usable(before["state"]):
             emit(dict(standing, refused="the missing half of this promotion could not be"
@@ -2739,11 +2998,39 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
                               " interrupted promotion is not this run's to finish",
                       pointer={"path": str(pointer_path), "target": before.get("target")}))
             return EXIT_REFUSED
+        # There is one thing this record can say that settles the narrower question the other
+        # way. An entry holding the PATH and no placement is this command's own statement that
+        # no link IT placed is here -- written by a rollback that established the link was gone
+        # -- so a link that has turned up there since was put there by something else, and its
+        # target naming a runtime this record happens to account for does not make it this
+        # command's to replace. Without this the promotion refuses that link and the resume
+        # replaces it, which would be the record saying one thing and two readers answering
+        # differently.
+        #
+        # An installation older than claims has NO entry at all, which says nothing either way,
+        # and it keeps the adoption this path exists for.
+        #
+        # Bound to THIS path. The entry is read fresh under this lock while pointer_path was
+        # derived before it, so the two can be about different places -- and an entry naming
+        # somewhere else says nothing at all about the link here. Read unbound, this guard
+        # answered about one path from a reading taken of another, which is the very shape the
+        # rest of this change exists to remove.
+        owned_here = hostrecord.pointer_entry_for(owned_before, pointer_path)
+        if (before["state"] == pointer.LINK and owned_here
+                and not hostrecord.placement_recorded(owned_here)):
+            emit(dict(standing,
+                      refused="a symbolic link is at " + str(pointer_path) + " and this host"
+                              " record holds that path without recording that this command"
+                              " placed a link there, so it was placed by something else and is"
+                              " not this run's to replace",
+                      pointer={"path": str(pointer_path), "target": before.get("target")}))
+            return EXIT_REFUSED
         # A pointer this command owns is RECORDED when it is placed, and this path placed one
         # without recording it. An installation older than claims has no such record, so the
         # link written here was a link nobody recorded -- and the next update refuses to
         # replace one of those. Adopting a host once and then refusing it for ever is the
         # failure this command exists to remove, so the record is written with the link.
+        #
         owning = hostrecord.update(record_path, data["definitionVersion"],
                                    pointer={"path": str(pointer_path), "recordedAt": now(),
                                             "recordedBy": issue})
@@ -2757,21 +3044,21 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
             pointer.place(pointer_path, environment)
         except OSError as error:
             put_back = _restore_pointer(pointer_path, before, environment, record_path,
-                                        data["definitionVersion"])
+                                        data["definitionVersion"], owned_before)
             emit(dict(standing, refused="the missing half of this promotion could not be"
                                         " written: "
                                         + type(error).__name__ + ": " + str(error),
-                      pointerRestored=put_back))
+                      pointerRestored=put_back, **_outstanding_ownership(put_back)))
             return EXIT_REFUSED
         landed = pointer.names(pointer_path, environment)
         if landed is not True:
             # Put back what was found, absence included, so a destination this call could not
             # repair is left the way it was rather than holding a link nothing selects.
             put_back = _restore_pointer(pointer_path, before, environment, record_path,
-                                        data["definitionVersion"])
+                                        data["definitionVersion"], owned_before)
             emit(dict(standing, refused="the pointer did not land on the environment the host"
                                         " record already selects",
-                      pointerRestored=put_back))
+                      pointerRestored=put_back, **_outstanding_ownership(put_back)))
             return EXIT_REFUSED
     staging.write_claim(environment, staging.COMPLETE, issue=issue, run=str(os.getpid()))
     emit(dict(standing, applied=True,
@@ -2919,8 +3206,58 @@ def _selected_install(record, name):
     return None
 
 
+# What a rollback did with the host record's pointer ownership entry. Five answers, because
+# "it was not taken away" had three entirely different reasons and one boolean answered all
+# three with False: an entry this run INHERITED is kept deliberately, an entry another run has
+# since moved on is not this one's to touch, and a write that failed is a rollback that did not
+# finish. None is the sixth thing and is not an answer: nothing was attempted.
+OWNERSHIP_DROPPED = "dropped"
+OWNERSHIP_WITHDRAWN = "withdrawn"
+OWNERSHIP_RESTORED = "restored"
+OWNERSHIP_MOVED_ON = "moved on"
+OWNERSHIP_UNREADABLE = "unreadable"
+OWNERSHIP_ANSWERS = (OWNERSHIP_DROPPED, OWNERSHIP_WITHDRAWN, OWNERSHIP_RESTORED,
+                     OWNERSHIP_MOVED_ON, OWNERSHIP_UNREADABLE)
+
+
+def _ownership_answer(written, wanted, wrote):
+    """What the host record says about pointer ownership after a rollback wrote to it.
+
+    READ BACK from the record the single writer loaded, never inferred from the delta having
+    been sent. Every rollback delta is compare-and-act: a record another run has since moved on
+    is left exactly as it stands and the write still reports usable, so "the call returned" and
+    "the entry is what this rollback meant to leave" are two facts, and only the second one is
+    the answer this reports.
+
+    It is the state the record was left IN, which is not the claim that this call wrote it: a
+    compare that matched what was already there reports the same answer, and that is the honest
+    one, because the question a reader has is what the NEXT run will read.
+
+    'wanted' is the entry the rollback meant to leave, and None when it meant to leave nothing.
+    'wrote' is the path THIS RUN recorded, and it is what separates the two ways the record can
+    disagree with 'wanted'. An entry naming somewhere else belongs to another run. An entry
+    still naming this run's path is this run's own, left because the delta did not land -- and
+    calling that "moved on" would hand it to a run that never touched it.
+    """
+    if not written.usable:
+        return OWNERSHIP_UNREADABLE, ("the ownership record could not be written: "
+                                      + str(written.detail))
+    after = (written.value or {}).get("pointer")
+    if after == wanted:
+        if wanted is None:
+            return OWNERSHIP_DROPPED, ""
+        return (OWNERSHIP_RESTORED if hostrecord.placement_recorded(after)
+                else OWNERSHIP_WITHDRAWN), ""
+    if (after or {}).get("path") != str(wrote):
+        return OWNERSHIP_MOVED_ON, ("the ownership record names "
+                                    + str((after or {}).get("path")) + " now, so the entry this"
+                                    " run wrote is not its to put back")
+    return OWNERSHIP_UNREADABLE, ("the ownership record still holds what this promotion wrote"
+                                  " at " + str(wrote) + ", so the rollback's delta did not land")
+
+
 def _restore_pointer(pointer_path, before, environment, record_path=None,
-                     definition_version=None):
+                     definition_version=None, ownership=None):
     """Put the pointer back the way this run found it, INCLUDING finding it absent.
 
     The rollback could only restore a previous target, which has no answer for a first or legacy
@@ -2933,47 +3270,184 @@ def _restore_pointer(pointer_path, before, environment, record_path=None,
     'Restore to absence' was the value missing from this answer set, the same shape as the
     established-absent answer the in-flight cell was missing.
 
-    Restoring absence takes the OWNERSHIP RECORD away with the link. The record is what makes a
-    link this command's: the promotion refuses to replace one this record never recorded
-    placing. Left behind for a path where the link was removed, it says this command owns a
-    link that is not there, and the next run then reads a stranger's link at that path as its
-    own. Half a rollback re-arms the guard against the host it protects, so the record goes
-    only when the link went, and only for the path this run recorded.
+    'ownership' is the RECORD side of the same question, and it is the second thing this had to
+    be handed. A link state of NO_POINTER says the LINK was not there; it says nothing about the
+    RECORD, and a host whose recorded link was deleted out from under it has the entry and no
+    link. Taking that entry away is not a rollback: it removes the path the Codex registration
+    names, and a retry with a different --dest then derives another path and reads a
+    registration nobody changed as a conflict. So only an entry this run INTRODUCED goes away
+    with the link, and only for the path this run recorded.
+
+    An entry this run INHERITED goes back, and what goes back depends on what the link ended up
+    as, because the entry answers two questions (hostrecord.POINTER_PLACEMENT). Where the link
+    was put back, the whole entry goes back -- which also takes this run's refreshed stamp off
+    an entry it did not introduce. Where the link is established ABSENT, the path goes back and
+    the placement evidence is WITHDRAWN: the registration still needs the path, and a link that
+    turns up there afterwards is still one this command never recorded placing, which is what
+    the promotion refuses. Put back whole it would authorise replacing that link, which is the
+    protection the absence rollback was written to keep.
 
     A restoration that cannot be read back is reported as residual rather than claimed: the
     caller then keeps the candidate, which is the safe direction when the disk and the record
     may disagree.
+
+    That applies to the RECORD half too. The link going back and the record not going with it
+    is half a rollback, not a completed one: the record still says this command placed a link
+    at a path where there is now none, and that claim is exactly what the next promotion reads
+    before it replaces whatever has turned up there. So the restoration is not claimed as
+    verified and the path whose claim somebody has to settle is named.
     """
+    restored_to, verified, residual = None, True, None
+    detail = "this run placed no pointer, so there is nothing to put back"
+    # What the record should hold once this is over, and whether it may be written yet. 'wanted'
+    # of None means nothing should be there, which is the answer only for an entry this run
+    # introduced.
+    wanted, settled = None, False
+
     if before["state"] == pointer.NO_POINTER:
         removed, detail = pointer.remove(pointer_path, environment)
-        dropped = None
-        if removed and record_path is not None:
-            # Only after the link is verifiably gone. Dropping the record first would leave a
-            # link nobody recorded, which is the refusal shape from the opposite side.
-            written = hostrecord.update(record_path, definition_version,
-                                        drop_pointer=str(pointer_path))
-            dropped = written.usable
-            if not written.usable:
-                detail = (detail + ", but the ownership record for it could not be taken away: "
-                          + str(written.detail))
-        return {"restoredTo": "absent" if removed else None, "verified": removed,
-                "residualPointer": None if removed else str(pointer_path),
-                "ownershipDropped": dropped, "detail": detail}
-    if before["state"] == pointer.LINK and before.get("target"):
+        restored_to = "absent" if removed else None
+        verified = removed
+        residual = None if removed else str(pointer_path)
+        # Only after the link is verifiably gone. Writing the record first would leave a link
+        # nobody recorded, which is the refusal shape from the opposite side.
+        settled = removed
+        wanted = hostrecord.without_placement(ownership) if ownership else None
+    elif before["state"] == pointer.LINK and before.get("target"):
         try:
             pointer.place(pointer_path, before["target"])
         except OSError as error:
-            return {"restoredTo": None, "verified": False,
-                    "residualPointer": str(pointer_path),
-                    "detail": "the previous target could not be put back: "
-                              + type(error).__name__ + ": " + str(error)}
-        back = pointer.names(pointer_path, before["target"]) is True
-        return {"restoredTo": str(before["target"]) if back else None, "verified": back,
-                "residualPointer": None if back else str(pointer_path),
-                "detail": ("the previous target was put back and read back" if back
-                           else "the previous target could not be read back after restoring it")}
-    return {"restoredTo": None, "verified": True, "residualPointer": None,
-            "detail": "this run placed no pointer, so there is nothing to put back"}
+            verified, residual = False, str(pointer_path)
+            detail = ("the previous target could not be put back: " + type(error).__name__
+                      + ": " + str(error))
+        else:
+            verified = pointer.names(pointer_path, before["target"]) is True
+            restored_to = str(before["target"]) if verified else None
+            residual = None if verified else str(pointer_path)
+            detail = ("the previous target was put back and read back" if verified
+                      else "the previous target could not be read back after restoring it")
+        # A link was here and a link is here, so nothing disproved the placement. The entry
+        # goes back exactly as found, and an entry this run introduced over no entry at all --
+        # a legacy adoption that failed -- goes away, which is the same "as found".
+        settled = True
+        wanted = dict(ownership) if ownership else None
+
+    owned = None
+    residual_claim = None
+    settle_claim = None
+    if settled and record_path is not None:
+        try:
+            if wanted is None:
+                written = hostrecord.update(record_path, definition_version,
+                                            drop_pointer=str(pointer_path))
+            else:
+                written = hostrecord.update(record_path, definition_version,
+                                            restore_pointer={"wrote": str(pointer_path),
+                                                             "found": wanted})
+        except OSError as error:
+            # Reported, not raised. This bookkeeping is the SMALLER of the two rollbacks a
+            # failed promotion needs and it happens first, so letting it out costs the larger
+            # one: the caller never reaches the selection rollback, the pointer is back on the
+            # predecessor while the record still selects the candidate, and _install_failed
+            # keeps that candidate and reports a defect in this command instead of the failure
+            # that actually happened. The exception type travels in the detail rather than
+            # being read as anything -- a lock this run could not take and a disk that refused
+            # the write are the same answer here, which is that the record does not say what
+            # this rollback meant it to.
+            #
+            # It is also not evidence that the write did not HAPPEN. The save lands inside the
+            # lock and releasing that lock can raise afterwards, so a run can have committed
+            # the delta and still come out here. Answering "unreadable" from the exception
+            # alone invented an outstanding claim for a record that was already correct, so the
+            # record is READ BACK and the answer comes from what it says; only a read-back that
+            # also fails leaves the outcome unknown.
+            detail = (detail + ", but writing the ownership record raised: "
+                      + type(error).__name__ + ": " + str(error))
+            after = hostrecord.load(record_path, definition_version)
+            if not after.usable:
+                owned = OWNERSHIP_UNREADABLE
+                detail = (detail + ", and the record could not be read back to establish"
+                          " whether it landed: " + str(after.detail))
+            else:
+                owned, note = _ownership_answer(after, wanted, pointer_path)
+                detail = detail + (", but " + note if note
+                                   else ", and the record reads back as " + str(owned))
+        else:
+            owned, note = _ownership_answer(written, wanted, pointer_path)
+            if note:
+                detail = detail + ", but " + note
+        if owned in (OWNERSHIP_UNREADABLE, OWNERSHIP_MOVED_ON):
+            # Reporting this as a completed rollback is the one outcome that would let a
+            # re-armed guard pass unseen: the candidate is released, the result says retriable
+            # and clean, and the record goes on claiming a placement for a link that is gone.
+            # 'restoredTo' still says what the LINK was put back to, because that part is true;
+            # 'verified' is about the restoration as a whole, and this one did not finish.
+            verified = False
+        if owned == OWNERSHIP_UNREADABLE:
+            # An ownership claim THIS RUN left outstanding, which is the only thing this cell
+            # means. The write did not happen, so the record still holds what this promotion put
+            # there and somebody has to settle it.
+            #
+            # Two states reach here and they need different things said, because the sentence
+            # is written where the readings that decide it were made. Composed by the caller it
+            # could name only one, and telling an operator the link was taken away when it is
+            # back sends them looking for something that did not happen.
+            residual_claim = str(pointer_path)
+            # Composed from the two readings rather than from one of them. What happened to the
+            # LINK and where the ENTRY came from are separate facts, and a sentence that assumes
+            # either -- that the link went back when the restoration failed, or that the entry
+            # was inherited when this run introduced it over a legacy install -- tells an
+            # operator something that did not happen.
+            link_says = (
+                "the link this run placed was taken away" if restored_to == "absent"
+                else "the link there was put back to " + str(restored_to) if restored_to
+                else "the link could not be put back either, so what is at that path is this"
+                     " run's")
+            record_says = (
+                "the record holds an entry this run introduced" if not ownership
+                else "the record still carries this run's stamp on an entry it did not"
+                     " introduce")
+            # The consequence is a THIRD reading, not a restatement of the first. Where nothing
+            # went back, the link there and the record that claims it are both this run's, so
+            # they do not disagree -- saying they do would name a conflict that is not the
+            # problem. What is wrong there is that a failed promotion's link and entry are the
+            # ones a host now reaches through.
+            reaches = (
+                "so the next update would read a link that appears at that path as its own"
+                if restored_to == "absent"
+                else "so the record and the link disagree about who placed it" if restored_to
+                else "so a host reaches through the link this failed run left, and the record"
+                     " agrees with it")
+            settle_claim = ("settle the host record's pointer ownership for "
+                            + str(pointer_path) + ": " + link_says + " and " + record_says
+                            + ", " + reaches)
+        elif owned == OWNERSHIP_MOVED_ON:
+            # NOT a residual of this run's. Another writer owns the entry now, and the reading
+            # that established that also established there is nothing here for this run to put
+            # back -- so asking an operator to settle a claim at this path would send them after
+            # somebody else's record. The restoration is still unverified, because it did not do
+            # what it set out to, and the concurrent move is reported through the ownership cell
+            # and the detail, which is what actually happened.
+            pass
+    return {"restoredTo": restored_to, "verified": verified, "residualPointer": residual,
+            "residualOwnership": residual_claim, "settleOwnership": settle_claim,
+            "ownership": owned, "detail": detail}
+
+
+def _outstanding_ownership(pointer_restored):
+    """The claim a rollback left behind, as the two fields a RESULT reports it with.
+
+    One place, because two commands end on this and a reader has to find the same answer in
+    both. _install_failed is the update's exit and _finish_promotion is the resume's, and the
+    resume's never goes through the update's -- so a receipt following the documented procedure
+    read nulls there for a claim that was outstanding, while the same failure one path over
+    reported it. Written twice they would drift; asked of one helper they cannot.
+
+    The sentence is carried rather than composed. Only the restoration knows which of its states
+    this was, and a sentence written at an exit could name just one of them.
+    """
+    return {"residualOwnership": (pointer_restored or {}).get("residualOwnership"),
+            "recoveryRequires": (pointer_restored or {}).get("settleOwnership")}
 
 
 def _restore_selection(record_path, definition_version, previous, installs):
@@ -3100,6 +3574,20 @@ def _install_failed(record_path, definition_version, performed, environment, own
     # retriable was false in the way that matters: the deterministic directory is still there
     # and the next install refuses at the existence check.
     retriable = owned is None or removed
+    # A pointer restoration that did not finish leaves a CLAIM rather than a path. The record
+    # goes on saying this command placed a link where there is now none, and that claim is what
+    # the next promotion reads before replacing whatever has turned up at that path -- so it is
+    # an outstanding thing somebody has to settle, and a result that does not say so is how it
+    # goes unseen.
+    #
+    # It is not folded into 'residualPaths' and it does not move 'retriable'. Nothing is on
+    # disk, and 'retriable' answers whether this DESTINATION can be used again, which the
+    # deterministic directory decides and a record claim does not. Answering either of those
+    # with this would be a cell carrying a reading its own question did not produce, which is
+    # the shape the rest of this change exists to remove.
+    outstanding = _outstanding_ownership(pointer_restored)
+    unsettled = outstanding["residualOwnership"]
+    settle = outstanding["recoveryRequires"]
     emit({
         "command": "install", "applied": False, "steps": performed,
         "environment": str(environment),
@@ -3123,12 +3611,19 @@ def _install_failed(record_path, definition_version, performed, environment, own
         "residualPaths": ([str(owned)] if (owned is not None and not removed) else [])
                          + ([(pointer_restored or {}).get("residualPointer")]
                             if (pointer_restored or {}).get("residualPointer") else []),
-        "recoveryRequires": None if retriable else (
-            ("this environment is selected, so it was kept deliberately and the destination"
-             " cannot be retried until the selection moves") if keeping
-            else ("remove " + str(owned) + " by hand; this run created it and could not remove"
-                  " it, so the same destination will keep refusing until it is gone")
-        ),
+        # What this run left behind that is not a path. Reported beside residualPaths rather
+        # than inside it, because a reader looking for a directory to delete and a reader
+        # looking for a record claim to settle are answering different questions.
+        "residualOwnership": unsettled,
+        "recoveryRequires": "; and ".join(part for part in (
+            None if retriable else (
+                ("this environment is selected, so it was kept deliberately and the destination"
+                 " cannot be retried until the selection moves") if keeping
+                else ("remove " + str(owned) + " by hand; this run created it and could not"
+                      " remove it, so the same destination will keep refusing until it is"
+                      " gone")),
+            settle,
+        ) if part) or None,
         "refused": (
             failed_reading.detail if failed_reading is not None else
             ("this command failed in a way it does not model: " + type(failed_error).__name__
@@ -3468,7 +3963,7 @@ def cmd_register_mcp(args):
                 if outcome == codexconfig.CREATED:
                     hostrecord.atomic_write(path, fresh)
                     new_text, wrote = fresh, True
-        except TimeoutError as error:
+        except hostrecord.Busy as error:
             emit({"command": "register-mcp", "path": str(path), "outcome": BUSY,
                   "detail": str(error), "applied": False, "wrote": False,
                   "otherTablesPreserved": True})
@@ -3671,6 +4166,22 @@ def main(argv=None):
               "reading": stop.reading.refusal(),
               "note": "a record could not be read and the command that reads it did not"
                       " report the refusal itself"})
+        return EXIT_REFUSED
+    except hostrecord.Busy as error:
+        # A lock another run holds is a modelled outcome of every command that takes one, and
+        # it says the same thing wherever it happens: nothing was established. Each site that
+        # can say more answers it itself; this is the backstop, so a sibling added later cannot
+        # report a competing run as a defect in this command the way the hook path did.
+        #
+        # The LOCK's own type, not the built-in. TimeoutError is an OSError, and a destination
+        # on a network mount raises it with ETIMEDOUT for an ordinary filesystem call; catching
+        # the broad type here would answer "another run holds a lock" about a failure no lock
+        # took part in, which is this command's own subject in its own failure contract.
+        emit({"command": args.command, "outcome": BUSY,
+              "refused": "another run holds a lock this command needs: " + str(error),
+              "raisedAt": reading.where(error),
+              "note": "nothing was established by the step that needed the lock, and a run"
+                      " that holds it is not a defect in this command."})
         return EXIT_REFUSED
     except Exception as error:                                   # noqa: BLE001 - see above
         emit({"command": args.command, "internalError": {

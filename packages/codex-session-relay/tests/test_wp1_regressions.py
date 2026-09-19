@@ -362,12 +362,21 @@ class ActiveTurnSelfEmission(RelayTestCase):
         _relationship, _stored, payload = self._staged()
         self.intake.resolve_staged(self.assigned_turn("interrupted"))
         self.assertFalse(self.intake.deliverable(payload["eventId"]))
+        # Named separately because deliverable() is bool(row) and row['stage'] == FINAL, so it
+        # is equally false for a claim that was never recorded at all. Alone among the cases
+        # here this one had nothing to tell those two apart. Found by the summary inventory in
+        # test_regression_map.py rather than by review.
+        self.assertEqual(self.intake.row(payload["eventId"])["stage"], "suppressed")
 
     def test_a_still_running_turn_leaves_the_claim_staged(self):
         _relationship, _stored, payload = self._staged()
         result = self.intake.resolve_staged(self.assigned_turn("inProgress"))
         self.assertTrue(result["pending"])
         self.assertFalse(self.intake.deliverable(payload["eventId"]))
+        # resolve_staged answers pending before it reads the stored claim, so the line above is
+        # true for a suppressed row too, and deliverable() is false for a row that is absent.
+        # Between them they named nothing; the stage does.
+        self.assertEqual(self.intake.row(payload["eventId"])["stage"], "staged")
 
     def test_a_receipt_from_a_completed_turn_is_final_immediately(self):
         relationship = self.register()

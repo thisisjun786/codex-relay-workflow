@@ -6,7 +6,9 @@ in [README.md](README.md).
 
 ## Make a change
 
-Start from `dev` on a short-lived branch. Use a separate worktree when another
+The skills live in `plugins/crw/skills/`, which is the payload of the published
+plugin; `docs/plugin-packaging.md` describes the package and what may sit in its
+root. Start from `dev` on a short-lived branch. Use a separate worktree when another
 task owns the checkout, and preserve its uncommitted work. Read the target skill
 and linked references before editing. Shared workflow rules belong in
 `skills/crw-plan/references/integrations.md`; operation-specific guidance
@@ -34,6 +36,7 @@ Use Python 3.10 or newer. No dependency installation is needed for these checks:
 
 ```sh
 python3 scripts/ci/validate.py
+python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
 python3 scripts/ci/contracts.py
 git diff --check

@@ -855,9 +855,18 @@ class AuthorizedRepairTests(unittest.TestCase):
                 self.assertEqual(sent, [], "an incomplete trial must write nothing")
 
     def test_a_recipient_that_is_not_the_parent_is_refused_before_any_write(self):
+        """Refused before the first command, and refused by the CONSUMER's rule.
+
+        The gate used to compare the two values itself. Its own sentence read well and was a
+        second copy of scope.check_recipient, so the assertion is on the property that matters:
+        nothing was sent, and the refusal names the rule the relay would have applied.
+        """
+        import runtime_install
+
         result, sent = self.run_trial(self.trial_args(recipient="somebody-else"))
         self.assertEqual(result["value"], "not_verified")
-        self.assertIn("not the parent task", result["evidence"])
+        self.assertIn(runtime_install.RELAY_RECIPIENT[-1], result["evidence"])
+        self.assertIn("--recipient", result["evidence"])
         self.assertEqual(sent, [])
 
     def test_recorded_settings_stay_reusable_through_an_explicit_claim(self):
@@ -5049,6 +5058,19 @@ class PairedMemberTests(unittest.TestCase):
                 if predicate == runtime_install.NON_BLANK:
                     continue
                 self.assertIsInstance(predicate, tuple, name + " names a consumer's callable")
+                if predicate[0] == runtime_install.RESTATED_HERE:
+                    # A rule the consumer holds where nothing read-only can ask it. The pair
+                    # names where it lives and this reads that back, because a restatement
+                    # whose original has moved is a restatement of nothing -- which is the
+                    # shape every layer of this class has been made of.
+                    self.assertGreaterEqual(len(pair), 3,
+                                            name + " restates a relational rule and must name"
+                                            " the member it is judged with")
+                    self.assertTrue(
+                        _relay_defines(predicate[1:]),
+                        name + " restates " + str(predicate[1:]) + ", which the relay's own"
+                        " source no longer holds there")
+                    continue
                 self.assertTrue(
                     _relay_defines(predicate),
                     name + " is governed by " + str(predicate) + ", which the relay's own"
@@ -5586,6 +5608,139 @@ def component_of_for_test(data, name):
     return next(c for c in data["components"] if c["component"] == name)
 
 
+# Only the two build commands are simulated below, and which one an argv is has to be read from
+# the command it runs -- the module the interpreter is told to run, and the operation handed to
+# that module -- never from the text of the paths in it. A temporary destination is named by the
+# host and is free to spell `pip` or `venv`; searching the joined argv for those words then made
+# the environment command answer to the package injection and stubbed out
+# `scripts/install.py --check` instead of running it, on the hosts whose temporary name happened
+# to spell it and nowhere else (CRW-107).
+def module_invocation(argv):
+    """Return `(module, operands)` for `<interpreter> [options] -m <module> [operands]`.
+
+    `-m` counts only inside the leading option block, where the interpreter reads it: a `-c`, a
+    bare `--` and the first operand all end option processing, so a `-m` after any of them is an
+    argument to the program rather than a module selector. An interpreter option that takes a
+    SEPARATE operand -- `-X dev`, `-W error` -- ends the walk early and reads as no module at
+    all. Neither the installer nor this file emits one, and that is the safe direction to be
+    wrong in: a command this cannot name runs for real instead of being silently simulated.
+    """
+    parts = [str(a) for a in argv]
+    for index in range(1, len(parts)):
+        token = parts[index]
+        if token == "-m":
+            return (parts[index + 1] if index + 1 < len(parts) else None), parts[index + 2:]
+        if token in ("-c", "--") or not token.startswith("-"):
+            break
+    return None, []
+
+
+def build_step(argv):
+    """Name the installer build step an argv performs, or None when it performs neither.
+
+    The shapes are the installer's own: `<interpreter> -m venv <environment>` creates the
+    environment and `<python> -m pip install --quiet <package>...` installs the packages. Git,
+    the `-c` import probes and `scripts/install.py --check` are not build steps and must run.
+    """
+    module, operands = module_invocation(argv)
+    if module == "venv":
+        return "create environment"
+    if module == "pip":
+        operation = next((o for o in operands if not o.startswith("-")), None)
+        if operation == "install":
+            return "install packages"
+    return None
+
+
+# What each simulated build step says when it is made to fail. The wording is this fixture's;
+# what the assertions read is which step carries it.
+BUILD_REFUSALS = {
+    "create environment": "venv refused to build",
+    "install packages": "no matching distribution",
+}
+
+
+class BuildStepNamingTests(unittest.TestCase):
+    """The naming the failure injection rests on, checked against the commands themselves.
+
+    A destination directory is named by the host, so a name that happens to contain `pip` or
+    `venv` must not turn an unrelated command into a build step, and must not stop one of the
+    two real build commands from being recognised as itself.
+    """
+
+    CONTAMINATED = "/var/tmp/crw107-pip-venv-42"
+
+    def test_the_two_build_commands_are_named_from_module_and_operation(self):
+        environment = Path(self.CONTAMINATED) / "dest" / "env-1-a8ffcbfd23f0"
+        cases = (
+            ([sys.executable, "-m", "venv", str(environment)], "create environment"),
+            ([str(environment / "bin" / "python"), "-m", "pip", "install", "--quiet",
+              str(ROOT / "packages" / "codex-thread-bridge"),
+              str(ROOT / "packages" / "codex-session-relay")], "install packages"),
+        )
+        for argv, expected in cases:
+            with self.subTest(expected):
+                self.assertEqual(build_step(argv), expected)
+
+    def test_a_command_whose_path_spells_a_build_tool_is_not_a_build_step(self):
+        environment = Path(self.CONTAMINATED) / "dest" / "env-1-a8ffcbfd23f0"
+        cases = {
+            # The one the joined-argv match stubbed out: a real check that quietly stopped
+            # running in any destination whose name spelled a build tool.
+            "the installed-skill check": [sys.executable, str(ROOT / "scripts" / "install.py"),
+                                          "--check", "--dest", self.CONTAMINATED + "/skills"],
+            "an import probe": [str(environment / "bin" / "python"), "-c",
+                                "import codex_session_relay"],
+            "the settings probe": [str(environment / "bin" / "python"), "-B", "-c",
+                                   "import json, codex_session_relay"],
+            "a git read": ["git", "-C", self.CONTAMINATED, "rev-parse", "HEAD"],
+            "an argument that only looks like one": [sys.executable, "--", "-m", "pip",
+                                                     "install"],
+        }
+        for label, argv in cases.items():
+            with self.subTest(label):
+                self.assertIsNone(build_step(argv), label + " is not a build step")
+
+    def test_pip_names_the_install_step_only_when_it_installs(self):
+        self.assertIsNone(build_step([sys.executable, "-m", "pip", "--version"]))
+        self.assertEqual(build_step([sys.executable, "-m", "pip", "--quiet", "install", "/pkg"]),
+                         "install packages")
+
+    def test_the_naming_covers_every_build_command_the_installer_performs(self):
+        """Read the build commands back out of the installer and name them from here.
+
+        build_step mirrors argv that lives in another file. If the installer ever builds a
+        different way, or adds a third build step, a fixture that cannot name the new shape
+        stops simulating it: the injection passes straight through and the boundary case
+        reports a step nothing failed at. So the shapes are read from the source rather than
+        trusted to stay where they were, and every non-literal argument is substituted with a
+        path that spells both build tools, which is the one thing the naming may not read.
+        """
+        contaminated = self.CONTAMINATED + "/dest"
+        performed = {}
+        for node in ast.walk(ast.parse(RUNTIME.read_text(encoding="utf-8"))):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "perform" and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[1], ast.List)):
+                performed[node.args[0].value] = node.args[1].elts
+        self.assertEqual(sorted(performed), sorted(BUILD_REFUSALS),
+                         "the installer performs a build step this fixture cannot inject into")
+        for step, elements in performed.items():
+            argv = []
+            for element in elements:
+                if isinstance(element, ast.Constant):
+                    argv.append(element.value)
+                elif isinstance(element, ast.Starred):
+                    argv.append(contaminated + "/a-package")
+                else:
+                    argv.append(contaminated + "/bin/python")
+            with self.subTest(step):
+                self.assertEqual(build_step(argv), step,
+                                 "scripts/runtime_install.py performs " + step + " as "
+                                 + " ".join(argv) + ", which this fixture must recognise")
+
+
 class UpdateRecoveryTests(unittest.TestCase):
     """Failure injected at each boundary an update crosses.
 
@@ -5594,14 +5749,29 @@ class UpdateRecoveryTests(unittest.TestCase):
     the same file with the same rows in it.
     """
 
+    # Every failure this fixture injects, with the step the result has to name. The boundary
+    # case and the destination-name contrast both read it, so an injection added here is
+    # covered by both rather than by whichever one was remembered.
+    BOUNDARY_STEPS = {
+        "create environment": "create environment",
+        "install packages": "install packages",
+        "replace the owned pointer": "replace the owned pointer",
+        "read the owned pointer back": "read the owned pointer back",
+    }
+
     def _run(self, host, *, breaking=None, gate=None, interpose=None, probes=None,
-             clean_store=False):
+             clean_store=False, dest=None, observe=None, issue="CRW-49"):
         import runtime_install
 
+        # A retry can be invoked against a DIFFERENT destination, which is the whole of what
+        # distinguishes the bad case in CRW-95 from the ordinary one, and the candidate has to
+        # move with it or the fake install writes under a directory this run does not own.
+        destination = Path(dest) if dest else host.destination
+        candidate = destination / host.candidate.name
         emitted = []
         args = argparse.Namespace(
-            dest=str(host.destination), apply=True, record=str(host.record_path),
-            python=sys.executable, socket=None, state=str(host.state), issue="CRW-49",
+            dest=str(destination), apply=True, record=str(host.record_path),
+            python=sys.executable, socket=None, state=str(host.state), issue=issue,
             codex_home=str(host.codex_home))
 
         # Only the two build steps are simulated. Everything else -- git above all, which
@@ -5611,18 +5781,15 @@ class UpdateRecoveryTests(unittest.TestCase):
         real_run = runtime_install.subprocess.run
 
         def fake_run(argv, **kwargs):
-            joined = " ".join(str(a) for a in argv)
-            building = "venv" in joined or "pip" in joined
-            if not building:
+            step = build_step(argv)
+            if step is None:
                 return real_run(argv, **kwargs)
-            if breaking == "create environment" and "venv" in joined:
-                return subprocess.CompletedProcess(argv, 1, "", "venv refused to build")
-            if breaking == "install packages" and "pip" in joined:
-                return subprocess.CompletedProcess(argv, 1, "", "no matching distribution")
+            if step == breaking:
+                return subprocess.CompletedProcess(argv, 1, "", BUILD_REFUSALS[step])
             return subprocess.CompletedProcess(argv, 0, "", "")
 
         def fake_location(python, module):
-            site = host.candidate / "site" / module
+            site = candidate / "site" / module
             site.mkdir(parents=True, exist_ok=True)
             return str(site), None, [str(python), "-c", "import " + module]
 
@@ -5672,6 +5839,21 @@ class UpdateRecoveryTests(unittest.TestCase):
         if gate == "store would be downgraded":
             candidate_declares = {"relationships": schema["relationships"]}
 
+        def fake_classification(component, **read):
+            """Stubbed, and OBSERVABLE at the boundary it is stubbed at.
+
+            The class itself is about the checkout this suite runs in rather than about any
+            behaviour under test, so it is stubbed. What the classifier is HANDED is a different
+            matter: the registration it receives is the post-inheritance value, which is the one
+            a conflict would actually be judged from, and a caller that wants to assert on it
+            must not have to re-derive it.
+            """
+            if observe is not None:
+                observe.append({"component": component["component"],
+                                "registration": read.get("registration"),
+                                "pointer": read.get("pointer")})
+            return {"class": ownership.OWN, "reasons": ["for this case"]}
+
         patches = [
             mock.patch.object(runtime_install, "emit", side_effect=emitted.append),
             mock.patch.object(runtime_install.subprocess, "run", side_effect=fake_run),
@@ -5696,7 +5878,7 @@ class UpdateRecoveryTests(unittest.TestCase):
             mock.patch.object(runtime_install, "candidate_tables",
                               return_value={"readable": True, "tables": candidate_declares}),
             mock.patch.object(runtime_install, "classify_component",
-                              return_value={"class": ownership.OWN, "reasons": ["for this case"]}),
+                              side_effect=fake_classification),
         ]
         if breaking == "replace the owned pointer":
             # The link LANDS and then the call fails, which is the case the code claims to
@@ -5773,13 +5955,7 @@ class UpdateRecoveryTests(unittest.TestCase):
                                  label + ": the pointer still names the previous runtime")
 
     def test_each_failure_names_the_boundary_it_stopped_at(self):
-        expected = {
-            "create environment": "create environment",
-            "install packages": "install packages",
-            "replace the owned pointer": "replace the owned pointer",
-            "read the owned pointer back": "read the owned pointer back",
-        }
-        for breaking, step in expected.items():
+        for breaking, step in self.BOUNDARY_STEPS.items():
             with self.subTest(breaking):
                 with tempfile.TemporaryDirectory() as temporary:
                     host = _Host(temporary)
@@ -5787,6 +5963,47 @@ class UpdateRecoveryTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertEqual(payload["failedStep"], step,
                                  "a reader must not have to infer where it stopped")
+
+    def test_the_boundary_is_read_from_the_command_and_not_the_path_it_ran_in(self):
+        """The same injections again, in destinations that spell the build tools.
+
+        A temporary directory is named by the host. When that name contained `pip`, the
+        joined-argv match made the environment command answer to the package injection: the run
+        stopped at the first boundary and reported the second one. Both spellings exit 1 either
+        way, so only an assertion that names the step sees it, and only on the hosts whose
+        temporary name happens to spell it -- which is why it surfaced as an unrelated PR's CI
+        failing and not as a failure here.
+
+        Only the last path component is this test's to choose. The temporary root above it
+        belongs to the host -- `TMPDIR` may name one, and `mkdtemp` adds random characters that
+        can spell `pip` on their own -- so requiring it to be neutral would make this case fail
+        for the very reason it exists to remove. A contaminated root simply makes every case
+        here contaminated, including the one named plain, and every case still has to report
+        its own step, so the property holds either way.
+        """
+        parent = Path(tempfile.mkdtemp(prefix="crw107-contrast-"))
+        try:
+            for name in ("plain", "pip", "venv", "pip-venv"):
+                destination = parent / ("crw107-" + name)
+                for token in ("pip", "venv"):
+                    self.assertEqual(
+                        token in destination.name, token in name,
+                        "a case only means something if its destination really does or does"
+                        " not spell " + token)
+                for breaking, step in self.BOUNDARY_STEPS.items():
+                    with self.subTest(destination=name, breaking=breaking):
+                        destination.mkdir()
+                        try:
+                            code, payload = self._run(_Host(str(destination)), breaking=breaking)
+                        finally:
+                            shutil.rmtree(destination, ignore_errors=True)
+                        self.assertEqual(code, 1)
+                        self.assertEqual(
+                            payload["failedStep"], step,
+                            "a destination named " + destination.name + " must not move the"
+                            " boundary the run stopped at")
+        finally:
+            shutil.rmtree(parent, ignore_errors=True)
 
     def test_a_gate_refusal_reports_the_gate_that_refused(self):
         for gate in ("running daemon", "handover in flight", "store would be downgraded"):
@@ -6297,6 +6514,288 @@ class SchemaComparisonTests(unittest.TestCase):
                                                            "openAttempts": 0}}}),
                  "storeTables": cell})["verdict"],
             swapgate.UNESTABLISHED)
+
+
+# =========================================================================================
+# Check 10 - the comparison set is the catalog's, not a list of kinds this command chose
+# =========================================================================================
+
+# One object of every kind SQLite can put in a schema, plus a name the old exclusion swallowed.
+#
+# NOT LIKE 'sqlite_%' reads _ as a one-character wildcard, so it dropped a legal user object
+# called sqlitexfoo as well as the internal ones it was aimed at. SQLite refuses the real prefix
+# outright, so nothing internal can be spelled this way and the name is only ever a user's.
+EVERY_KIND_DDL = (
+    "CREATE TABLE kept (id INTEGER PRIMARY KEY, value TEXT UNIQUE);\n"
+    "CREATE INDEX kept_value ON kept (value);\n"
+    "CREATE VIEW kept_seen AS SELECT id FROM kept;\n"
+    "CREATE TRIGGER kept_touch AFTER INSERT ON kept"
+    " BEGIN UPDATE kept SET value = value WHERE id = NEW.id; END;\n"
+    "CREATE TABLE sqlitexfoo (a TEXT);\n"
+)
+
+
+def _relay_ddl():
+    """The relay's schema script, read from its source rather than from an installed package."""
+    tree = ast.parse((RELAY_SRC / "store.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "DDL" for target in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError("the relay's store.py no longer binds DDL at module level")
+
+
+def _partitioned(ddl):
+    """Every catalog row a scratch copy lets you DROP, and every row it refuses.
+
+    SQLite's own division between what a user declared and what SQLite maintains for itself,
+    asked of SQLite instead of restated here. A test that wrote its own exclusion would be
+    checking the comparison against a second copy of the comparison's rule, which is the shape
+    this whole issue exists to remove. The refused rows come back too, so a row that is neither
+    internal nor droppable is something a caller can fail on rather than something the oracle
+    quietly absorbs.
+    """
+    def built():
+        connection = sqlite3.connect(":memory:")
+        connection.executescript(ddl)
+        return connection
+
+    catalogue = built()
+    rows = catalogue.execute("SELECT type, name FROM sqlite_master").fetchall()
+    catalogue.close()
+    droppable, refused = set(), set()
+    for kind, name in rows:
+        scratch = built()
+        try:
+            scratch.execute('DROP ' + kind + ' "' + name.replace('"', '""') + '"')
+            droppable.add(kind + " " + name)
+        except sqlite3.Error:
+            refused.add(kind + " " + name)
+        finally:
+            scratch.close()
+    return droppable, refused
+
+
+def _built_store(state, ddl, drop=None):
+    """Build a store at the path the RELAY resolves for this state directory.
+
+    The path is asked of the relay rather than spelled here, because which file a state
+    directory resolves to is the relay's rule; a test that wrote its own copy would be building
+    a database the probe under test does not read.
+    """
+    import runtime_install
+
+    presence = runtime_install.store_presence(RELAY_RUNTIME, str(state))
+    assert presence.get("readable"), presence.get("detail")
+    database = Path(presence["dbPath"])
+    database.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(database))
+    try:
+        connection.executescript(ddl)
+        if drop is not None:
+            kind, name = drop.split(" ", 1)
+            connection.execute('DROP ' + kind + ' "' + name.replace('"', '""') + '"')
+        connection.commit()
+    finally:
+        connection.close()
+    return database
+
+
+needs_relay = unittest.skipUnless(sys.version_info >= (3, 11),
+                                  "the relay requires Python 3.11 or newer")
+
+
+class SchemaDepthTests(unittest.TestCase):
+    """A schema is not its tables (CRW-91).
+
+    Both readings asked the catalog for type = 'table', so an index, a trigger or a view was
+    never in the judgement at all. A store that had lost one compared identical to a candidate
+    that declares it, the gate answered AGREES, and the relay runs its whole DDL on every
+    write-open -- so the new daemon would put it back. Letting an update through on that is the
+    implicit migration OPS-4.5 reserves for its own issue with its own copied backup, arrived at
+    by not looking rather than by deciding.
+
+    Nothing here names a kind. The comparison set is whatever the catalog holds, and the tests
+    draw their expectations from SQLite rather than from a list, so a kind SQLite gains is
+    covered without this file being taught about it.
+
+    Two groups, said out loud rather than left to be inferred. REGRESSION cases fail at the
+    parent commit on the defect itself: they drive the real probe functions, which exist there
+    under the same names, so the failure is the answer and not a missing symbol. SUPPORT cases
+    prove an oracle can fail, pin the output shape, or keep the two readings from drifting; they
+    passed at the parent too, and that is them doing their job rather than them being weak.
+    """
+
+    @needs_relay
+    def test_the_store_reading_carries_every_object_the_catalog_owns(self):
+        """REGRESSION. The reading, against SQLite's own account of the same database.
+
+        Both sides are derived: the reading comes from the shipped probe, and what it is
+        measured against is every row a scratch copy of that database lets you drop. A kind the
+        query stops returning is the difference between the two sets.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "state"
+            _built_store(state, EVERY_KIND_DDL)
+            reading = runtime_install.store_tables(RELAY_RUNTIME, str(state))
+        droppable, refused = _partitioned(EVERY_KIND_DDL)
+
+        self.assertTrue(reading.get("readable"), str(reading.get("detail")))
+        self.assertGreater(len({key.split(" ", 1)[0] for key in droppable}), 1,
+                           "a fixture holding one kind cannot show a comparison losing kinds")
+        self.assertEqual(set(reading["tables"]), droppable,
+                         "the store reading and the objects this database actually owns are"
+                         " different sets, so the comparison is being made on a schema the"
+                         " store does not have")
+        self.assertTrue(all(name.startswith("sqlite_") for name in
+                            (key.split(" ", 1)[1] for key in refused)),
+                        "a row this database owns cannot be dropped, so the oracle above would"
+                        " leave it out of the comparison without saying so: " + repr(refused))
+
+    def test_a_reading_that_lost_a_kind_does_not_satisfy_that_check(self):
+        """SUPPORT, the negative control for the check above.
+
+        Narrowing the QUERY would not have proved this. The query ends in ORDER BY, so SQLite
+        reads a trailing AND as another ordering expression and every kind stays -- a control
+        written that way passes while narrowing nothing. So the control narrows the reading,
+        which is what that check actually compares.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "schema.sqlite3"
+            connection = sqlite3.connect(str(database))
+            connection.executescript(EVERY_KIND_DDL)
+            connection.commit()
+            whole = {row[0] for row in connection.execute(swapgate.SCHEMA_OBJECTS_QUERY)}
+            connection.close()
+        droppable, _refused = _partitioned(EVERY_KIND_DDL)
+
+        self.assertEqual(whole, droppable, "the control's own fixture must start out satisfied")
+        kinds = {key.split(" ", 1)[0] for key in whole}
+        for kind in sorted(kinds):
+            with self.subTest(kind):
+                without = {key for key in whole if not key.startswith(kind + " ")}
+                self.assertNotEqual(without, droppable,
+                                    "a reading that lost every " + kind + " still satisfies the"
+                                    " inventory check, so the check cannot fail and its passing"
+                                    " means nothing")
+
+    @needs_relay
+    def test_the_candidate_reading_is_every_object_its_own_ddl_creates(self):
+        """REGRESSION. The candidate side, measured the same way against the relay's real DDL.
+
+        This is the half that decides what an update would install, and the relay's schema has
+        held indexes all along: eight of them, none of which reached the comparison.
+        """
+        import runtime_install
+
+        ddl = _relay_ddl()
+        droppable, refused = _partitioned(ddl)
+        reading = runtime_install.candidate_tables(RELAY_RUNTIME)
+
+        self.assertTrue(reading.get("readable"), str(reading.get("detail")))
+        self.assertEqual(set(reading["tables"]), droppable,
+                         "the candidate declares objects this reading never reports, so an"
+                         " update compares against a schema the runtime would not install")
+        self.assertTrue(all(name.startswith("sqlite_") for name in
+                            (key.split(" ", 1)[1] for key in refused)),
+                        "a row the relay's own schema owns cannot be dropped: " + repr(refused))
+
+    @needs_relay
+    def test_a_store_missing_one_object_of_any_kind_refuses_the_swap(self):
+        """REGRESSION, and criterion 3 in the same breath.
+
+        One object per kind the relay's schema actually has, chosen from the catalog rather than
+        listed here, so a kind the relay gains enters this loop without being added to it. The
+        answer must be one of the refusing ones and the verdict must be BLOCKED: the existing
+        installation is kept, and nothing is downgraded on the quiet.
+
+        Dropping a table takes its indexes with it, so what is required of the refusal is that
+        it NAMES the object that went, never that exactly one thing changed.
+        """
+        import runtime_install
+
+        ddl = _relay_ddl()
+        droppable, _refused = _partitioned(ddl)
+        candidate = runtime_install.candidate_tables(RELAY_RUNTIME)
+        self.assertTrue(candidate.get("readable"), str(candidate.get("detail")))
+
+        first_of_kind = {}
+        for key in sorted(droppable):
+            first_of_kind.setdefault(key.split(" ", 1)[0], key)
+        self.assertGreater(len(first_of_kind), 1,
+                           "one kind in the relay's schema proves nothing about a comparison"
+                           " that is supposed to span kinds")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "intact"
+            _built_store(state, ddl)
+            whole = runtime_install.store_tables(RELAY_RUNTIME, str(state))
+        self.assertEqual(swapgate.tables_cell(whole, candidate)["answer"], swapgate.AGREES,
+                         "the control: an untouched store must agree, or every refusal below is"
+                         " a refusal of the fixture rather than of the missing object")
+
+        for kind, key in sorted(first_of_kind.items()):
+            with self.subTest(kind):
+                with tempfile.TemporaryDirectory() as temporary:
+                    state = Path(temporary) / "missing"
+                    _built_store(state, ddl, drop=key)
+                    reading = runtime_install.store_tables(RELAY_RUNTIME, str(state))
+                cell = swapgate.tables_cell(reading, candidate)
+                self.assertIn(cell["answer"], swapgate.TABLES_BLOCKING,
+                              "a store missing " + key + " answered " + str(cell["answer"])
+                              + ", so the new daemon would re-create it on its first write-open")
+                self.assertIn(key, cell["detail"], "the refusal has to name what went")
+                self.assertIn(key, cell["evidence"]["onlyInCandidate"])
+                verdict = swapgate.decide({
+                    "daemon": swapgate.daemon_cell(
+                        {"ok": True, "payload": {"running": False}}),
+                    "inFlight": swapgate.inflight_cell(
+                        {"ok": True, "payload": {"contents": {"available": True,
+                                                              "openAttempts": 0}}}),
+                    "storeTables": cell})["verdict"]
+                self.assertEqual(verdict, swapgate.BLOCKED,
+                                 "the existing installation is kept rather than replaced over a"
+                                 " store whose schema the candidate does not match")
+
+    def test_both_schema_readings_ask_the_one_question(self):
+        """SUPPORT, the drift guard.
+
+        Two copies of a query kept equal by hand is how the two sides come to compare different
+        schemas, and this cell reports that as a schema difference -- a refusal caused by the
+        readers rather than by the store.
+        """
+        import runtime_install
+
+        programs = {name: value for name, value in vars(runtime_install).items()
+                    if name.endswith("_PROGRAM") and isinstance(value, str)}
+        asking = {name for name, value in programs.items() if "sqlite_master" in value}
+        self.assertEqual(len(asking), 2,
+                         "the schema comparison has two sides; found " + repr(sorted(asking)))
+        for name in sorted(asking):
+            with self.subTest(name):
+                self.assertIn(swapgate.SCHEMA_OBJECTS_QUERY, programs[name],
+                              name + " asks the catalog a question of its own instead of the"
+                              " one both sides are compared on")
+
+    def test_the_refusal_names_the_kind_as_well_as_the_name(self):
+        """SUPPORT, pinning the output shape this change introduces.
+
+        The evidence lists reach install JSON, and their entries gained a kind: 'index
+        sync_ready' where they used to read 'sync_ready'. A consumer parses those, so the format
+        is stated here rather than left to be discovered from a payload.
+        """
+        held = {"table kept": "CREATE TABLE kept (a TEXT)"}
+        declared = dict(held, **{"index kept_a": "CREATE INDEX kept_a ON kept (a)"})
+        cell = swapgate.tables_cell(
+            {"readable": True, "present": True, "dbPath": "/d", "tables": held},
+            {"readable": True, "tables": declared})
+
+        self.assertEqual(cell["answer"], swapgate.EXTENDS)
+        self.assertEqual(cell["evidence"]["onlyInCandidate"], ["index kept_a"])
+        self.assertEqual(cell["evidence"]["onlyInStore"], [])
+        self.assertIn("index kept_a", cell["detail"])
 
 
 class NarrowReadingTests(unittest.TestCase):
@@ -7408,7 +7907,8 @@ class PointerOwnershipRollbackTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIsNone(record.get("pointer"),
                           "the record must not claim a link this run took away")
-        self.assertTrue(payload["pointer"]["pointerRestored"]["ownershipDropped"])
+        self.assertEqual(payload["pointer"]["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_DROPPED)
 
     def test_a_link_this_command_did_not_place_is_refused_after_the_rollback(self):
         """The consequence, end to end. The leftover claim made a stranger's link ours."""
@@ -7441,6 +7941,727 @@ class PointerOwnershipRollbackTests(unittest.TestCase):
 
         self.assertEqual((kept or {}).get("path"), "/dest/current")
         self.assertIsNone(gone)
+
+
+class PointerOwnershipLifetimeTests(unittest.TestCase):
+    """An ownership entry OLDER than the promotion that failed.
+
+    CRW-49 taught the rollback to restore absence, and it took the ownership entry away with the
+    link. It keyed that on the LINK state, and a missing link is not a missing RECORD: a host
+    whose recorded link was deleted out from under it has the entry and no link. There the
+    rollback erased an entry that predated the promotion entirely -- and that entry holds the
+    path the Codex registration names, so erasing it is what makes a retry with a different
+    --dest read a registration nobody changed as a conflict.
+
+    The entry answers two questions and the rollback now answers them separately. The path stays
+    because the registration depends on it. The placement evidence goes, because the rollback
+    just established there is no link this command placed there -- which keeps CRW-49's refusal
+    of a stranger's link armed rather than trading it away for the path.
+    """
+
+    def _link_deleted_under_it(self, host):
+        """The state this defect needs: the record's entry intact, the link gone.
+
+        Only the LINK. PointerOwnershipRollbackTests removes both, which is the first or legacy
+        install where the run really does introduce the entry -- the case CRW-49 closed, and the
+        one these must not reopen.
+        """
+        host.pointer_path.unlink()
+
+    def _entry(self, host):
+        record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value or {}
+        return record.get("pointer")
+
+    def test_an_ownership_entry_older_than_this_promotion_survives_its_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            found = dict(self._entry(host))
+            self._link_deleted_under_it(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="read the owned pointer back")
+            entry = self._entry(host)
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertIsNotNone(entry,
+                             "a failed promotion erased an ownership entry it did not introduce")
+        self.assertEqual(entry.get("path"), found["path"],
+                         "and the path the registration names has to survive with it")
+        self.assertEqual(payload["pointer"]["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_WITHDRAWN)
+
+    def test_the_placement_evidence_goes_even_though_the_path_stays(self):
+        """The two questions the entry answers, answered separately rather than together."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._link_deleted_under_it(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="read the owned pointer back")
+            entry = self._entry(host)
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual((entry or {}).get("path"), str(host.pointer_path))
+        self.assertFalse(hostrecord.placement_recorded(entry),
+                         "the rollback established there is no link here that this command"
+                         " placed, so it must not go on saying there is")
+
+    def _retry_elsewhere(self, host):
+        """Fail a promotion, then retry the install against a DIFFERENT destination.
+
+        Returns the retry's result and what the classification was handed, because the two
+        halves of the consequence are read in two places and only one of them needs a
+        configuration reader.
+        """
+        self._link_deleted_under_it(host)
+        UpdateRecoveryTests()._run(host, breaking="read the owned pointer back")
+        seen = []
+        code, payload = UpdateRecoveryTests()._run(
+            host, dest=str(host.root / "somewhere-else"), observe=seen)
+        return code, payload, [s["registration"] for s in seen if s["registration"] is not None]
+
+    def test_a_retry_with_a_different_dest_stays_on_the_recorded_pointer_path(self):
+        """Half the consequence the issue names, and the half that needs no reader.
+
+        The recorded path is the only thing that keeps one host on one pointer across a --dest
+        change. Erased, the retry derives its pointer from the NEW destination instead.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload, _ = self._retry_elsewhere(host)
+            recorded = str(host.pointer_path)
+
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertEqual(payload["pointer"]["path"], recorded,
+                         "the retry has to stay on the pointer path the record recorded")
+
+    @needs_reader
+    def test_a_retry_with_a_different_dest_is_not_read_as_a_registration_conflict(self):
+        """The other half, and the one the issue is actually about.
+
+        The configuration registers <recorded pointer>/bin/<script>. Derive the pointer from the
+        new destination and the registered command stops matching -- and _inherited_registration
+        does not rescue it, because that only forgives a recorded INSTALL entry point and a
+        pointer path is not one.
+
+        Read at the CLASSIFIER boundary rather than from registration_state. The harness stubs
+        the class, so the exit code cannot show this; what the classifier is HANDED is the
+        post-inheritance registration a conflict would actually be judged from.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload, judged = self._retry_elsewhere(host)
+
+        self.assertEqual(code, 0, json.dumps(payload)[:1200])
+        self.assertEqual(len(judged), 1, "exactly one component is judged on the registration")
+        self.assertEqual(judged[0]["outcome"], codexconfig.LINKED,
+                         "a configuration nobody changed must not read as a conflict: "
+                         + json.dumps(judged[0].get("detail"))[:400])
+
+    def test_the_resume_path_does_not_erase_an_entry_it_inherited_either(self):
+        """_finish_promotion writes the same entry before placing and rolls back through the
+        same helper, so it carried the same defect and closes with the same answer."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self._link_deleted_under_it(host)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="replace the owned pointer")
+            entry = self._entry(host)
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertIsNotNone(entry,
+                             "the resume rollback erased an entry it did not introduce")
+        self.assertEqual(entry.get("path"), str(host.pointer_path))
+        self.assertEqual(payload["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_WITHDRAWN)
+
+    def test_the_resume_exit_reports_the_same_outstanding_claim(self):
+        """A resume never reaches the update's exit, so the two fields a receipt reads for an
+        outstanding claim are produced there too, from one helper, so the same failure cannot
+        read one way on one path and another way on the other. Raised by an independent review
+        of this pull request.
+
+        Its red baseline is ceeb5d9, the head before these fields reached this exit, not the
+        issue's 33d139a -- MEASURED, after I twice wrote down a baseline I had not run. There it
+        fails with "None != <pointer path>". The fields are read with .get() so an absent one
+        fails as the absence it is rather than as a KeyError.
+        """
+        import runtime_install
+
+        real_update = hostrecord.update
+
+        def refuse_the_rollback_write(path, version, **delta):
+            if "drop_pointer" in delta or "restore_pointer" in delta:
+                raise OSError("the record could not be written")
+            return real_update(path, version, **delta)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self._link_deleted_under_it(host)
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=refuse_the_rollback_write):
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="replace the owned pointer")
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertEqual(payload.get("residualOwnership"), str(host.pointer_path),
+                         "the resume's exit names the claim it left, the way the update's does")
+        self.assertIn("settle the host record's pointer ownership",
+                      payload.get("recoveryRequires") or "")
+        self.assertEqual(payload["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_UNREADABLE)
+
+    def test_ownership_evidence_is_bound_to_the_path_it_is_about(self):
+        """SUPPORT. An entry is ABOUT a path, and a caller holding a path derived somewhere else
+        can read evidence that belongs to a different one -- which is how a resume came to decide
+        whether a link here could be replaced from a record talking about somewhere else. The
+        three answers have to stay three: no entry about this path, an entry about it with no
+        placement, and an entry about it that records one."""
+        placed = {"path": "/dest/current", "recordedAt": "t", "recordedBy": "CRW-95"}
+        withdrawn = {"path": "/dest/current"}
+        elsewhere = {"path": "/elsewhere/current", "recordedAt": "t", "recordedBy": "CRW-95"}
+
+        self.assertEqual(hostrecord.pointer_entry_for(placed, "/dest/current"), placed)
+        self.assertEqual(hostrecord.pointer_entry_for(withdrawn, "/dest/current"), withdrawn)
+        self.assertIsNone(hostrecord.pointer_entry_for(elsewhere, "/dest/current"),
+                          "an entry naming somewhere else says nothing about this path, and"
+                          " reading it as evidence here authorised replacing a link from a"
+                          " record that was not about it")
+        self.assertIsNone(hostrecord.pointer_entry_for(None, "/dest/current"))
+        self.assertTrue(hostrecord.placement_recorded(
+            hostrecord.pointer_entry_for(placed, "/dest/current")))
+        self.assertFalse(hostrecord.placement_recorded(
+            hostrecord.pointer_entry_for(withdrawn, "/dest/current")),
+            "and the withdrawn one is an entry about this path that records no placement,"
+            " which is a different answer from having none at all")
+
+    def test_the_resume_does_not_refuse_on_an_entry_about_another_path(self):
+        """The binding rule at the site that broke it, not only at the helper.
+
+        _finish_promotion is handed its pointer path by the caller and rereads the record under
+        its own lock, so the two can name different places. Read unbound, the withdrawal guard
+        asked "does this record record a placement" of an entry that was about somewhere else,
+        and refused a resume on the strength of it -- a judgment about one path taken from a
+        reading of another.
+
+        Called directly with the two disagreeing, because that state is what the window between
+        the caller's derivation and this lock produces and it is not reachable through the
+        shared fixture. It is red at the commit before this one, which refuses here.
+
+        It does NOT cover the stale path itself: this run still writes the path it was handed.
+        That is the PROMOTION_FRESH defect this branch reports rather than absorbs.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # The record's entry is about SOMEWHERE ELSE and records no placement there -- the
+            # state a rollback at that other path leaves. Unbound, the guard read "no placement
+            # recorded" off it and refused THIS path on the strength of it.
+            record = hostrecord.load(host.record_path,
+                                     host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(host.root / "elsewhere" / "current")}
+            hostrecord.save(host.record_path, record)
+            # ... while the record selects the CANDIDATE and the link at the path this call was
+            # handed still names the predecessor, which the record accounts for. Selecting the
+            # candidate is what makes the outcome observable: finishing moves the link, refusing
+            # leaves it where it was.
+            host.candidate.mkdir(parents=True, exist_ok=True)
+            (host.candidate / "site").mkdir(exist_ok=True)
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            emitted = []
+            with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                code = runtime_install._finish_promotion(
+                    host.record_path, host.data, host.candidate, host.pointer_path,
+                    {"command": "install", "applied": False}, issue="CRW-95", reported={})
+            reached = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 0, json.dumps(emitted[-1])[:900])
+        # Asserted on what the call DID, not on what it said. A message check would go on
+        # passing if the refusal came back under different words, and this repository does not
+        # take text matching as proof of behaviour.
+        self.assertEqual(reached, str(host.candidate),
+                         "the resume finished: an entry about another path is not evidence"
+                         " about this one, so there was nothing here to refuse on")
+        import runtime_install
+
+        real_update = hostrecord.update
+
+        def refuse_the_rollback_write(path, version, **delta):
+            if "drop_pointer" in delta or "restore_pointer" in delta:
+                raise OSError("the record could not be written")
+            return real_update(path, version, **delta)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self._link_deleted_under_it(host)
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=refuse_the_rollback_write):
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="replace the owned pointer")
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertEqual(payload.get("residualOwnership"), str(host.pointer_path),
+                         "the resume's exit names the claim it left, the way the update's does")
+        self.assertIn("settle the host record's pointer ownership",
+                      payload["recoveryRequires"] or "")
+        self.assertEqual(payload["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_UNREADABLE)
+
+    # ---------------------------------------------------------------- support, not evidence
+
+    def test_a_stranger_link_is_still_refused_after_an_inherited_rollback(self):
+        """SUPPORT (negative control). Green at the parent too, because the parent refuses for
+        the opposite reason -- it erased the entry. What it proves is that keeping the path did
+        not buy the retry at the cost of CRW-49's protection: restoring the entry WHOLE makes
+        this run succeed and replace a link it never placed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            self._link_deleted_under_it(host)
+            UpdateRecoveryTests()._run(host, breaking="read the owned pointer back")
+            pointer.place(host.pointer_path, host.previous)
+            code, payload = UpdateRecoveryTests()._run(host)
+            still = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["failedStep"], "establish the pointer is this command's")
+        self.assertEqual(still, str(host.previous),
+                         "a link nobody recorded placing is left exactly as it is")
+
+    def test_the_delta_leaves_an_entry_another_run_has_moved_on(self):
+        """SUPPORT. The keyword does not exist at the parent, so this can only raise there
+        rather than fail on the defect. It pins the compare the rollback depends on."""
+        mine = {"path": "/dest/current", "recordedAt": "t0", "recordedBy": "me"}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            hostrecord.update(path, 1, pointer={"path": "/moved-on/current",
+                                                "recordedAt": "t", "recordedBy": "another run"})
+            hostrecord.update(path, 1, restore_pointer={"wrote": "/dest/current",
+                                                        "found": mine})
+            kept = (hostrecord.load(path, 1).value or {}).get("pointer")
+            hostrecord.update(path, 1, pointer={"path": "/dest/current", "recordedAt": "t9",
+                                                "recordedBy": "the failed run"})
+            hostrecord.update(path, 1, restore_pointer={"wrote": "/dest/current",
+                                                        "found": mine})
+            back = (hostrecord.load(path, 1).value or {}).get("pointer")
+
+        self.assertEqual(kept.get("recordedBy"), "another run",
+                         "an entry another run has moved on is that run's to keep")
+        self.assertEqual(back, mine,
+                         "and the entry this run replaced goes back whole, stamp included")
+
+    def test_the_rollback_answer_is_read_back_rather_than_assumed(self):
+        """SUPPORT. compare-and-act means a miss still reports usable, so 'the call returned'
+        and 'the entry is what this rollback meant to leave' are two different facts."""
+        mine = {"path": "/dest/current", "recordedAt": "t0", "recordedBy": "me"}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            hostrecord.update(path, 1, pointer={"path": "/moved-on/current",
+                                                "recordedAt": "t", "recordedBy": "another run"})
+            written = hostrecord.update(path, 1, restore_pointer={"wrote": "/dest/current",
+                                                                  "found": mine})
+            answer, note = runtime_install_module._ownership_answer(written, mine,
+                                                                    "/dest/current")
+
+        self.assertTrue(written.usable, "the write itself succeeded, which is the point")
+        self.assertEqual(answer, runtime_install_module.OWNERSHIP_MOVED_ON)
+        self.assertIn("/moved-on/current", note)
+
+    def test_a_delta_that_did_not_land_is_not_another_run_s_entry(self):
+        """SUPPORT. Two different things make the record disagree with what a rollback wanted,
+        and the path separates them: an entry naming somewhere else belongs to another run,
+        while one still naming the path THIS run wrote is this run's own, left because the delta
+        did not land. Calling the second 'moved on' hands an outstanding claim to a run that
+        never touched it, and nothing then asks for it to be settled."""
+        mine = {"path": "/dest/current", "recordedAt": "t0", "recordedBy": "me"}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record.json"
+            hostrecord.save(path, hostrecord.empty(1))
+            # This run's own refreshed stamp, at the path this run wrote: the promotion's write
+            # landed and the rollback's did not.
+            hostrecord.update(path, 1, pointer={"path": "/dest/current", "recordedAt": "t9",
+                                                "recordedBy": "the failed run"})
+            stood = hostrecord.load(path, 1)
+            answer, note = runtime_install_module._ownership_answer(stood, mine, "/dest/current")
+
+        self.assertEqual(answer, runtime_install_module.OWNERSHIP_UNREADABLE,
+                         "the record still holds what this promotion wrote, so the claim is"
+                         " this run's and outstanding")
+        self.assertIn("did not land", note)
+
+    def test_the_found_entry_is_a_declared_member_of_the_promotions_fresh_set(self):
+        """SUPPORT. The record side of the prior state is decided on inside the promotion, so it
+        is protected by the same scan that protects the link side."""
+        import runtime_install
+
+        self.assertIn("owned_before", runtime_install.PROMOTION_FRESH)
+
+    def test_malformed_placement_evidence_does_not_authorise_replacing_a_link(self):
+        """SUPPORT. The record is a file a person can edit and the shape check accepts any JSON
+        under these keys, so truthiness is the wrong question: 'true' and '   ' are truthy and
+        neither records when or by whom a link was placed. This answer authorises replacing a
+        link, which is the one direction it may not fail open in."""
+        self.assertTrue(hostrecord.placement_recorded(
+            {"path": "/dest/current", "recordedAt": "2026-09-18T00:00:00Z",
+             "recordedBy": "CRW-95"}))
+        for malformed in ({"path": "/dest/current", "recordedAt": True, "recordedBy": True},
+                          {"path": "/dest/current", "recordedAt": ["t"], "recordedBy": ["who"]},
+                          {"path": "/dest/current", "recordedAt": "   ", "recordedBy": "   "},
+                          {"path": "/dest/current", "recordedAt": 1, "recordedBy": 2},
+                          {"path": "   ", "recordedAt": "t", "recordedBy": "CRW-95"}):
+            with self.subTest(repr(malformed)):
+                self.assertFalse(hostrecord.placement_recorded(malformed),
+                                 "a record that states nothing is not evidence that this"
+                                 " command placed a link")
+
+    def test_a_legacy_adoption_that_fails_takes_back_the_entry_it_introduced(self):
+        """The other side of the same rule, in the branch where the link IS put back.
+
+        An installation older than claims has no ownership entry, so _finish_promotion writes
+        one before placing. When the placement then fails, that entry is this run's to take
+        away -- and taking it away is what leaves the record as the run found it. It is the
+        introduced case, so it is dropped rather than withdrawn.
+
+        Adjacent to CRW-95 rather than its subject: it pins a cleanup this change introduced in
+        the link-restored branch, and it is not counted toward the issue's criteria.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # An installation this record selects, carrying no claim, with the link in place and
+            # nothing recording who put it there.
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record.pop("pointer", None)
+            record["selected"] = {c["component"]: str(host.candidate / "site" / c["module"])
+                                  for c in host.data["components"]}
+            hostrecord.save(host.record_path, record)
+
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="replace the owned pointer")
+            entry = self._entry(host)
+            still = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(payload["stagingDecision"], staging.RECORDED)
+        self.assertIsNone(entry,
+                          "the entry this run introduced is not left behind for a link it did"
+                          " not manage to place")
+        self.assertEqual(still, str(host.previous), "and the link a host reaches through is the"
+                                                    " one that was there")
+        self.assertEqual(payload["pointerRestored"]["ownership"],
+                         runtime_install_module.OWNERSHIP_DROPPED)
+
+    def test_the_selection_rollback_still_runs_when_the_ownership_write_raises(self):
+        """The bookkeeping write must not take the rollback that matters more down with it.
+
+        hostrecord.update can raise: Locked reports Busy for a lock another run holds, and the
+        atomic save re-raises whatever the filesystem did. Let that out of _restore_pointer and
+        the caller never reaches _restore_selection -- the pointer is back on the predecessor
+        while the record still selects the candidate, so the candidate is kept, the destination
+        is not retriable, and the run reports a defect in this command instead of the failure
+        that actually happened.
+
+        Raised by an independent review of this pull request. Red at 33d139a for the same
+        reason: the parent's rollback writes the record too, in its one branch that did.
+        """
+        import runtime_install
+
+        real_update = hostrecord.update
+
+        def refuse_the_rollback_write(path, version, **delta):
+            if "drop_pointer" in delta or "restore_pointer" in delta:
+                raise OSError("the record could not be written")
+            return real_update(path, version, **delta)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            found = host.snapshot()
+            self._link_deleted_under_it(host)
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=refuse_the_rollback_write):
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="read the owned pointer back")
+            after = host.snapshot()
+
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertIsNone(payload.get("internalError"),
+                          "a bookkeeping write that failed is not a defect in this command")
+        self.assertEqual(after["selected"], found["selected"],
+                         "the selection this promotion moved has to go back even when the"
+                         " ownership record could not be written")
+        restored = payload["pointer"]["pointerRestored"]
+        self.assertEqual(restored["ownership"], runtime_install_module.OWNERSHIP_UNREADABLE)
+        # And it is not reported as a rollback that finished. The link went back, the record
+        # did not, and the record still claims a placement for a link that is gone -- which is
+        # the claim the next promotion reads before replacing whatever turns up at that path.
+        self.assertFalse(restored["verified"],
+                         "half a rollback is not a completed one")
+        self.assertEqual(restored["residualOwnership"], str(host.pointer_path),
+                         "and the path whose claim somebody has to settle is named")
+        # And the result a reader actually sees says so. A cell nothing consumes is the same
+        # silence as no cell at all, which is the shape the rest of this change removes.
+        self.assertEqual(payload["residualOwnership"], str(host.pointer_path))
+        self.assertIn("settle the host record's pointer ownership",
+                      payload["recoveryRequires"] or "",
+                      "an outstanding claim has to reach recoveryRequires, or the run reports"
+                      " a clean retry over an unsettled one")
+        self.assertEqual(payload["residualPaths"], [],
+                         "and it is not a residual PATH: nothing is on disk, so the list a"
+                         " reader deletes from stays about directories")
+
+    def test_the_outstanding_claim_says_which_state_it_is(self):
+        """SUPPORT. A rollback whose record half did not land has to say WHICH state that is.
+
+        Two of them leave an outstanding claim of this run's and need different sentences -- the
+        link taken away, and the link put back -- and a third, an entry another writer owns,
+        leaves no claim of this run's at all and must not ask anyone to settle it. Driven
+        through _restore_pointer directly, because the moved-on case needs a record something
+        else changed underneath this run.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            record_path = root / "record.json"
+            environment = root / "env-new"
+            environment.mkdir()
+            previous = root / "env-old"
+            previous.mkdir()
+            here = root / "current"
+            mine = {"path": str(here), "recordedAt": "t0", "recordedBy": "this run"}
+
+            # Moved on: this run's entry has been replaced by another run's, so the compare
+            # finds nothing of its own to put back.
+            hostrecord.save(record_path, hostrecord.empty(1))
+            hostrecord.update(record_path, 1, pointer={"path": str(root / "elsewhere"),
+                                                       "recordedAt": "t9",
+                                                       "recordedBy": "another run"})
+            pointer.place(here, environment)
+            moved_on = runtime_install._restore_pointer(
+                here, {"state": pointer.NO_POINTER}, environment, record_path, 1, mine)
+
+            # A link put back, and the record write refusing.
+            pointer.place(here, environment)
+            hostrecord.save(record_path, hostrecord.empty(1))
+            # What the promotion leaves before it fails: this run's own refreshed stamp over
+            # the entry it inherited. The rollback means to put 'mine' back, so the record NOT
+            # equalling that is what makes the failed write outstanding rather than harmless.
+            hostrecord.update(record_path, 1, pointer={"path": str(here), "recordedAt": "t9",
+                                                       "recordedBy": "the failed run"})
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=OSError("the record could not be written")):
+                link_back = runtime_install._restore_pointer(
+                    here, {"state": pointer.LINK, "target": str(previous)}, environment,
+                    record_path, 1, mine)
+
+        self.assertEqual(moved_on["ownership"], runtime_install_module.OWNERSHIP_MOVED_ON)
+        self.assertFalse(moved_on["verified"],
+                         "the rollback did not do what it set out to")
+        self.assertIsNone(moved_on["residualOwnership"],
+                          "an entry another writer owns is not an outstanding claim of this"
+                          " run's, and naming it would send an operator after somebody else's"
+                          " record")
+        self.assertIsNone(moved_on["settleOwnership"],
+                          "so there is nothing for this run to ask them to settle")
+        self.assertIn("elsewhere", moved_on["detail"],
+                      "the concurrent move is reported for what it is")
+
+        self.assertEqual(link_back["ownership"], runtime_install_module.OWNERSHIP_UNREADABLE)
+        self.assertEqual(link_back["restoredTo"], str(previous))
+        self.assertEqual(link_back["residualOwnership"], str(here))
+        self.assertIn("put back to", link_back["settleOwnership"])
+        self.assertNotIn("taken away", link_back["settleOwnership"],
+                         "the link is there; saying it was taken away would send an operator"
+                         " looking for something that did not happen")
+        self.assertIn("did not introduce", link_back["settleOwnership"],
+                      "and the entry was inherited, which is a different thing to say than"
+                      " one this run introduced")
+
+    def test_the_recovery_text_does_not_claim_a_restoration_that_did_not_happen(self):
+        """SUPPORT. The fallback sentence used to cover two states it was not true of: a link
+        restoration that itself failed, and an entry this run INTRODUCED over a legacy install
+        that had none. Both are composed from their own readings now."""
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            record_path = root / "record.json"
+            environment = root / "env-new"
+            environment.mkdir()
+            here = root / "current"
+            hostrecord.save(record_path, hostrecord.empty(1))
+
+            # A legacy adoption: no entry existed, so this run introduced one. The link
+            # restoration also fails, so neither half went back.
+            pointer.place(here, environment)
+            # The entry this run INTRODUCED, written the way _finish_promotion writes it before
+            # placing. Without it the record already matches what the rollback wants and the
+            # failed write leaves nothing outstanding -- the state this is about would not exist.
+            hostrecord.update(record_path, 1, pointer={"path": str(here), "recordedAt": "t9",
+                                                       "recordedBy": "this run"})
+            with mock.patch.object(runtime_install.hostrecord, "update",
+                                   side_effect=OSError("the record could not be written")):
+                with mock.patch.object(runtime_install.pointer, "place",
+                                       side_effect=OSError("read-only filesystem")):
+                    introduced = runtime_install._restore_pointer(
+                        here, {"state": pointer.LINK, "target": str(root / "env-old")},
+                        environment, record_path, 1, None)
+
+        self.assertEqual(introduced["ownership"], runtime_install_module.OWNERSHIP_UNREADABLE)
+        self.assertIsNone(introduced["restoredTo"])
+        self.assertIn("could not be put back either", introduced["settleOwnership"],
+                      "a restoration that failed is not reported as one that happened")
+        self.assertIn("an entry this run introduced", introduced["settleOwnership"],
+                      "and an entry this run created is not reported as one it inherited")
+        self.assertNotIn("disagree about who placed it", introduced["settleOwnership"],
+                         "and a link this run left with a record that agrees with it is not"
+                         " reported as a disagreement")
+
+    def test_a_blank_issue_is_refused_before_anything_is_written(self):
+        """SUPPORT. --issue is written into the ownership entry as the evidence that this
+        command placed the pointer, and the predicate that reads it back requires a value the
+        record states. A blank one records ownership this command reads as somebody else's, and
+        the next update refuses the pointer it placed itself."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            before = host.snapshot()
+            code, payload = UpdateRecoveryTests()._run(host, issue="   ")
+            after = host.snapshot()
+
+        self.assertEqual(code, runtime_install_module.EXIT_REFUSED, json.dumps(payload)[:600])
+        self.assertIn("--issue", payload["refused"])
+        self.assertEqual(after["selected"], before["selected"], "and nothing was written")
+        self.assertEqual(after["pointerTarget"], before["pointerTarget"])
+
+    def test_the_resume_path_refuses_a_stranger_link_after_a_withdrawal_too(self):
+        """The withdrawal has to mean the same thing to both readers of the record.
+
+        A path without placement is this command's own statement that no link IT placed is
+        here. The promotion refuses a link that turns up there afterwards. The resume asks a
+        narrower question -- does the link name a runtime this record accounts for -- and a
+        stranger's link aimed at the PREDECESSOR answers it yes, so without this the record
+        would say one thing and the two readers would answer differently.
+
+        Raised by an independent review of this pull request. The state it needs is one this
+        branch introduced, so at 33d139a the test fails for the absence of the evidence rather
+        than for ignoring it: there the rollback deleted the entry outright.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            self._link_deleted_under_it(host)
+            # The resume fails and withdraws the placement, leaving the path behind.
+            UpdateRecoveryTests()._run(host, breaking="replace the owned pointer")
+            withdrawn = self._entry(host)
+            # Something else puts a link there, aimed at a runtime this record does account
+            # for, which is what defeats the narrower question on its own.
+            pointer.place(host.pointer_path, host.previous)
+
+            code, payload = UpdateRecoveryTests()._run(host)
+            still = pointer.read(host.pointer_path)["target"]
+
+        self.assertEqual((withdrawn or {}).get("path"), str(host.pointer_path))
+        self.assertFalse(hostrecord.placement_recorded(withdrawn))
+        self.assertEqual(code, 1, json.dumps(payload)[:900])
+        self.assertEqual(still, str(host.previous),
+                         "a link this record does not say this command placed is left exactly"
+                         " as it is, by the resume as well as by the promotion")
+        self.assertIn("not this run's to replace", json.dumps(payload))
+
+
+def _bodiless_tests(tree):
+    """Test methods whose body is a docstring, or nothing, and no more.
+
+    A test that asserts nothing passes, and reports that it passed. The name still appears in
+    the run, the count still goes up, and a reader takes the green for evidence.
+    """
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+            continue
+        doing = [statement for statement in node.body
+                 if not isinstance(statement, ast.Pass)
+                 and not (isinstance(statement, ast.Expr)
+                          and isinstance(statement.value, ast.Constant)
+                          and isinstance(statement.value.value, str))]
+        if not doing:
+            found.append(node.name)
+    return found
+
+
+class BodilessTestTests(unittest.TestCase):
+    """A test with no body in it, which is the one failure a test suite cannot report.
+
+    This existed. A patch replaced a docstring and took the body away with it, and the empty
+    method then went on reporting success -- through three commits, and twice into a pull
+    request description as a MEASURED baseline, because running it produced a green result and
+    the green looked like a reading. Everything else in this file is about a cell carrying an
+    answer its own question's reading did not produce; this is that, one layer out, where the
+    reading was the test suite itself.
+
+    Derived over every test module here rather than the one that had it, because the next one
+    will not be in the same file.
+    """
+
+    def _modules(self):
+        return sorted(Path(__file__).resolve().parent.glob("test_*.py"))
+
+    def test_no_test_in_this_suite_asserts_nothing(self):
+        empty = []
+        for module in self._modules():
+            for name in _bodiless_tests(ast.parse(module.read_text(encoding="utf-8"))):
+                empty.append(module.name + "::" + name)
+
+        self.assertEqual(empty, [],
+                         "a test with nothing in it passes and reports that it passed: "
+                         + json.dumps(empty))
+
+    def test_the_scan_is_not_looking_at_an_empty_set(self):
+        """Guards the reader. A glob that matched nothing would pass the claim above silently."""
+        modules = self._modules()
+        self.assertGreaterEqual(len(modules), 4, [m.name for m in modules])
+        self.assertIn("test_runtime_install.py", [m.name for m in modules])
+
+    def test_the_scan_sees_a_test_that_only_has_a_docstring(self):
+        """The negative control, in both shapes it takes."""
+        self.assertEqual(
+            _bodiless_tests(ast.parse("class T:\n"
+                                      "    def test_documented(self):\n"
+                                      '        """says what it would do"""\n'
+                                      "    def test_passing(self):\n"
+                                      "        pass\n"
+                                      "    def test_real(self):\n"
+                                      "        assert True\n")),
+            ["test_documented", "test_passing"])
 
 
 class LegacyInstallTests(unittest.TestCase):
@@ -7668,3 +8889,661 @@ class PromotionPointerPathTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# =========================================================================================
+# Check 19 - a member carries the STRONGEST predicate, and a cell is answered at EVERY site
+#
+# Layer 18 made a member a pair. A pair fixes that a member HAS a predicate and a cell HAS a
+# reading; it fixes neither which predicate nor how many places write the cell. So the same
+# defect arrived once more, one dimension up, in two shapes:
+#
+#   a member left on this command's own minimum, with the rest of its question answered here
+#   a cell declaring one reading while a second assignment fills it from another
+#
+# Both scans are derived. Neither names a member, a rule or a cell.
+# =========================================================================================
+
+
+def _bound(target):
+    return {node.id for node in ast.walk(target) if isinstance(node, ast.Name)}
+
+
+def _calls_in(node):
+    """Every callable name mentioned in an expression, bare or through a module."""
+    found = set()
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            if isinstance(sub.func, ast.Name):
+                found.add(sub.func.id)
+            elif isinstance(sub.func, ast.Attribute):
+                found.add(sub.func.attr)
+    return found
+
+
+def _undeclared_member_rules(members, probes, minimum="_supplied"):
+    """Decisions this command makes ITSELF about a declared member's value.
+
+    A member's value may be read for two purposes: handed to this command's own minimum, or
+    handed to the consumer whose predicate governs it. Anything else is a rule written here,
+    and a rule written here is a rule that drifts from the one that will actually be applied.
+
+    A comparison against a CONSUMER's answer is not such a rule, which is why the taint is
+    two-coloured: looking a member's value up in what the relay said about it is reading the
+    relay's answer, not inventing one.
+    """
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    functions = {node.name: node for node in ast.walk(tree)
+                 if isinstance(node, ast.FunctionDef)}
+    offenders, seen = [], set()
+
+    def touches(node, member):
+        for sub in ast.walk(node):
+            if (isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name)
+                    and sub.value.id == "args" and sub.attr in members):
+                return True
+            if isinstance(sub, ast.Name) and sub.id in member:
+                return True
+            if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                    and sub.func.id == "getattr" and sub.args
+                    and isinstance(sub.args[0], ast.Name) and sub.args[0].id == "args"):
+                return True
+        return False
+
+    def preflight(function):
+        """The statements before the trial hands its steps over to be sent.
+
+        Everything after that binding decides on the RELAY's answers, not on a member's value,
+        and taint carried into it would report the trial reading its own results as a rule it
+        invented. The boundary is the one this whole class is about: what is decided before
+        anything is written.
+        """
+        for index, statement in enumerate(function.body):
+            if isinstance(statement, ast.Assign) and "steps" in set().union(
+                    *(_bound(t) for t in statement.targets)):
+                return function.body[:index]
+        return function.body
+
+    def visit(function, member):
+        key = (function.name, tuple(sorted(member)))
+        if key in seen or function.name in probes or function.name == minimum:
+            return
+        seen.add(key)
+        member, verdict = set(member), set()
+        body = preflight(function) if function.name == "_trial" else [function]
+        walked = [node for statement in body for node in ast.walk(statement)]
+        for node in walked:
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.For):
+                targets, value = [node.target], node.iter
+            else:
+                continue
+            bound = set().union(*(_bound(t) for t in targets)) if targets else set()
+            if _calls_in(value) & set(probes):
+                verdict |= bound
+            elif touches(value, member):
+                member |= bound
+        for node in walked:
+            if not isinstance(node, ast.Compare):
+                continue
+            operands = [node.left] + list(node.comparators)
+            if not any(touches(operand, member) for operand in operands):
+                continue
+            if any({n.id for n in ast.walk(operand) if isinstance(n, ast.Name)} & verdict
+                   for operand in operands):
+                continue
+            offenders.append(function.name + ":" + str(node.lineno) + " decides "
+                             + ast.unparse(node))
+        for node in walked:
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            callee = functions.get(node.func.id)
+            if callee is None:
+                continue
+            names = [argument.arg for argument in callee.args.args]
+            passed = {names[index] for index, argument in enumerate(node.args)
+                      if index < len(names) and touches(argument, member)}
+            if passed:
+                visit(callee, passed)
+
+    visit(functions["_trial"], set())
+    return sorted(offenders)
+
+
+def _cell_locals(cells):
+    """Which local name feeds each judgment cell, read from the Signals call itself."""
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "Signals"):
+            continue
+        found = {}
+        for keyword in node.keywords:
+            if keyword.arg not in cells:
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+                    and value.func.id == "bool" and len(value.args) == 1:
+                value = value.args[0]
+            if isinstance(value, ast.Name):
+                found[keyword.arg] = value.id
+        return found
+    return {}
+
+
+def _signals_owner(tree):
+    """The function that assembles the judgment, so a local of the same name elsewhere is not
+    mistaken for a cell."""
+    for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for node in ast.walk(function):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "Signals"):
+                return function
+    return None
+
+
+def _undeclared_write_sites(readings, cells):
+    """Assignments to a cell that reference no reading the cell declares.
+
+    An assignment of None or an empty container is an initialisation: it says the cell is
+    unanswered, which is the one thing every cell is allowed to say without a reading.
+
+    A value is traced one hop through the locals it was built from, because a reading's answer
+    is normally bound to a name first and the cell is written from that name.
+
+    A cell declared to be answered by no reading of this command is left alone here; whether
+    that claim is true is what the unclaimed-reading check already asks.
+    """
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    locals_for = _cell_locals(cells)
+    owner = {local: cell for cell, local in locals_for.items()
+             if readings.get(cell, (None, ()))[0] != "not-a-reading"}
+    offenders, covered = [], set()
+    for function in [f for f in [_signals_owner(tree)] if f is not None]:
+        produced, sites = {}, []
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Assign):
+                continue
+            calls = _calls_in(node.value)
+            for name in set().union(*(_bound(t) for t in node.targets)):
+                produced.setdefault(name, set())
+                produced[name] |= calls
+                for sub in ast.walk(node.value):
+                    if isinstance(sub, ast.Name) and sub.id in produced:
+                        produced[name] |= produced[sub.id]
+                if name in owner:
+                    sites.append((owner[name], node))
+        parameters = {a.arg for a in function.args.args} | {a.arg for a in function.args.kwonlyargs}
+        # The collector records a comparison; it does not make one. A call on it, and bool(),
+        # are transparent: the reading is what they were handed, not the recording of it.
+        collector = next(
+            (name for node in ast.walk(function) if isinstance(node, ast.Assign)
+             for name in set().union(*(_bound(t) for t in node.targets))
+             if isinstance(node.value, ast.Call)
+             and isinstance(node.value.func, ast.Attribute)
+             and node.value.func.attr == "Judgement"), None)
+
+        def unwrapped(value):
+            while isinstance(value, ast.Call):
+                if isinstance(value.func, ast.Name) and value.func.id == "bool" \
+                        and len(value.args) == 1:
+                    value = value.args[0]
+                    continue
+                if (collector and isinstance(value.func, ast.Attribute)
+                        and isinstance(value.func.value, ast.Name)
+                        and value.func.value.id == collector and value.args):
+                    value = value.args[0]
+                    continue
+                break
+            return value
+
+        def answered_by(value):
+            """The readings that produced what is written, not the ones that fed them.
+
+            A cell written from a CALL is answered by that call. A cell written from anything
+            else is answered by whatever produced the names it was built from, because a
+            reading's answer is normally bound to a name first.
+            """
+            value = unwrapped(value)
+            if isinstance(value, ast.Call):
+                return set(_calls_in(value)) - {"bool"}
+            reached = set(_calls_in(value))
+            for sub in ast.walk(value):
+                if isinstance(sub, ast.Name) and sub.id in produced:
+                    reached |= produced[sub.id]
+            return reached
+
+        for cell, node in sites:
+            value = node.value
+            if isinstance(value, ast.Constant) and value.value is None:
+                continue
+            if isinstance(value, (ast.List, ast.Tuple)) and not value.elts:
+                continue
+            declared = {name for _module, name, _only in readings.get(cell, ((),))[1]} \
+                if readings.get(cell) else set()
+            covered.add(cell)
+            reached = answered_by(value)
+            if reached & declared:
+                continue
+            if any(isinstance(sub, ast.Name) and sub.id in parameters
+                   for sub in ast.walk(value)):
+                # Answered by the CALLER's reading, which the caller-set check owns.
+                continue
+            offenders.append(cell + " at " + function.name + ":" + str(node.lineno)
+                             + " is written from " + ast.unparse(value)
+                             + ", which names none of its declared readings "
+                             + repr(sorted(declared)))
+    return sorted(offenders), covered
+
+
+class StrengthAndSiteTests(unittest.TestCase):
+    """The fourth layer: which predicate a member carries, and how many places write a cell."""
+
+    def test_the_inventories_are_not_empty(self):
+        import runtime_install
+
+        # Guards both readers. An empty members map or an empty cell map would make every
+        # claim below pass while seeing nothing at all.
+        self.assertIn("artifact_root", runtime_install.TRIAL_PREFLIGHT_INPUTS)
+        self.assertIn("entry_point_recorded", _cell_locals(_signal_cells()))
+        self.assertIn("_supplied", {node.name for node in ast.walk(
+            ast.parse(RUNTIME.read_text(encoding="utf-8"))) if isinstance(node, ast.FunctionDef)})
+
+    def test_no_member_is_judged_by_a_rule_this_command_wrote_and_did_not_declare(self):
+        """A member left on the supplied-minimum has the rest of its question answered here.
+
+        The artifact root was the instance: declared NON_BLANK, and then judged for containment
+        by a second copy of the relay's rule. That copy disagreed with the relay in BOTH
+        directions, so it was neither the safe approximation it looked like nor the relay's
+        answer. The count comes off the declarations, so a rule restated without being declared
+        fails here rather than at the relay once rows exist.
+        """
+        import runtime_install
+
+        offenders = _undeclared_member_rules(runtime_install.TRIAL_PREFLIGHT_INPUTS,
+                                             runtime_install.PREFLIGHT_PROBES)
+        restated = sorted(
+            name for name, pair in runtime_install.TRIAL_PREFLIGHT_INPUTS.items()
+            if isinstance(pair[1], tuple) and pair[1][0] == runtime_install.RESTATED_HERE)
+        self.assertEqual(
+            len(offenders), len(restated),
+            "every rule this command applies to a declared member's value must be the"
+            " consumer's, or be declared a restatement. Undeclared: " + repr(offenders)
+            + "; declared restatements: " + repr(restated))
+
+    def test_the_scan_sees_a_rule_written_here_again(self):
+        """The negative control: the scan is red on the shape it exists to catch."""
+        import runtime_install
+
+        source = RUNTIME.read_text(encoding="utf-8")
+        put_back = source.replace(
+            "        if raw in outside:",
+            "        base = Path(str(root))\n"
+            "        if not (path == base or base in path.parents):", 1)
+        self.assertNotEqual(put_back, source, "the scan's fixture no longer matches the source")
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary) / "runtime_install.py"
+            copy.write_text(put_back, encoding="utf-8")
+            with mock.patch.object(sys.modules[__name__], "RUNTIME", copy):
+                offenders = _undeclared_member_rules(
+                    runtime_install.TRIAL_PREFLIGHT_INPUTS, runtime_install.PREFLIGHT_PROBES)
+        self.assertTrue(any("path.parents" in offender for offender in offenders), offenders)
+
+    def test_every_write_site_of_a_cell_names_a_reading_that_cell_declares(self):
+        """A cell is answered by every reading written into it, not by the first one declared.
+
+        entry_point_recorded had two write sites and named one reading. The second filled the
+        ownership cell from the interpreter a console script's FIRST LINE names, which
+        interpreter_of already calls the fallback rather than the answer -- so a wrapper this
+        command never created classified as this installation.
+        """
+        import runtime_install
+
+        offenders, covered = _undeclared_write_sites(runtime_install.SIGNAL_READINGS,
+                                                     _signal_cells())
+        self.assertIn("entry_point_recorded", covered,
+                      "the scan saw no write site for the cell this layer is about")
+        self.assertEqual(offenders, [])
+
+    def test_the_write_site_scan_sees_a_site_that_declares_nothing(self):
+        import runtime_install
+
+        readings = dict(runtime_install.SIGNAL_READINGS)
+        outcome, observations = readings["entry_point_recorded"]
+        readings["entry_point_recorded"] = (
+            outcome, tuple(o for o in observations if o[1] != "interpreter_in_recorded_path"))
+        offenders, _covered = _undeclared_write_sites(readings, _signal_cells())
+        self.assertTrue(any("entry_point_recorded" in offender for offender in offenders),
+                        offenders)
+
+    @unittest.skipUnless(sys.version_info >= (3, 11), "the relay requires Python 3.11 or newer")
+    def test_the_preflight_answers_the_root_question_with_the_relays_own_verdict(self):
+        """Agreement, not one-sided safety.
+
+        A copy of a rule is wrong in whichever direction it happens to differ. This one refused
+        a root the relay accepts end to end, and for a root the relay refuses it named the
+        deliverable as the thing at fault. The corpus is written as forms of one root, so each
+        case differs from the canonical one only in the way the relay has a rule about.
+        """
+        import runtime_install
+
+        root = TRIAL_ROOT
+        corpus = (root, root + "/", str(Path(root).parent) + "/./" + Path(root).name,
+                  root + "/../" + Path(root).name, os.path.relpath(root, os.getcwd()),
+                  "~" + root)
+        for candidate in corpus:
+            with self.subTest(candidate):
+                refusals, reason = runtime_install._relay_contains(
+                    [TRIAL_ARTIFACT], candidate, RELAY_RUNTIME)
+                self.assertIsNone(reason, reason)
+                consumer_holds = TRIAL_ARTIFACT not in refusals
+                problems = runtime_install._unusable_artifacts(
+                    [TRIAL_ARTIFACT], candidate, RELAY_RUNTIME)
+                self.assertEqual(
+                    consumer_holds, not problems,
+                    "the relay " + ("holds" if consumer_holds else "refuses")
+                    + " this root and the preflight " + ("refuses" if problems else "accepts")
+                    + " it: " + repr(problems))
+
+
+# =========================================================================================
+# Check 20 - an incomplete reading is not a value, and a busy lock is not a defect
+#
+# The same class from underneath. A cell can also be filled wrongly because the READER never
+# reported a failure at all:
+#
+#   a walk that answers an unreadable subtree by leaving it out returns a well-formed value
+#   a refusal shape applied at one call site and not at its siblings
+#
+# Neither is about which predicate was declared. Both are about a boundary being handed
+# something it cannot tell from an answer.
+# =========================================================================================
+
+
+def _omitting_reader_uses(readers, declared):
+    """Every call to a reader whose answer to an unreadable subtree is to leave it out."""
+    offenders = []
+    for path in RUNTIME_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            if function.name in declared:
+                continue
+            for node in ast.walk(function):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in readers):
+                    offenders.append(
+                        path.stem + "." + function.name + ":" + str(node.lineno) + " uses "
+                        + node.func.attr + ", which answers a subtree it cannot read by"
+                        " leaving it out, and does not declare what that omission means")
+    return sorted(offenders)
+
+
+def _called_names(function):
+    names = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                names.add(node.func.attr)
+    return names
+
+
+def _lock_reachers():
+    """Every function in these modules that can reach an exclusive lock.
+
+    Read as a call graph rather than listed, so a sibling added later is in the set the moment
+    it can meet a busy lock, instead of the moment somebody remembers to add it.
+    """
+    functions = {}
+    for path in RUNTIME_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                functions[path.stem + "." + node.name] = _called_names(node)
+    takers = {key for key, names in functions.items() if "Locked" in names}
+    growing = True
+    while growing:
+        growing = False
+        leaves = {key.split(".")[-1] for key in takers}
+        for key, names in functions.items():
+            if key not in takers and names & leaves:
+                takers.add(key)
+                growing = True
+    return takers
+
+
+def _handler_arms(function_name):
+    """The exception names each except clause of a function catches, in source order."""
+    tree = ast.parse(RUNTIME.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == function_name):
+            continue
+        arms = []
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Try):
+                for handler in inner.handlers:
+                    arms.append((handler.lineno, ast.unparse(handler.type)
+                                 if handler.type else "bare"))
+        return [name for _line, name in sorted(arms)]
+    return []
+
+
+class IncompleteReadingTests(unittest.TestCase):
+    """A walk that skips is not a walk that failed."""
+
+    def test_the_reader_inventory_is_not_empty(self):
+        # Guards the scan: an empty reader set would find nothing and pass on every source.
+        self.assertIn("rglob", reading.OMITTING_READERS)
+        self.assertIn("store_places", reading.OMISSION_DECLARED)
+
+    def test_every_omitting_reader_in_these_modules_declares_what_omission_means(self):
+        self.assertEqual(
+            _omitting_reader_uses(reading.OMITTING_READERS, reading.OMISSION_DECLARED), [])
+
+    def test_the_scan_sees_an_omission_nobody_declared(self):
+        offenders = _omitting_reader_uses(reading.OMITTING_READERS, {})
+        self.assertTrue(offenders, "the scan finds nothing at all, so it proves nothing")
+        self.assertTrue(any("store_places" in offender for offender in offenders), offenders)
+
+    def test_a_subtree_that_cannot_be_read_is_a_refusal_rather_than_a_digest(self):
+        """The defect measured: the value that came back was not merely wrong, it was exactly
+        the digest the smaller tree really has. Nothing downstream could tell them apart."""
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "pkg"
+            (package / "sub").mkdir(parents=True)
+            (package / "a.py").write_text("a", encoding="utf-8")
+            (package / "sub" / "b.py").write_text("b", encoding="utf-8")
+            whole = definition.ops12_digest(package)
+            smaller = Path(temporary) / "smaller"
+            smaller.mkdir()
+            (smaller / "a.py").write_text("a", encoding="utf-8")
+            self.assertNotEqual(whole, definition.ops12_digest(smaller))
+            os.chmod(package / "sub", 0o000)
+            try:
+                if os.access(package / "sub", os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                with self.assertRaises(OSError):
+                    definition.ops12_digest(package)
+            finally:
+                os.chmod(package / "sub", 0o755)
+
+    def test_an_unreadable_excluded_directory_cannot_refuse_a_digest_it_cannot_affect(self):
+        """Pruning is not omission.
+
+        A directory the definition excludes cannot change the answer, so it must not be able to
+        withhold it. Opened before it was excluded, a root-owned __pycache__ turned a perfectly
+        readable package into an unreadable one at every boundary that asks for its digest.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "pkg"
+            (package / definition.EXCLUDED_DIRECTORY).mkdir(parents=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / definition.EXCLUDED_DIRECTORY / "x.pyc").write_bytes(b"cached")
+            expected = definition.ops12_digest(package)
+            os.chmod(package / definition.EXCLUDED_DIRECTORY, 0o000)
+            try:
+                if os.access(package / definition.EXCLUDED_DIRECTORY, os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                self.assertEqual(definition.ops12_digest(package), expected)
+            finally:
+                os.chmod(package / definition.EXCLUDED_DIRECTORY, 0o755)
+
+    def test_an_unreadable_subtree_stops_the_classification_rather_than_forking_it(self):
+        import runtime_install
+
+        component = definition.load()["components"][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment = root / "env"
+            (environment / "bin").mkdir(parents=True)
+            entry = environment / "bin" / component["consoleScript"]
+            entry.write_text("#!" + sys.executable + chr(10), encoding="utf-8")
+            entry.chmod(0o755)
+            installed = root / "site" / component["module"]
+            (installed / "inner").mkdir(parents=True)
+            (installed / "__init__.py").write_text("", encoding="utf-8")
+            (installed / "inner" / "x.py").write_text("x", encoding="utf-8")
+            record = hostrecord.empty(1)
+            hostrecord.put_install(record, component["component"], {
+                "location": str(installed), "environment": str(environment),
+                "entryPoint": str(entry), "interpreterPath": sys.executable})
+            os.chmod(installed / "inner", 0o000)
+            try:
+                if os.access(installed / "inner", os.R_OK):
+                    self.skipTest("this process can read a directory with no permissions")
+                with mock.patch.dict(os.environ,
+                                     dict(os.environ, PYTHONPATH=str(root / "site")),
+                                     clear=True), \
+                     mock.patch.object(runtime_install, "codex_cli_version",
+                                       return_value="0.0.0-for-this-case"), \
+                     self.assertRaises(reading.Refused) as refused:
+                    runtime_install.classify_component(
+                        component, record=record, entry_override=str(entry), app_server="a")
+            finally:
+                os.chmod(installed / "inner", 0o755)
+        self.assertTrue(reading.unusable(refused.exception.reading.state),
+                        refused.exception.reading.refusal())
+
+
+class LockSiblingTests(unittest.TestCase):
+    """A run that holds a lock is a fact about the host, never a defect in this command."""
+
+    def test_the_lock_inventory_is_not_empty(self):
+        takers = _lock_reachers()
+        # Guards the reader, and names the sibling this layer was opened by.
+        self.assertIn("hooks.install", takers)
+        self.assertIn("runtime_install.cmd_hook", takers)
+        self.assertIn("runtime_install.cmd_install", takers)
+
+    def test_the_busy_answer_is_closed_at_the_boundary_and_not_only_at_the_siblings(self):
+        """Every command that can reach a lock is covered, without listing them.
+
+        The instance was one handler out of several. Answering it there and stopping would be
+        the same repair the previous four rounds made: correct, and open again at the next
+        sibling. main() answers a busy lock too, BEFORE the arm that files anything unmodelled
+        as a defect in this command, so a sibling added later cannot reopen it.
+        """
+        commands = sorted(key for key in _lock_reachers()
+                          if key.startswith("runtime_install.cmd_"))
+        self.assertTrue(commands, "no command reaches a lock, so this proves nothing")
+        arms = _handler_arms("main")
+        self.assertIn("hostrecord.Busy", arms,
+                      "main() files a busy lock as an unmodelled defect, or answers it from a"
+                      " type that is not specific to a lock")
+        self.assertNotIn("TimeoutError", arms,
+                         "TimeoutError is an OSError: a network destination raises it with"
+                         " ETIMEDOUT for an ordinary call, and answering that as BUSY claims a"
+                         " lock nobody took")
+        self.assertLess(arms.index("hostrecord.Busy"), arms.index("Exception"),
+                        "the catch-all runs first, so the busy arm is unreachable")
+
+    def test_the_hook_path_reports_a_busy_lock_rather_than_a_defect(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            hook_file = home / "hooks.json"
+            hook_file.write_text(json.dumps({"hooks": {}}), encoding="utf-8")
+            held = hostrecord.Locked(hook_file, timeout=0.2)
+            held.__enter__()
+            try:
+                done = run("hook", "--codex-home", str(home), "--hook-command", "/bin/true",
+                           "--issue", "CRW-87", "--apply")
+            finally:
+                held.__exit__()
+        payload = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 1)
+        self.assertIsNone(payload.get("internalError"),
+                          "a competing run was reported as a defect in this command")
+        self.assertEqual(payload["outcome"], runtime_install_module.BUSY)
+        self.assertIn(str(hook_file), payload["refused"])
+
+    def test_a_busy_lock_escaping_any_handler_is_never_an_internal_defect(self):
+        import runtime_install
+
+        emitted = []
+        with mock.patch.object(runtime_install, "cmd_verify_definition",
+                               side_effect=hostrecord.Busy("another run holds it")), \
+             mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            code = runtime_install.main(["verify-definition"])
+        self.assertEqual(code, 1)
+        self.assertIsNone(emitted[0].get("internalError"))
+        self.assertEqual(emitted[0]["outcome"], runtime_install.BUSY)
+
+    def test_a_timeout_no_lock_took_part_in_is_not_reported_as_a_busy_lock(self):
+        """The other half of the answer, and the reason the lock has its own type.
+
+        TimeoutError is an OSError. A destination on a network mount raises it with ETIMEDOUT
+        for an ordinary filesystem call, and reporting that as BUSY would claim another run
+        holds a lock that was never involved -- a receipt filled by something other than the
+        reading its own question produced, inside the contract that exists to prevent exactly
+        that.
+        """
+        import runtime_install
+
+        emitted = []
+        elsewhere = TimeoutError("the mount stopped answering")
+        elsewhere.errno = errno.ETIMEDOUT
+        with mock.patch.object(runtime_install, "cmd_verify_definition",
+                               side_effect=elsewhere), \
+             mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+            code = runtime_install.main(["verify-definition"])
+        self.assertEqual(code, 1)
+        self.assertNotEqual(emitted[0].get("outcome"), runtime_install.BUSY)
+        self.assertEqual(emitted[0]["internalError"]["exception"], "TimeoutError")
+
+    def test_a_busy_settings_lock_still_names_the_hook_file_it_was_installing(self):
+        """The completion adapter takes TWO locks, on two different files.
+
+        The file being installed into and the file whose lock could not be taken are two facts.
+        Reporting the second as `hookFile` named the settings file as the hook being installed,
+        which is this change's own subject arriving one more time in the change itself: a field
+        filled by a value other than the reading its own question produced.
+        """
+        import runtime_install
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            configuration = Path(completion.configuration_path(home))
+            configuration.parent.mkdir(parents=True, exist_ok=True)
+            args = argparse.Namespace(
+                codex_home=str(home), event=None, hook_command=None, adapter="completion",
+                dest=None, relay_command=str(home / "codex-session-relay"),
+                marker_root=str(home / "marker"), db_path=None,
+                journal_root=str(home / "journal"), python="python3",
+                mode=completion.OBSERVE, guard_timeout=5, timeout=10, issue="CRW-87",
+                apply=True)
+            emitted = []
+            held = hostrecord.Locked(configuration, timeout=0.2)
+            held.__enter__()
+            try:
+                with mock.patch.object(runtime_install, "emit", side_effect=emitted.append):
+                    code = runtime_install.cmd_hook(args)
+            finally:
+                held.__exit__()
+            self.assertEqual(code, runtime_install.EXIT_REFUSED)
+            self.assertEqual(emitted[-1]["outcome"], runtime_install.BUSY)
+            self.assertIsNone(emitted[-1].get("internalError"))
+            self.assertEqual(emitted[-1]["hookFile"], str(home / "hooks.json"))
+            self.assertEqual(emitted[-1]["lockedPath"], str(configuration))
+            self.assertIn(str(configuration), emitted[-1]["refused"])

@@ -1,7 +1,7 @@
 # Runtime installation, update and diagnosis
 
 [POLICY.md](../POLICY.md) owns repository rules and
-[the operations contract](../skills/crw-run/references/operations.md) owns the operational ones.
+[the operations contract](../plugins/crw/skills/crw-run/references/operations.md) owns the operational ones.
 This page describes the runtime entry point that installs, updates and diagnoses the MCP bridge
 and the session relay, and it is written against that contract's clause numbers so a reader can
 check a claim against the rule it came from.
@@ -285,6 +285,24 @@ of a failed run. A lock another run holds establishes nothing about the selectio
 answer the same function already gives for a record it cannot read, so it takes that branch: the
 candidate is kept and the refusal says why.
 
+That was one sibling. `install` and `register-mcp` answered the same event properly and the hook
+path did not: with the hook file locked, `hook --apply` reported
+`internalError: TimeoutError` naming `hostrecord.py:292` - a claim that this command has a
+defect, which is about the code rather than about the host and sends whoever reads it somewhere
+that has nothing wrong with it. Answering it at the hook and stopping would be the repair that
+reopens at the next sibling, so `main()` answers a busy lock as well, ahead of the arm that files
+anything unmodelled as a defect. `cmd_hook` still answers for itself, because it is the one that
+knows the settings are written before the hook and a lock taken between them leaves them on disk.
+The check reads the lock reachers as a call graph rather than a list, and requires the busy arm to
+precede the catch-all, because an arm after it is unreachable.
+
+Review then found the other half of it. `TimeoutError` is an `OSError`, and a destination on a
+network mount raises it with `ETIMEDOUT` for an ordinary filesystem call, so answering the
+built-in would claim another run holds a lock that was never involved - the same defect, inside
+the contract that exists to prevent it. The lock raises `hostrecord.Busy`, its own type, which
+subclasses `TimeoutError` so a caller that already answered the broader question keeps working.
+The check requires the narrow type and forbids the broad one.
+
 ### One cell, one question
 
 Two readings that answer different questions are never joined into one value. `summarise`
@@ -348,6 +366,91 @@ this checkout's copy of a rule the installation owns. And a point recorded befor
 existed no longer qualifies: it cannot name the instrument that produced its claim, so a host that
 reached `own` on such a point measures again.
 
+### A pair fixes that there is a predicate, not which one
+
+Declaring a member as a pair closed the layer above and opened this one. A pair says a member HAS
+a predicate and a cell HAS a reading. It says nothing about whether that predicate is the
+strongest one the consumer applies, or whether the cell has more than one place that writes it.
+Both gaps produced a working, well-formed, wrong answer.
+
+`NON_BLANK` is this command's own minimum and nothing more, so a member left on it has every
+further question about its value answered here. The artifact root was that member: its real
+question is containment, and containment was decided by `base in path.parents`, a second copy of
+a rule the relay owns. The copy was not the safe approximation it looked like. It disagreed with
+the relay in **both** directions - it refused `<root>/../<root>`, which the relay accepts end to
+end, and where the relay does refuse a root it named the deliverable as the thing at fault. Driven
+directly, a relative root registers - the relationship row is written - and is refused at `emit`
+with `scope_escape`.
+
+So a member carries the predicate its consumer applies, and where that predicate is relational it
+names the member supplying the other operand. `--artifact-root` is asked of `scope.assert_within`
+after `normalize_declared_path`, which is the pair `AuthorizedFile` itself asks, in that order.
+`--recipient` is asked of `scope.check_recipient`. `--turn-thread` cannot be asked of anything:
+the relay holds that rule inside a method that needs a store. It is restated here and **declared**
+as restated, naming where the original lives, and a check reads that place back - which is how the
+commit introducing it was caught naming a class the relay does not have.
+
+A cell has the same shape one level down. `entry_point_recorded` declared one reading and had two
+assignments. The second filled the ownership cell from the interpreter a console script's first
+line names, which `interpreter_of` already calls the fallback rather than the answer. A wrapper
+this command never created, sitting outside every recorded root, whose author wrote a shebang
+naming an interpreter inside a recorded environment, classified as this installation. The second
+site now answers only from an interpreter the record names, and the cell declares both readings.
+
+Two scans hold these instead of the instances, and neither names a member, a rule or a cell. One
+follows a declared member's value through the preflight and reports any comparison this command
+makes about it that is neither its own minimum nor the consumer's answer; the count comes off the
+declared restatements, so a rule restated without being declared fails. The other reads which
+local feeds each judgment cell, out of the `Signals` call itself, and requires every assignment to
+it to name a reading that cell declares. Both carry a negative control.
+
+### A walk that skips is not a walk that failed
+
+The same class reached from underneath. A reading can also fill a cell wrongly because it never
+reported a failure at all. `ops12_digest` walked with `rglob`, which answers a subtree it cannot
+read by leaving it out. For a package with one unreadable subdirectory the digest that came back
+was not merely wrong: it was byte for byte the digest that smaller tree really has. Nothing raised,
+so the reading region around the call saw a value, the comparison saw a mismatch, and the component
+was reported a **fork** - a claim that somebody had modified an installation nobody could read.
+
+An incomplete reading is not a value. The walk is now explicit and fails on a directory it cannot
+open, so the boundary reports `ACCESS_ERROR` and the cell goes unread. The file set is unchanged:
+both committed package digests re-derive exactly, and `verify-definition` still reports no
+findings. `OMITTING_READERS` names the readers whose answer to an unreadable subtree is omission -
+`rglob`, `glob`, `iterdir` and `os.walk`, whose default `onerror` discards the error - and
+`OMISSION_DECLARED` names each place one is used with what omission means there. `os.scandir` is
+deliberately absent from that list: it raises, which is the behaviour the list exists to require.
+
+Pruning is not omission, and review found where the difference bites. The walk opened every
+directory, including the `__pycache__` the definition excludes, so a cache directory nobody can
+read turned a perfectly readable package into an unreadable one at every boundary that asks for
+its digest. An excluded directory cannot change the answer, so it must not be able to withhold
+it: it is pruned before it is opened, and every subtree that can affect the answer still raises.
+
+### What each of these answered before the fix
+
+Four instances of one class, each driven against the commit before the fix and against the commit
+after it, by the same probe. None of them asks whether a fix is present; each one exercises the
+defect and reports what the code answered.
+
+| Instance | Criterion it reopened | Before | After |
+| --- | --- | --- | --- |
+| a foreign wrapper's first line decides ownership | 3 | `entryPointInRecordedPath=True`, `interpreterFrom="the script's first line"`, class `fork` | `False`, class `foreign` |
+| an incomplete walk comes back as a value | 1, 3 | raised nothing and returned the smaller tree's own digest | raises `PermissionError`; classification refuses with `ACCESS_ERROR` |
+| a busy hook lock is reported as an internal defect | 6 | `internalError: TimeoutError` at `hostrecord.py:292` | `outcome: BUSY`, `internalError: null` |
+| the artifact-root question is answered by a rule written here | 5 | the relay holds `<root>/../<root>` and the preflight refuses it | the two verdicts agree on every form of the root |
+
+So the four criteria hold for the reasons they were written, rather than by assertion. Criterion 1
+and criterion 3 required a reading that cannot answer to stop the classification; a walk that
+omitted a subtree was answering, and it no longer is. Criterion 5 required the trial to write
+nothing it cannot complete; the root is now judged by the rule that will actually be applied to
+it. Criterion 6 required a failed run to report whether its destination is retriable rather than
+an internal error; the hook path was the sibling still doing the latter.
+
+One residue is recorded rather than fixed: `scripts/hook_comparison.py` also walks with `rglob`.
+It is outside this change's scope and fills no judgment cell, so it is named here instead of being
+swept in.
+
 ### An answer about a state that was found has to be able to say there was nothing there
 
 Three review rounds in a row produced what read as three separate defects, and they were one
@@ -378,6 +481,24 @@ The two absence deltas are compare-and-remove rather than remove. `deselect` tak
 entry that still names what this run wrote, and `drop_pointer` only the ownership record for the
 path this run recorded. Undoing a promotion this run never made is a worse outcome than the
 failure being rolled back.
+
+`restore_pointer` is the third rollback delta and the only one that puts a value **back**, for
+the half of that question absence cannot answer. The pointer ownership entry answers two things
+at once: `path` is which path this host's pointer **is**, and the placement keys
+(`hostrecord.POINTER_PLACEMENT`) are the evidence that a link this command **placed** is there.
+Absence is the right rollback only for a run that INTRODUCED the entry. A run that inherited one
+and failed must not erase it, because the path goes with it and the registration names that
+path — a retry with a different `--dest` then derives another path and reads a registration
+nobody changed as a conflict. So an inherited entry goes back: whole where the link was put
+back, and with its placement **withdrawn** where the rollback established the link is absent,
+which keeps the path and still refuses a link that turns up there afterwards. It compares
+against the path **this run wrote** and carries the entry it **found** as two separate values,
+because a caller handed its path before the lock can have written over an entry naming
+somewhere else. What the rollback actually did is read back from the record rather than inferred
+from the delta having been sent, so it can answer `moved on` truthfully. It reports the state
+the record was left IN, which is not the same claim as "this call wrote it": a compare that
+matched what was already there reports the same answer, and that is the honest one, because the
+question is what a later run will read.
 
 ### The failure contract
 
@@ -638,7 +759,7 @@ reconciled. Three readings answer that, each filling only its own cell:
 | --- | --- |
 | `daemon` | the relay's `service status`, whose `running` is decided by the lock a supervisor holds |
 | `inFlight` | whether a store is there at all, then the relay's `doctor`, whose `contents.openAttempts` counts in-flight and held-uncertain attempts |
-| `storeTables` | the store's own table inventory, read read-only through the relay's `read_only_rows` |
+| `storeTables` | the store's own schema inventory — every object the catalog reports, read read-only through the relay's `read_only_rows` |
 
 The in-flight cell reads twice, and the order is the point. The relay reports contents
 unavailable both for a store that is missing and for one it cannot read, and those are opposite
@@ -651,7 +772,7 @@ where absence is settled by looking before anything is opened. Two readings that
 still no answer.
 
 The swap proceeds only when the daemon is established stopped, the open attempts are established
-zero, and the store's tables are established compatible. Any cell that could not be read decides
+zero, and the store's schema is established compatible. Any cell that could not be read decides
 `UNESTABLISHED`, which keeps the existing installation exactly as a blocking answer does. A
 check that could not be made is not a check that passed, and a daemon is never reported stopped
 because nobody could ask it.
@@ -673,11 +794,11 @@ this code, and it is left open rather than answered here.
 The obvious reading would compare the store's recorded schema version with the candidate's. It
 would also be worthless. The relay declares `SCHEMA_VERSION = 1`, has never raised it, writes it
 once with `INSERT OR IGNORE` when the database is created, and grows its schema through
-thirty-nine separate `CREATE TABLE IF NOT EXISTS` statements. Every store therefore agrees with
-every candidate at version one, and the comparison would detect neither a downgrade nor an upgrade
-while looking exactly like a check.
+separate `CREATE ... IF NOT EXISTS` statements, tables and indexes alike. Every store therefore
+agrees with every candidate at version one, and the comparison would detect neither a downgrade
+nor an upgrade while looking exactly like a check.
 
-So the cell compares what actually differs: each table's `CREATE` statement in the store's
+So the cell compares what actually differs: each object's `CREATE` statement in the store's
 `sqlite_master` against the statements the candidate relay declares. Statements and not names,
 because names agree while a column, a constraint or a default differs, and that difference is a
 schema change the new runtime would apply the first time it opens the store for writing.
@@ -688,25 +809,45 @@ current DDL. Nothing else is. Going further is not free: lowercasing the stateme
 `'a  b'` and `'a b'` compare equal, and both are real schema differences reported as agreement.
 What remains is stated rather than implied: two statements that mean the same thing written
 differently are reported as a difference, which refuses an update and therefore keeps the
-previous installation. A reading that carries table names without their statements cannot answer
+previous installation. A reading that carries object names without their statements cannot answer
 this cell at all and says so, because names agree while a column differs.
+
+Every object, and not only the tables. Both readings ask the catalog one question that names no
+kind at all, so indexes, triggers and views are compared on the same terms tables are. Asking
+only for `type = 'table'` was the name comparison's mistake one level up: it agreed about
+everything it had not looked at, and the relay's own schema has carried indexes all along. A
+store that had lost one compared identical to a candidate that declares it, and the new daemon
+would have re-created it on its first write-open — a migration arrived at by not looking.
+
+What the catalog is asked for is every row it holds, less the objects SQLite maintains for
+itself: the autoindexes a `UNIQUE` or `PRIMARY KEY` constraint creates, whose definition is
+already inside the table statement being compared, and the bookkeeping tables `AUTOINCREMENT`
+and `ANALYZE` leave behind. The exclusion is an exact prefix rather than `NOT LIKE 'sqlite_%'`,
+because `LIKE` reads `_` as a one-character wildcard and that pattern also dropped a legal user
+object named `sqlitexfoo`.
+
+Each object is keyed by its kind **and** its name, so the evidence lists and the refusal text
+read `index sync_ready` rather than `sync_ready`. A trigger may share a name with a table, so
+names alone can collide, and an object whose kind changed would otherwise be reported as one
+redefinition when it is really one object lost and a different one gained. `onlyInStore`,
+`onlyInCandidate` and `definedDifferently` carry entries in that `<type> <name>` form.
 
 | Answer | Observed | Decision |
 | --- | --- | --- |
 | `NO_STORE` | no store exists at the resolved selection | allowed, and reported as absence rather than as agreement |
-| `AGREES` | the same tables, defined identically | allowed |
-| `EXTENDS` | the candidate declares tables the store does not hold | refused |
-| `DIFFERS` | a shared table is defined differently | refused |
-| `NARROWS` | the store holds tables the candidate does not declare | refused |
+| `AGREES` | the same schema objects, defined identically | allowed |
+| `EXTENDS` | the candidate declares schema objects the store does not hold | refused |
+| `DIFFERS` | a shared object is defined differently | refused |
+| `NARROWS` | the store holds schema objects the candidate does not declare | refused |
 
-`NARROWS` is the implicit downgrade the issue forbids: a runtime that does not know a table
+`NARROWS` is the implicit downgrade the issue forbids: a runtime that does not know an object
 cannot preserve what is in it. The other two refuse for the contract's reason rather than that
 one. The relay opens its store read-write and runs its whole DDL script on every open, so a
 candidate whose schema is not the store's schema **applies** the difference the moment the new
 daemon first starts. OPS-4.5 reserves that for its own decision, in its own issue, with a copied
 backup of the whole state directory taken first, so letting an update wave it through is exactly
 the implicit migration the clause forbids. An update is not the place either direction is decided,
-and the refusal names the tables so the next step is obvious.
+and the refusal names the objects so the next step is obvious.
 
 The reading is the relay's own, run under the relay's own interpreter. A second copy of the rule
 here would be a restatement of something the relay owns, and the next change would move only one
@@ -801,11 +942,28 @@ placing one is: only a symbolic link, only while it still names what this run pl
 absence is read back before it is claimed. A restoration that cannot be read back reports a
 residual pointer and keeps the candidate rather than claiming the rollback completed.
 
-The ownership record goes with the link. The record is what makes a link this command's — the
-promotion refuses to replace one the record never recorded placing — so a rollback that removed
-the link and left the record behind said this command owns a link that is not there, and armed
-that guard in favour of whatever appeared at that path next. It is dropped only after the link is
-verifiably gone, and only for the path this run recorded.
+The ownership record goes with the link, for the run that PUT IT THERE. The record is what makes
+a link this command's — the promotion refuses to replace one the record never recorded placing —
+so a rollback that removed the link and left the record behind said this command owns a link that
+is not there, and armed that guard in favour of whatever appeared at that path next. An entry this
+run introduced is therefore dropped, and only for the path this run recorded. Where the rollback
+restored ABSENCE the record is written only after the link is verifiably gone, because writing it
+first would leave a link nobody recorded — the refusal shape from the opposite side. Where a link
+was REPLACED the record is written whichever way the restoration went, including when putting the
+previous target back could not be read back: a link is at that path either way, so the ordering
+that protects the absence case has nothing to protect here, and the result reports the link's own
+`verified: false` for what did not land.
+
+An entry this run INHERITED is a different question, because a link that is missing does not mean
+a record that is missing: a host whose recorded link was deleted out from under it has the entry
+and no link. Erasing it takes away the path the registration names, and a retry aimed at a
+different `--dest` then derives another path and reads a registration nobody changed as a
+conflict. So the entry stays and its PLACEMENT is withdrawn — the path the registration depends
+on is kept, and the guard goes on refusing whatever link turns up at that path, which is stricter
+than the state the update found. Where the link is instead put back, the entry goes back whole,
+which also takes this run's refreshed stamp off one it did not introduce; that happens whenever
+the link was replaced, including when the restoration could not be read back, because the path in
+the record is the same either way and the payload reports `verified: false` for the link itself.
 
 The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
 destination is retriable; removal that could not finish reports the residual path, what recovery
@@ -1085,7 +1243,7 @@ turn ending without the records a completion needs. It is the same install path 
 command derived from this checkout instead of typed, and it lands on `Stop` unless the caller
 names another event.
 
-The decision is not made in the hook. [The hook contract](../skills/crw-run/references/hook-contract.md)
+The decision is not made in the hook. [The hook contract](../plugins/crw/skills/crw-run/references/hook-contract.md)
 fixes the rules and the relay's `guard-evaluate` implements them, down to the exact Stop JSON to
 print. `scripts/completion_hook.py` is the piece between the host and that guard: it reads the
 delivered payload, asks the configured runtime, and prints only a block that runtime produced.
@@ -1556,10 +1714,34 @@ for path in sys.argv[1:]:
 # only place that field is written. diagnose reports the selection and the pointer as they now
 # stand and has no residualPaths to give, so an operator who looks for it there finds nothing
 # and concludes there was nothing to clear. That is why the install above is kept.
+#
+# residualOwnership and recoveryRequires are read from the same result and for the same reason.
+# A rollback can settle the LINK and fail to settle the RECORD, and what that leaves is a claim
+# rather than a path: nothing is on disk to delete, so residualPaths is empty and correct while
+# the record still says something about that path. residualOwnership names the path whose claim
+# is outstanding. recoveryRequires is COMPOSED rather than chosen from a list, because what has
+# to be settled is two separate readings -- what became of the LINK (taken away, put back to a
+# named target, or not put back at all) and where the ENTRY came from (introduced by that run,
+# or inherited and left carrying its stamp) -- and the consequence follows from the pair. A
+# sentence that assumed either would tell an operator the link was put back when it was not, or
+# report a disagreement between a link and a record that in fact agree.
+#
+# Both are empty for a rollback that found the entry belonged to ANOTHER run by the time it
+# wrote. Nothing there is this run's to settle, so asking an operator to settle it would send
+# them after somebody else's record. That case is reported where it belongs, under
+# pointer.pointerRestored: 'ownership' reads "moved on", 'verified' is false because the
+# rollback did not do what it set out to, and 'detail' names the path the record holds now. The
+# command below prints 'pointer', so the receipt carries it.
+#
+# A RESUME or an adoption that fails reports the same rollback at the TOP level rather than
+# under 'pointer', because it never reaches the update's exit. It carries residualOwnership and
+# recoveryRequires from the same helper, so those two read the same either way, and the receipt
+# reads 'pointerRestored' as well so the rollback's own detail is there for both.
 "$controller" -c 'import json, sys
 result = json.load(open(sys.argv[1]))
 print(json.dumps({key: result.get(key) for key in
-                  ("failedStep", "retriable", "residualPaths", "removedCandidate", "pointer")},
+                  ("failedStep", "retriable", "residualPaths", "residualOwnership",
+                   "recoveryRequires", "removedCandidate", "pointer", "pointerRestored")},
                  indent=2))' <receipt>/install.json
 
 # Kept the same way, and under its own name: this is the recovery read-back, a different

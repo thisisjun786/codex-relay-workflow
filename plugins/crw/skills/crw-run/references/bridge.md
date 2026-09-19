@@ -133,7 +133,8 @@ when an existing owned checkout is available.
 
 ### Placement and ownership of a retained worktree
 
-Place it at `/home/jun/code-worktrees/<original-project>/<task>`, taking the
+Place it at `<worktree-root>/<original-project>/<task>`, where `<worktree-root>` is the
+worktree root the operator's applicable working instructions name, taking the
 project segment from the original repository's project name rather than the
 directory name of whatever checkout is currently open, and using a short
 kebab-case task segment with the branch `codex/<task>`. Reuse the existing
@@ -273,6 +274,8 @@ whatever was created. Why that marker is recorded at all is in
 - `accepted`: requested API steps returned; the task may still be running.
 - `failed`: inspect the actual rejection and any retained worktree/task/turn IDs.
 - `outcome_unknown` or `in_progress_or_unknown`: reconcile before another mutation.
+- `not_attempted`: nothing was sent and nothing was created, so there is nothing to reconcile.
+  Reuse the same ID to make the attempt; do not mint a new one.
 
 Use `get_operation`, backend reads/listing, and actual worktree state to identify
 what occurred. If a writer may still be active or the delivery outcome is unknown,

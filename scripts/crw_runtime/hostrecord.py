@@ -230,6 +230,20 @@ def points_for(record, name, *, location, interpreter, install_digest,
 
 LOCK_SUFFIX = ".crw-lock"
 STALE_LOCK_SECONDS = 300
+
+
+class Busy(TimeoutError):
+    """A lock in this module is held by another run, and nothing else.
+
+    Its own type because `TimeoutError` is not specific to a lock: it is an `OSError`, and a
+    destination on a network mount raises it with ETIMEDOUT for an ordinary filesystem call.
+    A handler catching the built-in would answer "another run holds a lock" about a failure no
+    lock was involved in -- which is the same defect this family is made of, a cell filled by
+    something other than the reading its own question produced.
+
+    It subclasses `TimeoutError` so a caller that already answered the broader type keeps
+    working; what changes is that a caller can now ask the narrow question.
+    """
 # How long a run waits for another run's lock before it reports that it could not take it.
 # Declared rather than left as a default argument so a check can shrink it without reaching
 # into the constructor.
@@ -289,7 +303,7 @@ class Locked:
                     self.path.unlink(missing_ok=True)
                     continue
                 if time.time() > deadline:
-                    raise TimeoutError("another run holds " + str(self.path))
+                    raise Busy("another run holds " + str(self.path))
                 time.sleep(0.05)
 
     def __exit__(self, *exc):
@@ -332,8 +346,8 @@ class Exclusive:
 
     def __enter__(self):
         if fcntl is None:                                        # pragma: no cover - not POSIX
-            raise TimeoutError("this platform provides no advisory locking, so two promotions"
-                               " could not be kept apart")
+            raise Busy("this platform provides no advisory locking, so two promotions"
+                       " could not be kept apart")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         handle = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o644)
         deadline = time.time() + self.timeout
@@ -348,8 +362,8 @@ class Exclusive:
                     raise
                 if time.time() > deadline:
                     os.close(handle)
-                    raise TimeoutError("another run holds the promotion lock at "
-                                       + str(self.path))
+                    raise Busy("another run holds the promotion lock at "
+                               + str(self.path))
                 time.sleep(0.05)
 
     def __exit__(self, *exc):
@@ -364,11 +378,79 @@ class Exclusive:
         return False
 
 
+# --------------------------------------------------------------- what an ownership entry says
+
+# The pointer ownership entry answers TWO questions with one object, and a rollback can take one
+# of them away without the other.
+#
+# 'path' is WHICH path this host's pointer is. The Codex registration names it and every later
+# run derives it from there, so it has to outlive a failed promotion: erased, a retry with a
+# different --dest derives another path and reads the registration that is still there as a
+# conflict.
+#
+# These keys are the other question -- the evidence that a link THIS COMMAND PLACED is at that
+# path, which is what the promotion reads before it replaces a link. A rollback that establishes
+# the link is GONE has disproved this one and not the first, so it keeps the path and withdraws
+# these. Kept whole, the entry would go on authorising the replacement of whatever link appears
+# there next.
+POINTER_PLACEMENT = ("recordedAt", "recordedBy")
+
+
+def placement_recorded(entry):
+    """Whether this record says a link this command placed is at the pointer path.
+
+    Asked of this module rather than tested against a key at the call site, because one object
+    answers two questions and the guard deciding whether a link may be replaced needs the
+    narrower one. An entry carrying only a path is a path this host's pointer is KNOWN BY and
+    not a link anybody recorded placing.
+
+    Non-blank STRINGS, not truthiness. This answer authorises replacing a link, and the record
+    is a file a person can edit: the shape check accepts any JSON under these keys, so 'true',
+    '[]' and '   ' are all truthy and none of them is a record of when or by whom a link was
+    placed. A guard that reads malformed evidence as evidence fails open, which is the one
+    direction this question may not fail in.
+    """
+    if not isinstance(entry, dict) or not stated(entry.get("path")):
+        return False
+    return all(stated(entry.get(key)) for key in POINTER_PLACEMENT)
+
+
+def stated(value):
+    """A value a record actually STATES: a string with something in it.
+
+    Public because a writer has to be able to ask it. What this module will read back as
+    evidence and what a caller is about to write have to be one question, or a run records
+    ownership its own next run refuses.
+    """
+    return isinstance(value, str) and bool(value.strip())
+
+
+def without_placement(entry):
+    """The same entry with its placement evidence withdrawn, and its path kept."""
+    return {key: value for key, value in dict(entry or {}).items()
+            if key not in POINTER_PLACEMENT}
+
+
+def pointer_entry_for(entry, path):
+    """The ownership entry, and only when it is ABOUT this path.
+
+    An entry is about a path. A caller holding a path it derived somewhere else can otherwise
+    read placement evidence that belongs to a different one -- which is exactly how a resume
+    came to decide whether a link here could be replaced from a record that was talking about
+    somewhere else. Returning None for a mismatch keeps that unrepresentable, and it is None
+    rather than False because "no entry about this path" and "an entry about it that records no
+    placement" are the two answers a caller has to tell apart.
+    """
+    if isinstance(entry, dict) and entry.get("path") == str(path):
+        return entry
+    return None
+
+
 # ------------------------------------------------------------------ the one way to write
 
 def update(path, definition_version, *, installs=None, points=None, select=None,
            component_facts=None, outgoing=None, drop_environment=None, pointer=None,
-           deselect=None, drop_pointer=None):
+           deselect=None, drop_pointer=None, restore_pointer=None):
     """Apply narrow deltas to state this helper loads itself, inside the lock, at write time.
 
     The helper never accepts a record, and that is the whole point. A caller that loads a
@@ -390,6 +472,16 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
     than remove, for the same reason the selection restore is narrow -- an entry another run
     has since moved on belongs to that run, and undoing a promotion this run never made is a
     worse outcome than the failure being rolled back.
+
+    'restore_pointer' is the delta for the other half of that question, and the only one that
+    puts a value BACK. Absence is the right answer only for a run that INTRODUCED the ownership
+    entry; a run that INHERITED one and then failed must not erase it, because the path goes
+    with it and the registration depends on that path. It carries two values because two
+    different questions are being asked of it: 'wrote' is the path THIS RUN recorded, and the
+    only thing it may compare against, while 'found' is the entry it replaced and what goes
+    back. They are not always the same path -- a caller handed its path before the lock can
+    have written over an entry naming somewhere else -- so collapsing them into one would make
+    the compare answer about the wrong record.
 
     Returns the Reading it loaded, so a caller can report an unreadable record rather than
     guess. Nothing is written when the record could not be read.
@@ -436,6 +528,14 @@ def update(path, definition_version, *, installs=None, points=None, select=None,
             owned = record.get("pointer")
             if isinstance(owned, dict) and owned.get("path") == str(drop_pointer):
                 del record["pointer"]
+        if restore_pointer is not None:
+            # Compare-and-replace, and it compares for the reason the other two do: an entry
+            # another run has since moved on belongs to that run. REPLACE rather than merge, so
+            # a key the failed run added that the found entry never had does not survive as
+            # this run's fingerprint on an entry it did not introduce.
+            owned = record.get("pointer")
+            if isinstance(owned, dict) and owned.get("path") == str(restore_pointer["wrote"]):
+                record["pointer"] = dict(restore_pointer["found"])
         save(path, record)
     return current
 
@@ -498,7 +598,7 @@ def release_candidate(path, definition_version, environment, *, pointer_names=No
                 entry["installs"] = [i for i in entry.get("installs") or []
                                      if i.get("environment") != str(environment)]
             save(path, record)
-    except TimeoutError as error:
+    except Busy as error:
         return (reading.Reading(state=reading.ACCESS_ERROR, source=path,
                                 exception=type(error).__name__,
                                 detail="the host record lock could not be taken: " + str(error)),

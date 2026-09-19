@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .effects import mark_local
+
 
 class WorktreeError(Exception):
     """A rejected Git contract or a known Git failure; partial artifacts may remain."""
@@ -118,9 +120,13 @@ class Worktree:
 
     def reserve(self):
         # Exclusive mkdir prevents concurrent launches from adopting even an empty directory.
+        # Recorded first for the same reason a frame is: after this line the destination can
+        # exist, so this operation is no longer one that began nothing.
+        mark_local("worktree/reserve")
         self.destination.mkdir(mode=0o700)
 
     async def create(self):
+        mark_local("worktree/create")
         await git(
             self.source,
             "worktree",
@@ -138,6 +144,7 @@ class Worktree:
     async def checkout(self):
         # Conditional includes may apply only to the newly registered worktree.
         overrides = await checkout_filter_config(self.destination)
+        mark_local("worktree/checkout")
         await git(self.destination, "read-tree", self.revision)
         await git(self.destination, *overrides, "checkout-index", "--all")
 

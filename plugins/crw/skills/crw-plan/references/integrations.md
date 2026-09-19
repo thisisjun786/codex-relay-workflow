@@ -2,6 +2,16 @@
 
 Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
+## Skill names under each installation
+
+These documents name the skills without a prefix, which is how a linked
+installation exposes them. A plugin installation namespaces every skill under the
+plugin, so `crw-run` is offered to the model as `crw:crw-run` and the same mapping
+applies to each name above. Read a name written here as whichever spelling the
+current installation exposes, and use the exposed spelling when invoking a skill
+or telling a user how to invoke one. The directory name, the file layout, and the
+relative links between these documents are identical in both installations.
+
 ## Resolve the project target
 
 Use an explicit target for the current operation. When it is omitted, use the
@@ -362,6 +372,15 @@ Explicit read-only, report-only, pause, no-contact, or narrower delivery limits 
 Recover the existing task first. A replacement is routine only when task creation/recovery is covered by the assignment and the host permits it, the earlier task is proven inactive, its work and receipts are preserved, and the replacement keeps the same scope and settings. Uncertain delivery or a read failure is not proof that no writer remains.
 
 ### Default independent execution
+
+Write instructions sent to child tasks in English, including initial assignments,
+review corrections, active-turn steer messages, resumes, and restoration blocks.
+Translate the actionable instructions without changing their scope or acceptance
+criteria; preserve exact identifiers, URLs, paths, code, and necessary source quotes.
+Keep task titles under the existing Korean title convention, and keep user-facing
+reports and Linear records in Korean unless explicitly requested otherwise. This
+language rule applies to future messages; it does not require resending old prompts
+or waking existing tasks merely to change their language.
 
 Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs `anthropic/claude-opus-5` at `xhigh` reasoning effort with CXC Loop as its workflow, and owns its own host goal, goalplan, and FSM. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
 
