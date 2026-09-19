@@ -2335,5 +2335,26 @@ class TheRefusalsAreAnInventoryTests(unittest.TestCase):
         for name, why in sorted(ANSWERING_METHODS.items()):
             self.assertTrue(str(why).strip(), name + " is excused without a reason")
 
+
+    def test_a_document_that_cannot_be_written_is_still_one_json_object(self):
+        """Support. The promise is one JSON object on stdout, including when writing fails.
+
+        Composing the whole string before writing any of it stops a truncated document, and it
+        does not stop the other half: this runs outside the handler that turns a failure into a
+        refusal, so anything the encoder rejects would end the command with a traceback and an
+        empty stdout. A document that cannot be written is a result too.
+        """
+        import contextlib
+        import io
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            harness._print({"source": "hook-comparison", "passed": True,
+                            "cells": {"x": {"value": object()}}})
+        answer = json.loads(printed.getvalue())
+        self.assertIn("refused", answer, "a document that could not be written printed no reason")
+        self.assertEqual(answer.get("source"), "hook-comparison")
+        self.assertNotIn("cells", answer, "a refusal must carry no rows")
+
 if __name__ == "__main__":
     unittest.main()

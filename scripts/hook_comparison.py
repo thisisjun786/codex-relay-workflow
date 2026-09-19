@@ -1812,8 +1812,20 @@ def _print(answer):
     json.dump streams to the file object, so anything it cannot encode leaves a truncated
     document behind and then raises. Composing the whole string first means an encoding failure
     happens before a single byte is written, and one JSON object on stdout stays true.
+
+    Composing first is only half of it. This runs outside main()'s own handler, so an encoding
+    failure here would still end the command with a traceback and NOTHING on stdout - which is
+    the same promise broken at the other end. A document that cannot be written is itself a
+    result, so it is reported as a refusal naming what could not be written and where.
     """
-    sys.stdout.write(json.dumps(answer, default=render, indent=2, sort_keys=True) + "\n")
+    try:
+        written = json.dumps(answer, default=render, indent=2, sort_keys=True)
+    except (TypeError, ValueError) as error:
+        written = json.dumps(refusal("the result document could not be written: "
+                                     + type(error).__name__ + ": " + str(error)[:400],
+                                     at=reading.where(error)), indent=2, sort_keys=True)
+    sys.stdout.write(written + "\n")
+    return written
 
 
 if __name__ == "__main__":
