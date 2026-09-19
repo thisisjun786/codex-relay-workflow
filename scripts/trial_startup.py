@@ -1244,11 +1244,23 @@ def registration_identity(record, boundary, receipt):
     """
     assignment = record.get("assignment") or {}
     this_one = boundary.get("issueKey") == assignment.get("issueKey")
-    for path in (("issueKey",), ("status",), ("authorizedScope", "allowedRecipients")):
+    for path in (("issueKey",), ("status",), ("authorizedScope", "allowedRecipients"),
+                 ("authorizedScope", "artifactRoots")):
         # A field the receipt does not carry is a reading nobody took, not a registration that
         # disagrees, and the cell above has to be able to tell them apart.
         if field(receipt, *path) is MISSING:
             return MISSING, "it does not carry " + ".".join(path)
+    # Both of these are read for what is inside them, so a list that authorises nothing is an
+    # answer rather than an absence: a scope permitting no recipient delivers to nobody and a
+    # scope permitting no root authorises nothing to be produced under it, and neither can be the
+    # registration this boundary is running under. Present and empty passed every check that only
+    # asked whether the key was there, and on a boundary other than the one being dispatched
+    # nothing else looked, because the gate reads the roots of the bound boundary alone.
+    for path in (("authorizedScope", "allowedRecipients"), ("authorizedScope", "artifactRoots")):
+        value = field(receipt, *path)
+        if not isinstance(value, list) or not value:
+            return False, ("its " + ".".join(path) + " is " + json.dumps(shown(value))
+                           + ", which authorises nothing")
     if this_one:
         for name in ("relationshipId", "executionGeneration"):
             if field(receipt, name) is MISSING:

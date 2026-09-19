@@ -4632,6 +4632,56 @@ class FortyFifthHostedRound(TrialCase):
             cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
             NOT_VERIFIED)
 
+    def test_a_registration_authorising_no_artifact_root_is_not_read_as_one(self):
+        # The required-field check asked whether the key was there. A scope with no artifact root
+        # authorises nothing to be produced under it, and on the boundary that is not the one
+        # being dispatched nothing else looked: the gate reads roots from the bound boundary
+        # alone, so the cell verified a registration it had not actually read.
+        for missing, answer in (("absent", UNKNOWN), ("empty", NOT_VERIFIED)):
+            with self.subTest(shape=missing):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                scope = world.captures["register-B.json"]["authorizedScope"]
+                if missing == "absent":
+                    scope.pop("artifactRoots")
+                else:
+                    scope["artifactRoots"] = []
+                world.flush()
+                world.start_supervisor()
+                document = world.preflight()
+                self.assertFalse(document["readyToStart"],
+                                 "a scope authorising no artifact root was read as a registration")
+                cell = cells_of(document, "boundaries")["registration:B"]
+                # A key that is not there is a reading nobody took; a list that is there and
+                # empty is an answer, and it says this scope authorises nothing.
+                self.assertEqual(cell["value"], answer)
+
+    def test_a_registration_authorising_no_recipient_is_not_read_as_one_either(self):
+        # Support, and the other half of the sweep: the same rule on the other list in that
+        # scope. This one already refused before the rule was written, because both endpoints
+        # have to be among the recipients and an empty list holds neither, so it is here to show
+        # the rule did not change an answer that was already right.
+        world = World(self.base)
+        self.addCleanup(world.stop)
+        world.captures["register-B.json"]["authorizedScope"]["allowedRecipients"] = []
+        world.flush()
+        world.start_supervisor()
+        document = world.preflight()
+        self.assertFalse(document["readyToStart"])
+        self.assertEqual(cells_of(document, "boundaries")["registration:B"]["value"], NOT_VERIFIED)
+
+    def test_a_registration_that_authorises_something_still_reads(self):
+        # The bound: this refuses a scope that authorises nothing, not a scope that authorises
+        # something other than what the record names, which is a disagreement and is graded as one.
+        world = World(self.base)
+        self.addCleanup(world.stop)
+        world.captures["register-B.json"]["authorizedScope"]["artifactRoots"] = [
+            str(world.repos["B"])]
+        world.flush()
+        world.start_supervisor()
+        document = world.preflight()
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
     def test_a_disabled_service_is_not_a_supervisor_that_continues(self):
         # The supervisor re-reads this intent at every worker boundary and spawns no replacement
         # once it is off, so a service disabled while its current worker still holds the lock is
