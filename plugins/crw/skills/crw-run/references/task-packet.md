@@ -247,9 +247,12 @@ already holds instead of recopying it, exactly as the restoration block carries 
 than contents.
 
 ```text
-Request: [id the sender chose; on a reply, the id it answers]
+Request: [id the sender chose for this message]
+Reply to: [on a reply, the id it answers; omit on a first message]
 Kind: [proposal | conditional acceptance | rejection | correction | result | blocked |
-  merge request | assignment | return | recovery update]
+  merge turn request | merge turn assignment | merge turn return | recovery update.
+  The three merge-turn kinds are about the order into a shared target and nothing else: no kind
+  here assigns work to another parent, because no parent can]
 From / To: [each side's role, task id and Linear scope]
 Scope: [the issues, files, interfaces or behaviour this is about, and the base revision]
 Asking: [the action or decision required, or the decision being returned]
@@ -270,6 +273,7 @@ Because: overlapping edit surfaces recorded in both projects' coordination recor
 Next: B, to accept or to name its own constraint
 
 Request: shared-surface-1-r1
+Reply to: shared-surface-1
 Kind: conditional acceptance
 From / To: parent of project B, task 01a0...b7; to parent of project A, task 01a0...a1
 Scope: same two issues, same base revision

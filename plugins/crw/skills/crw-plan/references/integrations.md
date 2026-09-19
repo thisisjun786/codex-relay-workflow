@@ -226,7 +226,7 @@ that happens to share the word.
 | Role | Bound to | Coordinates | Instructs |
 |---|---|---|---|
 | Supervisor | one initiative ID | its initiative's projects: cross-project dependencies, priority, shared resources, and the order in which projects reach a shared target | the parents of those projects |
-| Parent | one project ID | its project's issues: dependencies, sequencing, parallel children, delivery verification and integration | its own children, and peer parents directly |
+| Parent | one project ID | its project's issues: dependencies, sequencing, parallel children, delivery verification and integration; and, directly with a peer parent, the surface their projects share | its own children only; a peer parent is asked, never instructed |
 | Child | one issue ID | nothing outside its own issue | its own internal helpers |
 
 | Role | Verifies | Merges | Updates in Linear | Complete when |
@@ -290,9 +290,10 @@ cannot settle alone: an agreement they cannot reach, a change that widens either
 who owns newly discovered work, and shared resources, including the order in which projects reach a
 shared target. The resource decision and the merge order are two decisions and are recorded as two.
 
-Only the owning parent instructs its own children. A peer request is answered by the parent that
-received it, and that parent decides what its own issues and children do about it; it never reaches
-into the other project's children. A peer message is not a delivery: it carries no receipt, no
+Only the owning parent instructs its own children, and no parent instructs another. A peer
+message is a request or an agreement: the parent that receives it decides what its own issues and
+children do about it, and it never reaches into the other project's children. One parent cannot
+assign work to another, and the supervisor is the only level that can change who owns what. A peer message is not a delivery: it carries no receipt, no
 acknowledgement and no verdict, and it never enters another parent's registered relationship
 ([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents),
 [OPS-7.4](../../crw-run/references/operations.md#ops-74-three-levels-and-their-routing-identity)).
