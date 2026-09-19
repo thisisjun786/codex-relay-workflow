@@ -977,18 +977,27 @@ def reading_process(record, relay, sleeper=time.sleep):
     return cells
 
 
-def is_status_shaped(value):
-    """Whether this is the kind of thing a host answers a lifecycle call with at all.
+def status_state(value):
+    """The state a lifecycle status carries, or MISSING when nothing there is one.
 
-    A status is a word the host uses or the structured object its lifecycle call returns. JSON
-    false, 0, a null and a list are none of those, and str() turns the first two into a nonempty
-    word: a capture carrying "status": false read as a resolved participant and verified the
-    cell, with no evidence the host resolved the participant at all. That is the missing-rollout
-    condition this reading exists to catch, arriving as a pass. A bool is an int in Python, so
-    nothing here may fall back on truthiness or on str() to tell a status from a value that is
-    not one.
+    Two shapes reach this reading. A goal status is a word. A thread status is the object the
+    host returns, and its state lives at "type": the relay reads it at exactly that key, in
+    bridge_adapter.read_thread and again in the receipt's own thread check, so this reads it
+    there too instead of accepting whichever object turned up. {"unexpected": true} is a nonempty
+    object that says nothing about a lifecycle, and taking it for a status resolved a participant
+    the host never resolved.
+
+    JSON false, 0, a null and a list are not statuses at all, and str() turns the first two into
+    the nonempty words "False" and "0". A bool is an int in Python, so nothing here may fall back
+    on truthiness or on str() to tell a status from a value that is not one.
     """
-    return isinstance(value, (str, dict))
+    if isinstance(value, str):
+        return value.strip() or MISSING
+    if isinstance(value, dict):
+        found = value.get("type")
+        if isinstance(found, str) and found.strip():
+            return found.strip()
+    return MISSING
 
 
 def reading_lifecycle(record):
@@ -1017,9 +1026,8 @@ def reading_lifecycle(record):
             status = field(payload, "status")
             # The host's own lifecycle answer carries status as a structured object, not a word.
             # A predicate insisting on a string failed every capture a real host produced, so both
-            # shapes are admitted and anything that is neither is not an answer to read.
-            resolved_status = is_status_shaped(status) and bool(
-                status.strip() if isinstance(status, str) else status)
+            # shapes are read, and each is read where the state actually is.
+            state = status_state(status)
             names = (same(field(payload, "threadId"), task)
                      or same(field(payload, "taskId"), task))
             if status is MISSING and refusal is None:
@@ -1027,17 +1035,19 @@ def reading_lifecycle(record):
                                   evidence="the capture carries no thread status to read",
                                   provenance=CAPTURED, measured_at=found["capturedAt"]))
                 continue
-            if not is_status_shaped(status) and refusal is None:
+            if state is MISSING and refusal is None:
                 # Not a disagreement: a value that is not a status is a reading nobody took, and
                 # the start is refused for the same reason an absent capture refuses it.
                 cells.append(cell("lifecycle:" + str(task), UNKNOWN,
                                   evidence=("the capture carries " + json.dumps(shown(status))
-                                            + " where the thread status belongs, which is not a"
-                                            " status a host answers with"),
+                                            + " where the thread status belongs, and no state can"
+                                            " be read from it. A word, or the host's status"
+                                            ' object carrying its state at "type", is what this'
+                                            " resolves"),
                                   provenance=CAPTURED, measured_at=found["capturedAt"],
                                   detail=found["path"]))
                 continue
-            ok = (refusal is None and names and resolved_status
+            ok = (refusal is None and names
                   and not carries(payload, "error") and not carries(payload, "isError"))
             cells.append(cell("lifecycle:" + str(task), VERIFIED if ok else NOT_VERIFIED,
                               evidence=("the host resolved this thread with status "
@@ -1162,7 +1172,16 @@ def reading_store(record, relay):
                                   + str(shown(reach)) + ". A store comparison is decided on the"
                                   " database and says nothing about the socket the delivery will"
                                   " use")))
-    if configured is False:
+    if not isinstance(configured, bool):
+        # Whether the ledger sits beside the store is only answerable once doctor says a ledger
+        # is configured at all. A payload carrying split without configured graded as placed,
+        # which is a missing prerequisite reading as a pass.
+        cells.append(cell("ledgerSplit", UNKNOWN, probe=probe, provenance=EXECUTED,
+                          evidence=("doctor did not report whether a transport ledger is"
+                                    " configured, and it answered " + str(shown(configured))
+                                    + ", so where that ledger sits is not a question this"
+                                    " payload settles")))
+    elif configured is False:
         cells.append(cell("ledgerSplit", NOT_APPLICABLE, probe=probe, provenance=EXECUTED,
                           evidence="no socket is configured, so there is no transport ledger to"
                                    " place beside this store"))

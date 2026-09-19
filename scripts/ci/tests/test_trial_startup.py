@@ -1312,10 +1312,11 @@ class HostedReviewFindings(TrialCase):
 
     def test_a_structured_lifecycle_status_is_resolved(self):
         # The host's own lifecycle answer carries status as an object, so a predicate insisting on
-        # a string rejected every capture a real host produces.
+        # a string rejected every capture a real host produces. The state sits at "type", which is
+        # where the relay's own adapter reads it.
         self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
             "threadId": World.PARENT_A,
-            "status": {"state": "idle", "activeTurn": None}, "goal": None}
+            "status": {"type": "idle", "activeTurn": None}, "goal": None}
         self.world.flush()
         document = self.world.preflight()
         self.assertEqual(
@@ -1323,13 +1324,16 @@ class HostedReviewFindings(TrialCase):
             VERIFIED)
 
     def test_an_empty_structured_status_is_still_not_resolved(self):
+        # An earlier round pinned this as not_verified. A later one found that an object with
+        # keys but no state passed, and the two cases are one question: whether a state can be
+        # read at all. Both are now unreadable, and both still refuse the start.
         self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
             "threadId": World.PARENT_A, "status": {}}
         self.world.flush()
         document = self.world.preflight()
-        self.assertEqual(
-            cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]["value"],
-            NOT_VERIFIED)
+        cell = cells_of(document, "parentLifecycle")["lifecycle:" + World.PARENT_A]
+        self.assertEqual(cell["value"], UNKNOWN)
+        self.assertFalse(cell["met"])
 
     def test_a_relationship_under_another_parent_fails(self):
         self.world.payloads["assignment-find"]["payload"]["assignments"][0][
@@ -2595,7 +2599,30 @@ class TwentyFifthHostedRound(TrialCase):
             "pid": os.getpid(), "witness": str(world.trial / "supervisor.jsonl"),
             "launchedAt": startup.stamp(time.time() - 120)})
         documented["assignment"] = dict(world.record["assignment"])
-        documented["boundaries"] = world.record["boundaries"]
+        # The documented boundaries keep their own shape; only the angle-bracket placeholders
+        # become real. Replacing the whole value with the fixture is what let an abbreviated
+        # second boundary stay green here while load_start would have refused it from an
+        # operator who copied the record as written.
+        expect = dict(world.record["boundaries"][0]["participants"][0]["expect"])
+        issues = {"A": World.ISSUE_A, "B": World.ISSUE_B}
+        tasks = {("A", "parent"): World.PARENT_A, ("A", "child"): World.CHILD_A,
+                 ("B", "parent"): World.PARENT_B, ("B", "child"): World.CHILD_B}
+        for boundary in documented["boundaries"]:
+            name = boundary["name"]
+            boundary["issueKey"] = issues[name]
+            boundary["scopeRef"] = "scope-" + name
+            boundary["repositoryRoot"] = str(world.repos[name])
+            self.assertIsInstance(
+                boundary["participants"], list,
+                "boundary " + name + " does not document its participants as a list")
+            for participant in boundary["participants"]:
+                self.assertIsInstance(
+                    participant, dict,
+                    "boundary " + name + " abbreviates a participant, so an operator copying this"
+                    " record as written would have it refused")
+                participant["taskId"] = tasks[(name, participant["role"])]
+                participant["cwd"] = str(world.repos[name])
+                participant["expect"] = dict(expect)
         documented["captures"] = world.record["captures"]
         documented["window"] = dict(world.record["window"])
         self.assertEqual(documented["source"], "live-trial-start")
@@ -2666,7 +2693,7 @@ class TwentySeventhHostedRound(TrialCase):
                 self.assertEqual(cell["value"], UNKNOWN,
                                  json.dumps(value) + " was read as a resolved participant")
                 self.assertFalse(cell["met"])
-                self.assertIn("not a status a host answers with", cell["evidence"])
+                self.assertIn("no state can be read from it", cell["evidence"])
 
     def test_the_start_is_refused_when_a_status_is_not_a_status(self):
         self.world.start_supervisor()
@@ -2686,9 +2713,50 @@ class TwentySeventhHostedRound(TrialCase):
 
     def test_a_word_and_a_structured_status_are_still_resolved(self):
         # Support: the shapes a real host answers with keep passing.
-        for value in ("idle", {"state": "idle", "activeTurn": None}):
+        for value in ("idle", {"type": "idle", "activeTurn": None}):
             with self.subTest(value=value):
                 self.assertEqual(self.status_cell(value)["value"], VERIFIED)
+
+
+class TwentyEighthHostedRound(TrialCase):
+    """Two more cells verified by a reading that could not establish what the cell claimed.
+
+    A status object was accepted for being a nonempty object rather than for carrying a state,
+    and the ledger's placement was graded without doctor ever saying a ledger was configured.
+    """
+
+    def test_a_status_object_carrying_no_state_resolves_nobody(self):
+        for value in ({"unexpected": True}, {"type": ""}, {"type": 7}, {"activeTurn": None}):
+            with self.subTest(value=value):
+                self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
+                    "threadId": World.PARENT_A, "status": value, "goal": None}
+                self.world.flush()
+                cell = cells_of(self.world.preflight(),
+                                "parentLifecycle")["lifecycle:" + World.PARENT_A]
+                self.assertEqual(cell["value"], UNKNOWN,
+                                 json.dumps(value) + " was read as a resolved participant")
+                self.assertFalse(cell["met"])
+
+    def test_the_state_is_read_where_the_relay_reads_it(self):
+        # Support, and the reason the key is "type": the relay's own adapter reads the thread
+        # status there, so the checker is not inventing a shape of its own.
+        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
+                  / "bridge_adapter.py").read_text(encoding="utf-8")
+        self.assertIn('(thread.get("status") or {}).get("type"', source)
+
+    def test_a_ledger_placement_without_a_configured_ledger_is_unknown(self):
+        self.world.payloads["doctor"]["payload"]["ledger"] = {"split": False}
+        self.world.flush()
+        cell = cells_of(self.world.preflight(), "storeIdentity")["ledgerSplit"]
+        self.assertEqual(cell["value"], UNKNOWN)
+        self.assertFalse(cell["met"])
+
+    def test_a_configured_ledger_beside_the_store_still_verifies(self):
+        # Support: the arrangement a trial wants is unaffected.
+        self.world.payloads["doctor"]["payload"]["ledger"] = {"configured": True, "split": False}
+        self.world.flush()
+        self.assertEqual(
+            cells_of(self.world.preflight(), "storeIdentity")["ledgerSplit"]["value"], VERIFIED)
 
 
 class LinkedWorktreesAreOneRepository(TrialCase):
