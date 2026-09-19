@@ -25,7 +25,10 @@ of them were wrong when this landed and review caught both by mutation rather th
 import ast
 import pathlib
 import re
+import textwrap
 import unittest
+
+from .support import written_table
 
 TESTS = pathlib.Path(__file__).resolve().parent
 MAP = TESTS.parent / "docs" / "contention-regression.md"
@@ -998,6 +1001,755 @@ class TheSweepDerivesItsOwnReachRatherThanClaimingIt(unittest.TestCase):
                 verdict.strip(),
                 f"{module} {test} measures {summary} with no verdict written beside it",
             )
+
+
+# --------------------------------------------- where this suite injects store faults
+#
+# The sweep above derives which booleans this suite measures WITH. This derives where it
+# breaks things on purpose, which is the other way a case can assert nothing. The store's
+# fault hook is global and fires just before every COMMIT, so an arming reaches whichever
+# transaction runs first rather than the one the case is named for - and a case can then
+# pass in a situation its own name does not describe. Every hook-shaped CANDIDATE this
+# reader recognises is enumerated from source and carries the interval it reaches and a
+# reading. Candidate, not arming: this reader cannot tell a Store from anything else, so it
+# over-reports on purpose in the one direction that is safe, and the paragraph below says
+# how far recognition goes.
+#
+# What this is, and what it does NOT claim. The claim was rewritten four times under review
+# and was wrong three of them, which is the best argument for stating it exactly.
+#
+# This is a scope-blind, flow-blind reader of syntax, not Python name resolution. It
+# recognises: an attribute assignment whose attribute is the hook; a call whose callee names
+# the helper; a call to setattr, exec, eval or __setattr__; a __dict__ subscript assignment;
+# a string containing the hook's name; a read of the hook; the helper named without being
+# called; and a binding of the helper or of setattr, exec or eval to some other name, read
+# one level down an assignment, an annotated assignment, a walrus or an import-as. Every one
+# of those becomes a site or an unaccounted occurrence, and THAT is the only totality
+# claimed. Over-reporting is deliberate where it happens: a hook-named attribute on an
+# unrelated object costs somebody a declaration, and missing one hides an arming.
+#
+# It deliberately does not follow a binding. Resolving aliases is what an earlier version
+# did, and it answered wrongly twice: once reporting a raw reflective arming as a helper site
+# because the same local name appeared in two functions, and once for obj.arm(). A reader
+# that answers "helper" for a raw arming hides exactly what this exists to surface, which is
+# worse than one that says "somebody bound this name, go and read it". So a binding is
+# reported and the call made through it is not classified at all.
+#
+# Out of reach, and not claimed absent: an arming reached through a resolved alias, a
+# closure, a callback, a name looked up at runtime, or any other reflection.
+#
+# As with SUMMARY_SITES above: the scan supplies the reach, a person supplies the verdict,
+# and a wrong verdict fails nothing here.
+
+HOOK = "fault_hook"
+HELPER = "killed_before_commit"
+HIDING_CALLS = ("setattr", "exec", "eval")
+UNREADABLE = "unreadable"
+
+FAULT_SITES = (
+    ("support.py", "killed_before_commit", "raw", None,
+     "the helper's own arming, and the only raw one outside a declared row below: every"
+     " other case reaches the hook through it"),
+    ("test_ack_reconcile.py", "test_a_fault_at_commit_time_also_rolls_back", "raw", None,
+     "record_verdict runs exactly one transaction, measured as generations, relationships,"
+     " journal, delivery_supersession, events, deliveries, verdicts and verdict_context"
+     " together, so an unconditional arming cannot land anywhere but the transaction the"
+     " name is about. Left raw deliberately: a predicate would pin a fact the single"
+     " transaction already guarantees"),
+    ("test_failure_recovery.py",
+     "test_a_tick_killed_at_its_first_write_leaves_no_partial_state_and_a_new_daemon"
+     "_delivers_once", "helper", None,
+     "no predicate, because first IS the interval this case is named for. It asserts the"
+     " interrupted transaction wrote the poll observation and did NOT reach an attempt, so"
+     " the two cases in that class cannot collapse into one"),
+    ("test_failure_recovery.py",
+     "test_a_tick_killed_inside_the_attempt_transaction_rolls_that_attempt_back_and_a_new"
+     "_daemon_delivers_once", "helper", "attempts",
+     "attempts alone would not identify the claim - delivery's _settle and reconcile write"
+     " that table too, and _settle writes deliveries beside it - so the case asserts"
+     " attempt_messages was in the same transaction, which has exactly one writer and it is"
+     " inside _claim, with an empty send list as the independent check. The reserved capacity"
+     " is in that subset too, so the empty-table checks cannot pass for a reservation that was"
+     " never written"),
+    ("test_store.py", "test_a_failed_registration_is_not_a_registration", "helper",
+     "relationships",
+     "register() runs three transactions and this name held only because the relationship"
+     " write happens to come first; the predicate says so now, and the case asserts the"
+     " first generation was in the same transaction"),
+    ("test_store.py", "test_a_fault_after_the_body_still_rolls_back", "raw", None,
+     "the case opens the only transaction in scope itself, so the arming has nowhere else"
+     " to land. Left raw: there is nothing for a predicate to disambiguate"),
+)
+
+# A shape that could hide an arming and that this reader cannot classify. Two entries, and
+# both are this machinery looking at itself. The HOOK constant: from the outside a string
+# naming the hook is a string naming the hook, and nothing here can tell a scan's own
+# subject from an attribute name assembled for a setattr. The helper's own def: nothing
+# here can tell the real definition from one that shadows it, and a shadow is how a call
+# gets classified as the helper when it is something else. Both are declared rather than
+# excluded, because excluding a file is how you create the one place an arming sits unseen.
+UNACCOUNTED_FAULT_OCCURRENCES = (
+    ("support.py", "killed_before_commit", "defines the helper"),
+    ("test_regression_map.py", "<module>", "names the hook in a string"),
+    ("test_regression_map.py",
+     "test_the_names_this_reader_tracks_are_the_ones_written_down_here",
+     "names the hook in a string"),
+)
+
+
+def _referred(node):
+    """The bare name an expression refers to, for the two spellings that matter here."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+TRACKED = (HELPER, *HIDING_CALLS)
+
+
+def _binds_a_tracked_name(node):
+    """The tracked names this statement binds to some other name, reported and not followed.
+
+    Seven review rounds each produced another spelling of "bind it elsewhere and call that":
+    a plain assignment, an annotated one, a tuple, a starred tuple, a walrus, an import-as.
+    Resolving them answered WRONGLY twice - a raw reflective arming was reported as a helper
+    site once the same local name appeared in two functions, and again for obj.arm(). Name
+    resolution is not an AST-shape problem, so this stopped trying.
+
+    A binding is reported; the call made through it is not classified at all. What the
+    resolver was pretending to do, a person now has to do: read the binding and write down
+    what it is.
+
+    Shallow on purpose. The right-hand side is read one level: the value itself, or the
+    elements of a tuple or list literal. A binding buried deeper is not seen, and the reach
+    comment says so rather than implying otherwise.
+    """
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return [alias.name.split(".")[-1] for alias in node.names
+                if alias.asname and alias.name.split(".")[-1] in TRACKED]
+    if isinstance(node, ast.Assign):
+        values = [node.value]
+    elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+        values = [node.value] if node.value is not None else []
+    else:
+        return []
+    found = []
+    for value in values:
+        parts = value.elts if isinstance(value, (ast.Tuple, ast.List)) else [value]
+        for part in parts:
+            if _referred(part) in TRACKED:
+                found.append(_referred(part))
+    return found
+
+
+def _flatten(node):
+    """Every leaf of an assignment target, tuples and lists opened recursively."""
+    if isinstance(node, (ast.Tuple, ast.List)):
+        leaves = []
+        for element in node.elts:
+            leaves.extend(
+                _flatten(element.value if isinstance(element, ast.Starred) else element)
+            )
+        return leaves
+    return [node]
+
+
+def _pairs(target, value):
+    """(leaf, the value reaching it) when the two shapes correspond, else None.
+
+    Flattening both sides and zipping was wrong: store.fault_hook, (a, b) = (None, cb), pair
+    assigns a tuple to the hook, and a flat zip handed it the inner None instead, so an
+    arming became invisible. Structures have to line up or this declines to say anything,
+    and the caller reports that it could not pair them.
+    """
+    if isinstance(target, (ast.Tuple, ast.List)):
+        if not isinstance(value, (ast.Tuple, ast.List)):
+            return None
+        if len(target.elts) != len(value.elts):
+            return None
+        found = []
+        for element, reaching in zip(target.elts, value.elts):
+            if isinstance(element, ast.Starred):
+                # *store.fault_hook, other = [None, 1] hands the hook the LIST [None], not
+                # the scalar. Stripping the star paired it with None and read an arming as a
+                # disarming, so the whole structure is unreadable instead.
+                return None
+            if isinstance(reaching, ast.Starred):
+                # The mirror image: (*[None], 1) expands before assignment, so positions
+                # after the star are not the positions written here. Pairing the hook with
+                # the Starred node itself read a disarming as an arming.
+                return None
+            inner = _pairs(element, reaching)
+            if inner is None:
+                return None
+            found.extend(inner)
+        return found
+    return [(target, value)]
+
+
+def _binds_the_helper_name(node, alias):
+    """Does this import alias bind the helper's NAME, whatever it reads to get there.
+
+    The bound name differs by form, and reading the wrong end of it went both ways during
+    review. "from x import y as z" binds z. "from x import y" binds y. "import a.b.c" binds
+    a, not c, so a dotted import merely NAMED after the helper shadows nothing. And a star
+    import may or may not export the name; this reader cannot open the other module to find
+    out, so it assumes the binding it cannot rule out.
+    """
+    if alias.asname:
+        return alias.asname == HELPER
+    if alias.name == "*":
+        return True
+    if isinstance(node, ast.Import):
+        return alias.name.split(".")[0] == HELPER
+    return alias.name == HELPER
+
+
+def _is_canonical(node, alias):
+    """The one import that makes a bare call the real helper: from .support import it."""
+    return (
+        isinstance(node, ast.ImportFrom) and node.level == 1 and node.module == "support"
+        and alias.name == HELPER and not alias.asname
+    )
+
+
+def _binds_name(node, name):
+    """Does this node bind NAME, whatever syntax it uses to do it.
+
+    Enumerated as a class rather than one construct at a time. Review found shadowing
+    through a def, a class, a parameter, an import, an assignment, and then a match-case
+    capture, each needing its own patch; the last one is the argument for listing the
+    binding forms the language has instead of the ones somebody thought of. A Name in Store
+    or Del context already covers assignment, augmented assignment, walrus, for targets,
+    with-as, except-as and comprehension targets, which is most of them.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, ast.Name):
+        return node.id == name and isinstance(node.ctx, (ast.Store, ast.Del))
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    if isinstance(node, ast.ExceptHandler):
+        return node.name == name
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return node.name == name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    return False
+
+
+def _predicate_of(call):
+    """The writing predicate a helper call passes, or that it cannot be read."""
+    writing = None
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            # **something. The predicate may be in there and this reader cannot see it;
+            # answering None would assert there is none, which is a different claim.
+            return UNREADABLE
+        if keyword.arg == "writing":
+            writing = (
+                keyword.value.value
+                if isinstance(keyword.value, ast.Constant) else UNREADABLE
+            )
+    return writing
+
+
+def _injection_sites_in(tree, module):
+    """Sites and leftovers for one parsed module.
+
+    Split out from the file walk so the rules can be pinned against synthetic source.
+    Review measured the reason: replacing the binding reader with one that returns nothing
+    left every other case in this module green, so the behaviour was checked by a scratch
+    harness and by nothing that ships.
+    """
+    sites, leftover = [], []
+    owner = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(node):
+                owner.setdefault(child, node.name)
+    # A string whose value is thrown away cannot name an attribute for any purpose, so a
+    # docstring mentioning the hook is not a hiding place.
+    discarded = {
+        id(node.value) for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+    accounted = set()
+    # Provenance for the helper name, and it is the exact import or nothing. A bare call is
+    # only the helper when this module did "from .support import killed_before_commit"; a
+    # parameter, a class, a local def or an import from anywhere else is a different object
+    # that happens to share a name, and guessing which is how this reader answered wrongly.
+    # Module body only. An import inside a function binds a local name there and says
+    # nothing about a bare call somewhere else, and treating it as provenance let such a
+    # call be recorded as the helper.
+    imported = any(
+        _is_canonical(node, alias)
+        for node in tree.body if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    )
+    # A competing binding of the same name defeats the import, wherever the import sits. An
+    # earlier draft only looked for the canonical import and stopped, so a second import of
+    # the name from somewhere else left every later call classified as the real helper.
+    shadowed = any(
+        # Per ALIAS, not per statement. The name an import BINDS is what matters, and
+        # exempting a whole statement let "from .support import WorkerKilled as
+        # killed_before_commit" ride along beside the canonical one.
+        _binds_the_helper_name(node, alias) and not _is_canonical(node, alias)
+        for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    ) or any(
+        _binds_name(node, HELPER)
+        for node in ast.walk(tree)
+        if not isinstance(node, (ast.Import, ast.ImportFrom))
+    )
+
+    for node in ast.walk(tree):
+        for bound in _binds_a_tracked_name(node):
+            leftover.append((module, owner.get(node, "<module>"), "binds " + bound + " elsewhere"))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == HELPER:
+            # This reader cannot tell the real definition from one that shadows it, so it
+            # declines to and says which module it found.
+            leftover.append((module, node.name, "defines the helper"))
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            # store.fault_hook, other = die, 1 is an arming and ... = None, 1 is not, so the
+            # target has to be paired with the value that reaches it. Without that, the
+            # attribute fell through to the read pass and came back as "reads the hook", and
+            # a tuple disarming was reported as an arming.
+            leaves = _flatten(target)
+            paired = dict(_pairs(target, node.value) or []) if node.value is not None else {}
+            for leaf in leaves:
+                if isinstance(leaf, ast.Subscript) and _referred(leaf.value) == "__dict__":
+                    leftover.append(
+                        (module, owner.get(node, "<module>"), "assigns through __dict__")
+                    )
+                if not (isinstance(leaf, ast.Attribute) and leaf.attr == HOOK):
+                    continue
+                accounted.add(id(leaf))
+                if node.value is None:
+                    continue           # a bare annotation binds nothing, so it arms nothing
+                if leaf not in paired:
+                    leftover.append(
+                        (module, owner.get(node, "<module>"),
+                         "assigns the hook from a value this reader cannot pair")
+                    )
+                    continue
+                reaching = paired[leaf]
+                if isinstance(reaching, ast.Constant) and reaching.value is None:
+                    continue           # disarming
+                sites.append((module, owner.get(node, "<module>"), "raw", None))
+        if isinstance(node, ast.Call):
+            callee = _referred(node.func)
+            if isinstance(node.func, ast.Name) and callee == HELPER:
+                accounted.add(id(node.func))
+                if imported and not shadowed:
+                    sites.append(
+                        (module, owner.get(node, "<module>"), "helper", _predicate_of(node))
+                    )
+                else:
+                    leftover.append(
+                        (module, owner.get(node, "<module>"), "calls a helper-named local")
+                    )
+            elif callee == HELPER:
+                # obj.killed_before_commit(). Same final name, no reason to believe it is the
+                # same function, and guessing is how a raw arming got called a helper site.
+                accounted.add(id(node.func))
+                leftover.append((module, owner.get(node, "<module>"), "calls a helper-named attribute"))
+            elif callee in HIDING_CALLS or callee == "__setattr__":
+                leftover.append((module, owner.get(node, "<module>"), "calls " + str(callee)))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if HOOK in node.value and id(node) not in discarded:
+                leftover.append((module, owner.get(node, "<module>"), "names the hook in a string"))
+            continue
+        if isinstance(node, ast.Attribute) and node.attr == HOOK:
+            if id(node) not in accounted:
+                leftover.append((module, owner.get(node, "<module>"), "reads the hook"))
+        if isinstance(node, (ast.Name, ast.Attribute)) and _referred(node) == HELPER:
+            if id(node) not in accounted:
+                leftover.append((module, owner.get(node, "<module>"), "names the helper uncalled"))
+    return sites, leftover
+
+
+def fault_injection_sites():
+    """The armings this reader recognises across the suite, and the shapes it cannot read.
+
+    Occurrence accounting, in the same spirit as producer_paths above: a shape that could
+    hide an arming and is not one of the forms this reader knows becomes a leftover and
+    fails this module, rather than disappearing from a reach that calls itself complete.
+    """
+    sites, leftover = [], []
+    for path in sorted(TESTS.rglob("*.py")):
+        found, left = _injection_sites_in(ast.parse(path.read_text(encoding="utf-8")), path.name)
+        sites.extend(found)
+        leftover.extend(left)
+    return tuple(sorted(sites, key=_site_order)), tuple(sorted(leftover))
+
+
+
+def _site_order(site):
+    module, where, kind, writing = site
+    return (module, where, kind, writing or "")
+
+
+class EveryFaultInjectionSiteIsDeclared(unittest.TestCase):
+    """The reach of the fault injections, produced here rather than described in prose.
+
+    CRW-97 opened because one case's arming reached a transaction its name did not name.
+    Fixing that instance would leave the next one to be found by hand, so the sites are
+    derived and each carries what it reaches and why a reader believes that is the interval
+    the case is about.
+    """
+
+    def test_every_place_this_suite_arms_the_fault_hook_is_declared_with_its_interval(self):
+        sites, _leftover = fault_injection_sites()
+        declared = tuple(row[:4] for row in FAULT_SITES)
+        self.assertEqual(
+            sorted(sites, key=_site_order), sorted(declared, key=_site_order),
+            "the armings in this suite and the ones written down disagree."
+            f" Only in source: {sorted(set(sites) - set(declared))}."
+            f" Only declared: {sorted(set(declared) - set(sites))}."
+            " Read the new one, say which transaction it reaches and whether that is the"
+            " interval its case is named for, and declare it.",
+        )
+        self.assertGreater(
+            len(sites), 4,
+            f"only {len(sites)} armings were found, so the scan stopped seeing the suite it"
+            " is supposed to be reading",
+        )
+
+    def test_nothing_arms_the_hook_outside_the_helper_without_saying_why(self):
+        """The helper is the route; a bare assignment has to argue for itself."""
+        sites, _leftover = fault_injection_sites()
+        raw = {(module, where) for module, where, kind, _ in sites if kind == "raw"}
+        self.assertEqual(
+            raw, {(row[0], row[1]) for row in FAULT_SITES if row[2] == "raw"},
+            "an arming bypasses killed_before_commit without a declared reason. Either route"
+            " it through the helper, which makes the interval it reaches assertable, or"
+            f" declare why this one does not need to: {sorted(raw)}",
+        )
+
+    def test_a_shape_that_could_hide_an_arming_is_declared(self):
+        _sites, leftover = fault_injection_sites()
+        self.assertEqual(
+            leftover, UNACCOUNTED_FAULT_OCCURRENCES,
+            "a construct that could name the hook by a route this reader cannot follow is"
+            " neither a form it knows nor declared. Say what it is, or teach the reader the"
+            " form. Arbitrary reflective mutation stays out of reach either way.",
+        )
+
+    def test_no_declared_arming_is_left_without_a_reading(self):
+        for module, where, _kind, _writing, verdict in FAULT_SITES:
+            self.assertTrue(
+                verdict.strip(),
+                f"{module} {where} arms the hook with no reading written beside it",
+            )
+
+
+class TheWriteClassifierSaysWhatItCannotRead(unittest.TestCase):
+    """support.written_table decides which transaction a fault landed in.
+
+    So its reach is not a detail. A statement it cannot read makes a transaction look
+    emptier than it is, and a case could then assert it killed somewhere it did not.
+    """
+
+    def test_the_write_forms_this_package_issues_are_classified(self):
+        for statement, table in (
+            ("INSERT INTO attempts (request_id) VALUES (?)", "attempts"),
+            ("INSERT INTO poll_observations (a) VALUES (?)"
+             " ON CONFLICT(a) DO UPDATE SET b = 1", "poll_observations"),
+            ("INSERT OR IGNORE INTO schema_meta VALUES ('k','v')", "schema_meta"),
+            ("INSERT OR REPLACE INTO attempt_report_submissions (x) VALUES (?)",
+             "attempt_report_submissions"),
+            ("UPDATE deliveries SET state = ?", "deliveries"),
+            ("DELETE FROM holds WHERE id = ?", "holds"),
+            ("  update  relationships  set x = 1", "relationships"),
+            ("INSERT INTO main.journal (at) VALUES (?)", "journal"),
+        ):
+            self.assertEqual(written_table(statement), table, statement)
+
+    def test_the_forms_it_cannot_read_answer_nothing_rather_than_guessing(self):
+        """The blind spots, as data. A reader that guessed here would be worse than one
+        that declines, because a wrong table is a wrong transaction."""
+        for statement in (
+            "WITH recent AS (SELECT 1) INSERT INTO attempts (a) VALUES (1)",
+            "SELECT * FROM attempts",
+            "BEGIN IMMEDIATE",
+            "CREATE TABLE attempts (a)",
+            "SAVEPOINT inner",
+        ):
+            self.assertIsNone(written_table(statement), statement)
+
+    def test_no_write_statement_in_this_package_escapes_the_classifier(self):
+        """The blind spot above, watched instead of only described.
+
+        Screened case-sensitively, because every SQL statement in this package is uppercase
+        and a case-insensitive screen fires on ordinary prose - "With a host this verifies",
+        "Replace bounded workers". What that rests on is a convention, so state it: a
+        lowercase CTE would evade this, and that is the gap this cannot close.
+        """
+        head = re.compile(r"^\s*(?:INSERT|REPLACE|UPDATE|DELETE|WITH)\b")
+        screened, unreadable = 0, []
+        for path in sorted(SOURCE.glob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                    continue
+                if not head.match(node.value):
+                    continue
+                screened += 1
+                if written_table(node.value) is None:
+                    unreadable.append((path.name, node.lineno, node.value[:60]))
+        self.assertEqual(
+            unreadable, [],
+            "a write statement in this package is one the transaction watcher cannot"
+            " attribute, so a transaction holding it would look emptier than it is",
+        )
+        self.assertGreater(
+            screened, 60,
+            f"only {screened} write statements were screened, so this scan stopped matching",
+        )
+
+
+
+class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
+    """Synthetic source, because this suite is not a test corpus for its own reader.
+
+    Review measured why this exists: replacing the binding reader with one that returns
+    nothing left every other case in this module green. The reach was checked by a scratch
+    harness and by nothing that ships, which is the same shape as a fault firing before the
+    interval a case is named for - right today, and right for a reason nothing records.
+
+    The expectations here are written out rather than derived from the rules under test. An
+    earlier draft took its hiding name from HIDING_CALLS[0], and review measured that
+    deleting exec and eval from that tuple left every case green. A test whose oracle moves
+    with the code cannot fail when the code is wrong.
+
+    The wrong-answer rows matter most. They are not gaps; they are the reader saying
+    "helper" about something that is not one, which hides what the inventory exists to show.
+    """
+
+    IMPORT = f"from .support import {HELPER}\n"
+
+    def read(self, source):
+        sites, leftover = _injection_sites_in(
+            ast.parse(textwrap.dedent(source).strip() + "\n"), "probe.py",
+        )
+        return sorted(sites, key=_site_order), sorted(leftover)
+
+    def kinds(self, leftover):
+        return sorted(reason for _module, _where, reason in leftover)
+
+    def test_the_names_this_reader_tracks_are_the_ones_written_down_here(self):
+        """The oracle below names these three. If the rules stop tracking one, the cases
+        that exercise it would silently stop exercising anything, so the sets are compared
+        rather than shared."""
+        self.assertEqual(HIDING_CALLS, ("setattr", "exec", "eval"))
+        self.assertEqual(HOOK, "fault_hook")
+        self.assertEqual(HELPER, "killed_before_commit")
+
+    def test_a_direct_arming_is_a_site_however_it_is_spelled(self):
+        for source in (
+            f"def t(store, die):\n    store.{HOOK} = die\n",
+            f"def t(store, die):\n    store.{HOOK}: object = die\n",
+            f"def t(store, die):\n    store.{HOOK}, other = die, 1\n",
+            f"def t(store, die):\n    [store.{HOOK}] = [die]\n",
+            f"def t(store, die):\n    (store.{HOOK}, a), b = (die, 1), 2\n",
+        ):
+            sites, _leftover = self.read(source)
+            self.assertEqual(sites, [("probe.py", "t", "raw", None)], source)
+
+    def test_binding_nothing_arms_nothing(self):
+        """Disarming, and a bare annotation. Neither assigns, so neither is an arming."""
+        for source in (
+            f"def t(store):\n    store.{HOOK} = None\n",
+            f"def t(store):\n    store.{HOOK}: object\n",
+            f"def t(store):\n    store.{HOOK}, other = None, 1\n",
+        ):
+            sites, leftover = self.read(source)
+            self.assertEqual(sites, [], source)
+            self.assertEqual(leftover, [], source)
+
+    def test_a_value_this_reader_cannot_pair_is_a_leftover_not_a_site(self):
+        """The target names the hook and the value cannot be matched to it, so the reader
+        declines to say which it is rather than guessing arming or disarming."""
+        for source in (
+            f"def t(store, pair):\n    store.{HOOK}, other = pair\n",
+            # The shapes differ one level in: Python hands the hook the whole (None, cb)
+            # tuple, and a flat zip used to hand it the inner None and see a disarming.
+            f"def t(store, cb, pair):\n    store.{HOOK}, (a, b) = (None, cb), pair\n",
+            # A starred target takes a LIST, so pairing it with a scalar would read an
+            # arming as a disarming.
+            f"def t(store):\n    *store.{HOOK}, other = [None, 1]\n",
+            # The mirror image: a starred value expands before assignment, so the positions
+            # after it are not the ones written.
+            f"def t(store):\n    store.{HOOK}, other = (*[None], 1)\n",
+        ):
+            sites, leftover = self.read(source)
+            self.assertEqual(sites, [], source)
+            self.assertIn(
+                "assigns the hook from a value this reader cannot pair",
+                self.kinds(leftover), source,
+            )
+
+    def test_a_direct_helper_call_carries_the_predicate_it_passes(self):
+        for label, prefix in (
+            ("the canonical import alone", ""),
+            # import a.b.c binds a, so a dotted import merely NAMED after the helper takes
+            # nothing away. Reading its last component instead turned real helper calls
+            # into leftovers.
+            ("beside a dotted import that only looks like it", f"import foreign.{HELPER}\n"),
+        ):
+            sites, _leftover = self.read(
+                self.IMPORT + prefix
+                + "def t(store):\n"
+                + f"    with {HELPER}(store, writing='attempts'):\n"
+                + "        pass\n"
+            )
+            self.assertEqual(sites, [("probe.py", "t", "helper", "attempts")], label)
+
+    def test_a_predicate_this_reader_cannot_see_says_so_rather_than_saying_none(self):
+        """None means the case passes no predicate. That is a claim, and ** is not it."""
+        sites, _leftover = self.read(
+            self.IMPORT
+            + "def t(store, options):\n"
+            + f"    with {HELPER}(store, **options):\n"
+            + "        pass\n"
+        )
+        self.assertEqual(sites, [("probe.py", "t", "helper", UNREADABLE)])
+
+    def test_every_reflective_spelling_review_proposed_is_visible(self):
+        for label, source, expected in (
+            ("direct call", "def t(store, die):\n    setattr(store, 'x', die)\n",
+             "calls setattr"),
+            ("direct exec", "def t(store):\n    exec('x')\n", "calls exec"),
+            ("direct eval", "def t(store):\n    eval('x')\n", "calls eval"),
+            ("object.__setattr__",
+             "def t(store, die):\n    object.__setattr__(store, 'x', die)\n",
+             "calls __setattr__"),
+            ("__dict__ subscript", "def t(store, die):\n    store.__dict__['x'] = die\n",
+             "assigns through __dict__"),
+            ("assigned alias", "def t(store, die):\n    arm = setattr\n",
+             "binds setattr elsewhere"),
+            ("annotated alias", "def t(store, die):\n    arm: object = eval\n",
+             "binds eval elsewhere"),
+            ("tuple alias", "def t(store, die):\n    arm, spare = exec, None\n",
+             "binds exec elsewhere"),
+            ("list alias", "def t(store, die):\n    arm, spare = [setattr, None]\n",
+             "binds setattr elsewhere"),
+            ("starred target alias",
+             "import builtins\ndef t(store, die):\n    arm, *spare = (builtins.setattr,)\n",
+             "binds setattr elsewhere"),
+            ("walrus alias", "def t(store, die):\n    (arm := eval)('x')\n",
+             "binds eval elsewhere"),
+            ("import alias", "from builtins import setattr as arm\n",
+             "binds setattr elsewhere"),
+            ("helper import alias",
+             f"from support import {HELPER} as arm\n",
+             "binds " + HELPER + " elsewhere"),
+        ):
+            _sites, leftover = self.read(source)
+            self.assertIn(expected, self.kinds(leftover), label)
+
+    def test_a_bound_name_never_produces_a_site(self):
+        """The wrong answer that cost two review rounds, pinned so it cannot come back.
+
+        A module-wide alias map reported the raw arming below as a HELPER site, because the
+        same local name was bound to the helper in another function. Nothing is inferred
+        from a binding now, so a call through a bound name is not classified at all.
+        """
+        sites, leftover = self.read(
+            self.IMPORT
+            + "def raw(store, die):\n"
+            + "    arm = setattr\n"
+            + "    arm(store, 'x', die)\n"
+            + "def helper(store):\n"
+            + f"    arm = {HELPER}\n"
+            + "    with arm(store):\n"
+            + "        pass\n"
+        )
+        self.assertEqual(sites, [])
+        self.assertIn("binds setattr elsewhere", self.kinds(leftover))
+        self.assertIn("names the helper uncalled", self.kinds(leftover))
+
+    def test_a_helper_name_this_module_did_not_import_is_not_the_helper(self):
+        """Provenance, because the name alone is not identity. A parameter, a class, a local
+        definition or a foreign import can all carry it."""
+        for label, source in (
+            ("no import at all",
+             f"def t(store):\n    {HELPER}(store)\n"),
+            ("an import from somewhere else",
+             f"from other import {HELPER}\ndef t(store):\n    {HELPER}(store)\n"),
+            ("a plain module import",
+             f"import {HELPER}\ndef t(store):\n    {HELPER}(store)\n"),
+            ("a competing import beside the real one",
+             self.IMPORT + f"from other import {HELPER}\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("a later rebinding of the name",
+             self.IMPORT + f"{HELPER} = None\ndef t(store):\n    {HELPER}(store)\n"),
+            ("something else imported under the helper's name",
+             self.IMPORT + f"from other import replacement as {HELPER}\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("something else from support under the helper's name",
+             self.IMPORT + f"from .support import WorkerKilled as {HELPER}\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("the canonical import, but local to another function",
+             f"def setup():\n    from .support import {HELPER}\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("a match-case capture of the name",
+             self.IMPORT + "def t(store, event):\n    match event:\n"
+             + f"        case {{'killer': {HELPER}}}:\n            {HELPER}(store)\n"),
+            ("a for-loop target",
+             self.IMPORT + f"def t(store, items):\n    for {HELPER} in items:\n"
+             + f"        {HELPER}(store)\n"),
+            ("a with-as target",
+             self.IMPORT + f"def t(store, ctx):\n    with ctx as {HELPER}:\n"
+             + f"        {HELPER}(store)\n"),
+            ("a star import that might export the name",
+             self.IMPORT + "from foreign import *\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("parameter shadow",
+             self.IMPORT + f"def t(store, {HELPER}):\n    {HELPER}(store)\n"),
+            ("class shadow",
+             self.IMPORT + f"class {HELPER}:\n    pass\n"
+             + f"def t(store):\n    {HELPER}(store)\n"),
+            ("attribute of something else",
+             self.IMPORT + f"def t(obj):\n    obj.{HELPER}()\n"),
+        ):
+            sites, leftover = self.read(source)
+            self.assertEqual(
+                [site for site in sites if site[2] == "helper"], [], label,
+            )
+            self.assertTrue(leftover, label)
+
+    def test_a_module_defining_the_helper_says_so_rather_than_trusting_the_name(self):
+        _sites, leftover = self.read(
+            f"def {HELPER}(store, *, writing=None):\n    pass\n"
+        )
+        self.assertIn("defines the helper", self.kinds(leftover))
+
+    def test_a_docstring_naming_the_hook_is_not_a_hiding_place(self):
+        """A discarded value cannot name an attribute, and the helper's own docstring
+        mentions the hook. Excluding docstrings has to be principled or it is a loophole."""
+        _sites, leftover = self.read(f'def t():\n    """arms store.{HOOK}"""\n')
+        self.assertEqual(leftover, [])
+        _sites, named = self.read(f'def t():\n    name = "{HOOK}"\n')
+        self.assertIn("names the hook in a string", self.kinds(named))
+
+    def test_an_unrelated_receiver_is_over_reported_rather_than_missed(self):
+        """Deliberate, and the safe direction. This reader cannot know what config is, so a
+        hook-named attribute on anything is a site that somebody has to declare. Over-
+        reporting costs a declaration; under-reporting hides an arming."""
+        sites, _leftover = self.read(f"def t(config, value):\n    config.{HOOK} = value\n")
+        self.assertEqual(sites, [("probe.py", "t", "raw", None)])
 
 
 if __name__ == "__main__":
