@@ -1387,9 +1387,14 @@ def _places(tree):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 # A decorator, a default and an annotation are evaluated where the def is
                 # written and not inside it, so they stay in the scope around it.
+                args = child.args
+                every = (args.posonlyargs + args.args + args.kwonlyargs
+                         + ([args.vararg] if args.vararg else [])
+                         + ([args.kwarg] if args.kwarg else []))
                 outside = (list(getattr(child, "decorator_list", []))
-                           + list(child.args.defaults)
-                           + [value for value in child.args.kw_defaults if value]
+                           + list(args.defaults)
+                           + [value for value in args.kw_defaults if value]
+                           + [arg.annotation for arg in every if arg.annotation]
                            + ([child.returns] if getattr(child, "returns", None) else []))
                 for beside in outside:
                     found[id(beside)] = (".".join(chain) if chain else MODULE_LEVEL, klass)
@@ -1404,7 +1409,12 @@ def _places(tree):
             elif isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp,
                                     ast.GeneratorExp)):
                 # A comprehension has a scope of its own on Python 3: its target shadows an
-                # outer name INSIDE it and not after it.
+                # outer name INSIDE it and not after it. Its first iterable is the exception,
+                # evaluated outside before that scope exists.
+                if child.generators:
+                    first = child.generators[0].iter
+                    found[id(first)] = (".".join(chain) if chain else MODULE_LEVEL, klass)
+                    walk(first, chain, klass)
                 inner = chain + ["<comprehension@" + str(child.lineno) + ">"]
             elif isinstance(child, ast.ClassDef):
                 owner = child.name
@@ -1569,12 +1579,21 @@ def _hands_on(tree, spelled):
     places = _places(tree)
     parents = {node.name: [_dotted(base) for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
-    defined, methods = set(), {}
+    defined, methods, plain, receivers = set(), {}, set(), {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
         where, klass = places.get(id(node), (MODULE_LEVEL, None))
         defined.add(where)
+        # A method is reached through an instance or its class, never as a bare name inside
+        # another method, so it is kept out of the lexical lookup.
+        if klass is None or "." in where:
+            plain.add(where)
+        # And the instance is whatever the first parameter is called: self is a convention.
+        args = node.args
+        first = (args.posonlyargs + args.args)[:1]
+        if klass is not None and first:
+            receivers[where] = first[0].arg
         # Which class a method belongs to, because self.name reaches a method of THIS class and
         # not a module-level function or another class's method that happens to share the name.
         if klass is not None and "." not in where:
@@ -1593,6 +1612,10 @@ def _hands_on(tree, spelled):
             if isinstance(target, ast.Name):
                 methods[(klass, target.id)] = places.get(id(node.value),
                                                          (MODULE_LEVEL, None))[0]
+
+    def instance(function):
+        """How this scope spells its instance: whatever its first parameter is called."""
+        return {receivers.get(function), "cls"} - {None}
 
     def inherited(klass, named, seen=()):
         """The method this class reaches by that name, its own or one it inherits."""
@@ -1679,6 +1702,12 @@ def _hands_on(tree, spelled):
         where = places.get(id(node), (MODULE_LEVEL, None))[0]
         taken_names.setdefault(where, set()).difference_update(node.names)
 
+    declared_global = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            where = places.get(id(node), (MODULE_LEVEL, None))[0]
+            declared_global.setdefault(where, set()).update(node.names)
+
     def outwards(caller, named, aliases=None):
         """Every place this name may reach, innermost scope first.
 
@@ -1690,11 +1719,14 @@ def _hands_on(tree, spelled):
         the run, but that the name belongs to the parameter and not to a module-level function of
         the same name is a fact about the text, so the search stops there.
         """
+        if named in declared_global.get(caller, ()):
+            # global says the module, not the next scope out that happens to share the name.
+            return {named} if named in plain else set()
         for scope in scopes(caller):
             if aliases and named in aliases.get(scope, {}):
                 return set(aliases[scope][named])
             candidate = named if scope == MODULE_LEVEL else scope + "." + named
-            if candidate in defined:
+            if candidate in plain:
                 return {candidate}
             if named in taken_names.get(scope, ()):
                 return set()
@@ -1713,7 +1745,13 @@ def _hands_on(tree, spelled):
     while growing:
         growing = False
         for node in ast.walk(tree):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            # A named expression binds a name as surely as an assignment does.
+            if isinstance(node, ast.NamedExpr):
+                holders, answer = [node.target], node.value
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                holders = node.targets if isinstance(node, ast.Assign) else [node.target]
+                answer = node.value
+            else:
                 continue
             function, _klass = places.get(id(node), (MODULE_LEVEL, None))
             def names(expression):
@@ -1724,6 +1762,8 @@ def _hands_on(tree, spelled):
                     return names(expression.value)
                 if isinstance(expression, ast.Name):
                     return outwards(function, expression.id, aliases)
+                if isinstance(expression, ast.Await):
+                    return names(expression.value)
                 if isinstance(expression, ast.Lambda):
                     return {places.get(id(expression), (MODULE_LEVEL, None))[0]}
                 if isinstance(expression, ast.Attribute):
@@ -1736,30 +1776,18 @@ def _hands_on(tree, spelled):
                             if reached:
                                 return {reached}
                         return set()
-                    reached = inherited(klass if through in ("self", "cls")
+                    reached = inherited(klass if through in instance(function)
                                         else (through or "").rpartition(".")[2] or None,
                                         expression.attr)
                     return {reached} if reached else set()
                 return set()
 
-            if isinstance(node.value, (ast.IfExp, ast.NamedExpr)):
-                targets = names(node.value)
-            elif isinstance(node.value, ast.Name):
-                targets = outwards(function, node.value.id, aliases)
-            elif isinstance(node.value, (ast.Attribute, ast.Lambda)):
-                # A bound method put behind a name reaches exactly what calling it directly
-                # would, and alias = self.carrier is as ordinary as alias = carrier. Every
-                # receiver the call path resolves -- self, cls, a class named here, super() --
-                # is resolved the same way on this side of the assignment.
-                targets = names(node.value)
-            elif isinstance(node.value, ast.Lambda):
-                # A lambda given a name is a function given a name.
-                targets = {places.get(id(node.value), (MODULE_LEVEL, None))[0]}
-            else:
-                continue
+            # One traversal for every shape a right-hand side can take: a name, a bound
+            # method, a lambda, a conditional, a named expression, or one wrapped in another.
+            targets = names(answer)
             if not targets:
                 continue
-            for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+            for named in holders:
                 if not isinstance(named, ast.Name):
                     continue
                 known = aliases.setdefault(function, {}).setdefault(named.id, set())
@@ -1786,7 +1814,7 @@ def _hands_on(tree, spelled):
             # cls.name in a classmethod names a method of this class exactly as self.name does,
             # and Example.name names one of Example's just as statically.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-            reached = inherited(klass if through in ("self", "cls")
+            reached = inherited(klass if through in instance(function)
                                 else (through or "").rpartition(".")[2] or None,
                                 node.func.attr)
             return {reached} if reached else set()
@@ -2048,30 +2076,42 @@ def source_spellings(tree):
     growing = True
     while growing:
         growing = False
+        def spelled_by(expression):
+            """Every name a right-hand side may be, a conditional's arms included."""
+            if isinstance(expression, ast.IfExp):
+                return spelled_by(expression.body) + spelled_by(expression.orelse)
+            if isinstance(expression, (ast.NamedExpr, ast.Await)):
+                return spelled_by(expression.value)
+            named = _dotted(expression)
+            return [named] if named else []
+
         for node in ast.walk(tree):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            if isinstance(node, ast.NamedExpr):
+                holders, answer = [node.target], node.value
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                holders = node.targets if isinstance(node, ast.Assign) else [node.target]
+                answer = node.value
+            else:
                 continue
-            named = _dotted(node.value)
-            if named is None:
-                continue
-            if named not in hands_source:
-                # The name may hand source back without ever being called here: reader =
-                # inspect.getsource puts it behind a local name and the call names only that.
-                why, unread, _resolved = asked(named)
-                if unread:
-                    # A name nobody could read stays unreadable when it is put behind another
-                    # name; treating the alias as harmless is the plausible default this module
-                    # refuses everywhere else.
-                    undecided.setdefault(named, unread)
-                if not why:
-                    continue
-                hands_source[named] = why
-                growing = True
-            for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-                bound = _dotted(target)
-                if bound and bound not in hands_source:
-                    hands_source[bound] = "it is bound to " + named + ", which does"
+            for named in spelled_by(answer):
+                if named not in hands_source:
+                    # The name may hand source back without ever being called here: reader =
+                    # inspect.getsource puts it behind a local name and the call names only that.
+                    why, unread, _resolved = asked(named)
+                    if unread:
+                        # A name nobody could read stays unreadable when it is put behind
+                        # another name; treating the alias as harmless is the plausible default
+                        # this module refuses everywhere else.
+                        undecided.setdefault(named, unread)
+                    if not why:
+                        continue
+                    hands_source[named] = why
                     growing = True
+                for target in holders:
+                    bound = _dotted(target)
+                    if bound and bound not in hands_source:
+                        hands_source[bound] = "it is bound to " + named + ", which does"
+                        growing = True
     return frozenset(handles), hands_source, undecided, frozenset(called)
 
 
