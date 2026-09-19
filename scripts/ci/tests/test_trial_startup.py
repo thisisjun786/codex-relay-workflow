@@ -5172,6 +5172,36 @@ class FortyFifthHostedRound(TrialCase):
         self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
                          NOT_VERIFIED)
 
+    def test_one_file_cannot_be_two_kinds_of_evidence(self):
+        # This procedure is explicit that a creation receipt never establishes lifecycle. Pointing
+        # both captures at one file let a receipt carrying a status answer a question nothing ever
+        # asked the host, so no lifecycle read happened at all and the reading that exists to
+        # catch a missing rollout was satisfied by the evidence for something else.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            receipt = self.world.record["captures"]["creationReceipt"][task]["path"]
+            self.world.record["captures"]["parentLifecycle"][task]["path"] = receipt
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertIn("one file cannot be two readings", json.dumps(payload),
+                      "one file stood as the evidence for two different kinds")
+        self.assertEqual(code, 2, stderr)
+
+    def test_a_link_to_another_kinds_capture_is_the_same_file(self):
+        # Support, and the bound on the rule: the check is by the file rather than by the path it
+        # was spelled with, because a link is how a record would reach the same bytes twice
+        # without repeating a name.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            receipt = self.world.record["captures"]["creationReceipt"][task]["path"]
+            linked = os.path.join(os.path.dirname(receipt),
+                                  "linked-" + os.path.basename(receipt))
+            os.link(receipt, linked)
+            self.world.record["captures"]["parentLifecycle"][task]["path"] = linked
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertIn("one file cannot be two readings", json.dumps(payload),
+                      "a second name for one file was read as a second reading")
+        self.assertEqual(code, 2, stderr)
+
     def test_a_service_disabled_during_the_last_probe_is_caught(self):
         # The intent was read before the last store probe, which can run for as long as its
         # timeout allows. An owner who disables the service while it runs leaves the current

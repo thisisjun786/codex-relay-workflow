@@ -1061,6 +1061,14 @@ def load_start(path, *, environment=None, mode="preflight"):
     # the dispatch message belong to the child's workspace and are elsewhere by nature, so the rule
     # for those two is only that they are not inside this repository.
     private = [absolute(field(record, "supervisor", "witness"), "supervisor.witness")]
+    # One file is one reading. A capture serving two evidence kinds means one of those readings
+    # never happened: this procedure is explicit that a creation receipt never establishes
+    # lifecycle, and pointing both kinds at one file let a receipt carrying a status answer a
+    # question nothing ever asked the host -- which is the missing-rollout condition the
+    # lifecycle reading exists to catch, hidden by the evidence for something else. Two
+    # participants sharing one file inside a single kind is a different thing and stays reported
+    # rather than refused, because doctor does not name the participant that ran it.
+    readings = {}
     for kind, entries in sorted((record.get("captures") or {}).items()):
         if not isinstance(entries, dict):
             raise Refused("captures." + kind + " is not an object of captures")
@@ -1068,7 +1076,21 @@ def load_start(path, *, environment=None, mode="preflight"):
             what = "captures." + kind + "." + name
             if not isinstance(entry, dict):
                 raise Refused(what + " is not a capture", entry=type(entry).__name__)
-            private.append(absolute(field(entry, "path"), what + ".path"))
+            declared = absolute(field(entry, "path"), what + ".path")
+            private.append(declared)
+            # By the file rather than by the spelling: two names for one file are one file, and a
+            # link is the way a record would reach the same bytes twice without repeating a path.
+            try:
+                status = os.stat(declared)
+                identity = (status.st_dev, status.st_ino)
+            except OSError:
+                identity = (None, str(declared.resolve()))
+            already = readings.setdefault(identity, (kind, what))
+            if already[0] != kind:
+                raise Refused("one file cannot be two readings: this capture is already the"
+                              " evidence for another kind",
+                              path=str(declared), capture=what, alsoRead=already[1],
+                              alsoReadAs=already[0])
             moment(field(entry, "capturedAt"), what + ".capturedAt")
     for item in private:
         if not within(item, trial_root):
