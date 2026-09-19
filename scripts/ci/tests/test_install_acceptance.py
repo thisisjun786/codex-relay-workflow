@@ -3429,10 +3429,104 @@ RESOLVES_LIKE_PYTHON = {
           "",
           "def consumer():",
           "    return helper()"),
+        "consumer", False,
+        "its pair, and the reason the rule is positional rather than simply relaxed: the same"
+        " two statements in the other order really do read whatever the module bound, so"
+        " honouring position must not have turned the shadow off."),
+    "a default every call overrides":
+        (REFUSAL,
+         ("def helper(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "def consumer():",
+          "    return helper('fine')"),
          "consumer", False,
-         "its pair, and the reason the rule is positional rather than simply relaxed: the same"
-         " two statements in the other order really do read whatever the module bound, so"
-         " honouring position must not have turned the shadow off."),
+         "the refusal side read a default as bound whatever the calls did, so a parameter"
+         " nobody ever leaves alone still made its function a refusal and pulled its callers in"
+         " behind it. The handle side had been asking whether a call supplies the argument for"
+         " several rounds and this side never did, which is the inverse of an earlier fix"
+         " rather than a new kind of error. helper itself stays named because its signature"
+         " writes the spelling, and a literal occurrence is not a derived one."),
+    "a default a call leaves to itself":
+        (REFUSAL,
+         ("def helper(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "its pair, and the protection the entry above must not have removed: a default really"
+         " is what the parameter holds when the call omits it, so the refusal does reach the"
+         " caller and asking whether calls supply it must not have turned defaults off."),
+    "a default in the slot a bound receiver moves":
+        (TEXT,
+         ("class Holder:",
+          "    def helper(self, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer(other):",
+          "    return holder.helper(other)"),
+         "consumer", False,
+         "counting a call's written arguments against a method's slots is off by one, because"
+         " the receiver fills the first slot without being written. holder.helper(other) does"
+         " supply path, and reading one argument against slot one answered that it did not, so"
+         " a caller-supplied value was read as the HERE default and every caller behind it was"
+         " inventoried on a read that never happens."),
+    "a default in a bound method a call leaves alone":
+        (TEXT,
+         ("class Holder:",
+          "    def helper(self, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer():",
+          "    return holder.helper()"),
+         "consumer", True,
+         "its pair: the receiver moves the slot, it does not fill the parameter, so a call"
+         " writing no arguments still leaves path at HERE and that read is real. Shifting the"
+         " count must not have stopped a method's default applying at all."),
+    "a default a plain call overrides with no receiver in the way":
+        (TEXT,
+         ("def helper(path=HERE):",
+          "    return path.read_text()",
+          "",
+          "def consumer(other):",
+          "    return helper(other)"),
+         "consumer", False,
+         "SUPPORT rather than a regression: this answer was already right before the correction"
+         " above and is recorded because it is what pins that defect to the receiver rather"
+         " than to defaults in general. The offset is added only where a receiver is really"
+         " handed one, so a plain call has to keep counting its arguments straight against its"
+         " own slots."),
+    "a default behind a receiver the call writes itself":
+        (TEXT,
+         ("class Holder:",
+          "    def helper(self, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "def consumer(obj):",
+          "    return Holder.helper(obj)"),
+         "consumer", True,
+         "SUPPORT by the evidence standard, since it was already right at the parent, and kept"
+         " because the first draft of the correction above broke it. Holder.helper(obj) writes"
+         " the receiver, so no slot moves and path is still left to HERE. Reading every"
+         " attribute call as bound turned a real read into a dropped one, which is the inverse"
+         " error of the finding it was fixing. Whether the owner names a class is asked per"
+         " scope, not across the file."),
+    "a default behind a written receiver the call also supplies":
+        (TEXT,
+         ("class Holder:",
+          "    def helper(self, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "def consumer(obj, other):",
+          "    return Holder.helper(obj, other)"),
+         "consumer", False,
+         "its pair: the unbound form still has to count, so writing both the receiver and the"
+         " argument really does supply path and nothing here reads the source."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4485,17 +4579,43 @@ def _default_applies(tree, places):
 
     Answered per definition and parameter across that definition's calls rather than per call
     site: if ANY call omits it the default really does apply somewhere, and this reader errs
-    towards reporting. Observable boundary, stated because it is one: a call through a name
-    this text cannot resolve to a definition is not counted, so a function only ever called
-    that way is read as never taking its default.
+    towards reporting. A definition NO resolved call in this text reaches keeps its default for
+    the same reason: nothing here overrides it, so the parameter holds what the signature says.
+    Only a definition every resolved call supplies is read as never taking it.
+
+    Observable boundary, stated because it is one: a call through a name this text cannot
+    resolve to a definition is not counted. It cannot contradict the default either, so such a
+    function is read as TAKING it -- the reporting direction, which is the one that costs a
+    sentence rather than a place.
     """
-    supplied, defined, owned = {}, {}, {}
+    supplied, defined, owned, receives = {}, {}, {}, set()
+    by_spelling = _class_spellings(tree, places)
+
+    def names_a_class(scope, name):
+        """Whether this spelling names a class here, innermost scope first.
+
+        Asked per scope rather than across the file, because a class written in one function
+        does not make that spelling a class in another, and reading it file-wide is the defect
+        this module has been handed most often.
+        """
+        reach = [] if scope == MODULE_LEVEL else scope.split(".")
+        while True:
+            if name in by_spelling.get(".".join(reach) if reach else MODULE_LEVEL, {}):
+                return True
+            if not reach:
+                return False
+            reach.pop()
+
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         at = places.get(id(node), (MODULE_LEVEL, None))[0]
         owned.setdefault(at.rpartition(".")[0] or MODULE_LEVEL, {})[node.name] = at
         spelled = node.args.posonlyargs + node.args.args
+        if spelled and spelled[0].arg in ("self", "cls"):
+            # A bound method is handed its receiver before any written argument, so the slot a
+            # default sits in is one further along than the call's own arguments count.
+            receives.add(at)
         given = list(node.args.defaults)
         for index, argument in enumerate(spelled[len(spelled) - len(given):] if given else []):
             defined[(at, argument.arg)] = len(spelled) - len(given) + index
@@ -4519,10 +4639,23 @@ def _default_applies(tree, places):
         for (place, argument), where in defined.items():
             if place != target:
                 continue
-            handed = (where is not None and len(node.args) > where) or any(
+            # The receiver moves the slot only when the call does not WRITE it. holder.helper(x)
+            # hands the instance over unwritten, so x lands one slot further along; the unbound
+            # Holder.helper(obj, x) writes it, and counting a slot it never occupied there would
+            # read a supplied argument as an omitted one and drop a real read.
+            owner = node.func.value if isinstance(node.func, ast.Attribute) else None
+            spelled_owner = (_dotted(owner) or "").rpartition(".")[2] if owner is not None else ""
+            seated = 1 if (place in receives and owner is not None and spelled_owner
+                           and not names_a_class(
+                               places.get(id(node), (MODULE_LEVEL, None))[0], spelled_owner)
+                           ) else 0
+            handed = (where is not None and len(node.args) > where - seated) or any(
                 word.arg == argument for word in node.keywords)
             supplied.setdefault((place, argument), set()).add(handed)
-    return {pair for pair, seen in supplied.items() if False in seen}
+    # Absent from supplied means no resolved call reached that definition at all, which is not
+    # evidence the default is overridden. Reading absence as "never takes its default" lost
+    # every closure over a default in a function this text never calls.
+    return {pair for pair in defined if False in supplied.get(pair, {False})}
 
 
 def _passed_through(value):
@@ -5102,6 +5235,10 @@ def _hands_on(tree, spelled):
     alias_of = _class_aliases(tree)
     written = _written_in(tree, places)
     by_spelling = _class_spellings(tree, places)
+    # Once, not per node: which defaults any call actually leaves to the default. The walk
+    # below runs inside two nested fixpoints, so asking per node would re-derive the whole
+    # module on every pass.
+    left_to_the_default = _default_applies(tree, places)
     every_key = {places.get(id(node), (MODULE_LEVEL, None))[1] for node in ast.walk(tree)
                  if isinstance(node, ast.ClassDef)}
     parents = {places.get(id(node), (MODULE_LEVEL, None))[1]:
@@ -5956,7 +6093,12 @@ def _hands_on(tree, spelled):
             for node in ast.walk(tree):
                 function, klass = places.get(id(node), (MODULE_LEVEL, None))
                 held = bound.setdefault(function, set())
-                for named, value in list(_bindings(node)) + _defaults(node):
+                # A default binds only when a call leaves it to the default, the same condition
+                # the handle side already applies. Reading them unconditionally here made every
+                # refusal-valued default a refusal even where every call supplies one.
+                for named, value in list(_bindings(node)) + [
+                        (named, default) for named, default in _defaults(node)
+                        if (function, named.id) in left_to_the_default]:
                     if not _reachable(value, reaching(function, klass), klass,
                                       visible(function)):
                         continue
