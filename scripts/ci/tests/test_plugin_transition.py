@@ -125,7 +125,15 @@ class Host:
             raise AssertionError("the command printed no JSON: " + done.stdout[-2000:]
                                  + done.stderr[-2000:])
 
-    def transition(self, *arguments):
+    def transition(self, *arguments, trust=True):
+        """Run the transition, acknowledging the trust gap unless a case is about it.
+
+        This fixture writes a trust key with a made-up hash, which is exactly the state the tool
+        refuses to read as trust, so every case that is not about that acknowledges it the way an
+        operator would have to.
+        """
+        if trust and "--accept-hook-trust-gap" not in arguments:
+            arguments = arguments + ("--accept-hook-trust-gap",)
         return self.call("transition", *arguments)
 
     def outcomes(self, document):
@@ -181,13 +189,24 @@ class PreflightRefusesBeforeItRemovesAnything(TransitionCase):
         self.assertIn("--payload", answer["results"][0]["detail"])
 
     @needs_reader
-    def test_an_untrusted_hook_is_refused_until_the_window_is_accepted(self):
-        host = self.ready(trusted=False)
-        code, answer = host.transition("--apply")
-        self.assertEqual(code, 1)
-        self.assertIn("hooks.state", answer["results"][0]["detail"])
-        code, answer = host.transition("--apply", "--accept-hook-trust-gap")
-        self.assertEqual(code, 0, answer["results"][0]["detail"])
+    def test_trust_is_never_claimed_and_the_window_is_always_acknowledged(self):
+        """A recorded trust key is not proof the declared hook fires, so it is not read as one.
+
+        The hash in a [hooks.state] entry belongs to the hook as it stood when trust was given,
+        and nothing here can compute the hash Codex compares it against. A stale record therefore
+        looks exactly like a current one, and acting on it turns the stated window into a host
+        with no completion hook at all.
+        """
+        for trusted in (False, True):
+            with self.subTest(trustKey=trusted):
+                self.setUp()
+                host = self.ready(trusted=trusted)
+                code, answer = host.transition("--apply", trust=False)
+                self.assertEqual(code, 1)
+                self.assertIn("cannot be established", answer["results"][0]["detail"])
+                self.assertIsNone(host.call("inspect")[1]["host"]["plugin"]["trusted"])
+                code, answer = host.transition("--apply")
+                self.assertEqual(code, 0, answer["results"][0]["detail"])
 
     def test_a_dangling_pointer_is_refused_rather_than_recorded(self):
         host = self.ready()
@@ -558,7 +577,8 @@ class TheFindingsFromReview(TransitionCase):
 
     def test_an_override_would_write_where_no_launcher_reads_so_it_refuses(self):
         host = self.ready()
-        done = run([CLI, "--codex-home", host.home, "transition", "--apply"],
+        done = run([CLI, "--codex-home", host.home, "transition", "--apply",
+                    "--accept-hook-trust-gap"],
                    env={**os.environ, "CRW_COMPLETION_HOOK_CONFIG": str(host.root / "e.json")})
         answer = json.loads(done.stdout)
         self.assertEqual(done.returncode, 1)

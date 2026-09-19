@@ -39,9 +39,22 @@ def retire(path):
     old settings carry the marker root, the database and the journal an operator may still need to
     read, and this tool is not entitled to decide they are finished with.
     """
-    target = Path(str(path) + ".superseded-" + stamp())
-    os.replace(str(path), str(target))
-    return str(target)
+    # Second granularity is not enough on its own: two retirements of the same path within one
+    # second would name the same archive and os.replace would delete the first one. The name is
+    # taken with O_EXCL, so an existing archive is never the destination.
+    base = str(path) + ".superseded-" + stamp()
+    target, suffix = base, 0
+    while True:
+        try:
+            handle = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            suffix += 1
+            target = base + "-" + str(suffix)
+            continue
+        os.close(handle)
+        break
+    os.replace(str(path), target)
+    return target
 
 
 def _answer(step, outcome, detail, **extra):
@@ -133,12 +146,17 @@ def preflight(host, options):
             refusals.append("the installed package does not carry " + ", ".join(missing)
                             + ", which the links being removed provide")
 
-    if plugin.get("trusted") is not True and not options.get("accept_hook_trust_gap"):
-        refusals.append("no [hooks.state] entry records trust for this plugin's "
-                        + inventory.HOOK_DOCUMENT + ", and an untrusted declared hook fires zero"
-                        " times. Removing a trusted registration now would leave no completion"
-                        " hook at all. Nothing in this repository grants trust: trust the hook"
-                        " first, or pass --accept-hook-trust-gap to accept the window knowingly")
+    if not options.get("accept_hook_trust_gap"):
+        # Always, not only when no key was found. A trust key records a hash for the hook as it
+        # stood when trust was given, and nothing here can compute the hash Codex compares it
+        # against, so a stale or fabricated record is indistinguishable from a current one. An
+        # untrusted declared hook fires zero times, so getting this wrong turns the stated window
+        # into a permanent absence of any completion hook. The operator acknowledges it.
+        refusals.append(str(plugin.get("trustNote")) + ". Whether the plugin's declared hook will"
+                        " actually fire cannot be established from here, and an untrusted declared"
+                        " hook fires zero times, so removing a working registration now may leave"
+                        " no completion hook at all. Trust the hook and confirm it fires, then"
+                        " pass --accept-hook-trust-gap")
 
     if not host.get("destination"):
         refusals.append("no install destination was named or derivable from the recorded"
@@ -352,6 +370,17 @@ def settings_install(host, options, *, apply=False, previous=None):
                        "the settings being replaced were not read, so their marker root,"
                        " database and journal could not be carried forward, and no retired"
                        " document was found to read them from either")
+    policy = source.get("journalPolicy") or completion.EVERY_INVOCATION
+    if policy != completion.EVERY_INVOCATION:
+        # configuration() writes every_invocation and takes no policy argument, and that function
+        # belongs to another change. Carrying the value is not available, so the alternative to
+        # refusing is silently turning a host's chosen journalling back on, which is a change
+        # nobody asked for made invisibly.
+        return _answer("settings install", REFUSED,
+                       "the settings being replaced record journalPolicy " + str(policy)
+                       + ", and the document this command builds always records "
+                       + completion.EVERY_INVOCATION + ". Transitioning would change what this"
+                       " host records without being asked, so it stops here")
     timeout = source.get("timeoutSeconds") or completion.DEFAULT_TIMEOUT_SECONDS
     if timeout >= completion.LAUNCHER_CEILING_SECONDS:
         return _answer("settings install", REFUSED,
@@ -561,12 +590,13 @@ def disable(host, options, *, apply=False):
         if not Path(path).exists():
             results.append(_answer(step, ALREADY, str(path) + " is not there"))
             continue
-        if owners.get(step) == completion.OWNER_USER:
+        if owners.get(step) != completion.OWNER_PLUGIN:
             results.append(_answer(step, REFUSED,
-                                   str(path) + " names " + completion.OWNER_USER + " as the owner"
-                                   " of that registration, so it belongs to the manual install"
-                                   " rather than to the plugin. Transition first, or disable the"
-                                   " manual install with the command that created it"))
+                                   str(path) + " does not name " + completion.OWNER_PLUGIN
+                                   + " as the owner of that registration (" + str(owners.get(step))
+                                   + "), so it is not this command's to retire. A malformed or"
+                                   " unreadable record owns nothing and is left where it is;"
+                                   " a user-owned one belongs to the manual install"))
             continue
         if not apply:
             results.append(_answer(step, WOULD, "would retire " + str(path)))

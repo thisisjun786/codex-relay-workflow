@@ -56,6 +56,19 @@ def checkout_of(path):
     return None
 
 
+def same_adapter(path, repo_root):
+    """Whether the file at path IS this repository's adapter, compared byte for byte.
+
+    Marker files prove a directory is laid out like a checkout, and a directory can be laid out
+    like anything. What a registration runs is the adapter itself, so that is what is compared.
+    """
+    ours = Path(repo_root) / "scripts" / completion.ENTRY_POINT_NAME
+    try:
+        return ours.is_file() and Path(path).read_bytes() == ours.read_bytes()
+    except OSError:
+        return False
+
+
 def config_path(codex_home):
     return Path(codex_home) / "config.toml"
 
@@ -122,12 +135,29 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
         # The key shape is <plugin>@<marketplace>:<document>:<event>:<matcher>:<index>, and the
         # document segment is compared as a whole. A substring test anywhere in the key would
         # accept trust recorded for a different document whose path merely contains this one.
-        answer["trusted"] = any(
+        # A key naming this plugin and this hook document is the only evidence a file carries, and
+        # it is NOT proof the hook will fire: the recorded trusted_hash belongs to the hook as it
+        # stood when trust was given, and nothing here can compute the hash Codex compares it
+        # against. A stale or fabricated record looks exactly like a current one. So this reports
+        # what it found and refuses to call it trust.
+        answer["trustKeyPresent"] = any(
             len(key.split(":")) == 5 and key.split(":")[1] == HOOK_DOCUMENT
             for key in answer["trustKeys"])
+        answer["trusted"] = None
+        answer["trustNote"] = ("a trust key was found and its recorded hash was NOT compared with"
+                               " the installed hook, which this repository cannot do"
+                               if answer["trustKeyPresent"] else
+                               "no trust key names this plugin and this hook document")
 
     cache = Path(codex_home) / "plugins" / "cache"
-    found = sorted(cache.glob(name + "/" + name + "/*")) if cache.is_dir() else []
+    # The cache layout is <marketplace>/<plugin>/<version> and the entry key is
+    # <plugin>@<marketplace>, so the marketplace comes from the registration. Assuming it matches
+    # the plugin name would validate an old cache under another marketplace as the replacement for
+    # a registration pointing somewhere else.
+    marketplace = (answer["entryKey"].split("@", 1)[1]
+                   if answer.get("entryKey") and "@" in answer["entryKey"] else name)
+    answer["marketplace"] = marketplace
+    found = sorted(cache.glob(marketplace + "/" + name + "/*")) if cache.is_dir() else []
     # glob is a declared omission: an unreadable cache directory yields nothing, which is reported
     # as no version rather than as a version that could not be read.
     # Which cached version a session loads is the host's answer, not this reader's, so a host
@@ -210,7 +240,7 @@ def canonical_command(argv):
     return completion.command_for(argv[0], script, argv[2] if len(argv) == 3 else None)
 
 
-def read_hook(codex_home, event=None, *, destination=None):
+def read_hook(codex_home, event=None, *, destination=None, repo_root=None):
     """Every registration of this adapter in the hook file, with authorship and what follows it."""
     event = event or completion.EVENT
     path = Path(codex_home) / "hooks.json"
@@ -226,14 +256,17 @@ def read_hook(codex_home, event=None, *, destination=None):
         argv = completion.registered_argv(entry["command"]) or []
         canonical = canonical_command(argv)
         checkout = checkout_of(argv[1]) if len(argv) > 1 else None
+        identical = bool(len(argv) > 1 and repo_root and same_adapter(argv[1], repo_root))
         proven = bool(canonical is not None and canonical == entry["command"]
-                      and checkout is not None)
+                      and checkout is not None and identical)
         answer["entries"].append({**entry, "argv": argv, "proven": proven,
                                   "checkout": str(checkout) if checkout else None,
                                   "canonical": canonical,
+                                  "adapterIsOurs": identical,
                                   "why": None if proven else
                                   "the command is not what this repository's writer emits for the"
-                                  " words it names, or its script is not inside a CRW checkout"})
+                                  " words it names, or the file it runs is not this repository's"
+                                  " own adapter"})
     # A registration naming the PACKAGED adapter cannot be seen by names_this_adapter, because that
     # matcher knows one file name. No command in this repository can write one, so its presence
     # means a hand edit -- and an unreported hand edit is the silence this detector exists to break.
@@ -429,7 +462,7 @@ def snapshot(codex_home, *, repo_root, destination=None, event=None):
         else ("the caller" if destination else None),
         "plugin": read_plugin(codex_home),
         "skills": read_skill_links(codex_home, repo_root),
-        "hook": read_hook(codex_home, event, destination=dest),
+        "hook": read_hook(codex_home, event, destination=dest, repo_root=repo_root),
         "settings": settings,
         "mcp": read_mcp(codex_home),
         "pointer": read_pointer(dest),
