@@ -4096,6 +4096,33 @@ class FortyThirdHostedRound(TrialCase):
         cell = cells_of(document, "capability")["deliverableSettings:" + World.PARENT_A]
         self.assertIn("model is not a non-empty string", cell["evidence"])
 
+    def test_a_setting_longer_than_the_creation_policy_accepts_is_refused(self):
+        # The creation policy refuses a model or an effort past its maximum before any host call,
+        # so a record naming a longer one describes a participant no bridge created.
+        # Written as a length rather than through the checker's own constant, so this says what
+        # the policy requires instead of what this module happens to hold.
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["model"] = "m" * 501
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused, "a model past the creation policy's maximum was accepted")
+        self.assertIn("model", refused.detail["fields"])
+
+    def test_a_setting_at_the_maximum_is_still_accepted(self):
+        # Support: the boundary itself is allowed, as the policy allows it.
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["model"] = "m" * 500
+        self.world.flush()
+        self.assertIsNone(self.world.refusal())
+
+    def test_the_maximum_is_the_bridges_own(self):
+        # Support, and the guard on the sixth copied constant, read as a value.
+        source = relay_source("packages", "codex-thread-bridge", "src", "codex_thread_bridge",
+                              "execution.py")
+        self.assertEqual(startup.SETTING_MAXIMUM, assigned_literal(source, "MAXIMUM"))
+
 
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

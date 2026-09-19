@@ -103,8 +103,11 @@ declared interval and a later ledger would report a window it never measured. It
 the end of the run, because the
 readings take real time and a window a few seconds ahead can open while they are being taken. The
 ledger still grades that same record afterwards, which is what it is for, and it refuses a line
-dated after the moment it is being graded: the ledger is appended as things happen. All six readings are taken by one run at one
-moment, because that is the only moment at which all of them are simultaneously true. All three
+dated after the moment it is being graded: the ledger is appended as things happen. All six readings are taken by one run,
+as close together as separate processes allow, because the window they are true in is the thing
+worth narrowing. They are not simultaneous and this does not claim they are: the gate's own reads
+are taken again after the last of them and the span that pass covered is reported, and what remains is
+named in the stand-ins. All three
 observed failures were checks made too early, or not made.
 
 **Then dispatch.** The window opens here.
