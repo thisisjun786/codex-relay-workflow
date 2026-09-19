@@ -525,12 +525,14 @@ message path to deliver it. Without a relay, send the packet as described above.
 
 The restoration block rides inside that payload rather than beside it. The findings and
 their notes are what the relay actually delivers to the child, so that is where the
-block goes, and a verdict is not issued until it is there. Where the installed relay
-cannot carry it, that is a limitation recorded and reported on the assignment, and it
-is still not a reason to open the parallel path the sentence above forbids. Nor is
-there a supported way to send it again afterwards: the verdict does not resend. Record
-it as an undelivered correction and hand the decision to whoever owns the assignment,
-per [codex-session-relay](references/relay.md#the-parent-verifies) and
+block goes, and a verdict is not issued until it is there. Declare which finding carries
+it, so a correction the relay cannot carry is refused before it opens the next generation
+instead of being discovered after there is nothing left to go back to. Where the installed
+relay does not recognise that declaration, that is a limitation recorded and reported on
+the assignment, and it is still not a reason to open the parallel path the sentence above
+forbids. Nor is there a supported way to send it again afterwards: the verdict does not
+resend. Record it as an undelivered correction and hand the decision to whoever owns the
+assignment, per [codex-session-relay](references/relay.md#the-parent-verifies) and
 [the restoration block](references/task-packet.md#restoration-block).
 
 Refresh the task's identity, ownership, current turn, checkout, and prior

@@ -306,21 +306,48 @@ A `needs_changes` verdict IS the correction: it opens the next generation and qu
 request to the same registered child, carrying the superseded event, its digest and the findings.
 Give every finding a note.
 
-What the child actually reads is the RENDERED revision request, which is not the whole verdict. On
-the version named above the renderer emits only the first ten findings and adds no notice that it
-dropped the rest, so a finding past that point is delivered nowhere and looks delivered from the
-parent's side. A size budget can go further and drop the findings section outright, first entry
-included. So putting what the child must receive in the first finding is a precaution and not a
-guarantee, and no arrangement of the verdict makes one: the verdict is a single transaction that
-has already opened the next generation before anything can be read back.
+What the child actually reads is the RENDERED revision request, which is not the whole verdict.
+A build carrying the behaviour below still shows only the first ten findings, but it says how
+many it dropped and names the restoration block when the cut took it. Say which finding carries
+that block:
 
-Confirmation therefore comes from a dispatched attempt and what the child actually received. A
-queued rendering is the bytes the next attempt would send, not evidence that any send happened,
-and reading it settles nothing about delivery. Where the content did not arrive there is no second
-correction to send: the verdict does not resend, and this workflow forbids the route around it. So
-it is recorded as an undelivered correction on the assignment and handed to the coordinator to
-decide, rather than repaired here. Treat all of these limits as this version's behaviour rather
-than constants.
+    codex-session-relay --state "$RELAY_STATE" verdict --event <id> --verdict needs_changes \
+      --verdict-turn <own turn> --restoration c2 \
+      --finding 'c2=needs_changes:what to change, and the context to resume from'
+
+Ask the installed command whether it has this before relying on it, the same way capability is
+discovered everywhere else here: `verdict --help` lists `--restoration` on a build that carries
+it, and a build without it rejects the flag as unknown. The package version does not answer the
+question: both stay `0.1.0` while their contents change, which is why
+[OPS-1.2](operations.md#ops-12-the-integrity-digest) makes the integrity digest the thing that
+detects drift. An operator reading a version alone cannot tell this source from an older
+installation, and would get a usage error where the paragraph below promises a refusal before
+the generation opens.
+
+A declared block the message would not carry refuses the verdict with
+`restoration_undeliverable` BEFORE any generation is opened, so nothing is superseded and
+nothing is queued: move the finding and rule again. Recording a work report on the revision
+request moves it onto the composer, which has a byte budget the plain renderer does not, so
+that command re-measures and refuses there too, while there is still nothing sent to undo. The
+outcome is named either way — `carried`, `truncated`, `budget_dropped`, `not_carried` or
+`unmeasured` — and is reported beside the verdict record, as `_restoration`, and by
+`show --event <id>`.
+
+Those two are preflight: each describes the message the NEXT attempt would render. What an
+attempt actually froze is recorded by that attempt, in the transaction that froze its bytes,
+and `show` returns it as `restoration_attempted` beside the bytes themselves. A retry that
+never sent leaves the following render one request-id digit longer, so a measurement taken
+earlier is a good reason to act and never evidence of what went out.
+
+All of that is about what the relay will put in the bytes, and none of it is a claim that the
+child read them. Confirmation still comes from a dispatched attempt and what the child actually
+received. A queued rendering is the bytes the next attempt would send, not evidence that any
+send happened, and reading it settles nothing about delivery. Where the content did not arrive
+there is no second correction to send: the verdict does not resend, and this workflow forbids
+the route around it. So it is recorded as an undelivered correction on the assignment and
+handed to the coordinator to decide, rather than repaired here. Treat all of this as this
+version's behaviour rather than constants, and whether an installed relay behaves this way as
+a separate fact from what this source does.
 
 Queued is not sent. That revision request travels the same way a completion does, so the
 host-capable `deliver`, or a `daemon` already running, is what puts it in front of the child. A

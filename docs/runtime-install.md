@@ -482,6 +482,24 @@ entry that still names what this run wrote, and `drop_pointer` only the ownershi
 path this run recorded. Undoing a promotion this run never made is a worse outcome than the
 failure being rolled back.
 
+`restore_pointer` is the third rollback delta and the only one that puts a value **back**, for
+the half of that question absence cannot answer. The pointer ownership entry answers two things
+at once: `path` is which path this host's pointer **is**, and the placement keys
+(`hostrecord.POINTER_PLACEMENT`) are the evidence that a link this command **placed** is there.
+Absence is the right rollback only for a run that INTRODUCED the entry. A run that inherited one
+and failed must not erase it, because the path goes with it and the registration names that
+path — a retry with a different `--dest` then derives another path and reads a registration
+nobody changed as a conflict. So an inherited entry goes back: whole where the link was put
+back, and with its placement **withdrawn** where the rollback established the link is absent,
+which keeps the path and still refuses a link that turns up there afterwards. It compares
+against the path **this run wrote** and carries the entry it **found** as two separate values,
+because a caller handed its path before the lock can have written over an entry naming
+somewhere else. What the rollback actually did is read back from the record rather than inferred
+from the delta having been sent, so it can answer `moved on` truthfully. It reports the state
+the record was left IN, which is not the same claim as "this call wrote it": a compare that
+matched what was already there reports the same answer, and that is the honest one, because the
+question is what a later run will read.
+
 ### The failure contract
 
 The reading boundary answers questions about records. Underneath it, `main()` converts anything
@@ -924,11 +942,28 @@ placing one is: only a symbolic link, only while it still names what this run pl
 absence is read back before it is claimed. A restoration that cannot be read back reports a
 residual pointer and keeps the candidate rather than claiming the rollback completed.
 
-The ownership record goes with the link. The record is what makes a link this command's — the
-promotion refuses to replace one the record never recorded placing — so a rollback that removed
-the link and left the record behind said this command owns a link that is not there, and armed
-that guard in favour of whatever appeared at that path next. It is dropped only after the link is
-verifiably gone, and only for the path this run recorded.
+The ownership record goes with the link, for the run that PUT IT THERE. The record is what makes
+a link this command's — the promotion refuses to replace one the record never recorded placing —
+so a rollback that removed the link and left the record behind said this command owns a link that
+is not there, and armed that guard in favour of whatever appeared at that path next. An entry this
+run introduced is therefore dropped, and only for the path this run recorded. Where the rollback
+restored ABSENCE the record is written only after the link is verifiably gone, because writing it
+first would leave a link nobody recorded — the refusal shape from the opposite side. Where a link
+was REPLACED the record is written whichever way the restoration went, including when putting the
+previous target back could not be read back: a link is at that path either way, so the ordering
+that protects the absence case has nothing to protect here, and the result reports the link's own
+`verified: false` for what did not land.
+
+An entry this run INHERITED is a different question, because a link that is missing does not mean
+a record that is missing: a host whose recorded link was deleted out from under it has the entry
+and no link. Erasing it takes away the path the registration names, and a retry aimed at a
+different `--dest` then derives another path and reads a registration nobody changed as a
+conflict. So the entry stays and its PLACEMENT is withdrawn — the path the registration depends
+on is kept, and the guard goes on refusing whatever link turns up at that path, which is stricter
+than the state the update found. Where the link is instead put back, the entry goes back whole,
+which also takes this run's refreshed stamp off one it did not introduce; that happens whenever
+the link was replaced, including when the restoration could not be read back, because the path in
+the record is the same either way and the payload reports `verified: false` for the link itself.
 
 The two outcomes recovery already had are unchanged. Removal verified on the filesystem means the
 destination is retriable; removal that could not finish reports the residual path, what recovery
@@ -1692,13 +1727,37 @@ for path in sys.argv[1:]:
 
 # If an update has failed here, it has already restored what it found. Read that back rather
 # than assuming it -- and read residualPaths out of the FAILED RUN'S OWN result, which is what
-# THAT RUN left. diagnose now answers residualPaths too, and it is a different reading of a
-# different question: what is on the destination NOW. Neither is a superset of the other, which
-# is why the install result above is still kept rather than replaced by the diagnosis below.
+# THAT RUN left. diagnose answers residualPaths too, and it is a different reading of a
+# different question: what is on the destination NOW. Neither is a superset of the other, so
+# the install result above is kept rather than replaced by the diagnosis below.
+#
+# residualOwnership and recoveryRequires are read from the same result and for the same reason.
+# A rollback can settle the LINK and fail to settle the RECORD, and what that leaves is a claim
+# rather than a path: nothing is on disk to delete, so residualPaths is empty and correct while
+# the record still says something about that path. residualOwnership names the path whose claim
+# is outstanding. recoveryRequires is COMPOSED rather than chosen from a list, because what has
+# to be settled is two separate readings -- what became of the LINK (taken away, put back to a
+# named target, or not put back at all) and where the ENTRY came from (introduced by that run,
+# or inherited and left carrying its stamp) -- and the consequence follows from the pair. A
+# sentence that assumed either would tell an operator the link was put back when it was not, or
+# report a disagreement between a link and a record that in fact agree.
+#
+# Both are empty for a rollback that found the entry belonged to ANOTHER run by the time it
+# wrote. Nothing there is this run's to settle, so asking an operator to settle it would send
+# them after somebody else's record. That case is reported where it belongs, under
+# pointer.pointerRestored: 'ownership' reads "moved on", 'verified' is false because the
+# rollback did not do what it set out to, and 'detail' names the path the record holds now. The
+# command below prints 'pointer', so the receipt carries it.
+#
+# A RESUME or an adoption that fails reports the same rollback at the TOP level rather than
+# under 'pointer', because it never reaches the update's exit. It carries residualOwnership and
+# recoveryRequires from the same helper, so those two read the same either way, and the receipt
+# reads 'pointerRestored' as well so the rollback's own detail is there for both.
 "$controller" -c 'import json, sys
 result = json.load(open(sys.argv[1]))
 print(json.dumps({key: result.get(key) for key in
-                  ("failedStep", "retriable", "residualPaths", "removedCandidate", "pointer")},
+                  ("failedStep", "retriable", "residualPaths", "residualOwnership",
+                   "recoveryRequires", "removedCandidate", "pointer", "pointerRestored")},
                  indent=2))' <receipt>/install.json
 
 # Kept the same way, and under its own name: this is the recovery read-back, a different

@@ -17,11 +17,11 @@ from .ack import AckService
 from .admission import AnchorOrExplicit, admit_explicitly
 from .assignment import AssignmentView
 from .clock import SystemClock
-from .criteria import CriteriaService
+from .criteria import CriteriaService, finding_id
 from .currency import head_revision
 from .delivery import COMPLETION, DeliveryService
 from .errors import RelayError
-from . import guard, intent, marker
+from . import guard, intent, marker, restoration
 from .identity import ack_proof as derive_ack_proof
 from .manifest import build as build_manifest, freeze as freeze_manifest, revision_hash
 from .models import Endpoint, TurnRef
@@ -634,11 +634,75 @@ def cmd_verdict(services, args) -> dict:
         })
     if args.criteria:
         findings.extend(_settings_json(args.criteria))
-    return services.ack.record_verdict(
+    if args.restoration is not None:
+        # Declared against a finding, because a finding is the only thing the correction
+        # actually carries. Naming one that is not there is refused rather than ignored: a
+        # flag that silently attaches to nothing is the same silence this whole path removes.
+        #
+        # Omitted and empty are different answers, and argparse leaves this None only when the
+        # option is absent. A falsy check let --restoration "$UNSET" skip validation and
+        # marking altogether, so the verdict opened the next generation recording not_carried
+        # while every other carrier that names nothing is refused before that point.
+        # Compared through criteria.finding_id on BOTH sides, so this surface and the
+        # normalisation that follows it agree about which findings exist. Comparing the raw
+        # argument rejected ' c2' as naming no finding while the verdict went on to accept it
+        # as 'c2', and a rule that normalises one operand is half a rule.
+        wanted = finding_id(args.restoration)
+        if not wanted:
+            raise SystemExit2(
+                "--restoration names the criterion id whose finding carries the block, so it "
+                "cannot be empty. Leave the option out to carry no block",
+                EXIT_USAGE,
+            )
+        marked = [
+            item for item in criteria + findings
+            # Shape-checked here because --criteria accepts arbitrary JSON and this runs
+            # before normalise_findings can refuse it. Calling .get on a null entry raised an
+            # AttributeError out of a command whose contract is a named refusal and an exit
+            # code, so a malformed array answered with a traceback.
+            if isinstance(item, dict) and finding_id(item.get("id")) == wanted
+        ]
+        if not marked and all(isinstance(item, dict) for item in criteria + findings):
+            # Only when every entry was well formed. Otherwise the array itself is the
+            # problem, and normalise_findings owns that refusal and already words it.
+            raise SystemExit2(
+                f"--restoration names {args.restoration!r}, which is not one of the findings "
+                "this verdict carries. The block travels inside a finding, so it names one",
+                EXIT_USAGE,
+            )
+        for item in marked:
+            # An entry that already disclaims the block is a contradiction with the option,
+            # and overwriting it here would settle that argument before normalise_findings
+            # could see there had been one: --criteria could carry restoration false while
+            # --restoration named the same criterion, and the verdict would open the next
+            # generation instead of refusing. Only an absent or agreeing declaration is
+            # marked; a disagreeing one is returned to the caller to say once.
+            existing = item.get(restoration.FIELD)
+            if existing is False:
+                raise SystemExit2(
+                    f"--restoration names {wanted!r}, whose finding declares the restoration "
+                    "block false. One correction carries one block and says so once",
+                    EXIT_USAGE,
+                )
+            if existing is not None and not isinstance(existing, bool):
+                # Left exactly as it arrived, so normalise_findings refuses it by type. That
+                # rule belongs to the normaliser, and writing True over a bad value here would
+                # turn an invalid declaration into a valid one and take the refusal away from
+                # the only place that words it.
+                continue
+            item[restoration.FIELD] = True
+    record = services.ack.record_verdict(
         args.event, verdict=args.verdict, verdict_turn_id=args.verdict_turn,
         criteria=criteria or None, findings=findings or None, reason=args.reason,
         expect_criteria_digest=args.expect_criteria_digest,
     )
+    # Underscore-prefixed, which is this package's existing mark for a relay-owned annotation
+    # on a contract-shaped record: record_verdict already returns _replay the same way, and
+    # both the conformance suite and the ack tests strip exactly those keys before validating.
+    # verification-verdict.json closes additionalProperties on the record, so an unprefixed
+    # key here would be a contract violation dressed as observability - which is what the
+    # comment this replaces claimed not to be doing while doing it.
+    return dict(record, _restoration=services.ack.restoration_of(args.event))
 
 
 def cmd_show(services, args) -> dict:
@@ -681,6 +745,15 @@ def cmd_show(services, args) -> dict:
     # Every submission, because an earlier message may have elided part of its report and
     # sent its recipient here for the rest.
     payload["workReportSubmissions"] = read_work_reports(services.store, args.event)
+    # What became of this event's restoration block, if one was declared. Three kinds live
+    # here and they answer different questions. restoration_projected is what the ruling
+    # established BEFORE it opened the next generation, recorded against the event that was
+    # ruled on. restoration_rendered is what a later work report did to the message, recorded
+    # against the revision event that report reshaped. Both are preflight. Only
+    # restoration_attempted is about bytes that exist: it is written in the transaction that
+    # froze one attempt's message, so it says what that attempt carried rather than what the
+    # next one was expected to.
+    payload["restoration"] = _restoration_entries(services.store, args.event)
     if delivery is not None and args.message:
         # The bytes each attempt actually froze, with how far they got. A preview is offered
         # only when nothing has been prepared, and it is labelled a preview, because the old
@@ -691,6 +764,25 @@ def cmd_show(services, args) -> dict:
         if not prepared:
             payload["previewMessage"] = services.delivery.preview_message(args.event)
     return payload
+
+
+def _restoration_entries(store, event_id) -> list:
+    """Every recorded outcome for one event's restoration block, oldest first.
+
+    All three kinds, because the per-attempt one is the only measurement about bytes that
+    were actually frozen, and leaving it out of the documented inspection command would
+    return exactly the preflight projections while withholding the evidence.
+    """
+    rows = store.all(
+        "SELECT kind, at, detail FROM journal WHERE subject = ? AND kind IN (?,?,?)"
+        " ORDER BY seq",
+        (event_id, "restoration_projected", "restoration_rendered",
+         "restoration_attempted"),
+    )
+    return [
+        dict(json.loads(row["detail"]), kind=row["kind"], at=row["at"])
+        for row in rows if row["detail"]
+    ]
 
 
 def cmd_status(services, args) -> dict:
@@ -1754,6 +1846,11 @@ def build_parser() -> argparse.ArgumentParser:
              " unverified, which is the contract's frozen enum.",
     )
     verdict.add_argument("--criteria", help="a JSON array of findings, or @path to one")
+    verdict.add_argument(
+        "--restoration",
+        help="the criterion id whose finding carries this correction's restoration block."
+             " The verdict is refused if that finding would not reach the child.",
+    )
     verdict.add_argument("--reason", help="why an aborted or unverified verdict could not conclude")
     verdict.add_argument(
         "--expect-criteria-digest",
