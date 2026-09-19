@@ -966,7 +966,9 @@ was addressed, with no per-finding trail, is not that evidence.
 
 An optional review that is unavailable or stalled is recorded as unavailable, with sufficient
 independent review obtained instead under the repository's policy, and the work continues. Waiting
-indefinitely for an optional reviewer is not diligence.
+indefinitely for an optional reviewer is not diligence. A reviewer disabled by the
+[reviewer policy](merge-readiness.md#disabled-reviewer-policy) is not requested or awaited;
+its existing findings still require evidence-backed disposition.
 
 A missing mandatory review or a required check that has not passed is BLOCKED, and blocked is
 reported as blocked. It is never reported as completion with a note, because the note is what gets

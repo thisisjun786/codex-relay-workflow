@@ -21,6 +21,26 @@ that. A draft candidate is not merge-ready, and the fix is to publish it for rev
 describes, not to merge around the gap. Findings or pending CI on an open pull request
 never send it back to draft.
 
+## Disabled reviewer policy
+
+GitHub Codex automatic code review is disabled and is not a CRW completion or
+merge gate. Do not trigger it, re-request it after a push, or wait for a fresh-head
+Codex review or a settling period. Re-enabling it requires a new explicit user
+decision; an old assignment, review comment, or pending check does not supply one.
+Record it as disabled/not required, never as a successful review.
+
+This applies to the external GitHub reviewer, not Codex execution tasks, their
+model settings, CXC's workflow or independent review. Keep the target repository's
+policy for other reviewers, required CI, parent verification, and sufficient
+independent evidence. If an enforced GitHub rule still requires the disabled
+reviewer, report the specific configuration conflict for authorized correction;
+do not bypass the rule or silently change repository settings.
+
+Existing findings remain subject to the triage below, regardless of their author.
+A disabled reviewer does not excuse a confirmed defect or justify resolving its
+threads without evidence. Refresh stale launch and recovery instructions on the
+same parent and child tasks; preserve their work and dependency gates.
+
 ## Check CI for this candidate
 
 Inspect both check runs and commit statuses, including their source identities,
