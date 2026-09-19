@@ -1406,7 +1406,7 @@ def alive(pid):
 def process_state(pid):
     """The kernel's own state letter for this process, or None where the host cannot say.
 
-    The same line `process_started_at` reads, and the field before the one it takes: the comm
+    The same line `process_uptime` reads, and the field before the one it takes: the comm
     can hold spaces and brackets, so the split is on its closing bracket rather than whitespace.
     """
     try:
@@ -1423,12 +1423,12 @@ def session_of(pid):
         return None
 
 
-def process_started_at(pid):
-    """When this process itself started, or None where the host cannot say.
+def process_uptime(pid):
+    """How long this process has been running, or None where the host cannot say.
 
     The record declares when a supervisor was launched, and a restarted supervisor keeps the old
     declaration: a new process alive for two seconds then satisfied any minimum. The process's own
-    start time is the one that belongs to the pid being observed.
+    age is the one that belongs to the pid being observed.
 
     Read from the kernel's own start-time field rather than from the stat of /proc/<pid>. That
     directory's ctime is when its inode was instantiated, which is the process's start on some
@@ -1437,16 +1437,19 @@ def process_started_at(pid):
     minimum. Field 22 of /proc/<pid>/stat is boot-relative ticks and is defined, so it says the
     same thing everywhere. The comm field can hold spaces and brackets, so the split is on its
     closing bracket rather than on whitespace.
+
+    Measured against CLOCK_BOOTTIME, which shares that origin, so the answer is an age rather
+    than a difference between two readings of a wall clock. Deriving a start moment from the wall
+    clock and subtracting it from the wall clock later gives the same number only while nothing
+    corrects the clock in between.
     """
     try:
         with open("/proc/" + str(int(pid)) + "/stat", encoding="utf-8") as handle:
             after = handle.read().rsplit(")", 1)[1].split()
-        # The boot epoch to the same precision as the ticks it is added to. /proc/stat's btime is
-        # a whole second, so adding precise ticks to it moves the fraction the second dropped
-        # into the process's age: a supervisor could satisfy a sub-second minimum up to a second
-        # early. CLOCK_BOOTTIME carries the fraction, so the two halves agree.
-        boot = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
-        return boot + int(after[19]) / os.sysconf("SC_CLK_TCK")
+        # Both halves carry the fraction. /proc/stat's btime is a whole second, so a start moment
+        # built from it moved the dropped fraction into the process's age and a supervisor could
+        # satisfy a sub-second minimum up to a second early.
+        return time.clock_gettime(time.CLOCK_BOOTTIME) - int(after[19]) / os.sysconf("SC_CLK_TCK")
     except (OSError, TypeError, ValueError, IndexError, AttributeError):
         return None
 
@@ -1465,8 +1468,8 @@ def reading_process(record, relay, sleeper=time.sleep):
 
     launched = moment(supervisor.get("launchedAt"), "supervisor.launchedAt")
     minimum = supervisor.get("minimumAliveSeconds")
-    started = process_started_at(pid)
-    if started is None:
+    measured = process_uptime(pid)
+    if measured is None:
         # No /proc here, which is most hosts that are not Linux. The record's declaration is what
         # is left, and the cell says which of the two it read rather than refusing every trial on
         # such a host or passing one off as the other.
@@ -1479,7 +1482,7 @@ def reading_process(record, relay, sleeper=time.sleep):
                                     + str(minimum) + ". A restarted supervisor keeps that"
                                     " declaration, and there is nothing here that would notice")))
     else:
-        lived = time.time() - started
+        lived = measured
         declared = time.time() - launched.timestamp()
         ok = lived >= minimum
         cells.append(cell("uptime", VERIFIED if ok else NOT_VERIFIED, provenance=READ,

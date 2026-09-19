@@ -233,12 +233,12 @@ class World:
         wanted = min(self.record["supervisor"]["minimumAliveSeconds"], 1) + 0.02
         deadline = time.time() + 10
         while time.time() < deadline:
-            started = startup.process_started_at(self.supervisor.pid)
-            if started is None:
+            age = startup.process_uptime(self.supervisor.pid)
+            if age is None:
                 # No /proc, so the reading uses the record's own launchedAt instead and this
                 # wait has nothing to measure against.
                 break
-            if time.time() - started >= wanted:
+            if age >= wanted:
                 break
             time.sleep(0.02)
         self.record["supervisor"]["pid"] = self.supervisor.pid
@@ -2636,8 +2636,8 @@ class TwentySecondHostedRound(TrialCase):
         self.assertIn("this process has been running", cell["evidence"])
 
     def test_uptime_is_unknown_where_the_host_cannot_say(self):
-        self.assertIsNone(startup.process_started_at(0))
-        self.assertIsNotNone(startup.process_started_at(os.getpid()))
+        self.assertIsNone(startup.process_uptime(0))
+        self.assertIsNotNone(startup.process_uptime(os.getpid()))
 
     def test_a_capture_that_expires_during_the_run_fails_at_the_end(self):
         self.world.start_supervisor()
@@ -2675,12 +2675,12 @@ class TwentyThirdHostedRound(TrialCase):
         record = startup.load_start(str(self.world.trial / "start.json"),
                                     environment=self.world.environment())
         record["_now"] = startup.datetime.datetime.now(startup.datetime.timezone.utc)
-        original = startup.process_started_at
-        startup.process_started_at = lambda pid: None
+        original = startup.process_uptime
+        startup.process_uptime = lambda pid: None
         try:
             document = startup.preflight(record, sleeper=lambda seconds: time.sleep(0.4))
         finally:
-            startup.process_started_at = original
+            startup.process_uptime = original
         cell = cells_of(document, "processPersistence")["uptime"]
         # The record declares two minutes, so it passes there, and the cell says which it read.
         self.assertEqual(cell["value"], VERIFIED)
@@ -3689,14 +3689,14 @@ class ThirtySeventhHostedRound(TrialCase):
         self.addCleanup(child.wait)
         self.addCleanup(child.terminate)
         time.sleep(1.2)
-        age = time.time() - startup.process_started_at(child.pid)
+        age = startup.process_uptime(child.pid)
         self.assertGreaterEqual(age, 1.0,
                                 "a process that had been running read as younger than it is")
         self.assertLess(age, 30)
 
     def test_an_unreadable_process_is_unknown_rather_than_a_time(self):
-        self.assertIsNone(startup.process_started_at(0))
-        self.assertIsNone(startup.process_started_at("not a pid"))
+        self.assertIsNone(startup.process_uptime(0))
+        self.assertIsNone(startup.process_uptime("not a pid"))
 
 
 class ThirtyEighthHostedRound(TrialCase):
@@ -3744,8 +3744,9 @@ class ThirtyEighthHostedRound(TrialCase):
         self.addCleanup(child.wait)
         self.addCleanup(child.terminate)
         time.sleep(0.4)
-        started = startup.process_started_at(child.pid)
-        self.assertIsNotNone(started)
+        age = startup.process_uptime(child.pid)
+        self.assertIsNotNone(age)
+        started = time.time() - age
         # A tight bound on purpose: the fraction btime drops is whatever this host booted at,
         # 0.04s here and up to a second elsewhere, so a loose margin would pass on the hosts
         # where the error happens to be small and prove nothing.
