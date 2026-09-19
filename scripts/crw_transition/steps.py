@@ -90,12 +90,17 @@ def retire(path, into=None, stem=None):
         # case -- and a rename cannot cross one. Copy first, then unlink, so the archive exists
         # before the original stops existing: this failure happens after the standdown, and an
         # unrecoverable source there means no completion hook at all.
+        #
+        # Both halves, or neither. A copy that lands while the unlink fails leaves the document
+        # live AND archived under a valid recovery name, and the caller never learns the name
+        # because this raises instead of returning it: a later recovery would take that stale
+        # copy as the newest retired settings, out of a run that retired nothing.
         try:
             shutil.copy2(str(path), target)
+            os.unlink(str(path))
         except OSError:
             _discard(target)
             raise
-        os.unlink(str(path))
     return target
 
 

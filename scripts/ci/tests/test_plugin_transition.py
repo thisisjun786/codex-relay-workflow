@@ -2921,6 +2921,36 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("the same surface, once each", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
+    def test_an_archive_whose_source_cannot_be_removed_leaves_no_copy(self):
+        """Copied and not unlinked is live and archived at once, and a recovery takes the copy."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        source = Path(self.directory) / "settings-on-a-read-only-volume.json"
+        source.write_text('{"kept": true}', encoding="utf-8")
+        home = Path(self.directory) / "home-for-failed-archives"
+        home.mkdir()
+        real_replace, real_unlink = os.replace, os.unlink
+
+        def refuse_to_rename(src, dst, *arguments, **keywords):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        def refuse_to_unlink(path, *arguments, **keywords):
+            if str(path) == str(source):
+                raise OSError(errno.EPERM, "Operation not permitted")
+            return real_unlink(path, *arguments, **keywords)
+
+        os.replace, os.unlink = refuse_to_rename, refuse_to_unlink
+        try:
+            with self.assertRaises(OSError):
+                steps.retire(source, into=home, stem="crw-completion-hook.json")
+        finally:
+            os.replace, os.unlink = real_replace, real_unlink
+        self.assertTrue(source.is_file(), "the document that was not retired is still live")
+        self.assertEqual(sorted(home.glob("crw-completion-hook.json.superseded-*")), [],
+                         "a refused retirement left an archive a later recovery would take")
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
