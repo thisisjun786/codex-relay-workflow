@@ -312,6 +312,24 @@ def preflight(host, options):
                         " installation this host keeps first")
 
     registered = host.get("registered") or {}
+    fixed_document = host["settings"].get("document")
+    carried = registered.get("document")
+    if (fixed_document is not None and carried is not None
+            and completion.owner_of(fixed_document) == completion.OWNER_PLUGIN
+            and completion.owner_of(carried) == completion.OWNER_USER
+            and any(fixed_document.get(field) != carried.get(field)
+                    for field in inventory.OPERATIONAL)):
+        # Both owners are live: the plugin already owns the fixed path while a proven registration
+        # still reads a user-owned document that says something else. Reading only the fixed one
+        # made the retire step answer ALREADY, so the custom document was never archived, the
+        # registration was removed anyway, and the retry -- which can no longer find that
+        # document -- settled on the plugin configuration and abandoned the manual store.
+        refusals.append("the settings at " + str(host["settings"]["path"]) + " already name the"
+                        " plugin while " + str(registered.get("from")) + " still names the "
+                        + completion.OWNER_USER + " and says something else about "
+                        + ", ".join(field for field in inventory.OPERATIONAL
+                                    if fixed_document.get(field) != carried.get(field))
+                        + ". Two owners are live here: settle which installation this host keeps")
     unreadable = (registered.get("conflict") or {}).get("unreadable") or []
     if unreadable:
         refusals.append("a registration names settings that could not be read, so what it is"
@@ -537,10 +555,18 @@ def settings_retire(host, options, *, apply=False):
     paths = [path for index, path in enumerate(paths) if path not in paths[index + 1:]]
     if not paths:
         return _answer("settings retire", ALREADY, "no settings file is there to retire")
-    document = host["settings"]["document"]
-    if document and completion.owner_of(document) == completion.OWNER_PLUGIN:
+    known = ((host.get("registered") or {}).get("conflict") or {}).get("documents") or {}
+    owners = []
+    for candidate in paths:
+        document = known.get(candidate)
+        if document is None:
+            document, _outcome, _detail, _found = completion.read_configuration(Path(candidate))
+        owners.append(completion.owner_of(document) if document else None)
+    if owners and all(owner == completion.OWNER_PLUGIN for owner in owners):
+        # Every document that would be retired already names the plugin. Deciding this from the
+        # fixed path alone left a user-owned document a registration still reads unarchived.
         return _answer("settings retire", ALREADY,
-                       "the settings already name the plugin as the owner")
+                       "every settings document here already names the plugin as the owner")
     if not apply:
         return _answer("settings retire", WOULD, "would retire " + ", ".join(paths), paths=paths)
     home = Path(host["codexHome"])

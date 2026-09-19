@@ -761,9 +761,10 @@ class TheFindingsFromReview(TransitionCase):
         # ownership lock exists for -- the retire step stands down instead of taking the plugin
         # record the first run wrote. Driven through transition(), because the re-read happens
         # there, inside the lock, not in the step.
-        current = {**stale,
-                   "hook": inventory.read_hook(host.home, repo_root=ROOT),
-                   "settings": inventory.read_settings(host.home)}
+        # Everything refreshed EXCEPT the MCP reading, which is the one the ownership lock exists
+        # to re-take. Leaving the settings proof stale as well would stop the run a step earlier.
+        fresh = inventory.snapshot(host.home, repo_root=ROOT)
+        current = {**fresh, "mcp": stale["mcp"]}
         results = steps.transition(current, {"accept_hook_trust_gap": True}, apply=True)
         outcomes = {item["step"]: item["outcome"] for item in results}
         self.assertEqual(outcomes.get("mcp record retire"), "already_done",
@@ -1323,6 +1324,31 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(answer["destination"], str(host.destination.resolve()))
         self.assertTrue(os.path.isabs(host.record()["bridgeExecutable"]))
         self.assertTrue(os.path.isabs(host.settings()["adapterEntryPoint"]))
+
+    def test_two_live_owners_with_different_settings_are_refused(self):
+        """The plugin owns the fixed path while a registration still reads a user-owned document."""
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json",
+                                           markerRoot=str(self.host.marker / "manual"))
+        plugin_owned = json.loads(fixed.read_text(encoding="utf-8"))
+        plugin_owned.update({"owner": "plugin", "markerRoot": str(host.marker / "plugin"),
+                             "adapterInterpreter": str(host.destination / "current" / "bin"
+                                                       / "python3"),
+                             "adapterEntryPoint": str(host.destination / "current" / "bin"
+                                                      / "crw-completion-hook")})
+        fixed.write_text(json.dumps(plugin_owned), encoding="utf-8")
+        host.install_plugin()
+        before = host.hooks_document()
+
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("Two owners are live here", answer["results"][0]["detail"])
+        self.assertIn("markerRoot", answer["results"][0]["detail"])
+        # Nothing removed, and the manual document is still there to identify the installation.
+        self.assertEqual(host.hooks_document(), before)
+        self.assertTrue(custom.is_file())
+        self.assertEqual(json.loads(custom.read_text(encoding="utf-8"))["markerRoot"],
+                         str(host.marker / "manual"))
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
