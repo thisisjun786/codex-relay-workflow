@@ -218,6 +218,12 @@ def preflight(host, options):
                         " read (" + str(mcp["table"]) + ": " + str(mcp["detail"]) + "), so"
                         " whether this host registers " + inventory.SERVER_NAME + " was not"
                         " established")
+    for alias in mcp.get("aliases") or []:
+        refusals.append("the table [mcp_servers." + str(alias["name"]) + "] in "
+                        + mcp["configPath"] + " starts the same bridge under another name ("
+                        + str(alias["command"]) + "). Leaving it while the plugin declares its own"
+                        " would start two bridges, and renaming somebody's server is not this"
+                        " command's to do: remove or rename that table first")
     if mcp["table"] == reading.PRESENT and not mcp["tableProven"]:
         refusals.append("the " + inventory.SERVER_NAME + " table in " + mcp["configPath"]
                         + " is not the block this repository renders for the registration it"
@@ -228,14 +234,16 @@ def preflight(host, options):
                         + str(mcp["recordOutcome"]) + ")")
 
     flight = host["inFlight"]
-    busy = bool(flight.get("markerEntries"))
-    if busy and not options.get("allow_in_flight"):
-        refusals.append("the relay is carrying work (" + "; ".join(flight.get("how") or [])
-                        + "). Removing the hook now loses the completion record for a turn that"
-                          " is already running. Pass --allow-in-flight to proceed knowingly")
-    if flight.get("state") in reading.UNUSABLE and not options.get("allow_in_flight"):
-        refusals.append("whether the relay is carrying work could not be established ("
-                        + str(flight.get("detail")) + ")")
+    # Reported, never a refusal. A marker entry is created once and outlives the work it recorded,
+    # so refusing on its presence permanently blocks every host that has ever run a managed turn,
+    # and the reading it rests on was never about liveness in the first place. What the operator
+    # gets instead is the history, the store path, and a statement that whether a turn is running
+    # now was not established here.
+    notes.append({"work": {"markerHistory": flight.get("markerHistory"),
+                           "storePath": flight.get("storePath"),
+                           "storeExists": flight.get("storeExists"),
+                           "liveness": flight.get("liveness"),
+                           "why": flight.get("note")}})
 
     return _answer("preflight", REFUSED if refusals else SETTLED,
                    "; ".join(refusals) if refusals else "nothing blocks this transition",

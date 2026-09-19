@@ -251,15 +251,35 @@ class PreflightRefusesBeforeItRemovesAnything(TransitionCase):
         self.assertEqual(host.config(), text)
 
     @needs_reader
-    def test_work_in_flight_is_reported_and_refused_until_it_is_allowed(self):
+    def test_marker_history_is_reported_and_never_refuses_on_its_own(self):
+        """A marker is created once and outlives the work it recorded.
+
+        Refusing on its presence would block every host that has ever run a managed turn, and the
+        reading was never about liveness. The history is reported; the refusal is not.
+        """
         host = self.ready()
         (host.marker / "published").mkdir(parents=True, exist_ok=True)
         (host.marker / "published" / "an-assignment").write_text("{}", encoding="utf-8")
         code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
+        work = [note["work"] for note in answer["results"][0]["notes"] if "work" in note]
+        self.assertEqual(len(work), 1)
+        self.assertIn("published", work[0]["markerHistory"])
+        self.assertIsNone(work[0]["liveness"])
+
+    @needs_reader
+    def test_a_bridge_registered_under_another_name_is_refused(self):
+        """register-mcp takes --name, so the same bridge can sit under a table we do not declare."""
+        host = self.ready()
+        host.append_config('[mcp_servers.my-bridge]\ncommand = "'
+                           + str(host.destination / "current" / "bin" / "codex-thread-bridge")
+                           + '"\n')
+        before = host.config()
+        code, answer = host.transition("--apply")
         self.assertEqual(code, 1)
-        self.assertIn("carrying work", answer["results"][0]["detail"])
-        code, _ = host.transition("--apply", "--allow-in-flight")
-        self.assertEqual(code, 0)
+        self.assertIn("starts the same bridge under another name",
+                      answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
 
 
 @needs_reader
@@ -606,8 +626,77 @@ class TheFindingsFromReview(TransitionCase):
         code, answer = host.transition("--apply")
         self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
         _, seen = host.call("inspect")
-        self.assertIn("did not run the relay status command", " ".join(seen["host"]["inFlight"]["how"]))
+        self.assertIn("did not run the relay status command",
+                      " ".join(seen["host"]["inFlight"]["how"]))
         self.assertTrue(seen["host"]["inFlight"]["storeExists"])
+        self.assertIsNone(seen["host"]["inFlight"]["liveness"])
+
+
+@needs_reader
+class InterruptionAfterEveryStepConverges(TransitionCase):
+    """A run stopped after each individual step, then finished by an ordinary rerun.
+
+    The earlier version of this claim rested on a case that stopped at preflight, which proves
+    only that nothing happened. This stops the sequence after step 1, after step 2, and so on by
+    driving the step functions directly, then runs the real CLI and requires it to reach the same
+    end state. That is what "converges on the next run" has to mean.
+    """
+
+    def end_state(self, host):
+        """The host as JSON with its own root spelled out of it.
+
+        Every host here lives in its own temporary directory, so comparing raw paths would compare
+        the directories rather than the states. What is being compared is the SHAPE each run
+        arrived at.
+        """
+        state = {"config": host.config(), "hooks": host.hooks_document(),
+                 "settings": host.settings(), "record": host.record(),
+                 "skills": sorted(p.name for p in (host.home / "skills").iterdir())
+                 if (host.home / "skills").is_dir() else []}
+        text = json.dumps(state, indent=2, sort_keys=True)
+        return text.replace(str(host.root), "<host>").replace(
+            str(Path(host.root).resolve()), "<host>")
+
+    def build(self, label):
+        import tempfile
+        directory = tempfile.mkdtemp(dir=self.directory, prefix=label + "-")
+        host = Host(Path(directory))
+        host.manual_install()
+        host.install_plugin()
+        return host
+
+    def test_stopping_after_each_step_still_converges_to_the_same_host(self):
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        reference = self.build("reference")
+        code, _ = reference.transition("--apply")
+        self.assertEqual(code, 0)
+        wanted = self.end_state(reference)
+
+        options = {"accept_hook_renumbering": False, "accept_hook_trust_gap": True}
+        for stop_after in range(1, len(steps.ORDER) + 1):
+            with self.subTest(stopAfter=steps.ORDER[stop_after - 1][0]):
+                host = self.build("cut%d" % stop_after)
+                host_view = inventory.snapshot(host.home, repo_root=ROOT)
+                previous = host_view["settings"]["document"]
+                for name, step in steps.ORDER[:stop_after]:
+                    # Each step decides from disk, so the snapshot is retaken the way a fresh
+                    # process would take it. Only the settings source is carried, exactly as the
+                    # sequence does.
+                    host_view = inventory.snapshot(host.home, repo_root=ROOT)
+                    if name == "settings install":
+                        answer = step(host_view, options, apply=True, previous=previous)
+                    else:
+                        answer = step(host_view, options, apply=True)
+                    self.assertIn(answer["outcome"], ("settled", "already_done", "would_change"),
+                                  name + ": " + str(answer.get("detail")))
+                code, answer = host.transition("--apply")
+                self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
+                self.assertEqual(self.end_state(host), wanted,
+                                 "a run cut after " + steps.ORDER[stop_after - 1][0]
+                                 + " did not converge to the same host")
 
 
 if __name__ == "__main__":

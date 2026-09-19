@@ -51,7 +51,6 @@ def options_of(args):
         "apply": bool(args.apply),
         "accept_hook_renumbering": bool(getattr(args, "accept_hook_renumbering", False)),
         "accept_hook_trust_gap": bool(getattr(args, "accept_hook_trust_gap", False)),
-        "allow_in_flight": bool(getattr(args, "allow_in_flight", False)),
     }
 
 
@@ -140,8 +139,6 @@ def build():
     move.add_argument("--accept-hook-trust-gap", action="store_true",
                       help="proceed when no [hooks.state] entry records trust for the plugin's"
                            " hook, accepting that nothing fires until it is trusted")
-    move.add_argument("--allow-in-flight", action="store_true",
-                      help="proceed while the relay is carrying work")
     move.set_defaults(handler=cmd_transition)
 
     off = sub.add_parser("disable")

@@ -26,6 +26,7 @@ HOOK_DOCUMENT = "wiring/hooks/stop-recording-completion.json"
 # to in order to learn the destination an existing install used.
 POINTER_SEGMENTS = (pointer.POINTER_NAME, "bin")
 RELAY_SCRIPT = "codex-session-relay"
+BRIDGE_SCRIPT = "codex-thread-bridge"
 ADAPTER_SCRIPT = "crw-completion-hook"
 INTERPRETER_SCRIPT = "python3"
 
@@ -68,6 +69,25 @@ def same_adapter(path, repo_root):
     except OSError:
         return False
 
+
+def settle(path):
+    """One spelling for a path, so two names for one file compare equal."""
+    try:
+        return os.path.realpath(os.path.expanduser(str(path)))
+    except (OSError, ValueError):
+        return str(path)
+
+
+def runs_the_bridge(command):
+    """Whether a registered command starts the task bridge, whatever the table is called.
+
+    The console script's name is the fact that travels: a registration made by this repository
+    runs <destination>/current/bin/codex-thread-bridge, and an operator who renamed the SERVER did
+    not rename that.
+    """
+    if not command:
+        return False
+    return Path(settle(command)).name == BRIDGE_SCRIPT
 
 def config_path(codex_home):
     return Path(codex_home) / "config.toml"
@@ -361,6 +381,13 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
             answer["table"] = codexconfig.UNREADABLE
             answer["detail"] = "; ".join(view.unreadable)
         else:
+            # register-mcp takes --name, so a manual install may have registered this same bridge
+            # under another server name. Looking only for the declared name would leave that table
+            # in place beside the plugin's declaration, and the host would start two bridges.
+            answer["aliases"] = [
+                {"name": other, "command": entry.get("command"), "args": entry.get("args")}
+                for other, entry in sorted(view.servers.items())
+                if other != name and runs_the_bridge(entry.get("command"))]
             present, registration = codexconfig.registration_of(view, name)
             if present:
                 answer["table"] = reading.PRESENT
@@ -405,15 +432,20 @@ def read_pointer(destination):
 
 
 def read_in_flight(document):
-    """Work the relay is carrying, read without ever creating a store.
+    """What the records say about work, and what they cannot say.
 
     The relay's Store opens its file O_RDWR and runs the schema script on open, so asking a relay
     about a database that is not there CREATES an empty one, and an empty store answers "nothing in
     flight". That answer would be wrong in the one direction that matters, so the question is only
     asked when the file already exists, and the marker root is listed either way.
     """
-    answer = {"state": reading.ABSENT, "markerEntries": None, "snapshot": None, "detail": None,
-              "how": []}
+    answer = {"state": reading.ABSENT, "markerHistory": None, "liveness": None, "detail": None,
+              "how": [],
+              "note": ("a workspace marker is created once and stays after the work it recorded"
+                       " finished, so its entries are history rather than work in flight. Whether"
+                       " a turn is running right now is not establishable from these records, and"
+                       " this reading does not pretend otherwise: it reports what is there and"
+                       " refuses nothing on the strength of it.")}
     if not document:
         answer["state"] = reading.UNREADABLE
         answer["detail"] = "no settings document, so no relay or marker root was named"
@@ -423,7 +455,7 @@ def read_in_flight(document):
         root = Path(marker)
         answer["how"].append("listed " + str(root))
         if root.is_dir():
-            answer["markerEntries"] = sorted(p.name for p in root.iterdir())[:50]
+            answer["markerHistory"] = sorted(p.name for p in root.iterdir())[:50]
             answer["state"] = reading.PRESENT
     database = document.get("dbPath")
     if database:

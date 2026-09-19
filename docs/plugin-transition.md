@@ -75,10 +75,12 @@ again. The transition refuses to do that until `--accept-hook-renumbering` says 
 every identity that would shift. When the entry is the only hook in its matcher group, the group is
 left in place and empty, which renumbers nothing.
 
-Trust for the plugin's own hook is read from `[hooks.state]`. An untrusted declared hook fires zero
-times, so removing a trusted registration while the replacement is untrusted leaves a host with no
-completion hook at all. Nothing in this repository grants trust: trust the hook first, or pass
-`--accept-hook-trust-gap` to accept the window knowingly.
+Trust for the plugin's own hook is reported, never asserted. A `[hooks.state]` entry records a hash
+for the hook as it stood when trust was given, and nothing here can compute the hash Codex compares
+it against, so a stale or fabricated record is indistinguishable from a current one. An untrusted
+declared hook fires zero times, which would turn the window above into a host with no completion
+hook at all. So the transition reports the key it found, reports that the hash was not compared, and
+requires `--accept-hook-trust-gap` on every run. Trust the hook and confirm it fires first.
 
 ## Preflight refuses rather than half-finishing
 
@@ -91,9 +93,16 @@ a cache version that passes `scripts/ci/plugin.py --payload`, because an empty h
 empty `mcp.json` satisfy a file census and leave nothing working; the cached package carrying every
 skill the links being removed provide; the destination pointer resolving, and the adapter, its
 interpreter and the bridge each existing as executable files, because a dangling pointer still reads
-as a link; every registration proven; and no work in flight, which is read by listing the marker root
-and by asking the relay only when its database already exists, since asking about a database that is
-not there would create an empty one that answers "nothing in flight".
+as a link; and every registration proven, including any table that starts the same bridge under
+another name, because `register-mcp` takes `--name` and leaving an alias would start two
+bridges.
+
+Work in flight is reported rather than judged. The relay is never asked: its status subcommand takes
+no store argument, asking about an absent store would create one, and an idle relay answers with a
+nonempty object. The marker root is listed instead, and a marker is created once and outlives the
+work it recorded, so those entries are history. Whether a turn is running right now is not
+establishable from these records, and the run says so rather than refusing on a reading that was
+never about liveness.
 
 ## Re-running, and an interrupted run
 
