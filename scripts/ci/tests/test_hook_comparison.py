@@ -64,6 +64,16 @@ FIRING_CELLS = ("firedCommand", "adapterOutcome", "observation", "guardDecision"
                 "processWallMs", "processExit", "startedExecutable", "startedCommand",
                 "startedEntryPoint", "unexpectedExecutions", "writesOutsideRoot")
 
+# Every place in the harness that measures one path against another, and what each is for.
+# There is exactly one containment answer, which is what lets the entry-versus-target rule
+# reach every traced call and every place the run creates rather than the one that was
+# reported. A third entry here has to say which of the two kinds it is before it can exist.
+WHAT_COMPARES_A_PATH = {
+    "owned": "the one containment answer: is this path inside the run's own directory",
+    "_digest": "a relative path used as a stable key inside a digest, not a containment"
+               " answer and never consulted about where anything was written",
+}
+
 # Every answer that means there is nothing there, written here. The harness declares its own and
 # this check requires the two to be the same set: importing the harness's would have made every
 # absence comparison below agree with whatever the harness currently calls an absence.
@@ -1180,6 +1190,38 @@ class ProcessWitnessTests(unittest.TestCase):
         for one in said:
             self.assertEqual(one["changedTheFile"], "may_have_changed",
                              "the witness decided an open the trace leaves undetermined")
+
+    @unittest.skipUnless(HAVE_RELAY and CAN_WITNESS, "the demonstration starts a real process"
+                                                     " under a real tracer")
+    def test_an_entry_planted_outside_the_root_is_caught_though_it_points_back_inside(self):
+        """A firing that makes a path the run never named, where the path leads somewhere it did."""
+        self.assertTrue(hasattr(harness, "tracer_probe"),
+                        "the harness witnesses no write a subprocess makes")
+        arm, built = self.witness_arm()
+        outside = Path(tempfile.mkdtemp(prefix="hook-comparison-elsewhere-"))
+        self.addCleanup(shutil.rmtree, str(outside), True)
+        outside = outside.resolve()
+        planted = outside / "entry-planted-outside-the-root"
+        (outside / "sitecustomize.py").write_text(
+            "import os\n"
+            "try:\n"
+            "    os.symlink(" + repr(str(arm.run_root)) + ", " + repr(str(planted)) + ")\n"
+            "except FileExistsError:\n"
+            "    pass\n", encoding="utf-8")
+        kept = arm.environment
+        arm.environment = dict(kept, PYTHONPATH=str(outside))
+        try:
+            strayed = self.fired_row(arm, built)
+        finally:
+            arm.environment = kept
+        self.assertTrue(planted.is_symlink(),
+                        "no entry was planted outside the root, so this case watches nothing")
+        self.assertTrue(str(Path(str(planted)).resolve()).startswith(str(arm.run_root)),
+                        "the planted entry does not point back inside the root, so it would be"
+                        " caught by resolving alone and proves nothing")
+        self.assertIn(str(planted), strayed["cells"]["writesOutsideRoot"]["value"],
+                      "an entry made outside the root was reported clean because its target"
+                      " resolved back inside")
 
     def test_a_host_that_cannot_witness_says_so_and_never_says_nothing_was_written(self):
         """The third property: an unwitnessable boundary is a reading nobody took.
@@ -2606,6 +2648,53 @@ class TheSweepDrivesTheRefusalRatherThanWatchingForItTests(unittest.TestCase):
         healthy = harness.stability({"sourceDigests": {"relay": "a" * 64}},
                                     {"sourceDigests": {"relay": "a" * 64}})
         self.assertTrue(healthy["met"], "an unchanged source has to still be able to pass")
+
+    def test_an_entry_outside_the_root_is_outside_however_its_target_resolves(self):
+        """The escape this closes, both ways round, and the ordinary case beside them.
+
+        A path names two things and they can disagree. A symlink planted outside the root whose
+        target is inside was reported clean while an entry had been made somewhere the run never
+        named; judging only the entry would miss a write through a link that lands outside.
+        """
+        inside = self.root / "inside"
+        elsewhere = Path(tempfile.mkdtemp(prefix="hook-comparison-elsewhere-"))
+        self.addCleanup(shutil.rmtree, str(elsewhere), True)
+        elsewhere = elsewhere.resolve()
+
+        planted = elsewhere / "entry-outside-pointing-in"
+        os.symlink(str(inside), str(planted))
+        self.assertFalse(harness.owned(str(planted), self.root),
+                         "an entry made outside the root was reported inside it because its"
+                         " target resolved inward")
+
+        bridge = self.root / "entry-inside-pointing-out"
+        os.symlink(str(elsewhere / "landed-out-there"), str(bridge))
+        self.assertFalse(harness.owned(str(bridge), self.root),
+                         "a write through a link that lands outside the root was reported inside")
+
+        self.assertTrue(harness.owned(str(inside), self.root),
+                        "an ordinary path inside the root stopped reading as inside")
+
+    def test_every_containment_answer_in_the_harness_comes_through_that_one_function(self):
+        """SUPPORT, and the sweep predicate, derived from source rather than asserted.
+
+        The entry-versus-target question applies to every call that makes a path - symlink, link,
+        rename, mknod, the open family - and to every place the run creates. It is answered once
+        because there is one place that answers it, so this checks that there is still only one.
+        """
+        tree = _harness_tree()
+        _parents, owner = _owners(tree)
+        compares = set()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "relative_to"):
+                compares.add(owner.get(node, "<module>"))
+        self.assertEqual(dict((name, WHAT_COMPARES_A_PATH.get(name)) for name in compares),
+                         WHAT_COMPARES_A_PATH,
+                         "a place compares a path against a root that this check does not"
+                         " name. Say whether it is a containment answer - in which case it"
+                         " has to go through owned() so the entry and target rule reaches"
+                         " it - or something else: " + json.dumps(sorted(compares)))
 
     def test_a_place_that_could_not_be_resolved_is_not_reported_as_inside_the_root(self):
         """The containment judgment, driven with an answer it could not take."""

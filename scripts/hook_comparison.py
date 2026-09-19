@@ -2329,23 +2329,42 @@ def own_directory(where):
 def owned(path, root):
     """Whether this path is inside this run's own directory: inside, outside, or unreadable.
 
-    Resolved on both sides rather than compared as text. A path that starts with the root as a
-    string can still lead outside it through a symlink, and "everything is written inside the
-    root" is a claim about where the bytes land rather than about how the path is spelled.
+    Asked of BOTH the entry and the place it leads, and outside if either one is. A path names
+    two things here and they can disagree: creating a symlink makes an ENTRY where the path is
+    spelled and says nothing about where it points, while writing through one puts the bytes
+    where it points and not where it is spelled.
 
-    Three answers rather than two, because a path that could not be resolved is not a path outside
-    the root: reporting it as outside names the wrong repair and claims to know where it led.
+    Resolving only the target was measured letting a firing plant a symlink outside the root
+    whose target was inside and be reported clean - an entry made somewhere the run never named,
+    which is the escape this witness exists to close. Judging only the entry would let a write
+    through a symlink land outside unseen, which is the same escape facing the other way. Both
+    are asked because either alone answers about something other than what happened.
+
+    Every containment answer in this file comes through here, so the rule holds for every call
+    in the traced table and for every place the run creates rather than for the one that was
+    reported: a symlink, a hard link, a rename, a mknod and an open are all judged the same way.
+
+    Three answers rather than two, because a path that could not be resolved is not a path
+    outside the root: reporting it as outside names the wrong repair and claims to know where it
+    led.
     """
     try:
-        resolved = Path(path).resolve()
+        spelled = Path(path)
+        # The parent IS resolved, so a write into a directory reached through a symlink is
+        # judged where it actually lands. Only the last component is left unfollowed, because
+        # that is the one the call creates rather than goes through.
+        wanted = (Path(root).resolve(), spelled.resolve(),
+                  spelled.parent.resolve() / spelled.name)
     except OSError as error:
         return Unreadable("this path could not be resolved, so where it leads is not"
                           " established: " + type(error).__name__ + ": " + str(error),
                           state=reading.ACCESS_ERROR)
-    try:
-        resolved.relative_to(Path(root).resolve())
-    except (ValueError, OSError):
-        return False
+    here, target, entry = wanted
+    for found in (target, entry):
+        try:
+            found.relative_to(here)
+        except (ValueError, OSError):
+            return False
     return True
 
 
