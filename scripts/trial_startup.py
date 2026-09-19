@@ -379,6 +379,12 @@ def number(value, what, *, minimum, maximum=None):
 def absolute(value, what):
     if not isinstance(value, str) or not value.startswith("/"):
         raise Refused(what + " must be an absolute path", value=value)
+    # A path is a thing this run opens and hands to processes, and a NUL byte makes it neither.
+    # Accepted here, it reached subprocess and raised there, so a record naming an impossible
+    # path came back as an internal error about this checker rather than as a refusal naming
+    # the field the operator wrote.
+    if "\0" in value:
+        raise Refused(what + " holds a NUL byte, which no path can carry", value=shown(value))
     return Path(value)
 
 
@@ -389,6 +395,12 @@ def canonical(value, what):
     .. or . segments, a trailing slash, a doubled separator or a ~, and a gate that accepted one
     would report a dispatch as ready that emit then refuses.
     """
+    # Judged against the relay's rule first, because that rule already covers a NUL and names the
+    # refusal the way this boundary has always named it. absolute() refuses a NUL too, for the
+    # paths nothing normalises; taking that refusal here would rename one the relay owns.
+    if isinstance(value, str) and "\x00" in value:
+        raise Refused(what + " is not a normalised absolute path", value=value,
+                      normalised=os.path.normpath(value.replace("\x00", "")))
     path = absolute(value, what)
     text = str(value)
     if ("\x00" in text or "~" in text or text != os.path.normpath(text)
@@ -1231,6 +1243,15 @@ class Relay:
                           subcommand=subcommand)
         argv = [self.launcher, "--state", self.state, "--socket", self.socket, subcommand]
         argv.extend(arguments)
+        # Every argument has to be one a process can actually be given. A NUL inside any of them
+        # makes subprocess raise on the way out, and this run would report an internal error
+        # about something the record supplied: refused by name here, and refused at load by
+        # absolute() for the paths, so a record this cannot run says so rather than raising.
+        for argument in argv:
+            if "\0" in str(argument):
+                raise Refused("a value this run would hand to the relay holds a NUL byte, which"
+                              " no argument can carry",
+                              subcommand=subcommand, value=shown(str(argument)))
         # The launcher's bytes are read immediately before each spawn, so a pointer moved between
         # two probes is caught at the next one rather than only at the end of the run.
         self.digests.add(digest_or_none(self.launcher))
@@ -1793,8 +1814,20 @@ def reading_capability(record, relay):
                 added = [] if actual is MISSING else sorted(
                     {key + "." + name for key, value in expect.items()
                      for name in beyond_declaration(value, field(actual, key))})
+                # Judged the way the consumer judges it, which is the same rule as the roots:
+                # a value passes here when the contract that receives it would pass it, and is
+                # named rather than refused when that contract never compares it. The bridge
+                # compares a policy in full only where the creation asked for one in full --
+                # requested.sandbox then carries the normalised policy, and carries {"type": ...}
+                # and nothing else where only a mode was asked. So an unknown key beside a full
+                # request is a receipt with a finding missing from it, and the same key beside a
+                # mode request is outside anything findings() would have reported.
+                in_full = {key for key, value in (() if requested is MISSING
+                                                  else requested.items())
+                           if isinstance(value, dict) and set(value) - {"type"}}
+                unechoed = sorted(name for name in added if name.split(".", 1)[0] in in_full)
                 ok = (names and not disagreed and not unasked and not unrequested and not beyond
-                      and not unanswered
+                      and not unanswered and not unechoed
                       and not inconsistent and requested is not MISSING
                       and isinstance(findings, list) and not findings
                       and actual is not MISSING and verified is not MISSING)
@@ -3059,17 +3092,7 @@ def supervisor_still_running(record, relay=None, sleeper=time.sleep):
     # The intent the supervisor itself re-reads at every worker boundary, asked again for the
     # same reason everything else here is: an owner who disables the service while the pass runs
     # leaves the current worker holding the lock and no replacement after it.
-    service = MISSING
-    serving = True
-    if (record.get("supervisor") or {}).get("service") and relay is not None:
-        probe = relay.relay("service", "status")
-        payload = probe["payload"] or {}
-        service = {"lock": shown(field(payload, "lock")),
-                   "enabled": shown(field(payload, "enabled")),
-                   "ownership": shown(field(payload, "ownership"))}
-        serving = (field(payload, "lock") == "held" and field(payload, "enabled") is True
-                   and field(payload, "ownership") == "ours"
-                   and same(field(payload, "pid"), pid))
+    service, serving = service_still_serving(record, relay, pid)
     return {"passed": still is True and detached and named and advanced and serving,
             "pid": pid, "aliveAgain": still, "detached": detached, "namesTheSamePid": named,
             "progressBefore": shown(anchor.get("progress")), "progressAfter": shown(after),
@@ -3134,12 +3157,60 @@ def supervisor_still_alive(record, answer, sleeper=time.sleep):
     still, theirs = alive(pid), session_of(pid)
     detached = theirs is not None and theirs != os.getsid(0)
     moved_again = seen is not None and held is not None and held > seen
-    answered = dict(answer, passed=still is True and detached and named and moved_again,
+    # The service verdict taken after the last probe travels with the rest. Recomputing passed
+    # here without it would drop a refusal already established, which is how a reading gets lost
+    # between two gates that each believe the other carries it.
+    serving = answer.get("servingAfterTheLastProbe", True)
+    answered = dict(answer,
+                    passed=still is True and detached and named and moved_again and serving,
                     aliveAfterTheLastProbe=still, detachedAfterTheLastProbe=detached,
                     progressAfterTheLastProbe=shown(held),
                     witnessNamesTheSamePidAfterTheLastProbe=named,
                     secondsSinceTheGatesOwnReading=round(since, 3))
     return {k: v for k, v in answered.items() if not k.startswith("_")}
+
+
+def service_still_serving(record, relay, pid):
+    """Whether the relay's service is still the one this supervisor holds, read now.
+
+    One definition, because two gates ask it: the supervisor gate before the last store probe
+    and the intent reading after it. The supervisor re-reads this intent at every worker
+    boundary, so an owner who disables the service mid-pass leaves the worker holding the lock
+    and nothing after it, and a trial cleared on the earlier reading publishes readiness for a
+    poller that stops at the next boundary.
+    """
+    if not (record.get("supervisor") or {}).get("service") or relay is None:
+        return MISSING, True
+    probe = relay.relay("service", "status")
+    payload = probe["payload"] or {}
+    return ({"lock": shown(field(payload, "lock")),
+             "enabled": shown(field(payload, "enabled")),
+             "ownership": shown(field(payload, "ownership")),
+             "readAt": stamp()},
+            field(payload, "lock") == "held" and field(payload, "enabled") is True
+            and field(payload, "ownership") == "ours" and same(field(payload, "pid"), pid))
+
+
+def service_intent_after_the_last_probe(record, relay, answer):
+    """The intent asked once more, after the last store probe.
+
+    The reading beside it was taken before a command that can run for as long as its timeout
+    allows, so a service disabled while that command ran sat behind a verdict older than it.
+
+    This is now the last relay command the run makes, and what that costs is stated rather than
+    closed: the store's identity is then read one service-status call earlier. No single relay
+    command answers both questions, so one of them is read before the other whichever way round
+    they go; this way the earlier one is the short local read of a lock record rather than a
+    doctor. Everything published after this point starts nothing.
+    """
+    if not answer.get("passed"):
+        return answer
+    pid = (record.get("_supervisor") or {}).get("pid")
+    service, serving = service_still_serving(record, relay, pid)
+    if service is MISSING:
+        return answer
+    return dict(answer, passed=answer["passed"] and serving,
+                serviceAfterTheLastProbe=service, servingAfterTheLastProbe=serving)
 
 
 def store_still_the_same(record, relay):
@@ -3285,6 +3356,10 @@ def preflight(record, *, sleeper=time.sleep):
     # behind a verdict taken before them. This is the last relay command the run makes, and the
     # launcher reading below covers its spawn.
     store_held = store_still_the_same(record, relay)
+    # The service's intent, asked after that probe for the same reason the counter is read after
+    # it: an owner who disables the service while a minute-long command runs leaves the worker
+    # holding the lock and no replacement after it. This is the last relay command the run makes.
+    supervisor = service_intent_after_the_last_probe(record, relay, supervisor)
     # And the poller once more, after that command. Whichever of these two runs last, the other's
     # verdict was taken before a subprocess that can take a minute, so ordering them against each
     # other only moves which one is stale. The store's identity is the last question the relay is

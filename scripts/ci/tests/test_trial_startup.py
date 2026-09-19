@@ -3476,7 +3476,7 @@ class ThirtyFifthHostedRound(TrialCase):
     payload that policy produces, and every valid workspace-write trial was refused.
     """
 
-    def declare(self, policy, recorded):
+    def declare(self, policy, recorded, asked=None):
         for boundary in self.world.record["boundaries"]:
             for participant in boundary["participants"]:
                 participant["expect"]["sandbox"] = policy
@@ -3485,6 +3485,11 @@ class ThirtyFifthHostedRound(TrialCase):
             capture = self.world.captures["receipt-" + task + ".json"]
             for half in ("requested", "actual"):
                 capture["settings"][half]["sandbox"] = recorded
+            # What the creation asked for, where a case needs it to differ from what came back.
+            # The bridge writes the normalised policy here when one was requested in full, and
+            # the resolved type alone when only a mode was.
+            if asked is not None:
+                capture["settings"]["requested"]["sandbox"] = asked
         self.world.start_supervisor()
         self.world.flush()
         return self.world.preflight()
@@ -3535,13 +3540,36 @@ class ThirtyFifthHostedRound(TrialCase):
         self.assertFalse(document["readyToStart"],
                          "a trial started with access the record never declared")
 
-    def test_a_key_outside_the_policy_contract_is_named_rather_than_compared(self):
-        # Nothing is silently accepted: a key neither the record nor the policy's own defaults
-        # name is reported, so an operator who cares about it can declare it.
+    def test_a_key_outside_a_policy_asked_for_in_full_is_a_receipt_missing_its_finding(self):
+        # This used to be graded verified on the reasoning that a key this checker does not know
+        # is reported rather than judged. The consumer says otherwise where the creation asked
+        # for the policy in full: normalise_policy keeps every key it is given and findings()
+        # compares the whole dictionary, so a host echoing one more key than was asked for
+        # produces a SETTINGS_NOT_PRESERVED finding. Empty findings beside that key is a receipt
+        # no bridge wrote, and reporting it while grading the cell verified accepted exactly the
+        # fabricated evidence this reading exists to catch.
         normalised = {"type": "workspaceWrite", "networkAccess": False, "writableRoots": [],
                       "excludeTmpdirEnvVar": False, "excludeSlashTmp": False,
                       "somethingThisCheckerDoesNotKnow": "x"}
         document = self.declare({"type": "workspaceWrite"}, normalised)
+        cell = cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertFalse(document["readyToStart"],
+                         "a receipt echoing a key its own request never carried was accepted")
+        self.assertIn("The host also recorded", cell["evidence"])
+        self.assertIn("sandbox.somethingThisCheckerDoesNotKnow", cell["evidence"])
+
+    def test_a_key_outside_a_mode_only_request_is_named_rather_than_compared(self):
+        # And the other side of the same rule, which is why this is not simply a stricter check.
+        # Where only a mode was asked for, requested.sandbox carries the resolved type and
+        # nothing else, and findings() compares only that type. An unknown key beside it could
+        # not have produced a finding, so refusing the receipt here would refuse a real one:
+        # it is reported, and an operator who cares about it can declare it.
+        normalised = {"type": "workspaceWrite", "networkAccess": False, "writableRoots": [],
+                      "excludeTmpdirEnvVar": False, "excludeSlashTmp": False,
+                      "somethingThisCheckerDoesNotKnow": "x"}
+        document = self.declare({"type": "workspaceWrite"}, normalised,
+                                asked={"type": "workspaceWrite"})
         cell = cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]
         self.assertEqual(cell["value"], VERIFIED)
         self.assertIn("The host also recorded", cell["evidence"])
@@ -4967,10 +4995,19 @@ class FortyFifthHostedRound(TrialCase):
         self.assertIn("not an object", json.dumps(payload),
                       "the record was refused without saying what was wrong with it")
 
-    def test_the_store_is_asked_last_of_all_the_relay_is_asked(self):
-        # The supervisor gate waits for the counter and, on a service trial, runs a relay command
-        # of its own, so a store verdict taken before it sits behind both. The identity question
-        # is the last one the relay is asked.
+    def test_the_store_is_asked_last_of_all_except_the_intent_that_outlives_it(self):
+        # The store's identity was the last question the relay was asked, because a store
+        # replaced during any probe invalidates every reading taken from it. A service trial has
+        # one more fact that expires the same way: the supervisor re-reads the service's intent
+        # at every worker boundary, so an owner who disables it while that last doctor runs --
+        # and it can run for as long as its timeout allows -- leaves a verdict asserting a poller
+        # that will stop at the next boundary.
+        #
+        # No single relay command answers both, so one of them is read before the other whichever
+        # way round they go. The intent goes last, and the residual is named rather than hidden:
+        # the store's identity is then confirmed one service-status call earlier, which is a
+        # short local read of a lock record rather than another doctor. On a trial with no
+        # service there is no second question and the store stays last.
         self.world.start_supervisor()
         self.world.record["supervisor"]["service"] = True
         self.world.payloads["service status"]["payload"]["pid"] = self.world.supervisor.pid
@@ -4978,9 +5015,22 @@ class FortyFifthHostedRound(TrialCase):
         self.world.preflight()
         asked = [json.loads(line)["subcommand"]
                  for line in self.world.calls.read_text().splitlines() if line.strip()]
+        self.assertEqual(asked[-1], "service status",
+                         "the intent was not the last thing the relay was asked")
+        self.assertEqual(asked[-2], "doctor",
+                         "a relay command other than the intent ran after the store's identity")
+
+    def test_the_store_is_asked_last_where_no_service_is_declared(self):
+        # Support for the case above: without a service there is no intent to outlive the store,
+        # so nothing displaces it from the end.
+        self.world.start_supervisor()
+        self.world.flush()
+        self.world.preflight()
+        asked = [json.loads(line)["subcommand"]
+                 for line in self.world.calls.read_text().splitlines() if line.strip()]
         self.assertEqual(asked[-1], "doctor",
                          "a relay command ran after the store's identity was last confirmed")
-        self.assertIn("service status", asked[:-1])
+        self.assertNotIn("service status", asked)
 
     def test_a_supervisor_that_leaves_during_the_last_probe_is_not_a_running_one(self):
         # Whichever of the store check and the supervisor gate runs last, the other's verdict was
@@ -5086,6 +5136,43 @@ class FortyFifthHostedRound(TrialCase):
                          UNKNOWN)
         self.assertFalse(document["readyToStart"],
                          "a peer that never said where its ledger lives was read as ready")
+
+    def test_a_service_disabled_during_the_last_probe_is_caught(self):
+        # The intent was read before the last store probe, which can run for as long as its
+        # timeout allows. An owner who disables the service while it runs leaves the current
+        # worker holding the lock and nothing after it, and the reading beside that probe was
+        # older than the probe itself.
+        self.world.start_supervisor()
+        self.world.record["supervisor"]["service"] = True
+        self.world.payloads["service status"]["payload"]["pid"] = self.world.supervisor.pid
+        disabled = json.loads(json.dumps(self.world.payloads["service status"]["payload"]))
+        disabled["enabled"] = False
+        # After the two readings that already graded it: the process reading and the gate's own.
+        # What is left is the window the last store probe opens.
+        self.world.payloads["after"] = {
+            "subcommand": "service status", "calls": 2,
+            "payloads": {"service status": {"payload": disabled}}}
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a service disabled during the last probe was published as ready")
+        self.assertEqual(cells_of(document, "processPersistence")["service"]["value"], VERIFIED)
+        self.assertFalse(document["supervisorStillRunning"]["servingAfterTheLastProbe"],
+                         "the intent was never asked again after the last probe")
+
+    def test_a_path_holding_a_nul_byte_is_refused_by_name(self):
+        # A path with a NUL in it is one nothing can open and no process can be given. Carried
+        # past validation it reached subprocess and raised there, so a record naming an
+        # impossible path came back as this checker's internal error rather than as a refusal
+        # naming the field the operator wrote.
+        self.world.record["relay"]["socket"] = str(self.world.root / "sock") + "\x00"
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertIn("NUL byte", json.dumps(payload),
+                      "a path carrying a NUL byte was accepted at validation")
+        self.assertNotIn("raised before it could report", json.dumps(payload),
+                         "an impossible path was reported as this checker's own error")
+        self.assertEqual(code, 2, stderr)
 
     def test_a_receipt_asking_for_something_no_creation_can_ask_for_is_not_one(self):
         # The contract builds both collections out of its own fixed fields, so a receipt naming
