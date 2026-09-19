@@ -24,6 +24,13 @@ VERDICTS = (ALLOWED, BLOCKED, UNESTABLISHED)
 
 # What comparing the store's schema with the candidate's can say.
 #
+# Named for the SCHEMA and not for tables, because tables are not what it holds. The comparison
+# asks the catalog for every object it reports -- indexes, triggers and views alongside tables --
+# and keys each one by its kind AND its name, so an evidence list carries "index sync_ready"
+# rather than "sync_ready". The emitted key was storeTables while it already held all of that: a
+# name narrower than its contents, and a reader deciding from the name alone would have taken a
+# refusal about an index for one about a table.
+#
 # Comparing recorded schema VERSIONS would say nothing at all: the relay declares version one,
 # has never raised it, writes it once with INSERT OR IGNORE when the database is created, and
 # grows its schema through separate CREATE ... IF NOT EXISTS statements. Every store therefore
@@ -34,7 +41,7 @@ EXTENDS = "EXTENDS"
 NARROWS = "NARROWS"
 DIFFERS = "DIFFERS"
 NO_STORE = "NO_STORE"
-TABLE_ANSWERS = (AGREES, EXTENDS, NARROWS, DIFFERS, NO_STORE)
+SCHEMA_ANSWERS = (AGREES, EXTENDS, NARROWS, DIFFERS, NO_STORE)
 
 # The one question both schema readings ask the catalog, written once so the store side and the
 # candidate side cannot drift into asking different things.
@@ -79,7 +86,7 @@ NO_ATTEMPTS = 0
 # with a copied backup of the whole state directory taken first. Letting an update wave it
 # through is precisely the implicit migration that clause forbids, and an update is not the
 # place either direction is decided.
-TABLES_BLOCKING = (NARROWS, EXTENDS, DIFFERS)
+SCHEMA_BLOCKING = (NARROWS, EXTENDS, DIFFERS)
 
 def _daemon_blocks(cell):
     """A supervisor is running, so the runtime under it is not replaced (OPS-4.4)."""
@@ -91,9 +98,9 @@ def _in_flight_blocks(cell):
     return cell.get("answer") != NO_ATTEMPTS
 
 
-def _tables_block(cell):
+def _schema_blocks(cell):
     """Only the direction that loses data refuses."""
-    return cell.get("answer") in TABLES_BLOCKING
+    return cell.get("answer") in SCHEMA_BLOCKING
 
 
 # Each cell, the reading that answers it, and the predicate that decides whether its answer
@@ -103,7 +110,7 @@ def _tables_block(cell):
 GATE_CELLS = {
     "daemon": (("scope", "service_state"), _daemon_blocks),
     "inFlight": (("swapgate", "inflight_cell"), _in_flight_blocks),
-    "storeTables": (("swapgate", "tables_cell"), _tables_block),
+    "storeSchema": (("swapgate", "schema_cell"), _schema_blocks),
 }
 
 # The in-flight cell answers from TWO readings of its own, in this order: whether a store is
@@ -198,7 +205,7 @@ def inflight_cell(envelope, presence=None):
                               " in flight and the runtime under it is not replaced"))
 
 
-def tables_cell(store_answer, candidate_answer):
+def schema_cell(store_answer, candidate_answer):
     """Compare the schema the store holds with the schema the candidate declares.
 
     The comparison is over each object's CREATE statement and not merely its name. Names alone
@@ -227,7 +234,7 @@ def tables_cell(store_answer, candidate_answer):
                      detail="the store's schema could not be read: "
                             + str(store_answer.get("detail")))
 
-    candidate = _schema(candidate_answer.get("tables"))
+    candidate = _schema(candidate_answer.get("objects"))
     if candidate is None:
         return _cell(reading.UNREADABLE, readable=False,
                      command=candidate_answer.get("command"),
@@ -238,7 +245,7 @@ def tables_cell(store_answer, candidate_answer):
                      evidence={"dbPath": store_answer.get("dbPath")},
                      detail=("no store exists at the resolved selection, so there is nothing"
                              " whose schema could disagree. That is absence and not agreement"))
-    held = _schema(store_answer.get("tables"))
+    held = _schema(store_answer.get("objects"))
     if held is None:
         return _cell(reading.UNREADABLE, readable=False, command=store_answer.get("command"),
                      detail="the store reported object names without their definitions, so the"
