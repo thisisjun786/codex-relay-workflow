@@ -31,7 +31,7 @@ import os
 import stat
 from pathlib import Path
 
-from . import hostrecord, pointer, staging
+from . import hostrecord, pointer, reading, staging
 
 # Why a path is named. The decision itself comes from staging and is reported verbatim; this
 # only names the two questions this module adds around it.
@@ -92,37 +92,10 @@ def _entry(path, **fields):
     return found
 
 
-def _same_directory(one, other):
-    """Whether two spellings name the same directory, established by asking the filesystem.
-
-    os.path.samefile stats both and compares the device and inode the kernel reports, so it
-    answers the question the kernel would answer: an alias of this destination is this
-    destination, and 'link/..' lands where the link actually pointed rather than cancelling.
-    It also raises when either path is not traversable, which is the half that pure string
-    work cannot do.
-
-    Four attempts reached this, and the three that failed are worth keeping written down
-    because each was wrong in a way the next one reintroduced:
-
-      - raw strings made ONE directory into two whenever the spelling differed, and an owned
-        dangling pointer in the surveyed destination was disowned;
-      - lexically normalised strings made TWO directories into one, because normpath cancels
-        'X/..' without knowing X is a symlink;
-      - requiring both forms to agree brought the first failure back for any path combining an
-        alias with '..';
-      - resolution alone fixed that and still collapsed 'missing/..', because realpath is
-        best-effort: it equated a destination the kernel answers ENOENT for with a real one,
-        so a pointer could be claimed for a destination that was never scanned.
-
-    Every one of those was a STRING answering a question about the filesystem. This asks the
-    filesystem. A failure establishes nothing and is answered "different", which keeps an
-    unverified pointer out of the cleanup list -- the direction this module fails in on
-    purpose.
-    """
-    try:
-        return os.path.samefile(str(one), str(other))
-    except (OSError, ValueError):
-        return False
+# Moved to reading.same_directory once a second reader needed it: the journals a hook records
+# through can be named through an alias too, and two copies of this predicate kept equal by
+# hand is the shape this repository keeps removing.
+_same_directory = reading.same_directory
 
 
 def _target_exists(path):

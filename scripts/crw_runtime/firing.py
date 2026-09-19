@@ -247,9 +247,17 @@ def _unjudged_peer(observed):
     hit an access error, was treated exactly like a peer that positively cannot start, and its
     journal -- which may hold records -- stopped counting while a blocked neighbour supplied a
     settled explanation for the whole host.
+
+    A registration that keeps NO journal is not one of these, however its startability reads.
+    Every rule asking this is a rule about counts, and a registration configured never to
+    record contributes no count whether or not the host can start it: repairing its startability
+    would still leave it recording nothing. Left in, it kept every count-based cause unsettled
+    beside a peer whose journal had been read -- uncertainty about a registration that cannot
+    hold a record either way. journalling_off owns that registration, and it does not ask this.
     """
     return [entry for entry in (observed.get("namedJournals") or [])
-            if entry.get("usable") and entry.get("startable") is None]
+            if entry.get("usable") and entry.get("startable") is None
+            and entry.get("recordsAnswer") != NO_RECORDS_KEPT]
 
 
 def _named(entries):

@@ -82,6 +82,43 @@ READ_FAILURES = SHAPE_FAILURES + (OSError,)
 RESOLVE_FAILURES = READ_FAILURES + (RuntimeError,)
 
 
+def same_directory(one, other):
+    """Whether two spellings name the same directory, established by asking the filesystem.
+
+    os.path.samefile stats both and compares the device and inode the kernel reports, so it
+    answers the question the kernel would answer: an alias of this destination is this
+    destination, and 'link/..' lands where the link actually pointed rather than cancelling.
+    It also raises when either path is not traversable, which is the half that pure string
+    work cannot do.
+
+    Four attempts reached this, and the three that failed are worth keeping written down
+    because each was wrong in a way the next one reintroduced:
+
+      - raw strings made ONE directory into two whenever the spelling differed, and an owned
+        dangling pointer in the surveyed destination was disowned;
+      - lexically normalised strings made TWO directories into one, because normpath cancels
+        'X/..' without knowing X is a symlink;
+      - requiring both forms to agree brought the first failure back for any path combining an
+        alias with '..';
+      - resolution alone fixed that and still collapsed 'missing/..', because realpath is
+        best-effort: it equated a destination the kernel answers ENOENT for with a real one,
+        so a pointer could be claimed for a destination that was never scanned.
+
+    Every one of those was a STRING answering a question about the filesystem. This asks the
+    filesystem. A failure establishes nothing and is answered "different", which keeps an
+    unverified pointer out of a cleanup list and two unproven aliases out of one cache entry --
+    the direction both callers fail in on purpose.
+
+    It lives here rather than in either caller because it has two: the destination a survey
+    describes, and the journal a registration records through, are both named by spellings that
+    can be aliases. A second copy kept equal by hand is the shape this repository removes.
+    """
+    try:
+        return os.path.samefile(str(one), str(other))
+    except (OSError, ValueError):
+        return False
+
+
 class Reading:
     """A value and the state of the attempt that produced it."""
 

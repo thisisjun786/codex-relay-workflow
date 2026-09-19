@@ -1430,6 +1430,10 @@ def journals_named(registrations, already_read=None):
     # let a Stop landing between the reads report two different counts for one directory --
     # enough to establish "recorded on another path" when there is only one path.
     scanned = {}
+    # The spelling each snapshot was taken through, so a later registration can ask the kernel
+    # whether its own spelling reaches that same directory. Kept beside the snapshots rather
+    # than derived from their keys, because a key is lexical and this question is not.
+    aliases = {}
     for registration in registrations:
         if not registration.get("settings"):
             # A relative spelling or no settings at all. There is no file here to open, and
@@ -1460,6 +1464,22 @@ def journals_named(registrations, already_read=None):
         # distinction for an executable and not for this, so it is dropped here rather
         # than weakened there.
         root = (resource_key(str(Path(configured))) if configured else NO_ROOT)
+        # resource_key is lexical on purpose -- it refuses to resolve, because resolving would
+        # make a cache key depend on what a link points at. That leaves one case it cannot see:
+        # two registrations naming ONE directory, one through a real path and one through a
+        # symlink alias. Listed twice, that directory produced two readings, and a Stop landing
+        # between them showed one alias empty beside the other holding records -- which this
+        # answer set reads as two journals disagreeing, on a host that has one journal.
+        #
+        # So identity is asked of the kernel, and only where the kernel can answer. Where it
+        # cannot, the spellings keep their own keys rather than being merged on a guess: a
+        # second reading of one directory is the cost, and a shared reading of two different
+        # ones is what that refuses to cost.
+        if configured and root not in scanned:
+            alias = next((key for key, spelling in aliases.items()
+                          if reading.same_directory(configured, spelling)), None)
+            if alias is not None:
+                root = alias
         if root in scanned:
             # The policy is this registration's own; the listing is the directory's, and the
             # directory is the same one.
@@ -1468,6 +1488,8 @@ def journals_named(registrations, already_read=None):
         else:
             cell = _journal_cell(config)
             scanned[root] = cell
+            if configured:
+                aliases[root] = configured
         value = cell["value"]
         entry["journal"] = cell
         entry["journalRoot"] = cell.get("journalRoot")

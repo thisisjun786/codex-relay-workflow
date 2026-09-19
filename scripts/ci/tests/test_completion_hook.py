@@ -2612,6 +2612,73 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          "a host with one journal was told its journals may disagree, on the"
                          " strength of nobody having judged the only registration it has")
 
+    def test_a_peer_that_keeps_no_journal_never_unsettles_a_count(self):
+        """Every rule that asks about an unjudged peer is a rule about counts, and a
+        registration configured never to record contributes no count whether or not the host
+        can start it: repairing its startability would still leave it recording nothing. Left
+        in the unjudged set it kept the count causes unsettled beside a peer whose journal had
+        been read, which is uncertainty about a registration that cannot hold a record either
+        way.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            document = json.loads(second.read_text(encoding="utf-8"))
+            # This registration keeps no journal at all.
+            document.pop("journalRoot", None)
+            second.write_text(json.dumps(document), encoding="utf-8")
+            path = Path(temporary) / "hooks.json"
+            hooks_file = json.loads(path.read_text(encoding="utf-8"))
+            entries = hooks_file["hooks"][completion.EVENT][0]["hooks"]
+            # ... and its interpreter is relative, so its startability is never established.
+            entries[1]["command"] = "./python " + entries[1]["command"].split(" ", 1)[1]
+            path.write_text(json.dumps(hooks_file), encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertEqual(standings.get(firing.JOURNALLING_OFF), firing.ESTABLISHED,
+                         "the fixture did not build the non-journalling peer this case is"
+                         " about: " + repr(standings))
+        self.assertEqual(standings.get(firing.NOTHING_RECORDED), firing.ESTABLISHED,
+                         "the journal that WAS read holds nothing, and a peer that keeps no"
+                         " journal at all left that reading unsettled")
+        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
+                         [one["cause"] for one in cell.get("candidates") or []],
+                         "a registration that records nothing by configuration was counted as"
+                         " a journal that might disagree with the one that was read")
+
+    def test_two_spellings_of_one_journal_are_not_two_journals(self):
+        """resource_key is lexical and refuses to resolve, on purpose. That leaves one
+        directory reachable through a symlink alias keyed twice, and the divergence rule then
+        counted two unread journals for the one directory both registrations name. Same
+        "one journal cannot disagree with itself" the redundant-dot and trailing-separator
+        cases closed, reached through the kernel rather than through a string.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            # A regular file where the journal should be: neither spelling can be listed, so
+            # both counts are unestablished and only their identity decides this cause.
+            blocked = Path(temporary) / "not-a-journal"
+            blocked.write_text("", encoding="utf-8")
+            alias = Path(temporary) / "alias-of-not-a-journal"
+            alias.symlink_to(blocked)
+            amend_settings(temporary, journalRoot=str(blocked))
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["journalRoot"] = str(alias)
+            second.write_text(json.dumps(document), encoding="utf-8")
+            self.assertTrue(os.path.samefile(str(alias), str(blocked)),
+                            "the fixture did not build one directory under two spellings")
+            cell = why_no_record(temporary)
+        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
+                         [one["cause"] for one in cell.get("candidates") or []],
+                         "one directory named through an alias was counted as two journals"
+                         " that might disagree")
+
     def test_records_already_written_survive_the_registration_being_removed(self):
         """An empty hook file establishes the PRESENT. A registration removed after the hook
         had fired leaves its journal exactly where it was, and this answer used to say no
