@@ -515,10 +515,16 @@ def usable_root(value):
     components, so a root that is not a string cannot be compared at all, and a relative one
     never contains the absolute paths a manifest carries. A list of values like those is an
     empty list written at greater length.
+
+    Judged as the exact bytes the relay will receive. Validating a tidied copy accepted a root
+    the relay then used untidied: " /repo" is absolute once the space is taken off and is not
+    absolute to the relay at all, so a scope that authorised nothing passed a check that said it
+    authorised something. Everywhere else in this module a strip decides that a value is blank,
+    which refuses more rather than accepting more; this one was deciding what the value is.
     """
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or not value:
         return False
-    return posixpath.isabs(posixpath.normpath(value.strip()))
+    return posixpath.isabs(posixpath.normpath(value))
 
 
 def names_participant(payload, task, required=(), optional=()):

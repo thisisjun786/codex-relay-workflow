@@ -4689,7 +4689,11 @@ class FortyFifthHostedRound(TrialCase):
         # never contains the absolute paths a manifest carries: a list of those is an empty list
         # written at greater length, and on the boundary that is not being dispatched nothing
         # else looks at it.
-        for roots in ([None], [123], [""], ["relative/path"], ["/good", None]):
+        for roots in ([None], [123], [""], ["relative/path"], ["/good", None],
+                      # Absolute only once something takes the whitespace off, which the relay
+                      # does not do. A tidied copy passing the check is a check about a value
+                      # nothing will use.
+                      [" /leading-space"], ["\t/leading-tab"], ["  "]):
             with self.subTest(roots=roots):
                 world = World(self.base)
                 self.addCleanup(world.stop)
@@ -4808,6 +4812,19 @@ class FortyFifthHostedRound(TrialCase):
                         "a corrected clock excused the counter from having to move")
         self.assertGreaterEqual(gate["elapsedSeconds"],
                                 self.world.record["supervisor"]["witnessAdvanceSeconds"])
+
+    def test_a_root_is_judged_as_the_bytes_the_relay_receives(self):
+        # The bound on that refusal: a root that is absolute without anything being taken off it
+        # is still a root, trailing characters and all, because the relay compares it the same
+        # way. This refuses tidied-up values, not unusual ones.
+        world = World(self.base)
+        self.addCleanup(world.stop)
+        world.captures["register-B.json"]["authorizedScope"]["artifactRoots"] = [
+            str(world.repos["B"]) + "/"]
+        world.flush()
+        world.start_supervisor()
+        document = world.preflight()
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
 
     def test_a_disabled_service_is_not_a_supervisor_that_continues(self):
         # The supervisor re-reads this intent at every worker boundary and spawns no replacement
