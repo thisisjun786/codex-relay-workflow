@@ -89,6 +89,14 @@ REQUIRED_EXPECT = ("model", "reasoningEffort", "sandbox", "approvalPolicy")
 # record can be usable and complete while these three disagree with what creation recorded.
 DELIVERY_ACCESS = ("cwd", "runtimeWorkspaceRoots", "environments")
 
+# What a resume can actually restore, and the only approval policy delivery authorises. Both are
+# copied from the relay's settings module for the same reason POLICY_DEFAULTS is, and guarded the
+# same way: a case asserts each equals the relay's own, so a copy that drifts fails loudly. A
+# record naming a sandbox type with no resume mode, or any approval policy but this one, is a
+# trial whose automatic round trip cannot deliver however well every other reading agrees.
+RESUME_SANDBOX_TYPES = ("workspaceWrite", "readOnly", "dangerFullAccess")
+AUTHORIZED_APPROVAL_POLICY = "never"
+
 # The defaults the pinned SandboxPolicy declares, copied from the relay's own settings module so
 # an omitted default and an explicit one are not read as a difference. This is a second copy of
 # another lane's contract and it is held here only because the relay is not importable from a
@@ -792,6 +800,24 @@ def load_start(path, *, environment=None, mode="preflight"):
                               " relay records, carrying its mode at \"type\"",
                               boundary=boundary.get("name"), taskId=participant.get("taskId"),
                               sandbox=shown(sandbox))
+            if sandbox.get("type") not in RESUME_SANDBOX_TYPES:
+                # The relay refuses a row whose type has no ThreadResumeParams mode, so a trial
+                # declared under one cannot deliver its own correction however healthy the
+                # participants are. Refused here rather than reported as ready.
+                raise Refused("this sandbox type has no resume mode, so the relay cannot restore"
+                              " it and the trial's own round trip could not deliver",
+                              boundary=boundary.get("name"), taskId=participant.get("taskId"),
+                              sandbox=shown(sandbox.get("type")),
+                              resumable=list(RESUME_SANDBOX_TYPES))
+            if expect.get("approvalPolicy") != AUTHORIZED_APPROVAL_POLICY:
+                # A value constraint rather than a comparison: delivery authorises exactly one
+                # policy, so a row recording another is withheld after the resume and never
+                # reaches turn/start. Two payloads agreeing on the wrong one is still wrong.
+                raise Refused("delivery authorises one approval policy, so a trial declared with"
+                              " another could not send its own correction",
+                              boundary=boundary.get("name"), taskId=participant.get("taskId"),
+                              approvalPolicy=shown(expect.get("approvalPolicy")),
+                              authorized=AUTHORIZED_APPROVAL_POLICY)
             if not str(participant.get("taskId") or "").strip():
                 raise Refused("a participant has no task id", boundary=boundary.get("name"))
             absolute(participant.get("cwd"), "a participant cwd")
@@ -1018,10 +1044,23 @@ def process_started_at(pid):
     The record declares when a supervisor was launched, and a restarted supervisor keeps the old
     declaration: a new process alive for two seconds then satisfied any minimum. The process's own
     start time is the one that belongs to the pid being observed.
+
+    Read from the kernel's own start-time field rather than from the stat of /proc/<pid>. That
+    directory's ctime is when its inode was instantiated, which is the process's start on some
+    hosts and the first lookup on others: a supervisor that had been running reported an age near
+    zero on a CI runner here, marking a healthy process not_verified against any positive
+    minimum. Field 22 of /proc/<pid>/stat is boot-relative ticks and is defined, so it says the
+    same thing everywhere. The comm field can hold spaces and brackets, so the split is on its
+    closing bracket rather than on whitespace.
     """
     try:
-        return os.stat("/proc/" + str(int(pid))).st_ctime
-    except (OSError, TypeError, ValueError):
+        with open("/proc/" + str(int(pid)) + "/stat", encoding="utf-8") as handle:
+            after = handle.read().rsplit(")", 1)[1].split()
+        with open("/proc/stat", encoding="utf-8") as handle:
+            boot = next(int(line.split()[1]) for line in handle
+                        if line.startswith("btime "))
+        return boot + int(after[19]) / os.sysconf("SC_CLK_TCK")
+    except (OSError, TypeError, ValueError, IndexError, StopIteration):
         return None
 
 

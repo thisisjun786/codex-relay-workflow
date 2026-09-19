@@ -3495,5 +3495,78 @@ class ThirtySixthHostedRound(TrialCase):
             NOT_VERIFIED)
 
 
+class ThirtySeventhHostedRound(TrialCase):
+    """Three settings a trial can agree on perfectly and still not deliver under.
+
+    Every reading here exists so the round trip can happen. A record the relay will refuse at the
+    resume is a trial that cannot send its own correction, however well its participants agree,
+    and reporting it ready is a false pass of the same kind.
+    """
+
+    def declared(self, **changes):
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"].update(changes)
+        self.world.flush()
+        return self.world.refusal()
+
+    def test_a_sandbox_the_relay_cannot_resume_is_refused(self):
+        refused = self.declared(sandbox={"type": "externalSandbox", "networkAccess": "restricted"})
+        self.assertIsNotNone(refused, "a sandbox with no resume mode was accepted")
+        self.assertIn("no resume mode", refused.reason)
+
+    def test_an_approval_policy_delivery_does_not_authorise_is_refused(self):
+        refused = self.declared(approvalPolicy="on-request")
+        self.assertIsNotNone(refused, "an unauthorised approval policy was accepted")
+        self.assertIn("authorises one approval policy", refused.reason)
+
+    def test_the_resumable_types_and_the_policy_are_the_relays_own(self):
+        # Support, and the guard on two more copies of another lane's contract.
+        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
+                  / "settings.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        def assigned(name):
+            return next(ast.literal_eval(node.value) for node in ast.walk(tree)
+                        if isinstance(node, ast.Assign)
+                        and [t for t in node.targets if getattr(t, "id", None) == name])
+
+        self.assertEqual(sorted(startup.RESUME_SANDBOX_TYPES),
+                         sorted(assigned("RESUME_SANDBOX_MODE")),
+                         "the checker's resumable sandbox types are not the relay's")
+        self.assertEqual(startup.AUTHORIZED_APPROVAL_POLICY,
+                         assigned("AUTHORIZED_APPROVAL_POLICY"))
+
+    def test_the_resumable_types_a_trial_may_use_are_still_accepted(self):
+        # Support: the three the relay can restore keep working.
+        for kind in startup.RESUME_SANDBOX_TYPES:
+            with self.subTest(sandbox=kind):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                for boundary in world.record["boundaries"]:
+                    for participant in boundary["participants"]:
+                        participant["expect"]["sandbox"] = {"type": kind}
+                world.flush()
+                self.assertIsNone(world.refusal())
+
+    def test_process_age_comes_from_the_kernels_own_start_time(self):
+        # /proc/<pid>'s ctime is the process's start on some hosts and the first lookup on
+        # others, which read a running supervisor as zero seconds old on a CI runner here. The
+        # kernel's start-time field is defined, so this reads it and agrees about a process whose
+        # /proc entry nothing has looked at until now.
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.terminate)
+        time.sleep(1.2)
+        age = time.time() - startup.process_started_at(child.pid)
+        self.assertGreaterEqual(age, 1.0,
+                                "a process that had been running read as younger than it is")
+        self.assertLess(age, 30)
+
+    def test_an_unreadable_process_is_unknown_rather_than_a_time(self):
+        self.assertIsNone(startup.process_started_at(0))
+        self.assertIsNone(startup.process_started_at("not a pid"))
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
