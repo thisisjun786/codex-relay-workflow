@@ -5202,6 +5202,33 @@ class FortyFifthHostedRound(TrialCase):
                       "a second name for one file was read as a second reading")
         self.assertEqual(code, 2, stderr)
 
+    def test_an_identity_that_is_not_a_name_is_refused_by_name(self):
+        # A presence check through str() read an object as a task id, because its text is not
+        # empty. The run then used that object as a dictionary key and raised, so a malformed
+        # record came back as this checker's internal error rather than as a refusal naming the
+        # field the operator wrote. The boundary name is the other identity read as a key here.
+        for boundary, broken in zip(self.world.record["boundaries"],
+                                    ({"looks": "namelike"}, 7)):
+            boundary["participants"][0]["taskId"] = broken
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertIn("has to be a non-empty string", json.dumps(payload),
+                      "an object stood as a task id")
+        self.assertNotIn("raised before it could report", json.dumps(payload),
+                         "a malformed identity was reported as this checker's own error")
+        self.assertEqual(code, 2, stderr)
+
+    def test_a_boundary_name_that_is_not_a_name_is_refused_by_name(self):
+        # Support, over the other identity this boundary declares that a reading keys by.
+        self.world.record["boundaries"][0]["name"] = {"looks": "namelike"}
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertIn("no name to key its registration receipt by", json.dumps(payload),
+                      "an object stood as a boundary name")
+        self.assertNotIn("raised before it could report", json.dumps(payload),
+                         "a malformed identity was reported as this checker's own error")
+        self.assertEqual(code, 2, stderr)
+
     def test_a_service_disabled_during_the_last_probe_is_caught(self):
         # The intent was read before the last store probe, which can run for as long as its
         # timeout allows. An owner who disables the service while it runs leaves the current

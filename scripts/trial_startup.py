@@ -982,6 +982,24 @@ def load_start(path, *, environment=None, mode="preflight"):
         if not isinstance(boundary, dict):
             raise Refused("a boundary is not an object", index=index,
                           boundary=type(boundary).__name__)
+        # And the identities before anything compares or keys by them, for the same reason. A
+        # presence check through str() read {"a": 1} as a task id because its text is not empty,
+        # and the first thing to use it was a dictionary key or a comparison, so the operator's
+        # malformed record came back as this checker's internal error or as an unrelated
+        # disagreement. Every identity a later reading names is judged here, ahead of every use.
+        if not isinstance(boundary.get("name"), str) or not boundary["name"].strip():
+            raise Refused("a boundary has no name to key its registration receipt by",
+                          index=index, name=shown(boundary.get("name")))
+        for participant in (boundary.get("participants")
+                            if isinstance(boundary.get("participants"), list) else []):
+            if not isinstance(participant, dict):
+                continue
+            if not isinstance(participant.get("taskId"), str) \
+                    or not participant["taskId"].strip():
+                raise Refused("a participant's task id has to be a non-empty string, because"
+                              " every reading of that participant is keyed by it",
+                              boundary=shown(boundary.get("name")),
+                              taskId=shown(participant.get("taskId")))
     # The assignment being dispatched has to belong to a boundary this record declared. Falling
     # back to the first one read the wrong boundary's registration and let an assignment outside
     # every declared repository and project pass every reading.
@@ -1195,13 +1213,8 @@ def load_start(path, *, environment=None, mode="preflight"):
                               boundary=boundary.get("name"), taskId=participant.get("taskId"),
                               approvalPolicy=shown(expect.get("approvalPolicy")),
                               authorized=AUTHORIZED_APPROVAL_POLICY)
-            if not str(participant.get("taskId") or "").strip():
-                raise Refused("a participant has no task id", boundary=boundary.get("name"))
             absolute(participant.get("cwd"), "a participant cwd")
         absolute(boundary.get("repositoryRoot"), "a boundary repositoryRoot")
-        if not boundary.get("name"):
-            raise Refused("a boundary has no name to key its registration receipt by",
-                          index=index)
 
     record["_start"] = str(start)
     record["_relay"] = anchored_launcher(record, environment)
