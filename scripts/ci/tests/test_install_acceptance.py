@@ -3527,6 +3527,97 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", False,
          "its pair: the unbound form still has to count, so writing both the receiver and the"
          " argument really does supply path and nothing here reads the source."),
+    "a default behind a call that unpacks its arguments":
+        (REFUSAL,
+         ("def helper(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "def consumer():",
+          "    return helper(*())"),
+         "consumer", True,
+         "helper(*()) supplies no positional argument at all, but the call carries one Starred"
+         " node and counting nodes said the default had been overridden. The default really"
+         " applies, so the consumer receiving the refusal was dropped -- a place escaping the"
+         " inventory, which is the direction that costs something rather than a sentence."),
+    "a default behind an unpacking this text cannot count":
+        (REFUSAL,
+         ("def helper(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "def consumer(supplied):",
+          "    return helper(*supplied)"),
+         "consumer", True,
+         "the sibling shape, and the reason the rule is stated over unpackings rather than over"
+         " the empty one: how many arguments *supplied carries cannot be read from this text at"
+         " all, so the count is refused rather than guessed and the default stays applicable."
+         " The pair that keeps this honest is 'a default every call overrides' above, where the"
+         " argument IS written and the default still has to be suppressed."),
+    "a carrier a global statement gives to the module":
+        (REFUSAL,
+         ("def helper():",
+          "    global answer",
+          "    answer = reading.UNREADABLE",
+          "",
+          "def consumer():",
+          "    return answer"),
+         "consumer", True,
+         "global answer writes the MODULE binding, so the refusal is readable from anywhere,"
+         " but it was filed under the function that wrote it and no reader outside that"
+         " function could see it. The assigning helper was reported and the consumer that"
+         " actually returns the refusal was not."),
+    "a carrier a nonlocal statement gives to the scope around it":
+        (REFUSAL,
+         ("def outer():",
+          "    answer = \"fine\"",
+          "",
+          "    def setter():",
+          "        nonlocal answer",
+          "        answer = reading.UNREADABLE",
+          "",
+          "    def consumer():",
+          "        return answer",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the same defect through the other declaration, checked rather than assumed to follow:"
+         " nonlocal hands the binding to the function around this one, so the sibling reading it"
+         " sees the refusal. Both sides of the module consult one derived table for this, since"
+         " asking it twice is how these two have drifted apart before."),
+    "a carrier written with no declaration moving it":
+        (REFUSAL,
+         ("def helper():",
+          "    answer = reading.UNREADABLE",
+          "    return None",
+          "",
+          "def consumer():",
+          "    return answer"),
+         "consumer", False,
+         "its pair, and the protection the two above must not have removed: an ordinary local"
+         " write really is local, and consumer reads a name this text never binds where it can"
+         " see it. Routing declared names elsewhere must not have routed undeclared ones too."),
+    "a handle a global statement gives to the module":
+        (TEXT,
+         ("def helper():",
+          "    global stream",
+          "    stream = open(HERE)",
+          "",
+          "def consumer():",
+          "    return stream.read()"),
+         "consumer", True,
+         "the handle side had the same defect and it was not reported -- it was found by asking"
+         " the sibling loop the same question rather than waiting for the next round. The scope"
+         " a handle was MADE in decides who can see it, and a global write makes it in the"
+         " module."),
+    "a handle written with no declaration moving it":
+        (TEXT,
+         ("def helper():",
+          "    stream = open(HERE)",
+          "    return None",
+          "",
+          "def consumer():",
+          "    return stream.read()"),
+         "consumer", False,
+         "its pair on the handle side: a local handle stays local, and a consumer reading an"
+         " unrelated name of the same spelling is not reading this one."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4564,6 +4655,36 @@ def _defaults(node):
             for arg, default in paired]
 
 
+def _declared_owner(tree, places):
+    """Each (scope, name) that a global or nonlocal statement hands to a different scope.
+
+    global answer inside a function writes the MODULE binding, so a name bound under that
+    declaration belongs to the module and a reader anywhere sees it. nonlocal hands it to the
+    function around this one. Filing such a binding under the scope that WROTE it hides it from
+    every reader outside that scope, and the consumer that really receives it goes unreported --
+    a place escaping the inventory, which is the direction that costs something.
+
+    Asked once and consulted by both the refusal side and the handle side, because these two
+    have answered the same question separately before and drifted apart.
+
+    Observable boundary, stated because it is one: nonlocal is filed against the immediately
+    enclosing function rather than the nearest enclosing one that really binds the name, so a
+    declaration reaching two scopes out is filed one scope short. That keeps the name visible
+    to the siblings that read it, which is the reporting direction.
+    """
+    owner = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Global, ast.Nonlocal)):
+            continue
+        at = places.get(id(node), (MODULE_LEVEL, None))[0]
+        if at == MODULE_LEVEL:
+            continue
+        for name in node.names:
+            owner[(at, name)] = (MODULE_LEVEL if isinstance(node, ast.Global)
+                                 else at.rpartition(".")[0] or MODULE_LEVEL)
+    return owner
+
+
 def _default_applies(tree, places):
     """Which parameter defaults any call in this source actually leaves to the default.
 
@@ -4649,7 +4770,14 @@ def _default_applies(tree, places):
                            and not names_a_class(
                                places.get(id(node), (MODULE_LEVEL, None))[0], spelled_owner)
                            ) else 0
-            handed = (where is not None and len(node.args) > where - seated) or any(
+            # An unpacking supplies a count this text cannot read: helper(*()) writes one
+            # Starred node and supplies no argument at all. Counting the node itself says the
+            # default was overridden and drops every consumer that really receives it, so a
+            # call carrying one is not allowed to answer the positional question. Keywords
+            # still answer it, because **kwargs carries arg None and matches nothing.
+            unpacked = any(isinstance(written, ast.Starred) for written in node.args)
+            handed = (not unpacked and where is not None
+                      and len(node.args) > where - seated) or any(
                 word.arg == argument for word in node.keywords)
             supplied.setdefault((place, argument), set()).add(handed)
     # Absent from supplied means no resolved call reached that definition at all, which is not
@@ -5239,6 +5367,7 @@ def _hands_on(tree, spelled):
     # below runs inside two nested fixpoints, so asking per node would re-derive the whole
     # module on every pass.
     left_to_the_default = _default_applies(tree, places)
+    declared_owner = _declared_owner(tree, places)
     every_key = {places.get(id(node), (MODULE_LEVEL, None))[1] for node in ast.walk(tree)
                  if isinstance(node, ast.ClassDef)}
     parents = {places.get(id(node), (MODULE_LEVEL, None))[1]:
@@ -6092,7 +6221,6 @@ def _hands_on(tree, spelled):
             spreading = False
             for node in ast.walk(tree):
                 function, klass = places.get(id(node), (MODULE_LEVEL, None))
-                held = bound.setdefault(function, set())
                 # A default binds only when a call leaves it to the default, the same condition
                 # the handle side already applies. Reading them unconditionally here made every
                 # refusal-valued default a refusal even where every call supplies one.
@@ -6102,7 +6230,14 @@ def _hands_on(tree, spelled):
                     if not _reachable(value, reaching(function, klass), klass,
                                       visible(function)):
                         continue
-                    if isinstance(named, ast.Name) and named.id not in held:
+                    if not isinstance(named, ast.Name):
+                        continue
+                    # The scope the LANGUAGE gives the name, not the one that wrote it: a
+                    # binding under global or nonlocal belongs elsewhere, and filing it here
+                    # left its readers outside this scope unable to see it at all.
+                    owns = declared_owner.get((function, named.id), function)
+                    held = bound.setdefault(owns, set())
+                    if named.id not in held:
                         held.add(named.id)
                         spreading = True
 
@@ -6590,6 +6725,7 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None, t
     taken_at = taken_at or {}
     # Once, not per node: which defaults any call actually leaves to the default.
     left_to_the_default = _default_applies(tree, places)
+    declared_owner = _declared_owner(tree, places)
 
     def seen_in(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
@@ -6668,7 +6804,10 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None, t
                 # Where the name was made a handle. A name the MODULE declares is a handle
                 # everywhere; one derived from a binding is one in that scope and the scopes
                 # inside it, and an unrelated function's parameter of the same spelling is not.
-                where_from.setdefault(named, set()).add(scope)
+                # A binding under global or nonlocal was made in the scope the LANGUAGE gives
+                # it, so it is filed there rather than where it was written.
+                where_from.setdefault(named, set()).add(
+                    declared_owner.get((scope, named), scope))
     return frozenset(known), where_from
 
 
@@ -8697,6 +8836,7 @@ HANDED = {
     "_passed_through": NOTHING,
     "_defaults": NOTHING,
     "_default_applies": NOTHING,
+    "_declared_owner": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
     "test_a_decorator_alias_resolves_in_the_scope_that_imported_it": NOTHING,
