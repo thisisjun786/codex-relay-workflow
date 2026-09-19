@@ -3082,11 +3082,51 @@ RESOLVES_LIKE_PYTHON = {
          ("def outer(accepted=reading.UNREADABLE):",
           "    def consumer(accepted):",
           "        return accepted",
-          "    return consumer"),
-         "outer.consumer", False,
-         "the other pair: the closure binds the name itself, so what it reads is its caller's"
-         " and not the default outside. Seeding from defaults must not step over the shadow"
-         " rule that was built for exactly this."),
+         "    return consumer"),
+        "outer.consumer", False,
+        "the other pair: the closure binds the name itself, so what it reads is its caller's"
+        " and not the default outside. Seeding from defaults must not step over the shadow"
+        " rule that was built for exactly this."),
+    "a qualified source reader a parameter shadows":
+        (TEXT,
+         ("import ast as parser",
+          "",
+          "def helper(parser):",
+          "    return parser.parse(HERE.read_text())",
+          "",
+          "def consumer():",
+          "    return helper(None)"),
+         "consumer", False,
+         "a parameter called parser shadows parser.parse exactly as one called reader shadows"
+         " reader. Asking the shadow rule about the whole dotted spelling instead of the root"
+         " of the chain covered the bare name and left the qualified one forcing a declaration"
+         " nobody owes."),
+    "a qualified source reader nothing shadows":
+        (TEXT,
+         ("import ast as parser",
+          "",
+          "def helper():",
+          "    return parser.parse(HERE.read_text())",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "its pair: the module alias really is what the call reaches when no scope takes the"
+         " name, so asking about the root must not have stopped qualified readers being read"
+         " at all."),
+    "an opener a function imports for itself":
+        (TEXT,
+         ("def helper():",
+          "    from builtins import open as fopen",
+          "    stream = fopen(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the import binds the name in the scope that wrote it exactly as an assignment does,"
+         " so that scope is not shadowing the opener it has just taken. Recording only"
+         " assignments left the function importing the opener rejected as having hidden it."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -5907,7 +5947,7 @@ def _opener_spellings(tree, places):
     from here says what an unimported name holds, and a guess would be worse than the gap.
     """
     named = builtins.open.__name__
-    holders = set()
+    holders, rebound = set(), {}
     for module_name, module in list(sys.modules.items()):
         if module is None:
             continue
@@ -5924,6 +5964,13 @@ def _opener_spellings(tree, places):
                 for alias in node.names:
                     if alias.name == named:
                         bare.add(alias.asname or alias.name)
+                        # The import BINDS the name in the scope that wrote it, exactly as an
+                        # assignment does, so that scope is not shadowing the opener it just
+                        # took. Recording only assignments left a function importing the
+                        # opener rejected as having hidden it.
+                        rebound.setdefault(
+                            places.get(id(node), (MODULE_LEVEL, None))[0], set()).add(
+                                alias.asname or alias.name)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name in holders:
@@ -5932,7 +5979,7 @@ def _opener_spellings(tree, places):
     # step of it, so the statements are followed until they stop adding names. A function may
     # write one too, and the scope it wrote it in is kept: the name is then bound there rather
     # than being read as some other scope's, which is what a shadow means everywhere else here.
-    rebound, growing = {}, True
+    growing = True
     while growing:
         growing = False
         for node in ast.walk(tree):
@@ -6082,12 +6129,16 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             return repr(node.value) if node.value.endswith(".py") else None
         if isinstance(node, ast.Call):
             spelling = _dotted(node.func)
+            root = node.func
+            while isinstance(root, ast.Attribute):
+                root = root.value
             if (spelling in hands_source
-                    and not (isinstance(node.func, ast.Name) and id(node.func) in shadowed)):
+                    and not (isinstance(root, ast.Name) and id(root) in shadowed)):
                 # Unless the scope binds that name itself: a parameter called reader holds
                 # whatever its caller passed, and a call through it says nothing about this
                 # module's source. The spelling table is this module's; the binding is the
-                # analysed scope's.
+                # analysed scope's. Asked of the ROOT of the chain, because a parameter called
+                # parser shadows parser.parse exactly as one called reader shadows reader.
                 return spelling
             # A READ taken on a handle hands source text back: a helper answering
             # HERE.read_text() gives its caller the text as surely as one answering ast.parse.
