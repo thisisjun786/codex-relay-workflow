@@ -260,8 +260,10 @@ Keep it short and point at what the existing records already hold.
 Initiative / Supervisor: [stable initiative ID, the revision of its record that the approved set
   and the completion boundary were fixed at, and this supervisor's task id]
 Project: [stable project ID and URL, and the parent task id where one already exists]
-Criteria: [the project record revision read, and this project's contribution to the initiative's
-  finish condition. Issue-level criteria stay in the issues]
+Criteria: [the record this project's criteria were read from and its revision, naming which one it
+  is, since the contribution lives in the project record or in the initiative body depending on how
+  the plan was written; and this project's contribution to the initiative's finish condition.
+  Issue-level criteria stay in the issues]
 Scope as read: [this project's membership in the approved set, the completion boundary, and the
   designation's limits and exclusions as they bear on this project, all as they stood at the
   initiative revision above. They are stated rather than left implicit so the receiver has both
@@ -303,10 +305,11 @@ can still carry the wrong scope, by forgery, by mistake, or by arriving after th
 same read settles the rest: that the initiative named is the one whose record this is, that this
 parent's own project is in that initiative's approved set, and that the two values this handoff
 states it was written from, that membership, the completion boundary, and the designation's limits and exclusions, are the ones
-the record carries now. The contribution is corroborated against the project record the handoff
-names rather than against the initiative, because the initiative body may leave project-specific
-detail in that linked record: comparing it upward would refuse a legitimate handoff wherever the
-initiative only summarises, and accept a stale summary wherever it does. The limits are compared for the same reason as the rest: a handoff that
+the record carries now. The contribution is corroborated against whichever record the handoff
+names as its source, because that value lives in the project record or in the initiative body
+depending on how the plan was written, and a lookup fixed on either one refuses a legitimate
+handoff whenever the other owns it. A handoff naming no source is the case that fails: there is
+nothing to read it against, so it is a proposal rather than an instruction. The limits are compared for the same reason as the rest: a handoff that
 omits a narrowing the designation made, by forgery, mistake or age, reads as ordinary authority to
 a parent that already holds it, and the later refusal only catches authority being widened. For the
 same reason the handoff's two statements of those limits are compared with each other: Authority
