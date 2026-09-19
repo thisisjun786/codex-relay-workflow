@@ -1176,6 +1176,11 @@ def _pairs(target, value):
                 # the scalar. Stripping the star paired it with None and read an arming as a
                 # disarming, so the whole structure is unreadable instead.
                 return None
+            if isinstance(reaching, ast.Starred):
+                # The mirror image: (*[None], 1) expands before assignment, so positions
+                # after the star are not the positions written here. Pairing the hook with
+                # the Starred node itself read a disarming as an arming.
+                return None
             inner = _pairs(element, reaching)
             if inner is None:
                 return None
@@ -1584,6 +1589,9 @@ class TheInjectionReaderIsPinnedToTheAnswersItGives(unittest.TestCase):
             # A starred target takes a LIST, so pairing it with a scalar would read an
             # arming as a disarming.
             f"def t(store):\n    *store.{HOOK}, other = [None, 1]\n",
+            # The mirror image: a starred value expands before assignment, so the positions
+            # after it are not the ones written.
+            f"def t(store):\n    store.{HOOK}, other = (*[None], 1)\n",
         ):
             sites, leftover = self.read(source)
             self.assertEqual(sites, [], source)
