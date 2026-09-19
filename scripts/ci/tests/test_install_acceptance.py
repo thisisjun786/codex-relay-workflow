@@ -1482,6 +1482,11 @@ def _module_statements(tree):
             bound += [n.id for n in ast.walk(statement.target) if isinstance(n, ast.Name)]
         elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
             bound = [_dotted(statement.value.func) or "a call"]
+        elif isinstance(statement, ast.Expr):
+            # A walrus written as a statement binds a name, and that name is what it is for.
+            bound = [inner.target.id for inner in ast.walk(statement.value)
+                     if isinstance(inner, ast.NamedExpr)
+                     and isinstance(inner.target, ast.Name)]
         if not bound and isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
                                                 ast.ClassDef)):
             # A def evaluates its decorators and defaults out here, so the statement answers
@@ -1493,6 +1498,24 @@ def _module_statements(tree):
         for node in ast.walk(statement):
             named.setdefault(id(node), name)
     return named
+
+
+def _owned_by_a_class(tree):
+    """Every node a class body owns, by id: a walrus and a match case as much as a statement.
+
+    Not what a def or a class inside it owns -- those are scopes of their own -- so the walk
+    stops there rather than claiming their insides for the class.
+    """
+    def under(nodes):
+        for node in nodes:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                                 ast.Lambda)):
+                continue
+            yield id(node)
+            yield from under(ast.iter_child_nodes(node))
+
+    return {inner for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+            for inner in under(node.body)}
 
 
 def _bindings(node):
@@ -1562,18 +1585,7 @@ def _held_by_class(tree, spelled, over=None):
     places, held = _places(tree), dict(over or {})
     # Which statements a class body actually owns: a bare name bound in one is an attribute of
     # that class, and the same name bound inside a method is that method's local.
-    def owned(body):
-        for statement in body:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue
-            yield id(statement)
-            for field, value in ast.iter_fields(statement):
-                if isinstance(value, list):
-                    yield from owned([item for item in value
-                                      if isinstance(item, (ast.stmt, ast.ExceptHandler))])
-
-    in_class_body = {inner for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-                     for inner in owned(node.body)}
+    in_class_body = _owned_by_a_class(tree)
 
     # A local name that holds the thing first, so setUp doing value = reading.UNREADABLE and then
     # self.unread = value is one binding in two steps rather than two unrelated lines.
@@ -1659,16 +1671,18 @@ def _hands_on(tree, spelled):
         for statement in body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 yield statement
+            elif isinstance(statement, ast.match_case):
+                yield from in_body(statement.body)
             elif not isinstance(statement, ast.ClassDef):
                 for field, value in ast.iter_fields(statement):
                     if isinstance(value, list):
                         yield from in_body([item for item in value
-                                            if isinstance(item, (ast.stmt,
-                                                                 ast.ExceptHandler))])
+                                            if isinstance(item, (ast.stmt, ast.ExceptHandler,
+                                                                 ast.match_case))])
 
     is_method = {id(inner) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
                  for inner in in_body(node.body)}
-    defined, methods, plain, receivers = set(), {}, set(), {}
+    defined, methods, plain, receivers, properties = set(), {}, set(), {}, {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
@@ -1689,6 +1703,10 @@ def _hands_on(tree, spelled):
         # not a module-level function or another class's method that happens to share the name.
         if id(node) in is_method:
             methods.setdefault((klass, where.rpartition(".")[2]), where)
+            # A property is called by being read, so an attribute access naming one is a call.
+            if any((_dotted(mark) or "").rpartition(".")[2] in ("property", "cached_property")
+                   for mark in getattr(node, "decorator_list", [])):
+                properties.setdefault((klass, where.rpartition(".")[2]), where)
     for node in ast.walk(tree):
         # carrier = lambda self: ... in a class body binds a method named carrier, and the
         # lambda's own place is what a call through it reaches.
@@ -1743,8 +1761,8 @@ def _hands_on(tree, spelled):
                 for field, value in ast.iter_fields(statement):
                     if isinstance(value, list):
                         yield from bound_in([item for item in value
-                                             if isinstance(item, (ast.stmt,
-                                                                  ast.ExceptHandler))], False)
+                                             if isinstance(item, (ast.stmt, ast.ExceptHandler,
+                                                                   ast.match_case))], False)
 
         for named, line in bound_in(node.body):
             class_bound.setdefault(node.name, {}).setdefault(named, line)
@@ -1856,9 +1874,13 @@ def _hands_on(tree, spelled):
                          if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store))
         return found
 
+    owned_by_class = _owned_by_a_class(tree)
     for node in ast.walk(tree):
         where = places.get(id(node), (MODULE_LEVEL, None))[0]
-        if where == MODULE_LEVEL:
+        if where == MODULE_LEVEL or id(node) in owned_by_class:
+            # A name bound in a class body belongs to that body. Letting it into the function
+            # the class is written in would stop the outward lookup for everything after the
+            # class, which is not what Python does with a class attribute.
             continue
         bound_here = binds(node)
         if bound_here:
@@ -2015,6 +2037,17 @@ def _hands_on(tree, spelled):
                     known |= targets
                     growing = True
 
+    def read_as_a_call(node, function):
+        """A property read: self.carrier with no parentheses still runs carrier."""
+        if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
+            return set()
+        through = _dotted(node.value)
+        _where, klass = places.get(id(node), (MODULE_LEVEL, None))
+        owner = (klass if through in instance(function)
+                 else (through or "").rpartition(".")[2] or None)
+        reached = properties.get((owner, node.attr))
+        return {reached} if reached else set()
+
     def called(node, function):
         """Every place this call may reach."""
         if isinstance(node.func, ast.Name):
@@ -2061,6 +2094,9 @@ def _hands_on(tree, spelled):
                     reached = called(expression, function) & carriers
                     if reached:
                         return "through " + sorted(reached)[0]
+                read = read_as_a_call(expression, function) & carriers
+                if read:
+                    return "through " + sorted(read)[0]
                 return spelled(expression, inner)
             return hands
 
@@ -2100,7 +2136,7 @@ def _hands_on(tree, spelled):
     statements = _module_statements(tree)
     taken = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, (ast.Call, ast.Attribute)):
             continue
         function, _klass = places.get(id(node), (MODULE_LEVEL, None))
         # A carrier is reported here too. One that only forwards -- return await helper() --
@@ -2108,7 +2144,9 @@ def _hands_on(tree, spelled):
         # And a call made at module level is a place the same way a spelling written there is.
         at_module = function == MODULE_LEVEL
         where = statements.get(id(node), "a statement") if at_module else function
-        for place in sorted(called(node, function) & carriers):
+        reached = (called(node, function) if isinstance(node, ast.Call)
+                   else read_as_a_call(node, function))
+        for place in sorted(reached & carriers):
             taken.append((at_module, where, node.lineno, "through " + place))
     return carriers, taken
 
@@ -3749,6 +3787,7 @@ HANDED = {
     "_module_statements": NOTHING,
     "_reachable": NOTHING,
     "_bindings": NOTHING,
+    "_owned_by_a_class": NOTHING,
     "_held_by_class": NOTHING,
     "_hands_on": NOTHING,
     "_occurrences": NOTHING,
