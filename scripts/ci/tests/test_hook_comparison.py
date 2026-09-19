@@ -2255,5 +2255,85 @@ class TheVerdictGuardRunsBeforeThePredicateTests(unittest.TestCase):
                                  "the written form is a plain answer again, so a reader of the"
                                  " JSON inherits the defect the type removed")
 
+# Every operation that must refuse, and how a consumption site would reach it. Driven rather than
+# listed as present: a method that stops refusing is invisible to a check that only looks it up.
+# __bool__ is the one that matters most and the reason this table exists. Delete it and an object
+# is truthy by default, so "is there something there" answers yes again - which is exactly the
+# question CRW-68's sentinel escaped. __str__ is the same shape: object.__str__ falls back to
+# __repr__, a non-empty string, so formatting a reading that was not taken into a message would
+# quietly succeed.
+REFUSING_USES = {
+    "__eq__": lambda value: value == "resolved",
+    "__ne__": lambda value: value != "resolved",
+    "__lt__": lambda value: value < "resolved",
+    "__le__": lambda value: value <= "resolved",
+    "__gt__": lambda value: value > "resolved",
+    "__ge__": lambda value: value >= "resolved",
+    "__bool__": lambda value: bool(value),
+    "__hash__": lambda value: hash(value),
+    "__str__": lambda value: str(value),
+    "__format__": lambda value: format(value),
+    "__len__": lambda value: len(value),
+    "__iter__": lambda value: list(value),
+    "__contains__": lambda value: "resolved" in value,
+    "__getitem__": lambda value: value[0],
+}
+
+# What the type may answer rather than refuse, each with the reason it is safe. A method that is
+# neither driven above nor excused here fails the partition, which is what stops one being added
+# that quietly answers a question only a value can answer.
+ANSWERING_METHODS = {
+    "__init__": "builds one",
+    "__repr__": "a traceback and a failing assertion still have to be able to name which reading"
+                " failed and why, and repr is never mistaken for a value",
+    "rendered": "the written form, which is an object and therefore cannot equal a cell's answer",
+    "_refuse": "the refusal itself",
+}
+
+
+class TheRefusalsAreAnInventoryTests(unittest.TestCase):
+    """The enforcement rests on a set of methods, and nothing used to check that set.
+
+    The producers and the functions that consume a cell are both derived and pinned. The refusals
+    were not, so deleting one was silent - and two of them are silent in the worst way, because
+    what replaces them is a default that answers rather than raises.
+    """
+
+    def test_every_operation_that_must_refuse_actually_refuses(self):
+        """Driven against what read() answers with, not against a class this names.
+
+        That is what keeps it honest across the change: at the commit this replaces, read()
+        answers with a string, the string answers every one of these, and the case fails on the
+        property rather than on a name that does not exist there yet.
+        """
+        for name, use in sorted(REFUSING_USES.items()):
+            with self.subTest(operation=name):
+                try:
+                    answered = use(unread())
+                except Exception:
+                    continue
+                self.fail(name + " answered " + repr(answered)[:60] + " instead of refusing, so a"
+                          " consumption site reaching a reading that was not taken through it"
+                          " gets an answer only a value should be able to give")
+
+    def test_the_partition_covers_every_method_the_type_defines(self):
+        """Support. A method added without being classified, or removed, fails here.
+
+        Asked of the type read() hands back rather than of a name, so it moves with the
+        representation instead of describing one.
+        """
+        defined = set(name for name, value in vars(type(unread())).items() if callable(value))
+        unclassified = sorted(defined - set(REFUSING_USES) - set(ANSWERING_METHODS))
+        self.assertEqual(unclassified, [],
+                         "a method is defined that is neither driven as a refusal nor excused as"
+                         " one that may answer. Say which it is: " + ", ".join(unclassified))
+        missing = sorted(set(REFUSING_USES) - defined)
+        self.assertEqual(missing, [],
+                         "an operation this suite drives is no longer defined on the type, so"
+                         " whatever Python does by default answers it instead: "
+                         + ", ".join(missing))
+        for name, why in sorted(ANSWERING_METHODS.items()):
+            self.assertTrue(str(why).strip(), name + " is excused without a reason")
+
 if __name__ == "__main__":
     unittest.main()
