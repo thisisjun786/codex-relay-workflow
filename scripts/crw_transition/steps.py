@@ -458,17 +458,27 @@ def declaration_complaints(repo_root, cache_version):
         # here, the comparison proves nothing and must not pass by being empty.
         found.append("this checkout's plugin package could not be read, so what the installed one"
                      " declares was compared with nothing: " + "; ".join(ours_unread))
-    for event, wanted in sorted(ours_events.items()):
+    for event in sorted(set(ours_events) | set(cached_events)):
         # Counted, not merely contained. A cached document declaring the launcher twice answers a
         # subset test and fires two adapters on every Stop, which is the duplicate execution this
         # whole command exists to end.
+        #
+        # Both maps, not this checkout's events alone. Reading only the events declared here let
+        # a cached document keep the expected Stop entry and ADD another -- SessionStart running
+        # the same adapter -- and pass every check: the installed package would then answer turns
+        # this repository never declared a hook for, running the adapter and its guard there,
+        # while the run that handed the surface over reported it as the same surface.
+        wanted = ours_events.get(event) or []
         got = cached_events.get(event) or []
         if sorted(got) != sorted(wanted):
             found.append("the installed package declares " + str(event) + " hooks running "
                          + (", ".join(sorted(got)) if got else "nothing this checkout ships")
-                         + ", and this checkout declares " + ", ".join(sorted(wanted))
+                         + ", and this checkout declares "
+                         + (", ".join(sorted(wanted)) if wanted
+                            else "no " + str(event) + " hook at all")
                          + ". The replacement has to be the same surface, once each: anything"
-                         " else either leaves the Stop unanswered or answers it twice")
+                         " else either leaves the Stop unanswered, answers it twice, or answers"
+                         " an event this package never declared")
     if cached_servers != ours_servers:
         # The whole map, not each name this checkout happens to use. A cached file carrying the
         # expected entry PLUS a second name running the same launcher passes every per-name test

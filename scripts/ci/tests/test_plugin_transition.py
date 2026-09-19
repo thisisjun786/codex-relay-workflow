@@ -2851,6 +2851,24 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(retired["outcome"], "already_done", json.dumps(retired)[:600])
         self.assertIn(str(custom), retired.get("watched") or [], json.dumps(retired)[:600])
 
+    def test_a_cache_declaring_another_event_is_refused(self):
+        """The Stop entry is intact and the package also answers an event nobody here declares."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        # Structurally valid, and the expected Stop declaration is left exactly as it was: what
+        # is added is a second event running the same adapter on turns this package never
+        # reasoned about, with a Stop's guard budget.
+        document["hooks"]["SessionStart"] = json.loads(json.dumps(document["hooks"]["Stop"]))
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("SessionStart", answer["results"][0]["detail"])
+        self.assertIn("no SessionStart hook at all", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
