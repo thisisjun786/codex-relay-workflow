@@ -15,6 +15,7 @@ managed assignment is precisely the case that must refuse.
 import hashlib
 import json
 
+from . import restoration
 from .errors import AckRefused, RefusalReason
 
 DISPOSITIONS = ("verified", "needs_changes", "unverified")
@@ -24,6 +25,19 @@ MODES = (MANAGED, LEGACY)
 
 COVERED = "covered"
 LEGACY_UNREGISTERED = "legacy_unregistered"
+
+
+def finding_id(value) -> str:
+    """The canonical form of a criterion id: converted and trimmed, in one place.
+
+    Named because more than one surface has to answer "is this the finding called c2", and
+    they have to answer it the same way. The command surface selects the restoration carrier
+    before this module has normalised anything, so a comparison against the raw argument
+    rejected ` c2` as no finding while the verdict went on to accept it as `c2` - a selection
+    refused for a reason the refusal did not contain. Two copies of a rule about which
+    findings exist is the same failure this package is closing one layer in.
+    """
+    return str(value or "").strip()
 
 
 def set_digest(entries) -> str:
@@ -52,15 +66,25 @@ def normalise_findings(criteria=None, findings=None) -> list:
     criteria is the delivered core's simple form, [{"id", "verdict"}]. findings adds a note.
     Both end up here, and a disposition outside the frozen enum is refused before anything is
     written, because a record that would fail conformance must never reach the store.
+
+    A finding may also declare that it carries the correction's restoration block. That is the
+    one place the block can travel, so which finding holds it has to survive this
+    normalisation rather than being dropped with every other unrecognised key.
     """
     merged = []
+    # Explicit declarations, kept beside the merge rather than read back out of it. The
+    # merged entry records only a true, so an explicit false left no trace and the
+    # contradiction check could only see one ordering: true then false refused, false then
+    # true was accepted. The rule is about a caller saying two things, which does not depend
+    # on the order they said them in.
+    declared = {}
     for source in (criteria or [], findings or []):
         for item in source:
             if not isinstance(item, dict):
                 raise AckRefused(
                     RefusalReason.DISPOSITION_CONFLICT, "each finding is an object"
                 )
-            identifier = str(item.get("id") or "").strip()
+            identifier = finding_id(item.get("id"))
             if not identifier:
                 raise AckRefused(
                     RefusalReason.DISPOSITION_CONFLICT, "each finding names a criterion id"
@@ -76,7 +100,49 @@ def normalise_findings(criteria=None, findings=None) -> list:
             note = str(item.get("note") or "").strip()
             if note:
                 entry["note"] = note
+            flag = item.get(restoration.FIELD)
+            if flag is not None and not isinstance(flag, bool):
+                raise AckRefused(
+                    RefusalReason.DISPOSITION_CONFLICT,
+                    f"a finding declares its restoration block with true or false, not "
+                    f"{type(flag).__name__}",
+                )
+            if flag is not None:
+                if declared.get(identifier, flag) is not flag:
+                    # Last-entry-wins is right for a disposition and a note and wrong for
+                    # this. The two inputs are merged by id, so a caller that declared the
+                    # block in criteria and then described it in findings would have the
+                    # declaration cancelled by the entry that was only meant to add the note.
+                    # A caller that means to cancel it cannot be told apart from one that
+                    # forgot, so the contradiction is refused rather than guessed either way.
+                    raise AckRefused(
+                        RefusalReason.DISPOSITION_CONFLICT,
+                        f"{identifier!r} both declares and disclaims the restoration block; "
+                        "one correction carries one block and says so once",
+                    )
+                declared[identifier] = flag
+            if declared.get(identifier):
+                entry[restoration.FIELD] = True
             merged = [e for e in merged if e["id"] != identifier] + [entry]
+    carriers = [e["id"] for e in merged if e.get(restoration.FIELD)]
+    if len(carriers) > 1:
+        raise AckRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            f"{carriers} each declare the restoration block. One correction carries one "
+            "block, and two candidates is a block nobody can locate",
+        )
+    # After the merge, so a note supplied through the other input still counts. The block
+    # travels in the note and nowhere else, so a declaration with no note marks an empty
+    # carrier: coverage is satisfied by some other actionable finding, the renderer labels the
+    # empty one, and the relay reports it carried. Every check downstream tests the boolean,
+    # so this is the only place that can tell an intention from a delivery.
+    empty = [e["id"] for e in merged if e.get(restoration.FIELD) and not e.get("note")]
+    if empty:
+        raise AckRefused(
+            RefusalReason.DISPOSITION_CONFLICT,
+            f"{empty[0]!r} declares the restoration block and carries no note. The block is "
+            "the note; a declaration without one names a carrier with nothing in it",
+        )
     return merged
 
 
@@ -90,7 +156,7 @@ class CriteriaService:
     def register(self, relationship_id, entries, *, source_ref=None) -> dict:
         normalised, seen = [], set()
         for entry in entries:
-            identifier = str(entry.get("id") or "").strip()
+            identifier = finding_id(entry.get("id"))
             title = str(entry.get("title") or "").strip()
             if not identifier or not title:
                 raise AckRefused(
