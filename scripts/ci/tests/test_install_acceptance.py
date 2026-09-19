@@ -1963,6 +1963,45 @@ RESOLVES_LIKE_PYTHON = {
          " consumer is lost and the first's would be invented. This was declared a limit of the"
          " reader for a long while; it was a limit of cost, and only a form that cannot be"
          " widened may be declared."),
+    "an attribute assigned through a qualified class owner":
+        (REFUSAL,
+         ("class Outer:",
+          "    class Inner:",
+          "        def consumer(self):",
+          "            return self.unread",
+          "",
+          "Outer.Inner.unread = reading.UNREADABLE"),
+         "consumer", True,
+         "the owner has to be resolved to the same scoped key the other tables use. Reduced to"
+         " its last part it stores the attribute under a key nothing looks up, which is the"
+         " bill for keying classes by scope and has to be paid everywhere at once."),
+    "a nested parameter spelled like the receiver alias":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def outer(self):",
+          "        that = self",
+          "        def inner(that):",
+          "            return that.carrier()",
+          "        return inner"),
+         "outer.inner", False,
+         "the alias is inherited by the scopes inside the one that made it, and a nested"
+         " parameter of that spelling is the inner function's own. Its pair is the ordinary"
+         " closure that DOES read the enclosing alias, and the scope that made it keeps it or"
+         " nothing would inherit at all."),
+    "a receiver alias bound with an annotation":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def consumer(self):",
+          "        that: Holder = self",
+          "        return that.carrier()"),
+         "consumer", True,
+         "the ordinary typed spelling of the same line. Reading only plain assignments made an"
+         " annotation a form nobody looked at, which is why this goes through the same binding"
+         " abstraction as everything else."),
     "a class body binding inside a function":
         (REFUSAL,
          ("def outer():",
@@ -3176,6 +3215,23 @@ def _held_by_class(tree, spelled, over=None):
     # Which statements a class body actually owns: a bare name bound in one is an attribute of
     # that class, and the same name bound inside a method is that method's local.
     in_class_body = _owned_by_a_class(tree)
+    by_spelling = _class_spellings(tree, places)
+    known_keys = {key for scopes in by_spelling.values() for key in scopes.values()}
+
+    def owner_key(dotted, scope):
+        """The scoped class key a dotted owner names.
+
+        Outer.Inner is the inner class, and reducing it to Inner stores the attribute under a
+        key no table looks up. A spelling that names no class here answers with its last part,
+        which is what an imported owner was always answered with.
+        """
+        parts = [part for part in (dotted or "").split(".") if part]
+        if not parts:
+            return None
+        key = _class_named(by_spelling, parts[0], scope)
+        for part in parts[1:]:
+            key = key + "." + part
+        return key if key in known_keys else parts[-1]
 
     # A local name that holds the thing first, so setUp doing value = reading.UNREADABLE and then
     # self.unread = value is one binding in two steps rather than two unrelated lines.
@@ -3203,8 +3259,8 @@ def _held_by_class(tree, spelled, over=None):
             if isinstance(target, ast.Attribute):
                 through = _dotted(target.value)
                 # Example.unread = ... names the class as statically as self.unread does.
-                owner = klass if through in ("self", "cls") else (
-                    (through or "").rpartition(".")[2] or None)
+                owner = (klass if through in ("self", "cls")
+                         else owner_key(through, function))
                 if owner is not None:
                     held.setdefault(owner, set()).add(target.attr)
             elif (isinstance(target, ast.Name) and klass is not None
@@ -3243,7 +3299,7 @@ def _held_by_class(tree, spelled, over=None):
                        else statement.targets):
             if not isinstance(target, ast.Attribute):
                 continue
-            owner = (_dotted(target.value) or "").rpartition(".")[2] or None
+            owner = owner_key(_dotted(target.value), MODULE_LEVEL)
             if owner is not None:
                 rebound.setdefault(owner, set()).add(target.attr)
     # An attribute declared on a base is held by everything under it, the way a method is.
@@ -3620,14 +3676,16 @@ def _hands_on(tree, spelled):
     # that = self and other = that are two steps onto one object.
     receiver_alias = {}
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
-            continue
         where, _klass = places.get(id(node), (MODULE_LEVEL, None))
-        for target in node.targets:
+        for target, value in _bindings(node):
+            # Through the same binding abstraction as everything else, so that: Holder = self
+            # is the ordinary typed spelling of the same line rather than a form nobody reads.
+            if not isinstance(value, ast.Name):
+                continue
             for inner in ast.walk(target):
                 if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
                     receiver_alias.setdefault(where, {}).setdefault(
-                        node.value.id, set()).add(inner.id)
+                        value.id, set()).add(inner.id)
 
     def instance(function):
         """How this scope spells its instance: whatever the first parameter is called.
@@ -3654,7 +3712,16 @@ def _hands_on(tree, spelled):
                         chain, reach = function.split(".") if function != MODULE_LEVEL else [], []
                         for part in chain:
                             reach.append(part)
-                            gained |= receiver_alias.get(".".join(reach), {}).get(name, set())
+                            here = ".".join(reach)
+                            for alias in receiver_alias.get(here, {}).get(name, set()):
+                                # An alias the READING scope binds itself is that scope's own
+                                # name: a nested parameter called that is the inner function's,
+                                # not the receiver the method around it named. The scope that
+                                # made the alias still keeps it, or nothing would ever inherit.
+                                if here != function and alias in taken_names.get(function,
+                                                                                 set()):
+                                    continue
+                                gained.add(alias)
                         gained -= found
                         if gained:
                             found |= gained
