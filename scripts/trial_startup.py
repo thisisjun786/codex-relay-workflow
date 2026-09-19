@@ -89,6 +89,30 @@ REQUIRED_EXPECT = ("model", "reasoningEffort", "sandbox", "approvalPolicy")
 # record can be usable and complete while these three disagree with what creation recorded.
 DELIVERY_ACCESS = ("cwd", "runtimeWorkspaceRoots", "environments")
 
+
+def receipt_access(payload, key):
+    """Where a creation receipt actually carries each delivery setting.
+
+    The bridge builds settings.actual from its OBSERVABLE list, and environments is not in it:
+    the host reports the environment selection on the created thread, so the receipt carries it
+    at creation.thread.environments instead. Reading all three out of settings.actual made every
+    real receipt unreadable, and an unreadable cell refuses the start, so a checker meant to
+    catch a trial starting with unrecorded access would have blocked every genuine trial instead.
+    """
+    if key == "environments":
+        found = field(payload, "creation", "thread", "environments")
+        if found is MISSING:
+            # A host that does echo it under the settings is read there rather than called absent.
+            found = field(payload, "settings", "actual", "environments")
+        return found
+    return field(payload, "settings", "actual", key)
+
+
+def unreadable_access(value):
+    """A null environment selection means unknown in the relay's own normalisation, and unknown
+    is never flattened into empty here either. An empty list is a selection; a null is not."""
+    return value is MISSING or value is None
+
 # Every fact a later predicate compares a payload against. Declared here and required at ingress,
 # because a comparison between two absent values is an agreement nobody established.
 REQUIRED_FIELDS = (
@@ -1084,6 +1108,7 @@ def reading_capability(record, relay):
             expect = participant.get("expect") or {}
             found, why = capture(record, "creationReceipt", task)
             actual = MISSING
+            receipt = found["payload"] if found is not None else MISSING
             if found is None:
                 cells.append(cell("receiptEcho:" + str(task), UNKNOWN, evidence=why,
                                   provenance=CAPTURED))
@@ -1159,9 +1184,10 @@ def reading_capability(record, relay):
             # Compared payload against payload rather than against a fifth declaration, because
             # neither side of it is the operator's to invent.
             unread = [key for key in DELIVERY_ACCESS
-                      if field(actual, key) is MISSING or field(settings, key) is MISSING]
+                      if unreadable_access(receipt_access(receipt, key))
+                      or unreadable_access(field(settings, key))]
             apart = [key for key in DELIVERY_ACCESS
-                     if not same_value(field(actual, key), field(settings, key))]
+                     if not same_value(receipt_access(receipt, key), field(settings, key))]
             cells.append(graded("deliveryAccess:" + str(task),
                                 MISSING if unread else field(settings, "cwd"), not apart,
                                 probe=probe, provenance=EXECUTED,

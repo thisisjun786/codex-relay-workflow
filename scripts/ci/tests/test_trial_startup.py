@@ -260,11 +260,17 @@ class World:
     def _write_captures(self):
         settings = self._settings()
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
-            # A creation receipt echoes the settings the host recorded, workspace access and all,
-            # which is what makes creation and delivery comparable to each other.
-            echo = dict(settings, cwd=self.payloads["taskCwd"][task])
+            # The shape the bridge actually writes. Its observable list has no environments in
+            # it, because the host reports the environment selection on the created thread, so a
+            # receipt carries it there and not under settings.actual. A tidier fixture would have
+            # made a cell pass here that refuses every real receipt.
+            echo = {key: settings[key] for key in ("model", "reasoningEffort", "sandbox",
+                                                   "approvalPolicy", "runtimeWorkspaceRoots")}
+            echo["cwd"] = self.payloads["taskCwd"][task]
             self.captures["receipt-" + task + ".json"] = {
-                "taskId": task, "settings": {"requested": echo, "actual": echo, "findings": []}}
+                "taskId": task,
+                "creation": {"thread": {"id": task, "environments": settings["environments"]}},
+                "settings": {"requested": echo, "actual": echo, "findings": []}}
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
             self.captures["lifecycle-" + task + ".json"] = {
                 "threadId": task, "status": "idle", "goal": None}
@@ -1114,6 +1120,11 @@ class PayloadContract(TrialCase):
                "status", "threadId", "taskId", "stateDirectory", "socket", "launchedAt",
                "minimumAliveSeconds", "artifacts", "peerDoctor"}
         own |= {"closesAt", "opensAt"}
+        # The bridge's creation receipt, which is a capture rather than a relay payload. Its
+        # observable list builds settings.actual and has no environments in it, so the host's
+        # environment selection is read from the created thread. That claim is asserted against
+        # the bridge's own source in ThirtyFirstHostedRound rather than taken on trust here.
+        own |= {"creation", "thread", "environments"}
         self.assertEqual(reads - declared - own, set(),
                          "a field is read without being declared in the payload contract")
 
@@ -3006,6 +3017,63 @@ class ThirtiethHostedRound(TrialCase):
                 self.assertEqual(cell["value"], UNKNOWN,
                                  name + " read an absent field as a disagreement")
                 self.assertFalse(cell["met"])
+
+
+class ThirtyFirstHostedRound(TrialCase):
+    """The receipt shape the bridge actually writes, rather than the one the fixture preferred.
+
+    A cell added to catch a trial starting with access nobody recorded looked for all three
+    delivery settings under settings.actual. The bridge's observable list has no environments in
+    it, so every real receipt made the cell unreadable, and an unreadable cell refuses the start.
+    A check meant to refuse one bad arrangement would have refused every good one.
+    """
+
+    def test_a_receipt_in_the_shape_the_bridge_writes_still_starts(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+        self.assertEqual(
+            cells_of(document, "capability")["deliveryAccess:" + World.PARENT_A]["value"],
+            VERIFIED)
+
+    def test_the_environment_selection_is_read_from_the_created_thread(self):
+        self.world.start_supervisor()
+        self.world.captures["receipt-" + World.PARENT_A + ".json"]["creation"]["thread"][
+            "environments"] = [{"environmentId": "somewhere-else", "cwd": str(self.world.root),
+                                "runtimeWorkspaceRoots": [str(self.world.root)]}]
+        self.world.flush()
+        document = self.world.preflight()
+        cell = cells_of(document, "capability")["deliveryAccess:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("environments", cell["evidence"])
+
+    def test_an_environment_selection_nobody_reported_is_unknown(self):
+        # A null means unknown in the relay's own normalisation, and unknown is never flattened
+        # into empty here either. An empty list is a selection; a null is the absence of one.
+        for where in ("receipt", "store"):
+            with self.subTest(where=where):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                if where == "receipt":
+                    world.captures["receipt-" + World.PARENT_A + ".json"]["creation"]["thread"][
+                        "environments"] = None
+                else:
+                    world.payloads["settings-show"]["payload"]["settings"]["environments"] = None
+                world.start_supervisor()
+                world.flush()
+                cell = cells_of(world.preflight(),
+                                "capability")["deliveryAccess:" + World.PARENT_A]
+                self.assertEqual(cell["value"], UNKNOWN)
+                self.assertFalse(cell["met"])
+
+    def test_the_bridge_does_not_observe_the_environment_selection(self):
+        # Support, and the reason environments is read from the created thread rather than from
+        # settings.actual: the bridge's own observable list is what builds that object.
+        source = (ROOT / "packages" / "codex-thread-bridge" / "src" / "codex_thread_bridge"
+                  / "settings.py").read_text(encoding="utf-8")
+        observable = source.split("OBSERVABLE = (")[1].split(")")[0]
+        self.assertIn("runtimeWorkspaceRoots", observable)
+        self.assertNotIn("environments", observable)
 
 
 if __name__ == "__main__":                                           # pragma: no cover
