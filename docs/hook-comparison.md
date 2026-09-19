@@ -190,8 +190,10 @@ declared, and under a substitution it did; the finding is read from `judgmentsTh
 table.
 
 What it does not cover is emitted as data in `processWitness.doesNotCover` rather than left for a reader to
-assume: identity is by path, so a file replaced at that path during the run and put back before the last
-digest is not caught; writes through a descriptor this trace never saw opened, and the calls that write
+assume. It covers the firings and nothing else this run starts, so the installs, the relay
+commands that build each scenario and the probe are outside it. Beyond that: identity is by
+path, so a file replaced at that path during the run and put back before the last digest is
+not caught; writes through a descriptor this trace never saw opened, and the calls that write
 through one rather than through a path; a filesystem socket made by `bind`; ownership, timestamps and
 extended attributes, which are not in the traced set at all; where a path led at the syscall, since
 containment resolves it afterwards; the tracer itself, which is trusted rather than checked; and anything a
@@ -325,8 +327,10 @@ points at is exactly where something else already lives. Everything the run writ
 directory it created, including the bytecode its subprocesses would otherwise leave beside the
 source they import. `wroteOnlyInsideItsRoot` in the result is that claim checked against the
 resolved path of every place the run CREATES rather than against how the paths are spelled, and
-`processWitness` is the same claim checked against every path the processes were seen writing. With no
-`--root` the run makes a temporary directory and removes it afterwards; with one it keeps everything,
+`processWitness` is the same claim checked against every path THE FIRINGS were seen writing.
+The other subprocesses a run starts - the two installs, the relay commands that build each
+scenario, and the probe - are not traced, so for them the claim rests on the places check
+alone. With no `--root` the run makes a temporary directory and removes it afterwards; with one it keeps everything,
 which is what an operator wants when a row has to be explained.
 
 Every way a subprocess or a parse can fail ends in a document. A timeout, an executable that

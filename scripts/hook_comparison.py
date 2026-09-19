@@ -1228,6 +1228,11 @@ WITNESS_DOES_NOT_COVER = (
     " changed in between is answered as it is afterwards",
     "the tracer itself, which is trusted rather than checked, and its own trace file, which it"
     " writes without tracing",
+    "every subprocess this run starts that is NOT a firing: the two installs, the relay commands"
+    " that build each scenario, and the probe. They are started before or around the firings and"
+    " none of them is traced, so a write one of them made outside the root would be caught only"
+    " if it landed in a place wroteOnlyInsideItsRoot already names. What this witness covers is"
+    " the firings, which is what the criterion beside it says",
     "a host whose tracer rejects one of the options this witness needs. The probe reports that"
     " as not performed, carrying the tracer's own complaint, rather than tracing with a"
     " narrower option set whose output this parser was not written against",
@@ -2320,8 +2325,10 @@ def containment(root, places):
             "doesNotCover": "a write a subprocess made somewhere this run never named. This"
                             " judgment is about the places this run CREATES, and where the"
                             " processes actually wrote is a different question: processWitness"
-                            " is where it is asked, including whether it could be asked at all on"
-                            " this host. What is also built here is that the constructed"
+                            " asks it OF THE FIRINGS, and of nothing else this run starts -"
+                            " not the installs, not the relay commands that build a scenario,"
+                            " not the probe - and it also says whether it could be asked at all"
+                            " on this host. What is also built here is that the constructed"
                             " environment carries no pointer out of this directory and no"
                             " bytecode is left beside the source the subprocesses import."}
 
