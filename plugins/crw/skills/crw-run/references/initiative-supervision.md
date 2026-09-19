@@ -160,7 +160,14 @@ and the project's work did not. Where the winning set excludes this project, or 
 the work was started under, the parent records no supervisor it is not in fact supervised by:
 it preserves the work already done, stops what now falls outside, and raises both, because a
 recorded ownership nobody authorized would route every later message to the wrong owner. A withdrawal, or a replacement handoff from the other side, is what prompts that
-read; neither is what settles it, which is also why forging either achieves nothing. That does not prevent an overlap; it bounds one to the work already started, which can be
+read; neither is what settles it, which is also why forging either achieves nothing.
+
+A withdrawal also cannot always be delivered, since a parent that is paused, cancelled or archived
+does not receive one, so the transfer cannot rest on the message arriving. A parent validates its
+recorded supervisor against the initiative record when it resumes, before it continues or
+integrates anything, and applies the same rule there. The losing supervisor keeps the undelivered
+transfer on its own record as owed, so whoever resumes that parent can find it rather than
+inferring it. That does not prevent an overlap; it bounds one to the work already started, which can be
 reconciled, instead of letting an initiative run to completion under two owners. A busy parent, an unreachable record or an
 uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
 

@@ -307,7 +307,11 @@ a parent that already holds it, and the later refusal only catches authority bei
 same reason the handoff's two statements of those limits are compared with each other: Authority
 says what this parent may do and Scope as read says what the record said, so a handoff whose
 Authority is wider than its own Scope as read is inconsistent on its face, and it is refused and
-raised rather than followed at whichever of the two is more convenient. The handoff states both, with the revision it read them at, so the receiver has each
+raised rather than followed at whichever of the two is more convenient. The same read covers the
+prerequisites and any shared-target order the handoff states, because those are the supervisor's to
+set and need not appear anywhere in this parent's own baseline: a prerequisite or an order the
+record does not carry is unconfirmed, and work that depends on it does not start on the message's
+word. The handoff states both, with the revision it read them at, so the receiver has each
 side of the comparison; the test is those values and not revision equality: an authorized edit elsewhere in the initiative moves the revision
 without moving them, and refusing a handoff over that would turn ordinary record-keeping into a
 stall. Where those values have moved, the handoff is out of date, and what it needs is the scope
