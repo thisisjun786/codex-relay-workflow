@@ -3362,6 +3362,55 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("cannot prove is its own adapter", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
+    @needs_reader
+    def test_an_executable_merely_named_python_is_not_ours(self):
+        """A name is not the fact: /tmp/python3 -> /bin/true answers nothing and runs nothing."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        liar = Path(self.directory) / "python3"
+        liar.symlink_to("/bin/true")
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].replace(str(sys.executable), str(liar), 1)
+        self.assertIn(str(liar), entry["command"])
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        found = inventory.read_hook(host.home, repo_root=ROOT)
+        self.assertTrue(found["entries"], json.dumps(found)[:500])
+        self.assertFalse(any(item["proven"] for item in found["entries"]),
+                         json.dumps(found["entries"])[:600])
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertEqual(host.hooks_document(), before)
+
+    @needs_reader
+    def test_a_python_whose_name_is_not_python_is_still_ours(self):
+        """The installer takes --python and validates by running it, so a name rule is too narrow."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.host
+        # A real Python under a name no basename rule would accept.
+        elsewhere = host.version / "bin" / "pypy3"
+        elsewhere.symlink_to(sys.executable)
+        host.link_skills()
+        registered = host.register_hook(python=elsewhere)
+        self.assertEqual(registered.returncode, 0, registered.stdout[-600:])
+        host.register_mcp()
+        host.install_plugin()
+        found = inventory.read_hook(host.home, repo_root=ROOT)
+        self.assertTrue(found["entries"], json.dumps(found)[:500])
+        self.assertTrue(all(item["proven"] for item in found["entries"]),
+                        json.dumps(found["entries"])[:600])
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1200])
+        self.assertEqual(host.hooks_document()["hooks"]["Stop"][0]["hooks"], [])
+        self.assertEqual(host.settings()["owner"], "plugin")
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

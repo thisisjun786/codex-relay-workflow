@@ -29,10 +29,6 @@ RELAY_SCRIPT = "codex-session-relay"
 BRIDGE_SCRIPT = "codex-thread-bridge"
 ADAPTER_SCRIPT = "crw-completion-hook"
 INTERPRETER_SCRIPT = "python3"
-# The names a Python executable actually has, checked because the writer renders whatever argv[0]
-# it is given: a command reproduces byte for byte whatever starts it, so byte equality alone
-# proves the WORDS are ours and not that they run our adapter.
-INTERPRETER_NAMES = re.compile(r"^python(3(\.\d+)?)?$")
 
 REPO_MARKERS = ("plugins/crw/.codex-plugin/plugin.json", "scripts/crw_runtime/completion.py")
 
@@ -349,15 +345,13 @@ def canonical_command(argv):
     defeatable: names_this_adapter returns the first word whose basename matches, wherever it sits,
     so a foreign command that merely PASSES our adapter as an argument would pass a name check.
 
-    Byte equality is defeatable the same way, one word earlier. The writer renders the interpreter
-    it is handed, so /bin/true <checkout>/scripts/completion_hook.py <settings> reproduces exactly
-    and never runs the adapter at all -- a foreign hook doing its own work, which this would have
-    called ours and removed. The interpreter is asked to be a Python before the words are
-    compared, which is what the installer asks before it writes one.
+    Byte equality is defeatable the same way, one word earlier: the writer renders whatever
+    interpreter it is handed, so /bin/true <checkout>/scripts/completion_hook.py <settings>
+    reproduces exactly and never runs the adapter at all. That question is asked where a
+    subprocess is allowed -- runs_python below -- rather than here, because this function is the
+    text comparison and nothing else.
     """
     if not argv or len(argv) not in (2, 3):
-        return None
-    if not INTERPRETER_NAMES.fullmatch(Path(str(argv[0]).strip("\"'")).name):
         return None
     script = argv[1]
     if Path(script).name != completion.ENTRY_POINT_NAME:
@@ -367,6 +361,33 @@ def canonical_command(argv):
         # a relative path names one file here and another one there. Unproven rather than resolved.
         return None
     return completion.command_for(argv[0], script, argv[2] if len(argv) == 3 else None)
+
+
+def runs_python(candidate, seen=None):
+    """Whether a registered interpreter really is a Python this adapter could run under.
+
+    Asked by running it, which is what the installer asks before it writes one, because neither
+    half of the name is the fact. A name test is too narrow -- runtime_install.py takes --python
+    and validates by execution, so a supported install can register /opt/pypy/bin/pypy3 and a
+    basename rule would call this repository's own registration foreign and leave two hooks live.
+    A name test is also too weak: /tmp/python3 -> /bin/true is named right, answers nothing, and
+    would be classified as ours and removed.
+
+    Running a program named in a hook file is a real cost and it is taken deliberately: Codex
+    already runs this exact command on every Stop, the installer already probes candidates the
+    same way, and the check is a fixed argument list with the installer's own timeout. The answer
+    is cached per spelling, so a file carrying several registrations probes each interpreter once.
+    """
+    if seen is None:
+        seen = {}
+    key = str(candidate or "")
+    if key not in seen:
+        try:
+            completion.interpreter_for(key, run=True)
+            seen[key] = True
+        except (ValueError, OSError):
+            seen[key] = False
+    return seen[key]
 
 
 def event_registrations(document, event):
@@ -399,13 +420,18 @@ def read_hook(codex_home, event=None, *, destination=None, repo_root=None):
         return answer
     inventory_all = hooks.inventory(document.value, event)
     entries = completion.adapter_entries(document.value, event)
+    probed = {}
     for entry in entries:
         argv = completion.registered_argv(entry["command"]) or []
         canonical = canonical_command(argv)
         checkout = checkout_of(argv[1]) if len(argv) > 1 else None
         identical = bool(len(argv) > 1 and repo_root and same_adapter(argv[1], repo_root))
+        # The words, the file they name, and the program that runs them. Byte equality proves the
+        # first two and says nothing about the third, so the interpreter is asked to be a Python
+        # before this registration is called ours and removed.
         proven = bool(canonical is not None and canonical == entry["command"]
-                      and checkout is not None and identical)
+                      and checkout is not None and identical
+                      and runs_python(argv[0], probed))
         answer["entries"].append({**entry, "argv": argv, "proven": proven,
                                   "checkout": str(checkout) if checkout else None,
                                   "canonical": canonical,
