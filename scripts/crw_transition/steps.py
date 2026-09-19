@@ -408,7 +408,14 @@ def _declared(root, repo_root):
                         words = []
                     shape = _shape(words)
                     if shape:
-                        events.setdefault(event, []).append(shape)
+                        # The matcher and the timeout travel with the command. A declaration
+                        # carrying the right launcher under a restrictive matcher fires on some
+                        # turns and not others, and one carrying a second of timeout is killed
+                        # before the adapter's own budget can answer -- both are replacements
+                        # that do not replace, and both pass a comparison of command strings.
+                        events.setdefault(event, []).append(
+                            shape + " matcher=" + repr((group or {}).get("matcher"))
+                            + " timeout=" + repr((hook or {}).get("timeout")))
     named = manifest.get("mcpServers")
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)

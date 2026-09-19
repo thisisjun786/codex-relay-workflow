@@ -2749,6 +2749,30 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("a second bridge", answer["results"][0]["detail"])
         self.assertEqual(host.config(), before)
 
+    def test_a_cached_hook_with_another_matcher_or_timeout_is_refused(self):
+        """A launcher under a restrictive matcher, or a timeout that cannot outlast the adapter."""
+        import tempfile
+        for field, value in (("matcher", {"sessionSource": "vscode"}), ("timeout", 1)):
+            with self.subTest(field=field):
+                # Its own host per case: a cache is copied in whole and cannot be installed twice.
+                host = Host(Path(tempfile.mkdtemp(dir=self.directory, prefix=field + "-")))
+                host.manual_install()
+                host.install_plugin()
+                cache = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                         / "wiring" / "hooks" / "stop-recording-completion.json")
+                document = json.loads(cache.read_text(encoding="utf-8"))
+                group = document["hooks"]["Stop"][0]
+                if field == "matcher":
+                    group["matcher"] = value
+                else:
+                    group["hooks"][0]["timeout"] = value
+                cache.write_text(json.dumps(document), encoding="utf-8")
+                before = host.hooks_document()
+                code, answer = host.transition("--apply")
+                self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+                self.assertIn(field + "=", answer["results"][0]["detail"])
+                self.assertEqual(host.hooks_document(), before)
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
