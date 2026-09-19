@@ -766,12 +766,29 @@ class Linkage:
         if row is None:
             return "unscoped"
         at = self.clock.iso()
+        # Only the relationship that currently OWNS the issue scope may move it. A superseded
+        # one still gets status writes - archiving is how supersession records itself - and
+        # acting on them would archive the binding and edge its successor has already taken
+        # over, disabling the replacement's whole lower level.
+        current = db.execute(
+            "SELECT task_id FROM scope_bindings"
+            "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
+            "    AND status IN ('active','paused') AND superseded_by IS NULL",
+            (ISSUE, row["issue_key"], CHILD),
+        ).fetchone()
         # paused is LIVE ownership on both sides of this boundary. The relationship model
         # treats a paused assignment as still responsible - it blocks a replacement
         # registration - and LIVE here is active or paused for the same reason. Collapsing
         # paused into archived released the issue scope while registry still reported the
         # child as responsible, so one store answered two ways about the same assignment.
         lower = status if status in LIVE else ARCHIVED
+        if lower != ACTIVE and current is not None \
+                and current["task_id"] != row["child_task_id"]:
+            # Deactivating, and this relationship no longer owns the scope. A superseded one
+            # still receives status writes - archiving is how supersession records itself -
+            # and acting on them would archive the binding and the edge its SUCCESSOR has
+            # already taken over, disabling the replacement's whole lower level.
+            return "superseded"
         if lower == ACTIVE:
             # Reactivating must not produce a second owner. Cancelling RELEASES an issue, so
             # another child can be bound to it directly in the meantime; resume checks
@@ -1021,16 +1038,14 @@ class Linkage:
                     from_scope=None):
         """What a message can establish about whom it is addressing.
 
-        A task may own SEVERAL scopes of one role - one parent with two projects, one child
-        with two issues - because the role rule only forbids holding two DIFFERENT roles. So
-        picking one binding per task by revision alone chose arbitrarily between them, and a
-        correctly routed message could be answered about the wrong scope: reported unlinked
-        when a live edge existed, or reported foreign_scope against a binding nobody named.
-
-        Both endpoints are therefore resolved as CANDIDATE SETS, and the pair that an actual
-        live link joins is the one answered about. OPS-7.4 says a message binds both Linear
-        scopes; from_scope and quoted_scope are how a caller supplies them, and when it does
-        they narrow the candidates rather than being checked after an arbitrary pick.
+        Both endpoints are resolved as CANDIDATE SETS and the pair an actual live link joins
+        is the one answered about. One task holds one live scope per role, so in a healthy
+        store each set has one live member and the choice is trivial; the sets exist because a
+        task's ARCHIVED bindings are candidates too - that is how a message naming a replaced
+        owner is told so - and because a reader must not pick a branch if a store somehow
+        holds two live ones. OPS-7.4 says a message binds both Linear scopes; from_scope and
+        quoted_scope are how a caller supplies them, and they narrow the candidates rather
+        than being checked after a pick.
 
         Returns a record and never raises for an absence, and never reports a failure to READ
         as an absence: an empty answer with readable True means the store said there is
@@ -1202,7 +1217,11 @@ class Linkage:
                                   + ROLE_SCOPE_OWNER[scope_kind],
                                   "scopeKind": scope_kind, "scopeKey": scope_key}],
                         "contention": self.conflicts(scope_kind, scope_key)}
-            self._descend(scope_kind, scope_key, levels, gaps, contention, depth=0)
+            # A visited set, for the reason _reaches has a budget: a cyclic edge set is not
+            # reachable through the write paths, but a reader that recursed forever on a
+            # corrupt or hand-edited store would be worse than one that answers.
+            self._descend(scope_kind, scope_key, levels, gaps, contention, depth=0,
+                          seen=set())
             if not levels:
                 return {"state": "unregistered", "readable": True,
                         "levels": [], "gaps": gaps, "contention": contention}
@@ -1213,7 +1232,12 @@ class Linkage:
                     "levels": [], "gaps": [], "contention": [],
                     "detail": type(fault).__name__ + ": " + str(fault)}
 
-    def _descend(self, scope_kind, scope_key, levels, gaps, contention, *, depth):
+    def _descend(self, scope_kind, scope_key, levels, gaps, contention, *, depth, seen):
+        if (scope_kind, scope_key) in seen:
+            contention.append({"contention": "scope_cycle", "scopeKind": scope_kind,
+                               "scopeKey": scope_key})
+            return
+        seen.add((scope_kind, scope_key))
         owner = self.owner(scope_kind, scope_key)
         levels.append({"scopeKind": scope_kind, "scopeKey": scope_key, "owner": owner,
                        "depth": depth})
@@ -1241,7 +1265,7 @@ class Linkage:
                                    "recorded": edge["lower"]["taskId"],
                                    "live": live["taskId"]})
             self._descend(edge["lower"]["scopeKind"], edge["lower"]["scopeKey"],
-                          levels, gaps, contention, depth=depth + 1)
+                          levels, gaps, contention, depth=depth + 1, seen=seen)
 
     def up(self, *, task_id=None, issue_key=None, relationship_id=None, scope_key=None):
         """Child to parent to supervisor, reporting a missing upper level as a gap."""
@@ -1255,10 +1279,11 @@ class Linkage:
                     and issue_key is None and relationship_id is None):
                 held = [b for b in self._bindings_for(task_id) if b["status"] in LIVE]
                 if len({b["scopeKey"] for b in held}) > 1:
-                    # The role contract lets one task own several scopes of one role, so
-                    # choosing between them here would drop valid hierarchies without saying
-                    # so. The caller names which one, and until it does the answer is the
-                    # ambiguity rather than one arbitrary branch.
+                    # Unreachable through the write paths, which refuse a second live scope
+                    # of one role for one task. Kept because a reader must answer safely on a
+                    # store that contains one anyway - an older writer, a hand edit, a future
+                    # bug - and the rule for that case is to report the ambiguity rather than
+                    # pick a branch. This is a defence, not a supported shape.
                     return {
                         "state": "ambiguous", "readable": True, "levels": [], "gaps": [],
                         "contention": [{"contention": "ambiguous_scope", "taskId": task_id,
@@ -1389,6 +1414,26 @@ class Linkage:
                 unfinished_ids.append(row["rid"])
         return unfinished_ids
 
+    def attached(self, project_key):
+        """Every LIVE assignment in this project, settled or not.
+
+        Wider than outstanding on purpose. A merged assignment is still a live relationship
+        whose next generation opens under the parent named on its own row, so a handover that
+        only looked at unfinished work let settled work reopen under the owner that had
+        already stepped down. Reopening is ordinary - a needs_changes verdict does it - so
+        "finished for now" is not the same as "cannot come back".
+        """
+        return [
+            row["relationship_id"] for row in self.store.all(
+                "SELECT r.relationship_id FROM relationships r"
+                "  JOIN relationship_scope s ON s.relationship_id = r.relationship_id"
+                " WHERE s.project_key = ? AND r.status IN ('active','paused')"
+                "   AND r.superseded_by IS NULL"
+                " ORDER BY r.created_at",
+                (project_key,),
+            )
+        ]
+
     def handover(self, *, role, scope_key, expect_task_id, endpoint, acknowledged, evidence,
                  actor):
         """Replace a scope's owner, only from a caller that has read what it is taking on.
@@ -1464,7 +1509,8 @@ class Linkage:
                         + "; a replacement owner confirms the unfinished work it takes on",
                         scope_kind=scope_kind, scope_key=scope_key,
                         incumbent=expect_task_id, challenger=endpoint.task_id)
-                elif unfinished:
+                elif scope_kind == PROJECT and self.attached(scope_key):
+                    still_here = self.attached(scope_key)
                     # Refuse, and say what it could not move. An assignment's identity is
                     # sha256(parentTaskId|childTaskId|issueKey) and its queued deliveries name
                     # the parent's thread, so a handover cannot carry the endpoint across: it
@@ -1474,7 +1520,9 @@ class Linkage:
                     refusal = _Refusal(
                         RefusalReason.HANDOVER_WOULD_STRAND,
                         scope_kind + " " + repr(scope_key) + " still has unfinished work that "
-                        "this handover cannot move: " + repr(sorted(set(unfinished)))
+                        "this handover cannot move: " + repr(sorted(set(still_here)))
+                        + " (of which " + repr(sorted(set(unfinished))) + " is unfinished; a "
+                        "settled one still reopens under the parent named on its own row)"
                         + ". An assignment's identity and its queued deliveries name its "
                         "parent, so each one is moved by registering its successor with "
                         "supersedes before the scope changes hands",

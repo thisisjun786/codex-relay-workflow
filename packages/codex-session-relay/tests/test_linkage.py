@@ -984,5 +984,70 @@ class TheThirdRoundFoundTheseToo(LinkageTestCase):
                       linkage.PROJECT, PROJECT)
         self.assertEqual(len(lid), len("lnk-") + 32)
 
+class TheFourthRoundFoundTheseToo(LinkageTestCase):
+    def scoped(self):
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        return relationship["relationshipId"]
+
+    def test_a_superseded_relationship_does_not_archive_its_successors_lower_level(self):
+        """Archiving is how supersession records itself, so the old row keeps receiving status
+        writes. Acting on them archived the binding and edge the successor had taken over."""
+        original = self.scoped()
+        self.registry.register(
+            parent=Endpoint(PARENT, HOST, cwd="/parent"),
+            child=Endpoint("01child-two", HOST), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-successor", dispatch_turn_id="turn-successor",
+            supersedes=original)
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], "01child-two")
+        # Another status write on the superseded row must not reach the successor's level.
+        self.registry.set_status(original, "cancelled", actor="test")
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], "01child-two")
+        edge = self.linkage.link(
+            link_id(linkage.EXECUTION, linkage.PROJECT, PROJECT, linkage.ISSUE, ISSUE))
+        self.assertEqual(edge["status"], "active")
+
+    def test_settled_work_still_blocks_a_handover_because_it_can_reopen(self):
+        """outstanding excludes a merged assignment, but merged is not gone: its next
+        generation opens under the parent named on its own row."""
+        rid = self.scoped()
+        self.assertEqual(self.linkage.attached(PROJECT), [rid])
+        refusal = self.assertRefused(
+            RefusalReason.HANDOVER_WOULD_STRAND,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.parent(OTHER_PARENT),
+            acknowledged=self.linkage.outstanding(PROJECT),
+            evidence="the project still holds assignments", actor="test")
+        self.assertIn("reopens", refusal.detail)
+
+    def test_a_successor_for_another_issue_does_not_inherit_the_project(self):
+        """supersedes naming a relationship for a DIFFERENT issue pulled its project across."""
+        rid = self.scoped()
+        other = self.registry.register(
+            parent=Endpoint(PARENT, HOST, cwd="/parent"), child=Endpoint("01child-far", HOST),
+            issue_key="REL-FAR", artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-far", dispatch_turn_id="turn-far",
+            supersedes=rid)
+        self.assertIsNone(self.linkage.attachment(other["relationshipId"]))
+
+    def test_a_downward_walk_survives_a_cyclic_store(self):
+        """_reaches was bounded and _descend was not, so a corrupt or hand-edited edge set
+        would have recursed until the interpreter stopped it."""
+        self.supervise()
+        self.store.db.execute(
+            "INSERT INTO scope_links (link_id, link_kind, upper_kind, upper_key,"
+            " upper_task_id, lower_kind, lower_key, lower_task_id, status, revision,"
+            " superseded_by, created_at, updated_at)"
+            " VALUES ('lnk-forced-cycle','execution','project',?,?,'initiative',?,?,"
+            "         'active',1,NULL,?,?)",
+            (PROJECT, PARENT, INITIATIVE, SUPERVISOR_TASK, self.clock.iso(),
+             self.clock.iso()))
+        answer = self.linkage.down(linkage.INITIATIVE, INITIATIVE)
+        self.assertEqual(answer["state"], "resolved")
+        self.assertIn("scope_cycle",
+                      [row.get("contention") for row in answer["contention"]])
+
 if __name__ == "__main__":
     unittest.main()

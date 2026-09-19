@@ -134,8 +134,10 @@ class Registry:
             # archived the outgoing child binding and the project-to-issue edge and attached
             # no successor, so the issue silently lost its level.
             inherited = self.store.one(
-                "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
-                (supersedes,))
+                "SELECT s.project_key FROM relationship_scope s"
+                "  JOIN relationships r ON r.relationship_id = s.relationship_id"
+                " WHERE s.relationship_id = ? AND r.issue_key = ?",
+                (supersedes, issue_key))
             project_key = inherited["project_key"] if inherited else None
         existing = self.store.one("SELECT * FROM relationships WHERE relationship_id = ?", (rid,))
         if existing is not None:
