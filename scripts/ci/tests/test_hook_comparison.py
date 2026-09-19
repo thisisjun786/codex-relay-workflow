@@ -2356,5 +2356,37 @@ class TheRefusalsAreAnInventoryTests(unittest.TestCase):
         self.assertEqual(answer.get("source"), "hook-comparison")
         self.assertNotIn("cells", answer, "a refusal must carry no rows")
 
+    def test_a_result_that_could_not_be_written_exits_as_the_refusal_it_printed(self):
+        """The status has to come from the document that was written, not the one handed over.
+
+        A refusal exits 2 everywhere else in this command. Taking the status from the original
+        answer instead printed a refusal and exited zero, so anything reading the status would
+        accept a run whose own output says it was refused. Driven through main() rather than
+        through the writer, because the status is what is being asserted.
+        """
+        import contextlib
+        import io
+
+        unwritable = {"source": "hook-comparison", "passed": True, "cells": {"x": object()}}
+        printed, code, raised = io.StringIO(), None, None
+        with mock.patch.object(harness, "RELAY_PYTHON", (3, 0)), \
+                mock.patch.object(harness, "compare", lambda root: {}), \
+                mock.patch.object(harness, "source_identity", lambda: {}), \
+                mock.patch.object(harness, "document",
+                                  lambda scenarios, root, earlier: unwritable):
+            try:
+                with contextlib.redirect_stdout(printed):
+                    code = harness.main([])
+            except BaseException as error:
+                raised = error
+        self.assertIsNone(raised,
+                          "the command ended with " + type(raised).__name__ + " instead of"
+                          " printing one document, which is the one output it promises")
+        answer = json.loads(printed.getvalue())
+        self.assertIn("refused", answer)
+        self.assertEqual(code, 2,
+                         "a run whose result could not be written printed a refusal and exited "
+                         + str(code) + ", so anything reading the status accepts it")
+
 if __name__ == "__main__":
     unittest.main()

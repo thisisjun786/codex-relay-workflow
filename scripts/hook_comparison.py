@@ -1800,7 +1800,11 @@ def main(argv=None):
     finally:
         if not keep:
             shutil.rmtree(root, ignore_errors=True)
-    _print(answer)
+    # The answer this reports on is the one that was actually WRITTEN, not the one handed over.
+    # A result that could not be written becomes a refusal inside _print, and taking the status
+    # from the original would have printed a refusal and exited zero - a run whose own output
+    # says it was refused, accepted by anything reading the status.
+    answer = _print(answer)
     if answer.get("refused"):
         return 2
     return 0 if answer["passed"] else 1
@@ -1821,11 +1825,12 @@ def _print(answer):
     try:
         written = json.dumps(answer, default=render, indent=2, sort_keys=True)
     except (TypeError, ValueError) as error:
-        written = json.dumps(refusal("the result document could not be written: "
-                                     + type(error).__name__ + ": " + str(error)[:400],
-                                     at=reading.where(error)), indent=2, sort_keys=True)
+        answer = refusal("the result document could not be written: "
+                         + type(error).__name__ + ": " + str(error)[:400],
+                         at=reading.where(error))
+        written = json.dumps(answer, indent=2, sort_keys=True)
     sys.stdout.write(written + "\n")
-    return written
+    return answer
 
 
 if __name__ == "__main__":
