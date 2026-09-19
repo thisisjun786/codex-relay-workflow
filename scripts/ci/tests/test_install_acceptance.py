@@ -1347,6 +1347,50 @@ RESOLVES_LIKE_PYTHON = {
          "property(carrier) makes the same descriptor the decorator does, so reading self.alias"
          " runs the getter. Indexed only from decorators, the real consumer leaves both"
          " inventories."),
+    "a base named through an alias":
+        (REFUSAL,
+         ("class Base:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "Alias = Base",
+          "",
+          "class Child(Alias):",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "the line a name is searched in is built from what the bases NAME, not from how they"
+         " are spelled. Left unresolved, Alias is an unknown class that ends the line and the"
+         " whole inheritance below it goes missing."),
+    "a decorator name the module defines itself":
+        (REFUSAL,
+         ("def staticmethod(fn):",
+          "    return fn",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @staticmethod",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "a binding above the use wins over the builtin's own name. Reading this @staticmethod"
+         " as the builtin suppresses a receiver the method really has, which is the same cost"
+         " the alias cases pay in the other direction."),
+    "a parameter spelled like a refusal global":
+        (REFUSAL,
+         ("def consumer(CHANGED):",
+          "    return CHANGED"),
+         "consumer", False,
+         "the parameter is that function's, so the global of that spelling is not what this"
+         " reads and the place settles for nothing."),
+    "the refusal global itself":
+        (REFUSAL,
+         ("def consumer():",
+          "    return CHANGED"),
+         "consumer", True,
+         "its pair: a scope that does NOT bind the name reads the global, so honouring shadows"
+         " must not have stopped the ordinary reading."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2201,6 +2245,64 @@ def _reachable(expression, spelled, klass, bound):
     return False
 
 
+def _class_aliases(tree):
+    """Each name bound to a class written here, paired with the class it names.
+
+    Alias = Base makes class Child(Alias) inherit from Base, so the line a name is searched in
+    is built from what the bases NAME rather than from how they are spelled. To a fixpoint,
+    because an alias of an alias names the same class.
+    """
+    classes = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+    named, growing = {}, True
+    while growing:
+        growing = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            spelling = (_dotted(node.value) or "").rpartition(".")[2]
+            reached = spelling if spelling in classes else named.get(spelling)
+            for target in node.targets:
+                bound = _dotted(target)
+                if reached and bound and bound not in named:
+                    named[bound] = reached
+                    growing = True
+    return named
+
+
+def _shadowing_names(tree):
+    """Name nodes whose own scope binds the name, so a module global spelled that way is not
+    what they read.
+
+    A parameter or a local called CHANGED is that function's, and reading it as the constant
+    reports a place that settles for nothing of the kind. Module level is not shadowing: there
+    the binding IS the constant. A scope saying the name is global is not shadowing either.
+    """
+    places, taken, said_global = _places(tree), {}, {}
+    for node in ast.walk(tree):
+        where, _klass = places.get(id(node), (MODULE_LEVEL, None))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            args = node.args
+            for parameter in args.posonlyargs + args.args + args.kwonlyargs:
+                taken.setdefault(where, set()).add(parameter.arg)
+            for extra in (args.vararg, args.kwarg):
+                if extra:
+                    taken.setdefault(where, set()).add(extra.arg)
+        if isinstance(node, ast.Global):
+            said_global.setdefault(where, set()).update(node.names)
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            for named in _binds_locally(node):
+                taken.setdefault(where, set()).add(named)
+    shadowed = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name):
+            continue
+        where, _klass = places.get(id(node), (MODULE_LEVEL, None))
+        if where != MODULE_LEVEL and node.id in taken.get(where, ()) and (
+                node.id not in said_global.get(where, ())):
+            shadowed.add(id(node))
+    return frozenset(shadowed)
+
+
 def _linearised(parents):
     """Each class paired with the classes it searches, in the order Python searches them.
 
@@ -2318,7 +2420,9 @@ def _held_by_class(tree, spelled, over=None):
             if owner is not None:
                 rebound.setdefault(owner, set()).add(target.attr)
     # An attribute declared on a base is held by everything under it, the way a method is.
-    parents = {node.name: [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]
+    alias_of = _class_aliases(tree)
+    parents = {node.name: [alias_of.get(named, named) for named in
+                           [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     mro = _linearised(parents)
     growing = True
@@ -2353,8 +2457,9 @@ def _hands_on(tree, spelled):
     because alias = helper is an ordinary refactor and not a place to lose one.
     """
     places = _places(tree)
-    parents = {node.name: [(_dotted(base) or "").rpartition(".")[2]
-                           for base in node.bases]
+    alias_of = _class_aliases(tree)
+    parents = {node.name: [alias_of.get(named, named) for named in
+                           [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     mro = _linearised(parents)
     # A class body is a scope of its own, and it is not the module: a class written inside a
@@ -2408,12 +2513,20 @@ def _hands_on(tree, spelled):
             bound = [(node.lineno, inner.id, spelling) for target in node.targets
                      for inner in ast.walk(target)
                      if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store)]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            # A def or a class of that name shadows the builtin it is spelled like, and what it
+            # reaches is not the decorator, so it is recorded as reaching nothing.
+            bound = [(node.lineno, node.name, None)]
         else:
             continue
         owner = owns_a_body.get(id(node))
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # A def is bound in the scope AROUND it, while places names the scope it opens.
+            where = where.rpartition(".")[0] or MODULE_LEVEL
         if owner is not None:
             class_bindings.setdefault(owner, []).extend(bound)
-        elif places.get(id(node), (MODULE_LEVEL, None))[0] == MODULE_LEVEL:
+        elif where == MODULE_LEVEL:
             module_bindings += bound
 
     def means(name, seed, at, within=None, followed=0):
@@ -2423,17 +2536,21 @@ def _hands_on(tree, spelled):
         it with every carrier the class holds. A property is called by being read, so missing
         one loses the reader entirely. An alias of an alias is followed, to a bounded depth,
         because a cycle written at module level would not have run either.
+
+        A binding above the use wins over the builtin's own name. A module that defines its own
+        staticmethod has shadowed the builtin, and reading @staticmethod as the builtin there
+        suppresses a receiver the method really has.
         """
-        if name in seed:
-            return True
         visible = class_bindings.get(within, []) + module_bindings
         if followed > len(visible):
-            return False
+            return name in seed
         above = sorted((line, value) for line, bound, value in visible
                        if bound == name and line < at)
         if not above:
-            return False
+            return name in seed
         line, value = above[-1]
+        if value is None:
+            return False
         return means(value, seed, line, within, followed + 1)
 
     def decorated_by(node, seed, within=None):
@@ -3214,7 +3331,7 @@ def source_spellings(tree):
     return frozenset(handles), hands_source, undecided, frozenset(called)
 
 
-def _refusal_spelled(spellings, held, classes=(), as_class=None):
+def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=()):
     """The matcher: which node is a refusal, spelled any of the derived ways."""
     answers = spellings["answer"]
     attributes = spellings["module attribute"] | spellings["collection"]
@@ -3240,7 +3357,9 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None):
                 return None
             return "." + node.attr if node.attr in attributes else None
         if isinstance(node, ast.Name) and node.id in names:
-            return node.id
+            # Unless the scope binds that name itself, in which case the global of that
+            # spelling is not what this reads.
+            return None if id(node) in shadowed else node.id
         return None
 
     return spelled
@@ -3398,6 +3517,7 @@ def refusals_reached(source):
     # answered by what the class binds rather than by the spelling of its name.
     classes = frozenset(node.name for node in ast.walk(tree)
                         if isinstance(node, ast.ClassDef))
+    shadowed = _shadowing_names(tree)
     # And which names hold an instance of one, to a fixpoint so second = first carries too. An
     # instance is asked of its class rather than matched on the spelling of its attribute.
     as_class, growing = {}, True
@@ -3415,10 +3535,11 @@ def refusals_reached(source):
     # knows that self.first does.
     held, growing = {}, True
     while growing:
-        wider = _held_by_class(tree, _refusal_spelled(spellings, held, classes, as_class), held)
+        wider = _held_by_class(
+            tree, _refusal_spelled(spellings, held, classes, as_class, shadowed), held)
         growing = wider != held
         held = wider
-    return (_occurrences(tree, _refusal_spelled(spellings, held, classes, as_class)),
+    return (_occurrences(tree, _refusal_spelled(spellings, held, classes, as_class, shadowed)),
             spellings)
 
 
@@ -4740,6 +4861,8 @@ HANDED = {
     "_bindings": NOTHING,
     "_binds_locally": NOTHING,
     "_linearised": NOTHING,
+    "_class_aliases": NOTHING,
+    "_shadowing_names": NOTHING,
     "places_reached": NOTHING,
     "_owned_by_a_class": NOTHING,
     "_held_by_class": NOTHING,
