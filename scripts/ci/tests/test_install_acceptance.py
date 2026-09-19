@@ -274,10 +274,18 @@ ASKS_ABOUT_THE_FILE = {
 }
 
 EVERY_INTERPRETER = "every supported interpreter"
-THE_FLOOR = "the 3.10 floor"
+THE_FLOOR = "the interpreters below 3.13"
 # Where the floor entries stop being unreadable. Written down because no object can be asked it:
 # it is a fact about which interpreter gave its builtin types an introspectable signature.
-READABLE_FROM = (3, 11)
+#
+# Measured on the interpreters this machine has rather than recalled: 3.10 and 3.11 both raise
+# ValueError for set, frozenset and zip, while 3.13 and 3.14 read all three. 3.12 was not
+# available to exercise, so the boundary between it and 3.13 is taken at 3.13 -- the stricter
+# side, which makes the check DEMAND these names on an interpreter it cannot confirm rather
+# than excuse them. The wrong boundary the other way is the one that costs something: at 3.11
+# this check stopped requiring them on two supported interpreters, so the declared reach could
+# drift there without anything failing.
+READABLE_FROM = (3, 13)
 SOURCE_UNDECIDED_CALLS = {
     "getattr": (EVERY_INTERPRETER, "a builtin whose signature is not introspectable"),
     "vars": (EVERY_INTERPRETER, "the same"),
@@ -289,9 +297,10 @@ SOURCE_UNDECIDED_CALLS = {
     "min": (EVERY_INTERPRETER,
             "a builtin whose signature is not introspectable; calling it takes the first line"
             " at which the module binds open"),
-    "set": (THE_FLOOR, "a builtin type whose signature 3.11 made readable and 3.10 did not"),
+    "set": (THE_FLOOR, "a builtin type whose signature 3.13 made readable and 3.10, 3.11 and"
+                       " 3.12 did not"),
     "frozenset": (THE_FLOOR, "the same, and the pair of them is why this record is a union"),
-    "zip": (THE_FLOOR, "a builtin type the floor cannot read either"),
+    "zip": (THE_FLOOR, "a builtin type those interpreters cannot read either"),
     "next": (EVERY_INTERPRETER, "a builtin whose signature is not introspectable"),
     "range": (EVERY_INTERPRETER, "a builtin type; calling it counts the scopes between two"),
     "ast.Name": (EVERY_INTERPRETER,
@@ -1028,6 +1037,7 @@ REFUSAL_OUT_OF_REACH = {
          " callers with it when it hands the refusal back rather than a container holding one."),
 }
 
+
 # This reader resolves a name through classes; Python resolves it through objects. Where the two
 # disagree the reader is wrong, and eight of these were found by review against this branch: four
 # places it lost and four it invented. They are data rather than eight cases because the next
@@ -1039,6 +1049,41 @@ REFUSAL_OUT_OF_REACH = {
 # really does reach the declared thing, why). The fourth column is Python's answer, not this
 # reader's, which is the whole point of writing it down.
 REFUSAL, TEXT = "refusal", "text"
+
+# Where the thing is handed on through a TRANSFORMATION rather than as itself. This reader
+# follows names and the pass-through vocabulary; reading .strip() off a refusal or
+# .splitlines() off source text hands back a new object, and following that would mean
+# following every method call on everything, which is a taint analysis rather than this
+# reader. Unlike the two lists above, the place naming the spelling IS still found here -- what
+# is lost is the caller behind it -- so the control has to hold both ends: if the named place
+# stops being found the boundary is not where this says, and if the caller starts being found
+# the boundary has closed and the entry has to go.
+HANDED_ON_THROUGH_A_TRANSFORMATION = {
+    "a refusal handed on through a method call":
+        (REFUSAL,
+         ("def helper():",
+          "    return reading.UNREADABLE.strip()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper", "consumer",
+         "reading .strip() off the refusal hands back a string that is no longer the refusal"
+         " object, and whether it still ANSWERS as one is a fact about the run. The helper is"
+         " named because the spelling is written in it; the caller is not, and that is the"
+         " cost. Widening it means following an arbitrary method call on the thing, which is"
+         " the point at which this reader would stop being one."),
+    "source text handed on through a method call":
+        (TEXT,
+         ("def helper():",
+          "    return HERE.read_text().splitlines()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper", "consumer",
+         "the same on the source side: the read really is taken, so the helper is named, but"
+         " what it hands back is a list built from the text rather than the text. Following"
+         " that is the same unbounded step as above."),
+}
 RESOLVES_LIKE_PYTHON = {
     "a class-body name a loop that may never run does not shadow":
         (REFUSAL,
@@ -4244,6 +4289,66 @@ RESOLVES_LIKE_PYTHON = {
          "SUPPORT, green at the parent, and the limit the fix above stops at: what an iterable"
          " this text cannot read yields is a question about the run, so the loop binds nothing"
          " rather than a guess. Only the written forms are paired."),
+    "a carrier handed to a keyword-only parameter":
+        (REFUSAL,
+         ("def identity(*, answer):",
+          "    return answer",
+          "",
+          "def helper():",
+          "    return identity(answer=reading.UNREADABLE)",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the slot table was built from the positional parameters alone, so the keyword filter"
+         " beside it could never match a slot no position reaches. The rule was written one"
+         " commit earlier and applied to half the parameters it names -- a half-applied rule"
+         " reads as a working one until someone writes the other half's form."),
+    "a carrier handed positionally to a bound method":
+        (REFUSAL,
+         ("class Holder:",
+          "    def identity(self, answer):",
+          "        return answer",
+          "",
+          "holder = Holder()",
+          "",
+          "def helper():",
+          "    return holder.identity(reading.UNREADABLE)",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "I declared this one a limit a commit ago on the grounds that a receiver might be in"
+         " the way and binding one slot off would be worse than binding nothing. That was"
+         " wrong: which places take a receiver is already derived here, and the criterion only"
+         " allows a declared limit where the form cannot be widened. A receiver MOVES the"
+         " slots rather than making them unreadable."),
+    "a carrier destructured past a starred target":
+        (REFUSAL,
+         ("def helper():",
+          "    answer, *ignored = (reading.UNREADABLE,)",
+          "    return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the pairing required equal lengths, so a star made the whole target pair with the"
+         " whole value and nothing downstream accepted it. Python binds this deterministically:"
+         " the names before the star take the first values and the names after it take the"
+         " last. The starred name holds a list of what remains, which is a container rather"
+         " than the thing, so it is paired with nothing."),
+    "a carrier iterated from a dictionary written here":
+        (REFUSAL,
+         ("def helper():",
+          "    for answer in {reading.UNREADABLE: None}:",
+          "        return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "a dict is iterated over its KEYS, which are written out exactly as a tuple's elements"
+         " are. Listing the three sequence forms and stopping was the same half-applied rule as"
+         " the keyword-only slots above, in the commit that added it."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -5080,15 +5185,31 @@ def _bindings(node):
         # an assignment does, and a read taken on it reaches the same file.
         holders, answer = [node.optional_vars], node.context_expr
     elif isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(
-            node.iter, (ast.Tuple, ast.List, ast.Set)):
+            node.iter, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
         # for answer in (reading.UNREADABLE,) binds the target to each element written in the
-        # iterable, and the loop really does run. An iterable this text cannot read binds
-        # nothing here rather than a guess about what it yields, which is why only the written
-        # forms are paired.
+        # iterable, and the loop really does run. A dict is iterated over its KEYS, which are
+        # as plainly written here as a tuple's elements. An iterable this text cannot read
+        # binds nothing rather than a guess about what it yields, which is why only the
+        # written forms are paired.
         holders, answer = [], None
     else:
         return []
     def pair(holder, value):
+        if (isinstance(holder, (ast.Tuple, ast.List))
+                and isinstance(value, (ast.Tuple, ast.List))):
+            starred = [index for index, inner in enumerate(holder.elts)
+                       if isinstance(inner, ast.Starred)]
+            if len(starred) == 1 and len(value.elts) >= len(holder.elts) - 1:
+                # answer, *ignored = (reading.UNREADABLE,) binds deterministically: the names
+                # before the star take the first values and the names after it take the last.
+                # The starred name itself holds a LIST of what is left, which is a container
+                # rather than the thing, so it is paired with nothing.
+                at, after = starred[0], len(holder.elts) - starred[0] - 1
+                return ([entry for inner, given in zip(holder.elts[:at], value.elts[:at])
+                         for entry in pair(inner, given)]
+                        + ([entry for inner, given in zip(
+                            holder.elts[at + 1:], value.elts[len(value.elts) - after:])
+                            for entry in pair(inner, given)] if after else []))
         if (isinstance(holder, (ast.Tuple, ast.List))
                 and isinstance(value, (ast.Tuple, ast.List))
                 and len(holder.elts) == len(value.elts)):
@@ -5098,7 +5219,8 @@ def _bindings(node):
         return [(holder, value)]
 
     if isinstance(node, (ast.For, ast.AsyncFor)):
-        return [entry for element in node.iter.elts
+        written = node.iter.keys if isinstance(node.iter, ast.Dict) else node.iter.elts
+        return [entry for element in written if element is not None
                 for entry in pair(node.target, element)]
     return [entry for holder in holders for entry in pair(holder, answer)]
 
@@ -6253,10 +6375,12 @@ def _hands_on(tree, spelled):
     # module on every pass.
     left_to_the_default = _default_applies(tree, places)
     declared_owner = _declared_owner(tree, places)
-    # Which parameter each place takes, in order, so an argument can be read as the binding of
-    # the parameter it fills.
+    # Which parameter each place takes, so an argument can be read as the binding of the
+    # parameter it fills: the positional ones in order, and the keyword-only ones as a set,
+    # because def identity(*, answer) has a slot no position can reach.
     takes = {places.get(id(node), (MODULE_LEVEL, None))[0]:
-             [arg.arg for arg in node.args.posonlyargs + node.args.args]
+             ([arg.arg for arg in node.args.posonlyargs + node.args.args],
+              {arg.arg for arg in node.args.kwonlyargs})
              for node in ast.walk(tree)
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))}
     every_key = {places.get(id(node), (MODULE_LEVEL, None))[1] for node in ast.walk(tree)
@@ -7145,17 +7269,31 @@ def _hands_on(tree, spelled):
                         spreading = True
                 # An argument binds the parameter it fills: identity(answer) makes answer
                 # whatever the caller handed over, and seeding parameters from defaults alone
-                # left every carrier passed in this way unaccounted for. Keywords name their
-                # own slot; positions are read only where no receiver may be in the way, since
-                # a call on an attribute may hand one over unwritten and guessing which would
-                # bind the wrong slot.
+                # left every carrier passed in this way unaccounted for. A receiver moves the
+                # slots rather than making them unreadable -- the resolver already knows which
+                # places take one -- so a method's positions are counted from after it, and an
+                # unbound call through the class writes its receiver and moves nothing.
                 if isinstance(node, ast.Call):
                     for reached in called(node, function):
-                        slots = takes.get(reached, [])
+                        slots, only_by_keyword = takes.get(reached, ([], set()))
                         handed = [(word.arg, word.value) for word in node.keywords
-                                  if word.arg in slots]
-                        if isinstance(node.func, ast.Name):
-                            handed += list(zip(slots, node.args))
+                                  if word.arg in only_by_keyword or word.arg in slots]
+                        standing = list(slots)
+                        if isinstance(node.func, ast.Attribute) and reached in receivers:
+                            owner = (_dotted(node.func.value) or "").rpartition(".")[2]
+                            reach = [] if function == MODULE_LEVEL else function.split(".")
+                            through_a_class = False
+                            while True:
+                                at = ".".join(reach) if reach else MODULE_LEVEL
+                                if owner in by_spelling.get(at, {}):
+                                    through_a_class = True
+                                    break
+                                if not reach:
+                                    break
+                                reach.pop()
+                            if not through_a_class:
+                                standing = standing[1:]
+                        handed += list(zip(standing, node.args))
                         for name, given in handed:
                             if not _reachable(given, reaching(function, klass), klass,
                                               visible(function)):
@@ -8668,6 +8806,35 @@ class SevenReadingsTests(unittest.TestCase):
                 self.assertEqual([row for row in found if row[1] == "a_place_outside_the_reach"],
                                  [], form + " is inside the reach now, so delete the entry")
 
+    def test_each_transformation_boundary_is_still_where_it_says(self):
+        """Support: the declared transformation boundary, held at both ends.
+
+        The two lists above declare forms this reader never sees at all, and their control is
+        that the planted place is absent. This boundary is different in shape: the place naming
+        the spelling IS found, and what is lost is the caller behind it. A control that only
+        checked the absence would pass just as well if the derivation had stopped seeing
+        anything, so both ends are asserted -- the named place present, the caller absent.
+
+        A boundary that closes makes this fail and asks for the entry to be deleted, which is
+        the whole reason it is data rather than a sentence.
+        """
+        self.assertTrue(HANDED_ON_THROUGH_A_TRANSFORMATION,
+                        "the declared transformation boundary is empty, so this check would"
+                        " pass by asserting nothing")
+        for form, (which, lines, named, behind, why) in sorted(
+                HANDED_ON_THROUGH_A_TRANSFORMATION.items()):
+            with self.subTest(form):
+                self.assertTrue(why.strip(), form + " is declared without a reason")
+                places = places_reached(which, "\n".join(lines))
+                self.assertIn(named, places,
+                              form + ": the place that writes the spelling is not found at all,"
+                              " so this boundary is not where the entry says it is: "
+                              + json.dumps(places))
+                self.assertNotIn(behind, places,
+                                 form + ": the caller is inside the reach now, so delete the"
+                                 " entry rather than leave it claiming a limit that is gone: "
+                                 + json.dumps(places))
+
     def test_each_name_this_reader_resolves_lands_where_python_lands(self):
         """A name reaches what Python reaches, through classes as much as through scopes.
 
@@ -9919,6 +10086,7 @@ HANDED = {
     "test_no_class_body_binding_shadows_without_asking_whether_it_happened": NOTHING,
     "test_every_placement_site_here_honours_a_declared_owner": NOTHING,
     "test_every_statement_reader_here_pairs_an_unpacking_off": NOTHING,
+    "test_each_transformation_boundary_is_still_where_it_says": NOTHING,
     "test_every_owner_deciding_site_here_measures_how_near_the_binding_is": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
