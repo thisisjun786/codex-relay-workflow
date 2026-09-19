@@ -1298,6 +1298,32 @@ class TheFindingsFromReview(TransitionCase):
             (host.home / "crw-completion-hook.json").read_text(encoding="utf-8")), fresh)
         self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
 
+    def test_a_relative_destination_is_settled_before_anything_is_derived(self):
+        """A plugin-owned record needs an absolute path, and --dest feeds every derived path."""
+        host = self.host
+        host.link_skills()
+        host.register_hook()
+        host.register_mcp()
+        (host.home / "crw-bridge-mcp.json").unlink()
+        # No live table and no record at all, which is the state this fallback exists for.
+        lines, keep = host.config().splitlines(), []
+        skipping = False
+        for line in lines:
+            if line.strip().startswith("["):
+                skipping = line.strip().startswith("[mcp_servers.")
+            if not skipping:
+                keep.append(line)
+        (host.home / "config.toml").write_text("\n".join(keep) + "\n", encoding="utf-8")
+        host.install_plugin()
+        relative = os.path.relpath(host.destination, host.root)
+        done = run([CLI, "--codex-home", host.home, "--dest", relative, "transition", "--apply",
+                    "--accept-hook-trust-gap"], cwd=host.root)
+        answer = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 0, json.dumps(answer["results"], indent=2)[:1500])
+        self.assertEqual(answer["destination"], str(host.destination.resolve()))
+        self.assertTrue(os.path.isabs(host.record()["bridgeExecutable"]))
+        self.assertTrue(os.path.isabs(host.settings()["adapterEntryPoint"]))
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

@@ -52,8 +52,12 @@ def host_of(args):
         # and hand ownership to a declaration that does not cover it, leaving nothing registered.
         raise ValueError("this package declares only the " + completion_event() + " hook, so "
                          + repr(named) + " is not an event this transition can move")
-    return inventory.snapshot(home, repo_root=ROOT,
-                              destination=Path(args.dest) if args.dest else None,
+    # Settled here, once. Everything downstream is derived from it -- the adapter, its interpreter
+    # and the fallback bridge path -- and a plugin-owned record has to name an absolute path, so a
+    # relative --dest would pass preflight resolving from this command's working directory and be
+    # refused at the record write with the settings retired and the registration already gone.
+    destination = Path(args.dest).expanduser().resolve() if args.dest else None
+    return inventory.snapshot(home, repo_root=ROOT, destination=destination,
                               event=getattr(args, "event", None))
 
 
