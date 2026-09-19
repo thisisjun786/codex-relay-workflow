@@ -556,6 +556,30 @@ class TheFloorRefuses(TransitionCase):
                          before)
 
 
+class ReadingsThatMustNotEndTheCommand(TransitionCase):
+    """Deliberately outside the reader-gated classes, because these bite on the 3.10 floor.
+
+    A case that can only run where the defect cannot happen proves nothing about the defect. The
+    inventory of the skill links needs no configuration reader, so these run on both interpreters.
+    """
+
+    def test_a_looping_skill_link_is_classified_rather_than_ending_the_command(self):
+        """Before 3.13 a non-strict resolve() answers a symlink loop with RuntimeError."""
+        host = self.ready()
+        # Named away from crw-loop, which is a real skill this fixture links.
+        first = host.home / "skills" / "crw-ouroboros-a"
+        second = host.home / "skills" / "crw-ouroboros-b"
+        first.symlink_to(second)
+        second.symlink_to(first)
+        code, answer = host.call("inspect")
+        self.assertEqual(code, 0, json.dumps(answer)[:600])
+        owned = [item["path"] for item in answer["host"]["skills"]["crwOwned"]]
+        self.assertFalse([item for item in owned if "ouroboros" in item], json.dumps(owned))
+        foreign = [item["path"] for item in answer["host"]["skills"]["foreign"]]
+        self.assertEqual(len([item for item in foreign if "ouroboros" in item]), 2,
+                         json.dumps(foreign))
+
+
 @needs_reader
 class TheFindingsFromReview(TransitionCase):
     """One case per defect hosted review found, so none of them comes back quietly."""
@@ -1479,6 +1503,77 @@ class TheFindingsFromReview(TransitionCase):
                         json.dumps(answer["stillLive"]))
         self.assertTrue(all("NOT stopped" in item for item in answer["stillLive"]))
         self.assertIsNotNone(host.settings())
+
+    def test_a_field_appended_to_the_table_after_the_snapshot_is_not_orphaned(self):
+        """Authorship is equality with the whole table, so the span is re-derived under the lock."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertTrue(snapshot["mcp"]["tableProven"])
+        span = snapshot["mcp"]["tableSpan"].strip()
+        self.assertIn(span, host.config())
+        # An operator adding a field to the same table between the snapshot and the lock. The old
+        # span is still a substring of the file, which is exactly why containment cannot decide it.
+        (host.home / "config.toml").write_text(
+            host.config().replace(span, span + "\nstartup_timeout_sec = 30", 1), encoding="utf-8")
+        before = host.config()
+        answer = steps.mcp_table_standdown(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertEqual(host.config(), before)
+        self.assertIn("startup_timeout_sec = 30", host.config())
+
+    def test_a_second_marketplace_entry_after_the_snapshot_stops_the_removal(self):
+        """The cardinality preflight refuses on is answered again before anything is removed.
+
+        A behaviour guard rather than a guard over one line. The re-check already refused, through
+        the cache cell: a second marketplace leaves no single installed version nameable, so
+        read_plugin answers cacheVersion None and plugin_refusals refuses on that. What the
+        explicit cardinality line adds is a refusal that says the cause instead of leaving a
+        reading about the cache to carry it.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        host.append_config('[plugins."crw@another"]\nenabled = true\n')
+        before = (host.hooks_document(), host.settings(), host.record())
+        results = steps.transition(snapshot, {"accept_hook_renumbering": False,
+                                              "accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["settings retire"], "refused", json.dumps(results)[:700])
+        refusal = [item for item in results if item["step"] == "settings retire"][0]
+        self.assertIn("crw@another", refusal["detail"])
+        self.assertIn("more than one marketplace", refusal["detail"])
+        self.assertEqual(outcomes["skill unlink"], "not_reached")
+        self.assertEqual((host.hooks_document(), host.settings(), host.record()), before)
+
+    def test_a_registration_reading_the_default_path_is_compared_too(self):
+        """A two-word command names no settings file; it still reads one, and that one counts."""
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json",
+                                           markerRoot=str(self.host.marker / "registered"))
+        other = json.loads(fixed.read_text(encoding="utf-8"))
+        other["markerRoot"] = str(host.marker / "default-path")
+        fixed.write_text(json.dumps(other), encoding="utf-8")
+        document = host.hooks_document()
+        entry = dict(document["hooks"]["Stop"][0]["hooks"][0])
+        # The same adapter, registered without the third word: it resolves the document itself.
+        entry["command"] = entry["command"].rsplit(" ", 1)[0]
+        document["hooks"]["Stop"][0]["hooks"].append(entry)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        host.install_plugin()
+        before = host.hooks_document()
+        code, answer = host.transition("--apply", "--accept-hook-renumbering")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("disagree about", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+        self.assertTrue(custom.is_file())
+        self.assertEqual(json.loads(fixed.read_text(encoding="utf-8")), other)
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""

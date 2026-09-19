@@ -724,6 +724,23 @@ def mcp_table_standdown(host, options, *, apply=False):
         return _answer("mcp table standdown", WOULD, "would remove the " + inventory.SERVER_NAME
                        + " table from " + str(path))
     with hostrecord.Locked(path):
+        # The span is re-derived inside the lock rather than carried from the snapshot. Authorship
+        # is proved by equality and equality is a property of the WHOLE table: a field appended to
+        # it after the snapshot leaves the old span a substring of the file, so the containment
+        # test below still says ours, and removing the old span deletes the header and leaves the
+        # appended field attached to whatever table precedes it.
+        again = inventory.read_mcp(host["codexHome"])
+        if again["table"] != reading.PRESENT:
+            return _answer("mcp table standdown", REFUSED,
+                           "the " + inventory.SERVER_NAME + " table reads " + str(again["table"])
+                           + " now, so the configuration changed after it was read and nothing"
+                           " was removed")
+        if not again["tableProven"]:
+            return _answer("mcp table standdown", REFUSED,
+                           "the table changed after it was read and is no longer the block this"
+                           " repository renders, so it is left alone"
+                           + (": " + str(again["detail"]) if again.get("detail") else ""))
+        block = (again.get("tableSpan") or again["renderedTable"]).strip()
         text = reading.read_text(path, "the Codex configuration")
         if not text.usable or block not in text.value:
             return _answer("mcp table standdown", REFUSED,
@@ -804,6 +821,13 @@ def plugin_refusals(host):
     if not plugin.get("cacheVersion"):
         found.append("no single installed plugin version could be named"
                      + (": " + str(plugin["detail"]) if plugin.get("detail") else ""))
+    if len(plugin.get("entryKeys") or []) > 1:
+        # The same cardinality preflight refuses on. Asked again here because an entry installed
+        # after the snapshot leaves the first one present and enabled, so every other check in
+        # this function passes while two declarations load: the manual surfaces would be removed
+        # into exactly the duplicate hook and duplicate server this transition exists to end.
+        found.append("the plugin is now registered from more than one marketplace ("
+                     + ", ".join(plugin["entryKeys"]) + "), and every one of them loads")
     linked = {Path(item["path"]).name for item in host["skills"]["crwOwned"]}
     missing = sorted(linked - set(plugin.get("skills") or []))
     if missing:

@@ -51,7 +51,11 @@ def checkout_of(path):
     """
     try:
         settled = Path(path).expanduser().resolve()
-    except OSError:
+    except (OSError, RuntimeError):
+        # RuntimeError, not only OSError: before 3.13 a non-strict resolve() answers a symlink
+        # loop with RuntimeError, and this repository's floor is 3.10. A looping crw-* link left
+        # by anything at all would otherwise end every command in an internal error instead of
+        # being classified -- and a link this cannot follow is exactly a link it does not own.
         return None
     for candidate in list(settled.parents):
         if all((candidate / marker).is_file() for marker in REPO_MARKERS):
@@ -436,9 +440,14 @@ def registered_document(hook, settings, codex_home):
     """
     documents, unreadable = [], []
     for entry in hook.get("entries") or []:
-        named = entry.get("settings")
-        if not named or not entry.get("proven"):
+        if not entry.get("proven"):
             continue
+        # A proven command with no settings argument is not a registration without settings: its
+        # adapter resolves the path the same way this does, from the environment and then the
+        # Codex home. Skipping it compared one registration and removed two, so a host carrying a
+        # default-path registration beside one naming a custom document had the default one's
+        # store, marker and journal abandoned without ever being compared with the winner.
+        named = entry.get("settings") or str(completion.configuration_path(codex_home))
         document, outcome, detail, _found = completion.read_configuration(Path(named))
         if document is None:
             if outcome == completion.CONFIG_ABSENT:
