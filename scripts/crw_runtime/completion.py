@@ -1676,18 +1676,20 @@ def journals_named(registrations, already_read=None):
     # reached at the moment it was asked; what a reading is PUBLISHED under may not come from
     # a lookup, or a link retargeted between the lookup and the open files those bytes under an
     # identity they never came from.
-    read_by = {}
-    for taken in (already_read or {}).values():
-        known = getattr(taken[3], "identity", None)
-        if known is not None:
-            read_by[known] = taken
     # An identity is only a key while this call HOLDS the object it names. An inode is recycled
     # the moment its last name and its last descriptor are gone, so a file deleted after it was
     # read can hand its (device, inode) to an unrelated file created afterwards -- and a cache
     # keyed on that pair would then serve one file's reading for another's. Holding a descriptor
     # open removes the interval: the kernel cannot reuse an inode something still has open.
+    read_by = {}
     held = []
     try:
+        # The caller's own reading goes through the same gate rather than straight in. The
+        # descriptor it was read through was closed before this call began, so its identity is
+        # exactly this recyclable too, and seeding it unheld left one entry skipping the rule
+        # every other entry follows.
+        for spelling, taken in (already_read or {}).items():
+            _keep(spelling, taken, read_by, held)
         _read_named(registrations, already_read, read_by, held, found, scanned, aliases)
     finally:
         for descriptor in held:
@@ -1696,6 +1698,52 @@ def journals_named(registrations, already_read=None):
             except OSError:
                 pass
     return found
+
+
+def _one_source_each(spellings):
+    """Collapse the spellings the kernel says name one file, holding each while it is a key.
+
+    Two registrations can name ONE settings file through two absolute spellings, and counting
+    that as two sources reported the configuration unreadable as ambiguous while the cause
+    partition beside it read the one file once and answered from it.
+
+    Every identity compared here is taken from a descriptor this function HOLDS until it has
+    finished comparing. An identity read and released is recyclable: a file deleted after it
+    was identified hands its (device, inode) to the next file created, and a later, unrelated
+    spelling would then be collapsed into it and never read at all -- one source reported where
+    there are two, which is the opposite error and the worse one. Holding removes the interval.
+
+    A spelling nobody could open or identify keeps its own place rather than being merged on a
+    guess, because describing two files as one is what this check exists to prevent.
+    """
+    seen, kept, held = {}, [], []
+    try:
+        for spelling in spellings:
+            try:
+                # NONBLOCK so a named pipe at a settings path cannot stall this command.
+                descriptor = os.open(spelling, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                kept.append(spelling)
+                continue
+            mine = reading.descriptor_identity(descriptor)
+            if mine is None or mine in seen:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+                if mine is None:
+                    kept.append(spelling)
+                continue
+            seen[mine] = spelling
+            held.append(descriptor)
+            kept.append(spelling)
+    finally:
+        for descriptor in held:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    return kept
 
 
 def _journal_answer(cell):
@@ -1746,7 +1794,9 @@ def _keep(path, taken, read_by, held):
     if identity is None:
         return
     try:
-        descriptor = os.open(str(path), os.O_RDONLY)
+        # NONBLOCK so a named pipe left at a settings path cannot stall this command waiting
+        # for a writer. On a regular file it changes nothing.
+        descriptor = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK)
     except OSError:
         return
     if reading.descriptor_identity(descriptor) != identity:
@@ -1878,15 +1928,7 @@ def status(codex_home=None, environ=None, event=EVENT):
     # spellings keep their own places rather than being merged on a guess: describing two files
     # as one is the error this check exists to prevent, and a second entry is the cheaper cost.
     absolute = sorted({str(_settled(named)) for named in carried if named not in relative})
-    named_once, already = [], set()
-    for spelling in absolute:
-        mine = reading.path_identity(spelling)
-        if mine is not None and mine in already:
-            continue
-        if mine is not None:
-            already.add(mine)
-        named_once.append(spelling)
-    distinct = sorted(set(named_once) | set(relative))
+    distinct = sorted(set(_one_source_each(absolute)) | set(relative))
     # A registration with no settings argument resolves its own path, which is not necessarily
     # the one its neighbour names. Counted as a separate answer for that reason: "one path and
     # one silence" is two different files just as surely as two paths are.

@@ -3424,6 +3424,72 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
                          "one malformed record reported a different position for each line"
                          " ending: " + repr(details))
 
+    def test_the_callers_own_reading_is_held_before_it_is_a_key(self):
+        """The one entry that skipped the rule every other entry follows.
+
+        status() hands journals_named the reading it already took, and that entry went straight
+        into the cache under its identity. The descriptor it was read through was closed before
+        the call began, so that identity is exactly this recyclable too: delete the file and
+        the next one created inherits it, and a later registration naming the new file is
+        served the old file's configuration.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            first, second = temporary / "journal-one", temporary / "journal-two"
+            first.mkdir()
+            second.mkdir()
+            gone = temporary / "read-by-the-caller.json"
+            arrives = temporary / "named-by-a-registration.json"
+            gone.write_text(json.dumps(self._document(first)), encoding="utf-8")
+            carried = completion.read_configuration(gone)
+            vacated = gone.stat().st_ino
+            os.unlink(gone)
+            arrives.write_text(json.dumps(self._document(second)), encoding="utf-8")
+            recycled = arrives.stat().st_ino == vacated
+            found = completion.journals_named(
+                [{"registration": "named-by-a-registration", "settings": str(arrives),
+                  "startable": True}],
+                already_read={str(gone): carried})
+        if not recycled:
+            self.skipTest("the filesystem did not reuse the inode, so the collision this case"
+                          " is about was never built")
+        self.assertEqual(found[0]["journalRoot"], str(second),
+                         "a registration's own settings file was served the caller's reading"
+                         " of a deleted file that had held its inode")
+
+    def test_collapsing_sources_holds_each_identity_it_compares(self):
+        """SUPPORT, not evidence: a contract pin on the sibling site, deliberately not counted.
+
+        The defect is one class at two sites -- an identity compared without being held -- and
+        the case above is its evidence, red at the parent as an AssertionError. This is the
+        other site. It cannot be demonstrated red at the parent on the defect itself: the
+        parent has no function here to call, the collapse is inline in status(), and reaching
+        it would mean patching the very lookup the fix stops using, so the case would fail at
+        the parent with an AttributeError and pass at the head for the wrong reason. Pinned as
+        a contract instead, and said plainly rather than counted.
+
+        What it pins: merging on a released identity reports ONE source where there are two.
+        A file deleted after it was identified hands its inode to a later, unrelated settings
+        file, which is then collapsed into it and never read -- the opposite error from the
+        aliasing this collapse fixes, and the worse one.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            gone = temporary / "identified-then-deleted.json"
+            gone.write_text("{}", encoding="utf-8")
+            vacated = gone.stat().st_ino
+            os.unlink(gone)
+            arrives = temporary / "an-unrelated-file.json"
+            arrives.write_text("{}", encoding="utf-8")
+            recycled = arrives.stat().st_ino == vacated
+            kept = completion._one_source_each([str(gone), str(arrives)])
+        if not recycled:
+            self.skipTest("the filesystem did not reuse the inode, so the collision this case"
+                          " is about was never built")
+        self.assertIn(str(arrives), kept,
+                      "a settings file was collapsed into a deleted one whose inode it"
+                      " inherited, so it was never read as its own source")
+
 
 class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
     """Review of PR #52 head 000b83f. Two more answers this branch owns were being withheld
