@@ -4075,6 +4075,61 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          "an adapter script the interpreter cannot open was read as startable"
                          " because a regular file exists at its path")
 
+    def test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status(self):
+        """Only a program that RAN the source can produce this nonce.
+
+        Reading the exit status before the answer threw that away: a launcher that runs python
+        and then exits 1 of its own accord prints the nonce and the version, and the probe
+        discarded both and left startability unsettled -- so an empty journal could report
+        cause_unreadable on a host whose hook is fine. The answer is evidence and the status
+        is not, so the answer is read first.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            launcher = host / "a-launcher-that-exits-one"
+            # No exec, so the launcher keeps control and chooses its own status after the
+            # interpreter has already written the answer.
+            launcher.write_text("#!/bin/sh\n" + shlex.quote(sys.executable)
+                                + " \"$@\"\nexit 1\n", encoding="utf-8")
+            launcher.chmod(0o755)
+            register(temporary)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(sys.executable, str(launcher), 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["registeredInterpreter"]["value"], reading.PRESENT,
+                         "a launcher that answered the nonce and the version was discarded"
+                         " because it chose its own exit status")
+
+    def test_an_adapter_run_directly_is_not_judged_as_an_interpreter(self):
+        """The first word is the script, so there is no interpreter to have a verdict about.
+
+        A registration can execute the adapter directly through its shebang. Running that first
+        word with an interpreter's own option makes the adapter treat the option as its
+        settings path and exit 0 in silence -- which is exactly the shape the /bin/true verdict
+        is for, arriving from a host whose hook works and writes records. A verdict about
+        interpreters there would be about a question this command invented.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            register(temporary)
+            direct = host / ENTRY_POINT.name
+            direct.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            direct.chmod(0o755)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(
+                sys.executable + " " + str(ENTRY_POINT), str(direct), 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertNotEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                            firing.ESTABLISHED,
+                            "a registration that runs the adapter directly was reported as"
+                            " naming an interpreter the host cannot start")
+
     def test_a_wrapper_around_an_interpreter_is_left_unjudged(self):
         """Refusing the question and answering it wrongly are different facts.
 

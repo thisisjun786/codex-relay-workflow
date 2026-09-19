@@ -1503,7 +1503,11 @@ def _interpreter_cell(ours):
         else:
             # A bare name is looked up on PATH, which is what the host does with it too.
             resolved = shutil.which(first) or first
-        key = resource_key(resolved)
+        # The same program can be an interpreter for one registration and the adapter itself
+        # for another, and the verdict differs, so the probe is shared only between the two
+        # that ask the same question of it.
+        interpreter_slot = first != entry["target"]
+        key = (resource_key(resolved), interpreter_slot)
         if key in probed:
             probe = probed[key]
         else:
@@ -1512,7 +1516,9 @@ def _interpreter_cell(ours):
                 probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
                               path=str(resolved))
             elif probe["value"] == reading.PRESENT:
-                probe = _answers_as_an_interpreter(resolved, "the registered interpreter")
+                probe = (_answers_as_an_interpreter(resolved, "the registered interpreter")
+                         if interpreter_slot
+                         else _unjudged_interpreter(resolved, "the registered interpreter"))
             probed[key] = probe
         checked.append({"registration": entry["identity"], "word": first,
                         "resolved": str(resolved), "probe": probe})
@@ -1615,6 +1621,38 @@ def _interpreter_question():
     return source, nonce[::-1]
 
 
+# What this probe accepts as an ANSWER, and what it does with everything else. Stated once,
+# because every branch below and both call sites follow from it rather than each deciding for
+# itself -- which is how one site came to discard an answer it had already received while
+# another produced no verdict at all:
+#
+#   AN ANSWER      the exact nonce this call invented, computed and written back, beside a
+#                  version. Only a program that ran the source can produce it, so it is
+#                  evidence whatever the program does with its exit status afterwards. A
+#                  version below the floor is still an answer, and its own repair.
+#   REFUSED        it ran and would not take the question, which is what a wrapper around an
+#                  interpreter does. Nothing about running Python was established.
+#   ANSWERED WRONG it took the question, exited cleanly and said something else. That is the
+#                  family this probe exists for, and it is established.
+#   UNJUDGED       the command's shape does not put an interpreter in this word at all. There
+#                  is no question to ask, so none is asked and nothing is run.
+#
+# Only the third is a verdict. The other two non-answers are unestablished readings and say so,
+# and the fourth never reaches this function -- its caller answers it, because a gap that
+# produces no verdict is read as a clean one.
+def _unjudged_interpreter(resolved, label):
+    """The UNJUDGED outcome, reaching the caller as a reading rather than as nothing.
+
+    A registration can execute the adapter directly through its shebang, so the first word is
+    the script. Running it with an interpreter's own option would run the ADAPTER with an
+    argument it never expected, and any verdict drawn from that would be about a question this
+    command invented. So it is not run, and the answer says which question was not asked.
+    """
+    return _cell(NOT_READ, label + " is the adapter itself rather than a program registered to"
+                 " run it, so no interpreter question applies to this word and none was asked",
+                 path=str(resolved))
+
+
 def _answers_as_an_interpreter(resolved, label):
     """Whether this program runs Python, asked by running it.
 
@@ -1633,6 +1671,9 @@ def _answers_as_an_interpreter(resolved, label):
     What this establishes is a MOMENT. It ran as a Python interpreter when this was asked, and
     the evidence says so, because the host runs it again on the next Stop and this command
     cannot speak for that one.
+
+    Called only where the command's shape puts an interpreter in this word. Where it does not,
+    the caller answers with _unjudged_interpreter and nothing is run.
     """
     try:
         source, expected = _interpreter_question()
@@ -1649,17 +1690,10 @@ def _answers_as_an_interpreter(resolved, label):
                      errno=errno.errorcode.get(error.errno, error.errno))
     answered = _text(finished.stdout).strip().split(" ")
     version = _python_said(answered[1]) if len(answered) == 2 else None
-    if finished.returncode != 0:
-        # It REFUSED the question rather than answering it wrongly, and those are different
-        # facts. A wrapper -- env, a shell, a launcher script -- rejects an option meant for an
-        # interpreter and exits non-zero while starting the adapter perfectly well through the
-        # words that follow it, which this command deliberately does not follow. Establishing
-        # "not an interpreter" from that condemned a working registration. The family this
-        # probe exists to catch does the opposite: it exits 0 and says nothing.
-        return _cell(NOT_READ, label + " did not accept the question, which is also what a"
-                     " wrapper around an interpreter does, so whether it runs Python was not"
-                     " established here", path=str(resolved))
-    if finished.returncode == 0 and answered[0] == expected and version is not None:
+    # The ANSWER is read before the exit status, because only a program that ran the source can
+    # produce this nonce and a wrapper is free to replace the status afterwards -- a launcher
+    # ending in 'exit 1' would otherwise throw away the one piece of positive evidence there is.
+    if answered[0] == expected and version is not None:
         if version < SUPPORTED_PYTHON:
             return _cell(firing.BELOW_SUPPORTED_PYTHON, label + " runs Python "
                          + ".".join(str(part) for part in version) + ", below the supported "
@@ -1669,6 +1703,15 @@ def _answers_as_an_interpreter(resolved, label):
         return _cell(reading.PRESENT, label + " ran and answered as a Python interpreter when"
                      " this was asked; whether it does so on the next invocation is that"
                      " invocation's own fact", path=str(resolved))
+    if finished.returncode != 0:
+        # It REFUSED the question rather than answering it wrongly, and those are different
+        # facts. A wrapper -- env, a shell, a launcher script -- rejects an option meant for an
+        # interpreter and exits non-zero while starting the adapter perfectly well through the
+        # words that follow it, which this command deliberately does not follow. Establishing
+        # "not an interpreter" from that condemned a working registration.
+        return _cell(NOT_READ, label + " did not accept the question, which is also what a"
+                     " wrapper around an interpreter does, so whether it runs Python was not"
+                     " established here", path=str(resolved))
     return _cell(firing.NOT_AN_INTERPRETER, label + " is there and executable and did not"
                  " answer as a Python interpreter when it was run, so the adapter it is"
                  " registered to start cannot have run through it", path=str(resolved))
