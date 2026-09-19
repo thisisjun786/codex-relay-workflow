@@ -3026,6 +3026,41 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                       "the repair was presented without the registration it never read: "
                       + repr(detail))
 
+    def test_a_plugin_owned_host_that_has_recorded_has_no_absence_to_explain(self):
+        """A record outranks every cause that claims nothing ran.
+
+        A plugin-owned host leaves the hook file empty by design, so no registration here names
+        a journal and the count lands only in the settled one. Read as evidence about an absent
+        USER registration, it left not_registered unsettled -- which blocked every rule below
+        it, including the one that says there is no absence to explain. The payload then
+        reported cause_unreadable beside its own count of an invocation that happened.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable,
+                     adapterEntryPoint=str(ENTRY_POINT))
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["firingJournal"]["value"], "1",
+                         "the fixture did not record the invocation this case is about")
+        self.assertEqual(found["registrationOwner"]["value"], completion.OWNER_PLUGIN,
+                         "the fixture did not build the plugin-owned host this case is about")
+        self.assertEqual(found["configuration"]["namedSettings"], [],
+                         "the fixture registered something in the hook file, so the count would"
+                         " not have reached the settled journal at all")
+        cell = found["firingRecordAbsence"]
+        self.assertEqual(cell.get("value"), firing.RECORDS_FOUND,
+                         "a conclusive record stood beside an answer that could not settle"
+                         " whether anything had run")
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertEqual(standings.get(firing.NOT_REGISTERED), firing.RULED_OUT,
+                         "a record this hook wrote is proof something invoked it")
+        self.assertEqual(standings.get(firing.ADAPTER_CANNOT_RUN), firing.RULED_OUT,
+                         "a record outranks a probe that was never taken")
+
     def test_an_open_that_yielded_no_descriptor_publishes_no_identity(self):
         """An open that failed established nothing about WHICH directory refused it. Taking the
         identity from the spelling afterwards answered about whatever it named by then, so a

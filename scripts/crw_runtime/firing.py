@@ -91,6 +91,19 @@ def _not_registered(observed):
     if found:
         return RULED_OUT, (str(found) + " registration(s) in the hook file run this adapter")
     if not observed.get("registrationReadHere", True):
+        # Unless a record settles it. A record this hook wrote is proof that something invoked
+        # this adapter, which is the question -- and it is the one kind of evidence this
+        # command can have about a registration it cannot read. Left unsettled anyway, the
+        # payload carried "maybe it is not registered" beside its own count of an invocation
+        # that happened, and blocked every rule below it including the one that says there is
+        # no absence to explain.
+        found_records = observed.get("unregisteredRecords") or 0
+        if found_records:
+            return RULED_OUT, (str(found_records) + " record(s) this hook wrote are under the"
+                               " journal this command settled on, so something invoked this"
+                               " adapter; whether that registration is still in place is the"
+                               " registration cell's question and not a cause of an absence"
+                               " this host does not show")
         # An empty hook file is what a CORRECTLY installed plugin-owned host looks like: the
         # registration lives in a package manifest this command does not read. Establishing an
         # absence from the one file it is deliberately not in reported a repair that would put
@@ -146,6 +159,13 @@ def _adapter_cannot_run(observed):
     """
     probes = list(observed.get("startProbes") or [])
     if not probes:
+        # A record outranks a probe that was never taken. No registration in the hook file
+        # means nothing here to probe, but a record this hook wrote is proof the host DID
+        # start it -- which is exactly what this cause asks and what no probe could answer.
+        if observed.get("unregisteredRecords") or 0:
+            return RULED_OUT, ("no registered command was probed here, and a record this hook"
+                               " wrote is under the journal this command settled on, so the"
+                               " host started this adapter at least once")
         return NOT_RULED_OUT, "no probe of a registered command was made"
     blocked = [probe for probe in probes if _halves(probe) & set(CANNOT_START)]
     unjudged = [probe for probe in probes
@@ -341,6 +361,16 @@ def _records_found(observed):
     if holding and not empty and not _off and not unread:
         return ESTABLISHED, ("every journal these registrations name holds records this hook"
                              " wrote, so there is no absence to explain: " + _named(holding))
+    if not (holding or empty or _off or unread):
+        # No registration here named a journal, which is what a plugin-owned host looks like.
+        # The journal this command settled on is then the only one in scope, and a record in it
+        # is the same terminal answer: there is no absence to explain.
+        found_records = observed.get("unregisteredRecords") or 0
+        if found_records:
+            return ESTABLISHED, ("the journal this command settled on holds "
+                                 + str(found_records) + " record(s) this hook wrote and no"
+                                 " registration here names another, so there is no absence to"
+                                 " explain")
     if unread and not holding:
         return NOT_RULED_OUT, "a named journal could not be listed: " + _named(unread)
     return RULED_OUT, "a journal these registrations name holds no record"
@@ -481,12 +511,12 @@ CAUSE_RULES = {
                       "unregisteredRecords"), _not_registered),
     RECORD_PATH_UNIDENTIFIED: (("relativeSettings", "silentRegistrations"),
                                _record_path_unidentified),
-    ADAPTER_CANNOT_RUN: (("startProbes",), _adapter_cannot_run),
+    ADAPTER_CANNOT_RUN: (("startProbes", "unregisteredRecords"), _adapter_cannot_run),
     SETTINGS_ABSENT: (("namedJournals", "settledSettings", "registrationElsewhere"),
                       _settings_absent),
     SETTINGS_UNUSABLE: (("namedJournals", "settledSettings", "registrationElsewhere"),
                         _settings_unusable),
-    RECORDS_FOUND: (("namedJournals",), _records_found),
+    RECORDS_FOUND: (("namedJournals", "unregisteredRecords"), _records_found),
     RECORDED_ON_ANOTHER_PATH: (("namedJournals",), _recorded_on_another_path),
     JOURNALLING_OFF: (("namedJournals",), _journalling_off),
     POLICY_RECORDS_ONLY_FAULTS: (("namedJournals",), _policy_records_only_faults),
