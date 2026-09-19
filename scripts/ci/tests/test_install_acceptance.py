@@ -4178,6 +4178,72 @@ RESOLVES_LIKE_PYTHON = {
          "SUPPORT, green at the parent, and the pair that stops the fix above from refusing"
          " every decorator: with the name untaken the word means its builtin, the receiver is"
          " handed over, and the written argument really does fill path."),
+    "a carrier handed to a parameter":
+        (REFUSAL,
+         ("def identity(answer):",
+          "    return answer",
+          "",
+          "def helper():",
+          "    return identity(reading.UNREADABLE)",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "parameters were seeded from applicable defaults and from nothing else, so a refusal"
+         " handed over as an ARGUMENT bound no parameter, neither identity nor helper became a"
+         " carrier, and the caller below them was dropped. An argument is the binding of the"
+         " parameter it fills. Keywords name their own slot; positions are read only where no"
+         " receiver may be in the way, because a call on an attribute may hand one over"
+         " unwritten and guessing which would bind the wrong slot."),
+    "a source handle kept through Path construction":
+        (TEXT,
+         ("def helper():",
+          "    return Path(__file__).read_text()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the receiver of the read had no dotted spelling, so the read was not recognised as"
+         " taken on a handle and the helper was reported only for naming the file. This is NOT"
+         " the run-time-assembled path declared out of reach: there nothing in the expression"
+         " names a source file, and here the handle is written inside the call. Path keeps the"
+         " path its argument names."),
+    "a loop target from an iterable written here":
+        (REFUSAL,
+         ("def helper():",
+          "    for answer in (reading.UNREADABLE,):",
+          "        return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "a for target is a binding like any other when the iterable is written out, and the"
+         " pairing helper answered nothing at all for ast.For. Every table built on it lost the"
+         " loop, so the helper reading the target was not a carrier and its caller went"
+         " unaccounted for."),
+    "a source handle from an iterable written here":
+        (TEXT,
+         ("def helper():",
+          "    for path in (HERE,):",
+          "        return path.read_text()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the handle side of the same omission, fixed in the shared pairing helper rather than"
+         " twice."),
+    "a loop target from an iterable this text cannot read":
+        (REFUSAL,
+         ("def helper(values):",
+          "    for answer in values:",
+          "        return answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "SUPPORT, green at the parent, and the limit the fix above stops at: what an iterable"
+         " this text cannot read yields is a question about the run, so the loop binds nothing"
+         " rather than a guess. Only the written forms are paired."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -5013,6 +5079,13 @@ def _bindings(node):
         # with open(HERE) as stream binds the name to what the expression answered, exactly as
         # an assignment does, and a read taken on it reaches the same file.
         holders, answer = [node.optional_vars], node.context_expr
+    elif isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(
+            node.iter, (ast.Tuple, ast.List, ast.Set)):
+        # for answer in (reading.UNREADABLE,) binds the target to each element written in the
+        # iterable, and the loop really does run. An iterable this text cannot read binds
+        # nothing here rather than a guess about what it yields, which is why only the written
+        # forms are paired.
+        holders, answer = [], None
     else:
         return []
     def pair(holder, value):
@@ -5024,6 +5097,9 @@ def _bindings(node):
                     for entry in pair(inner, given)]
         return [(holder, value)]
 
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return [entry for element in node.iter.elts
+                for entry in pair(node.target, element)]
     return [entry for holder in holders for entry in pair(holder, answer)]
 
 
@@ -6177,6 +6253,12 @@ def _hands_on(tree, spelled):
     # module on every pass.
     left_to_the_default = _default_applies(tree, places)
     declared_owner = _declared_owner(tree, places)
+    # Which parameter each place takes, in order, so an argument can be read as the binding of
+    # the parameter it fills.
+    takes = {places.get(id(node), (MODULE_LEVEL, None))[0]:
+             [arg.arg for arg in node.args.posonlyargs + node.args.args]
+             for node in ast.walk(tree)
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))}
     every_key = {places.get(id(node), (MODULE_LEVEL, None))[1] for node in ast.walk(tree)
                  if isinstance(node, ast.ClassDef)}
     parents = {places.get(id(node), (MODULE_LEVEL, None))[1]:
@@ -7061,6 +7143,27 @@ def _hands_on(tree, spelled):
                     if named.id not in held:
                         held.add(named.id)
                         spreading = True
+                # An argument binds the parameter it fills: identity(answer) makes answer
+                # whatever the caller handed over, and seeding parameters from defaults alone
+                # left every carrier passed in this way unaccounted for. Keywords name their
+                # own slot; positions are read only where no receiver may be in the way, since
+                # a call on an attribute may hand one over unwritten and guessing which would
+                # bind the wrong slot.
+                if isinstance(node, ast.Call):
+                    for reached in called(node, function):
+                        slots = takes.get(reached, [])
+                        handed = [(word.arg, word.value) for word in node.keywords
+                                  if word.arg in slots]
+                        if isinstance(node.func, ast.Name):
+                            handed += list(zip(slots, node.args))
+                        for name, given in handed:
+                            if not _reachable(given, reaching(function, klass), klass,
+                                              visible(function)):
+                                continue
+                            held = bound.setdefault(reached, set())
+                            if name not in held:
+                                held.add(name)
+                                spreading = True
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Return) and node.value is not None:
@@ -7561,6 +7664,17 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None, t
             if isinstance(expression, ast.BoolOp):
                 return any(reaches(value, scope) for value in expression.values)
             if (isinstance(expression, ast.Call)
+                    and (_dotted(expression.func) or "").rpartition(".")[2] == "Path"
+                    and not _opener_call(expression.func, bare, dotted)):
+                # Path(HERE) and Path(__file__) name the same file the argument names: the
+                # conversion keeps the path rather than assembling one. That is what separates
+                # this from the run-time-assembled path declared out of reach below, where
+                # nothing in the expression names a source file at all -- here the handle is
+                # written in the call. Only the arguments are read, because the constructor
+                # itself is not a handle.
+                return any(reaches(given, scope) for given in list(expression.args)
+                           + [given.value for given in expression.keywords])
+            if (isinstance(expression, ast.Call)
                     and _opener_call(expression.func, bare, dotted)):
                 opener, receiver = expression.func, []
                 if isinstance(opener, ast.Name):
@@ -7719,6 +7833,22 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                 # A scope that binds the handle's name reads its own, so a read taken on it
                 # says nothing about the file the module's handle names.
                 on_a_handle = False
+            if not on_a_handle and isinstance(node.func, ast.Attribute):
+                # Path(HERE).read_text(): the conversion keeps the path its argument names, so
+                # the read IS taken on this module's handle even though the receiver has no
+                # dotted spelling of its own. This is not the run-time-assembled path declared
+                # out of reach below -- there nothing in the expression names a source file,
+                # and here the handle is written inside the call.
+                made_by = node.func.value
+                if (isinstance(made_by, ast.Call)
+                        and (_dotted(made_by.func) or "").rpartition(".")[2] == "Path"):
+                    kept = [_dotted(given) for given in list(made_by.args)
+                            + [given.value for given in made_by.keywords]]
+                    named = next((one for one in kept if one and one in handles), None)
+                    if named is not None:
+                        on_a_handle = True
+                        attribute = node.func.attr
+                        spelling = named + "." + attribute
             if on_a_handle and attribute.startswith("read"):
                 return None if attribute in ASKS_ABOUT_THE_FILE else spelling
             # open(HERE).read(): the file object has no name of its own, so there is no dotted
