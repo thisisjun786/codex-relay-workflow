@@ -3336,6 +3336,32 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("my-bridge", answer["results"][0]["detail"])
         self.assertEqual(host.config(), before)
 
+    @needs_reader
+    def test_a_registration_whose_interpreter_is_not_a_python_is_not_ours(self):
+        """The writer renders whatever starts the command, so byte equality is not enough."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        # Our adapter as the argument and something else entirely running it: the words this
+        # repository's writer emits, and a command that never reaches the adapter.
+        entry["command"] = entry["command"].replace(str(sys.executable), "/bin/true", 1)
+        self.assertIn("/bin/true", entry["command"])
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        found = inventory.read_hook(host.home, repo_root=ROOT)
+        self.assertTrue(found["entries"], json.dumps(found)[:500])
+        self.assertFalse(any(item["proven"] for item in found["entries"]),
+                         json.dumps(found["entries"])[:600])
+        # And the run leaves that foreign hook exactly where it is.
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("cannot prove is its own adapter", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

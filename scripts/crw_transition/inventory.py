@@ -29,6 +29,10 @@ RELAY_SCRIPT = "codex-session-relay"
 BRIDGE_SCRIPT = "codex-thread-bridge"
 ADAPTER_SCRIPT = "crw-completion-hook"
 INTERPRETER_SCRIPT = "python3"
+# The names a Python executable actually has, checked because the writer renders whatever argv[0]
+# it is given: a command reproduces byte for byte whatever starts it, so byte equality alone
+# proves the WORDS are ours and not that they run our adapter.
+INTERPRETER_NAMES = re.compile(r"^python(3(\.\d+)?)?$")
 
 REPO_MARKERS = ("plugins/crw/.codex-plugin/plugin.json", "scripts/crw_runtime/completion.py")
 
@@ -344,8 +348,16 @@ def canonical_command(argv):
     Authorship is byte equality with that writer, including its quoting. The name test alone is
     defeatable: names_this_adapter returns the first word whose basename matches, wherever it sits,
     so a foreign command that merely PASSES our adapter as an argument would pass a name check.
+
+    Byte equality is defeatable the same way, one word earlier. The writer renders the interpreter
+    it is handed, so /bin/true <checkout>/scripts/completion_hook.py <settings> reproduces exactly
+    and never runs the adapter at all -- a foreign hook doing its own work, which this would have
+    called ours and removed. The interpreter is asked to be a Python before the words are
+    compared, which is what the installer asks before it writes one.
     """
     if not argv or len(argv) not in (2, 3):
+        return None
+    if not INTERPRETER_NAMES.fullmatch(Path(str(argv[0]).strip("\"'")).name):
         return None
     script = argv[1]
     if Path(script).name != completion.ENTRY_POINT_NAME:
