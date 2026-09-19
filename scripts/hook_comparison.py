@@ -1175,8 +1175,13 @@ OPEN_FLAGS = {"open": 1, "openat": 2, "openat2": 2}
 WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND", "O_TMPFILE")
 
 # The flags that change the file at the moment it is opened, as against the ones that only ask
-# for the right to change it later.
-CHANGING_FLAGS = ("O_CREAT", "O_TRUNC", "O_TMPFILE")
+# for the right to change it later. O_CREAT is NOT one of them: opening a file that already
+# exists with O_CREAT and nothing else changes nothing at all, so counting it would overstate
+# exactly the number this distinction exists to keep honest. O_CREAT with O_EXCL is different,
+# and only because the calls here succeeded: an exclusive create over an existing file fails
+# with EEXIST, and a failed call never reaches this table.
+CHANGING_FLAGS = ("O_TRUNC", "O_TMPFILE")
+CREATED_IT = ("O_CREAT", "O_EXCL")
 
 # What the witness must find, fixed before any subprocess starts, and compared against the path
 # strings the KERNEL recorded rather than against what they resolve to afterwards. A resolution
@@ -1506,7 +1511,9 @@ def parse_trace(text, cwd):
             answer["writes"].append({
                 "line": number, "pid": pid, "call": name,
                 "path": _resolved_descriptor(result) or path,
-                "changedTheFile": any(flag in arguments[flags] for flag in CHANGING_FLAGS)})
+                "changedTheFile": (
+                    any(flag in arguments[flags] for flag in CHANGING_FLAGS)
+                    or all(flag in arguments[flags] for flag in CREATED_IT))})
             continue
         answer["writeCalls"] += 1
         for position, directory in positions:
@@ -1781,13 +1788,18 @@ def witness_payload(arm, fired):
     # only of the first line.
     unexpected = [one["path"] for one in seen["executions"][1:]
                   if one["pid"] == seen["rootPid"] or one["path"] != str(arm.launcher)]
-    outside, unresolved = [], []
+    outside, unresolved, strayed = [], [], []
     for one in seen["writes"]:
         answered = owned(one["path"], arm.run_root)
         if not_read(answered):
             unresolved.append(answered.why)
         elif answered is False:
             outside.append(one["path"])
+            # Published entry by entry, not as a count. A reader looking at a path this run
+            # reports writing needs to know which call put it there and whether that call
+            # changed the file or only asked to be able to.
+            strayed.append({"path": one["path"], "call": one["call"], "line": one["line"],
+                            "changedTheFile": one["changedTheFile"]})
     payload = {
         "source": WITNESS,
         "startedExecutable": first["path"],
@@ -1803,6 +1815,7 @@ def witness_payload(arm, fired):
             # How many of those changed a file outright, as against how many only opened one
             # able to change it. Both count as writes here, and a reader can tell them apart.
             "changedAFile": len([one for one in seen["writes"] if one["changedTheFile"]]),
+            "writesOutside": strayed,
             "failedAttempts": seen["failedAttempts"], "restarted": seen["restarted"],
             "tracePath": fired.get("tracePath"), "tracerArgv": fired.get("tracerArgv"),
             "tracerSaid": fired.get("tracerSaid") or "",
