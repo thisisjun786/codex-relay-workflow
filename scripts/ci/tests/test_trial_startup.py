@@ -4867,6 +4867,54 @@ class FortyFifthHostedRound(TrialCase):
         self.assertIn("supervisorStillRunning.passed", document["judgmentsThatFailed"])
         self.assertFalse(document["supervisorStillRunning"]["advanced"])
 
+    def test_a_supervisor_that_leaves_during_that_wait_is_not_a_running_one(self):
+        # The wait the gate makes for the counter is time the supervisor can leave in, and the
+        # counter value it leaves behind is a real advance. Liveness read before the wait then
+        # answers about a process that was there before the thing it is about happened.
+        if process_state_of(os.getpid()) is None:
+            raise unittest.SkipTest("this host does not report a process state to read")
+        witness = self.world.trial / "supervisor.jsonl"
+        leaving = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                   start_new_session=True,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(leaving.wait)
+        self.addCleanup(leaving.terminate)
+
+        def write(lines):
+            witness.write_text("".join(json.dumps(line) + "\n" for line in lines),
+                               encoding="utf-8")
+
+        def advance(progress):
+            write([{"pid": leaving.pid, "progress": n} for n in range(1, progress + 1)])
+
+        advance(1)
+        self.world.record["supervisor"]["pid"] = leaving.pid
+        # Long enough that the gate is still inside its own wait when the counter moves.
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 5
+        self.world.record["supervisor"]["minimumAliveSeconds"] = 0.05
+        self.world.flush()
+        pauses = {"count": 0}
+
+        def pause(seconds):
+            pauses["count"] += 1
+            if pauses["count"] == 1:
+                # The pause inside the first reading, which sees the counter move.
+                advance(2)
+                return
+            # The gate's own wait. One last value, written by a supervisor that is leaving.
+            advance(3)
+            leaving.terminate()
+            leaving.wait(timeout=5)
+
+        document = self.world.preflight_with(pause)
+        self.assertEqual(cells_of(document, "processPersistence")["alive"]["value"], VERIFIED,
+                         "the first reading did not see the live process this case needs")
+        self.assertTrue(document["supervisorStillRunning"]["advanced"],
+                        "the counter this case is about did not advance")
+        self.assertFalse(document["supervisorStillRunning"]["aliveAgain"])
+        self.assertFalse(document["readyToStart"],
+                         "a supervisor that left during the gate's own wait was read as running")
+
     def test_a_root_is_judged_as_the_bytes_the_relay_receives(self):
         # The bound on that refusal: a root that is absolute without anything being taken off it
         # is still a root, trailing characters and all, because the relay compares it the same

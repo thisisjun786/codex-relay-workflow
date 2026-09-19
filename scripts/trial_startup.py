@@ -2953,13 +2953,22 @@ def supervisor_still_running(record, relay=None, sleeper=time.sleep):
     # Only where the readings beside it still say there is something to wait for. A supervisor
     # already answered gone, in the caller's own session or writing under another pid is refused
     # on that, and waiting out its interval would spend the trial's time learning nothing.
+    waited_here = False
     while (still is True and detached and named
            and moved is not None and not (held is not None and held > moved)
            and time.monotonic() < deadline):
+        waited_here = True
         sleeper(min(WITNESS_POLL, max(deadline - time.monotonic(), 0)))
         found = read_witness(anchor.get("witness"))
         held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
         named = isinstance(found, dict) and same(found.get("pid"), pid)
+    if waited_here:
+        # Liveness was read before the wait, and a supervisor can write one last counter value
+        # and leave during it: the advance would then be real and the process behind it gone,
+        # and readiness published from an answer taken before the thing it is about happened.
+        # The gate's liveness answer is its last one.
+        still, theirs = alive(pid), session_of(pid)
+        detached = theirs is not None and theirs != caller
     after = found.get("progress") if isinstance(found, dict) else None
     elapsed = time.monotonic() - anchor["at"]
     advanced = moved is not None and held is not None and held > moved
