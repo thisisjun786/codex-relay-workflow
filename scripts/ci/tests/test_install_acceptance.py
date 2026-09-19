@@ -1760,7 +1760,7 @@ def _hands_on(tree, spelled):
             return {named} if named in plain else set()
         outer = list(scopes(caller))
         if named in declared_nonlocal.get(caller, ()):
-            # nonlocal says the scope AROUND this one, which is not the module either.
+            # nonlocal says a scope AROUND this one, which is not the module either.
             outer = outer[1:]
         for scope in outer:
             if aliases and named in aliases.get(scope, {}):
@@ -1804,7 +1804,8 @@ def _hands_on(tree, spelled):
                 if isinstance(expression, ast.NamedExpr):
                     return names(expression.value)
                 if isinstance(expression, ast.Name):
-                    return outwards(function, expression.id, aliases)
+                    _where, in_class = places.get(id(node), (MODULE_LEVEL, None))
+                    return outwards(function, expression.id, aliases, in_class)
                 if isinstance(expression, ast.Await):
                     return names(expression.value)
                 if isinstance(expression, ast.BoolOp):
@@ -1849,7 +1850,16 @@ def _hands_on(tree, spelled):
                 if named.id in declared_global.get(function, ()):
                     holder_scope = MODULE_LEVEL
                 elif named.id in declared_nonlocal.get(function, ()):
-                    holder_scope = (function.rpartition(".")[0] or MODULE_LEVEL)
+                    # The nearest scope outside this one that binds the name, however many
+                    # scopes down the declaration sits.
+                    holder_scope = MODULE_LEVEL
+                    outer_chain = function.split(".")[:-1]
+                    while outer_chain:
+                        candidate = ".".join(outer_chain)
+                        if named.id in taken_names.get(candidate, ()):
+                            holder_scope = candidate
+                            break
+                        outer_chain.pop()
                 known = aliases.setdefault(holder_scope, {}).setdefault(named.id, set())
                 if not targets <= known:
                     known |= targets
@@ -1914,13 +1924,20 @@ def _hands_on(tree, spelled):
         while spreading:
             spreading = False
             for node in ast.walk(tree):
-                if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                if isinstance(node, ast.NamedExpr):
+                    holders, answer = [node.target], node.value
+                elif (isinstance(node, (ast.Assign, ast.AnnAssign))
+                        and node.value is not None):
+                    holders = (node.targets if isinstance(node, ast.Assign)
+                               else [node.target])
+                    answer = node.value
+                else:
                     continue
                 function, klass = places.get(id(node), (MODULE_LEVEL, None))
                 held = bound.setdefault(function, set())
-                if not _reachable(node.value, reaching(function, klass), klass, held):
+                if not _reachable(answer, reaching(function, klass), klass, held):
                     continue
-                for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                for named in holders:
                     if isinstance(named, ast.Name) and named.id not in held:
                         held.add(named.id)
                         spreading = True
@@ -2156,7 +2173,16 @@ def source_spellings(tree):
                 answer = node.value
             else:
                 continue
-            for named in spelled_by(answer):
+            paired = []
+            for holder in holders:
+                if (isinstance(holder, (ast.Tuple, ast.List))
+                        and isinstance(answer, (ast.Tuple, ast.List))
+                        and len(holder.elts) == len(answer.elts)):
+                    paired += list(zip(holder.elts, answer.elts))
+                else:
+                    paired.append((holder, answer))
+            for holder, value in paired:
+              for named in spelled_by(value):
                 if named not in hands_source:
                     # The name may hand source back without ever being called here: reader =
                     # inspect.getsource puts it behind a local name and the call names only that.
@@ -2170,11 +2196,10 @@ def source_spellings(tree):
                         continue
                     hands_source[named] = why
                     growing = True
-                for target in holders:
-                    bound = _dotted(target)
-                    if bound and bound not in hands_source:
-                        hands_source[bound] = "it is bound to " + named + ", which does"
-                        growing = True
+                bound = _dotted(holder)
+                if bound and bound not in hands_source:
+                    hands_source[bound] = "it is bound to " + named + ", which does"
+                    growing = True
     return frozenset(handles), hands_source, undecided, frozenset(called)
 
 
