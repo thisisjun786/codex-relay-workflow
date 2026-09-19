@@ -1518,6 +1518,43 @@ def _owned_by_a_class(tree):
             for inner in under(node.body)}
 
 
+def _binds_locally(node):
+    """Every name this statement binds locally, whatever construct does the binding."""
+    targets = []
+    if isinstance(node, ast.Assign):
+        targets = list(node.targets)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        targets = [node.target]
+    elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+        # A for target binds in the function; a comprehension target binds in the
+        # comprehension, which is now a scope of its own, so both are collected here and
+        # each lands in the place it belongs to.
+        targets = [node.target]
+    elif isinstance(node, ast.withitem):
+        targets = [node.optional_vars] if node.optional_vars else []
+    elif isinstance(node, ast.ExceptHandler):
+        return {node.name} if node.name else set()
+    elif isinstance(node, (ast.Import, ast.ImportFrom)):
+        return {alias.asname or alias.name.split(".")[0] for alias in node.names}
+    elif isinstance(node, ast.NamedExpr):
+        targets = [node.target]
+    elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        # A class or a function defined in a scope takes that name in it.
+        return {node.name}
+    elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return {node.name} if node.name else set()
+    elif isinstance(node, ast.MatchMapping):
+        return {node.rest} if node.rest else set()
+    found = set()
+    for target in targets:
+        # Only what the target BINDS. mapping[carrier] = value and carrier.attr = value read
+        # the name rather than binding it, and marking those local would stop the search
+        # before a definition the call really does reach.
+        found.update(inner.id for inner in ast.walk(target)
+                     if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store))
+    return found
+
+
 def _bindings(node):
     """Each name a statement binds paired with what it is given, unpacking included.
 
@@ -1750,14 +1787,8 @@ def _hands_on(tree, spelled):
                     yield statement.name, statement.lineno
                     continue
                 if certain:
-                    if isinstance(statement, (ast.Import, ast.ImportFrom)):
-                        for alias in statement.names:
-                            yield (alias.asname or alias.name.split(".")[0]), statement.lineno
-                    elif isinstance(statement, ast.ExceptHandler) and statement.name:
-                        yield statement.name, statement.lineno
-                    for target, _value in _bindings(statement):
-                        if isinstance(target, ast.Name):
-                            yield target.id, statement.lineno
+                    for named in _binds_locally(statement):
+                        yield named, statement.lineno
                 for field, value in ast.iter_fields(statement):
                     if isinstance(value, list):
                         yield from bound_in([item for item in value
@@ -1838,42 +1869,6 @@ def _hands_on(tree, spelled):
     # An alias is looked up first, so this only stops the search where the binding is something
     # this reader cannot follow -- carrier = str -- which is a name Python resolves locally and
     # never to the enclosing definition.
-    def binds(node):
-        """Every name this statement binds locally, whatever construct does the binding."""
-        targets = []
-        if isinstance(node, ast.Assign):
-            targets = list(node.targets)
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            targets = [node.target]
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
-            # A for target binds in the function; a comprehension target binds in the
-            # comprehension, which is now a scope of its own, so both are collected here and
-            # each lands in the place it belongs to.
-            targets = [node.target]
-        elif isinstance(node, ast.withitem):
-            targets = [node.optional_vars] if node.optional_vars else []
-        elif isinstance(node, ast.ExceptHandler):
-            return {node.name} if node.name else set()
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            return {alias.asname or alias.name.split(".")[0] for alias in node.names}
-        elif isinstance(node, ast.NamedExpr):
-            targets = [node.target]
-        elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            # A class or a function defined in a scope takes that name in it.
-            return {node.name}
-        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
-            return {node.name} if node.name else set()
-        elif isinstance(node, ast.MatchMapping):
-            return {node.rest} if node.rest else set()
-        found = set()
-        for target in targets:
-            # Only what the target BINDS. mapping[carrier] = value and carrier.attr = value read
-            # the name rather than binding it, and marking those local would stop the search
-            # before a definition the call really does reach.
-            found.update(inner.id for inner in ast.walk(target)
-                         if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store))
-        return found
-
     owned_by_class = _owned_by_a_class(tree)
     for node in ast.walk(tree):
         where = places.get(id(node), (MODULE_LEVEL, None))[0]
@@ -1882,7 +1877,7 @@ def _hands_on(tree, spelled):
             # the class is written in would stop the outward lookup for everything after the
             # class, which is not what Python does with a class attribute.
             continue
-        bound_here = binds(node)
+        bound_here = _binds_locally(node)
         if bound_here:
             taken_names.setdefault(where, set()).update(bound_here)
     for node in ast.walk(tree):
@@ -2037,15 +2032,31 @@ def _hands_on(tree, spelled):
                     known |= targets
                     growing = True
 
+    def a_property(klass, named, seen=()):
+        """The property this class reaches by that name, its own or one it inherits."""
+        if klass is None or klass in seen:
+            return None
+        if (klass, named) in properties:
+            return properties[(klass, named)]
+        for base in parents.get(klass, ()):
+            reached = a_property(base, named, tuple(seen) + (klass,))
+            if reached:
+                return reached
+        return None
+
     def read_as_a_call(node, function):
-        """A property read: self.carrier with no parentheses still runs carrier."""
+        """A property read: self.carrier with no parentheses still runs carrier.
+
+        Through an INSTANCE only. Reading Example.carrier off the class hands back the
+        descriptor rather than running the getter, so counting that would invent an occurrence
+        nobody performs.
+        """
         if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
             return set()
-        through = _dotted(node.value)
+        if _dotted(node.value) not in instance(function):
+            return set()
         _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-        owner = (klass if through in instance(function)
-                 else (through or "").rpartition(".")[2] or None)
-        reached = properties.get((owner, node.attr))
+        reached = a_property(klass, node.attr)
         return {reached} if reached else set()
 
     def called(node, function):
@@ -2404,9 +2415,19 @@ def _handle_names(tree, handles):
     known, growing = set(handles), True
     while growing:
         growing = False
+        def reaches(expression):
+            """Whether this right-hand side names a handle, either arm of a conditional too."""
+            if isinstance(expression, ast.IfExp):
+                return reaches(expression.body) or reaches(expression.orelse)
+            if isinstance(expression, (ast.NamedExpr, ast.Await)):
+                return reaches(expression.value)
+            if isinstance(expression, ast.BoolOp):
+                return any(reaches(value) for value in expression.values)
+            return _dotted(expression) in known
+
         for node in ast.walk(tree):
             for target, value in _bindings(node):
-                if _dotted(value) not in known:
+                if not reaches(value):
                     continue
                 named = _dotted(target)
                 if named and named not in known:
@@ -3787,6 +3808,7 @@ HANDED = {
     "_module_statements": NOTHING,
     "_reachable": NOTHING,
     "_bindings": NOTHING,
+    "_binds_locally": NOTHING,
     "_owned_by_a_class": NOTHING,
     "_held_by_class": NOTHING,
     "_hands_on": NOTHING,
