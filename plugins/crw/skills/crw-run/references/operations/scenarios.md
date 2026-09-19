@@ -722,8 +722,9 @@ is recorded as conditional with its condition, and is never cited as evidence th
 applied: B's parent instructing its own child, that child's change and its verification are three
 further facts, each needing its own evidence. A never instructs B's child. The third project is not
 bound by an agreement its owner never accepted, so the proposal is recorded as unassigned until
-that owner accepts explicitly, and it is escalated to the supervisor as a blocker only if it is a
-required dependency. The supervisor decides an unresolved disagreement, a scope change, new
+that owner accepts explicitly, and where it is a required dependency it is escalated as a blocker
+by actual ownership: to that third project's own supervisor where it has one, to a supervisor the
+projects share where there is one, and to the user where a genuinely shared decision has neither. The supervisor decides an unresolved disagreement, a scope change, new
 ownership and shared resources including merge order, and nothing about the edit agreement grants
 either parent a merge turn.
 
