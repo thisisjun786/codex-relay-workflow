@@ -878,7 +878,21 @@ def hook_standdown(host, options, *, apply=False):
 
 
 def settings_retire(host, options, *, apply=False):
-    """Move the settings the removed registration named aside, never delete them."""
+    """Move the settings the removed registration named aside, never delete them.
+
+    Every answer carries the watched paths, whatever this step decided about the documents that
+    are actually there. They are the standdown's business rather than this step's: it locks them
+    and looks again inside that lock. An early answer that dropped them sent the removal over a
+    registration whose settings a supported installer can write back in the window between the
+    two -- the plugin-owned fast path dropped them, and so did the empty answer taken inside the
+    lock -- leaving a user-owned document the plugin install will not overwrite, a registration
+    gone, and no completion hook at all out of a run that reported success.
+    """
+    watched = []
+    return {**_retire_settings(host, options, watched, apply=apply), "watched": watched}
+
+
+def _retire_settings(host, options, watched, *, apply=False):
     # A registration's third argument is whatever was typed there. It is retired only when the file
     # it names actually reads as this hook's settings, because a canonical-looking command naming an
     # unrelated existing file would otherwise have that file moved aside.
@@ -888,7 +902,7 @@ def settings_retire(host, options, *, apply=False):
     # takes the newest, so ordering decides which document a rerun rebuilds from: archived first, an
     # unrelated file at the fixed path became the newest archive and silently supplied the marker
     # root, the database and the journal after an interruption.
-    paths, watched = [], []
+    paths = []
     for candidate in [host["settings"]["path"], fixed] + named:
         if not candidate or candidate in paths or candidate in watched:
             continue
@@ -1004,7 +1018,7 @@ def settings_retire(host, options, *, apply=False):
                                + ".", retired=[], settingsRestored=restored,
                                settingsLeftArchived=kept)
     return _answer("settings retire", SETTLED, "retired " + ", ".join(p["from"] for p in moved),
-                   applied=True, wrote=True, retired=moved, watched=watched)
+                   applied=True, wrote=True, retired=moved)
 
 
 def _newest_retired(host):

@@ -2801,6 +2801,56 @@ class TheFindingsFromReview(TransitionCase):
         self.assertTrue(seen["host"]["inFlight"]["storeExists"])
         self.assertIsNone(seen["host"]["inFlight"]["liveness"])
 
+    def test_a_plugin_owned_retire_still_hands_over_its_watched_paths(self):
+        """Every document that is there names the plugin; an absent registered one is not one."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        document = json.loads(custom.read_text(encoding="utf-8"))
+        custom.unlink()
+        # The state the fast path is for: the fixed document already names the plugin, and the
+        # registration still reads a custom document that is not on disk at this reading.
+        plugin_owned = dict(document)
+        plugin_owned.update({"owner": "plugin",
+                             "adapterInterpreter": str(host.destination / "current" / "bin"
+                                                       / "python3"),
+                             "adapterEntryPoint": str(host.destination / "current" / "bin"
+                                                      / "crw-completion-hook")})
+        fixed.write_text(json.dumps(plugin_owned), encoding="utf-8")
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        genuine = steps.settings_retire
+
+        def recreating(host_view, options, *, apply=False):
+            """The installer that owns that registration, writing its settings back in the window."""
+            answer = genuine(host_view, options, apply=apply)
+            if apply:
+                custom.write_text(json.dumps(document), encoding="utf-8")
+            return answer
+
+        steps.ORDER = tuple((name, recreating if name == "settings retire" else step)
+                            for name, step in steps.ORDER)
+        self.addCleanup(setattr, steps, "ORDER",
+                        tuple((name, genuine if name == "settings retire" else step)
+                              for name, step in steps.ORDER))
+        before = host.hooks_document()
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        # The harm first: without the watched paths the standdown never asks, removes the
+        # registration, and reports success over a document the plugin install cannot replace.
+        self.assertEqual(outcomes["hook standdown"], "refused", json.dumps(results)[:900])
+        standdown = [item for item in results if item["step"] == "hook standdown"][0]
+        self.assertIn("written again at", standdown["detail"])
+        # The registration is still installed, and it reads the document that came back.
+        self.assertEqual(host.hooks_document(), before)
+        self.assertTrue(custom.is_file())
+        retired = [item for item in results if item["step"] == "settings retire"][0]
+        self.assertEqual(retired["outcome"], "already_done", json.dumps(retired)[:600])
+        self.assertIn(str(custom), retired.get("watched") or [], json.dumps(retired)[:600])
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
