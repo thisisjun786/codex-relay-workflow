@@ -270,11 +270,23 @@ def read_skill_links(codex_home, repo_root):
         answer["unreadable"] = type(error).__name__ + ": " + str(error)
         return answer
     answer["exitCode"] = done.returncode
+    recognised = 0
     for line in (done.stdout + done.stderr).splitlines():
         for word, field in (("LINKED ", "linked"), ("MISSING ", "missing"),
                             ("CONFLICT ", "conflict"), ("LEGACY ", "legacy")):
             if line.startswith(word):
                 answer[field].append(line[len(word):].split(" -> ")[0])
+                recognised += 1
+    if done.returncode != 0 and not recognised:
+        # A nonzero exit on its own is the ORDINARY answer here -- --check exits 1 while a link is
+        # missing -- so it cannot stand for unreadable. A nonzero exit that printed none of the
+        # four kinds is different: the installer stopped before it inspected anything, and its
+        # four lists are empty because nothing was looked at rather than because nothing is there.
+        # crwOwned and foreign are decided below by reading the directory, which is why ownership
+        # survives this, but the installer's own verdict must not be reported as an empty one.
+        answer["unreadable"] = ("scripts/install.py --check exited " + str(done.returncode)
+                                + " without inspecting any link: "
+                                + (done.stdout + done.stderr).strip()[:300])
     # Ownership is decided per path, from the link itself, not from the installer's verdict: a
     # CONFLICT can be somebody else's directory, and those are never touched.
     if destination.is_dir():
@@ -310,6 +322,24 @@ def canonical_command(argv):
     return completion.command_for(argv[0], script, argv[2] if len(argv) == 3 else None)
 
 
+def event_registrations(document, event):
+    """Every registration under this event as its identity and the command it runs.
+
+    hooks.inventory() answers identity, matcher and trusted hash, deliberately: it exists to
+    compare positions and trust, and a command is none of those. A reader that needs the command
+    has to walk the document, and the positions are built the same way that inventory builds them
+    so the two agree about what an identity means.
+    """
+    found = []
+    for matcher_index, group in enumerate((document.get("hooks") or {}).get(event) or []):
+        for hook_index, hook in enumerate((group or {}).get("hooks") or []):
+            found.append({
+                "identity": hooks.identity(hooks.SOURCE, event, matcher_index, hook_index),
+                "command": str((hook or {}).get("command") or ""),
+            })
+    return found
+
+
 def read_hook(codex_home, event=None, *, destination=None, repo_root=None):
     """Every registration of this adapter in the hook file, with authorship and what follows it."""
     event = event or completion.EVENT
@@ -340,8 +370,13 @@ def read_hook(codex_home, event=None, *, destination=None, repo_root=None):
     # A registration naming the PACKAGED adapter cannot be seen by names_this_adapter, because that
     # matcher knows one file name. No command in this repository can write one, so its presence
     # means a hand edit -- and an unreported hand edit is the silence this detector exists to break.
-    for item in inventory_all:
-        command = str(item.get("command") or "")
+    #
+    # Walked over the document rather than over hooks.inventory(): that inventory answers identity,
+    # matcher and trusted hash and carries no command at all, so reading a command out of it was
+    # reading an absent key. Every entry compared as the empty string, none of them matched, and
+    # this detector reported nothing on every host it was meant to catch.
+    for item in event_registrations(document.value, event):
+        command = item["command"]
         if completion.names_this_adapter(command):
             continue
         if ADAPTER_SCRIPT in command or (destination and str(destination) in command):

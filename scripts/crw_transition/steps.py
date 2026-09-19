@@ -265,6 +265,45 @@ def payload_complaints(repo_root, cache_version):
     return [], {"payloadCheck": argv, "exitCode": done.returncode}
 
 
+def runtime_complaints(host):
+    """Whether the runtime this would record can still run, as a list.
+
+    One function, two callers, for the reason the payload contract has one: preflight establishes
+    this once and every destructive step runs afterwards. A version replacement landing in between
+    takes the adapter out from under the pointer, and the settings written after it would name a
+    program that is not there -- a declared hook that releases every Stop in silence while the run
+    reported success. The executable and interpreter probes are live; the pointer reading is the
+    caller's and may be older, which costs nothing here because a pointer that stopped resolving
+    makes the adapter under it fail its own probe.
+    """
+    if not host.get("destination"):
+        return ["no install destination was named or derivable from the recorded relayExecutable,"
+                " so no adapter path could be recorded"]
+    point = host["pointer"]
+    if point.get("state") != "LINK" or not point.get("targetDirectory"):
+        return ["the pointer at " + str(point.get("pointer")) + " is " + str(point.get("state"))
+                + " (" + str(point.get("detail")) + "). A recorded adapter path has to resolve,"
+                " and a dangling pointer still reads as a link"]
+    found = []
+    interpreter, adapter = adapter_paths(host)
+    for label, path in (("the adapter", adapter), ("its interpreter", interpreter),
+                        ("the bridge", bridge_command(host))):
+        if not _executable(path):
+            found.append(label + " at " + str(path) + " is not an executable file, so recording it"
+                         " would name something that cannot run")
+    if _executable(interpreter):
+        try:
+            # Executable is not the question. /bin/true is executable, exits 0, and would be
+            # recorded happily; every Stop would then run it, reach no adapter, and write no
+            # journal entry while the install reported success. The installer asks the candidate
+            # to be a Python before registering it as one, and so does this.
+            completion.interpreter_for(interpreter, run=True)
+        except ValueError as error:
+            found.append("the interpreter at " + str(interpreter) + " did not answer as a Python"
+                         " this adapter can run: " + str(error))
+    return found
+
+
 def preflight(host, options):
     """Every reason not to start, collected before anything is touched.
 
@@ -280,9 +319,17 @@ def preflight(host, options):
         refusals.append("the plugin is not registered in " + str(inventory.config_path(
             host["codexHome"])) + " (" + str(plugin["configEntry"]) + "), so removing the manual"
             " install would leave this host with no CRW skills, no hook and no bridge")
-    if plugin.get("enabled") is False:
-        refusals.append("the plugin entry " + str(plugin.get("entryKey")) + " is disabled, so its"
-                        " skills, hook and server would not load")
+    if plugin.get("enabled") is not True:
+        # Not "is False". An entry with no enabled key, or one carrying something that is not a
+        # boolean, leaves whether Codex loads this plugin unestablished, and the whole order here
+        # rests on the replacement being able to serve what is about to be removed. Unknown is
+        # answered as unknown rather than as yes.
+        refusals.append(
+            "the plugin entry " + str(plugin.get("entryKey")) + " is disabled, so its skills,"
+            " hook and server would not load" if plugin.get("enabled") is False else
+            "the plugin entry " + str(plugin.get("entryKey")) + " does not record enabled = true"
+            " (" + repr(plugin.get("enabled")) + "), so whether Codex loads its skills, hook and"
+            " server was not established")
     if not plugin.get("cacheVersion"):
         # The reader's own reason travels with the refusal. Without it, a host carrying two cached
         # versions is reported as a host carrying none, which sends the operator to the wrong repair.
@@ -313,34 +360,19 @@ def preflight(host, options):
                         " no completion hook at all. Trust the hook and confirm it fires, then"
                         " pass --accept-hook-trust-gap")
 
-    if not host.get("destination"):
-        refusals.append("no install destination was named or derivable from the recorded"
-                        " relayExecutable, so no adapter path could be recorded")
-    else:
-        point = host["pointer"]
-        if point.get("state") != "LINK" or not point.get("targetDirectory"):
-            refusals.append("the pointer at " + str(point.get("pointer")) + " is "
-                            + str(point.get("state")) + " (" + str(point.get("detail")) + ")."
-                            " A recorded adapter path has to resolve, and a dangling pointer"
-                            " still reads as a link")
-        else:
-            interpreter, adapter = adapter_paths(host)
-            for label, path in (("the adapter", adapter), ("its interpreter", interpreter),
-                                ("the bridge", bridge_command(host))):
-                if not _executable(path):
-                    refusals.append(label + " at " + str(path) + " is not an executable file, so"
-                                    " recording it would name something that cannot run")
-            if _executable(interpreter):
-                try:
-                    # Executable is not the question. /bin/true is executable, exits 0, and would
-                    # be recorded happily; every Stop would then run it, reach no adapter, and
-                    # write no journal entry while the install reported success. The installer asks
-                    # the candidate to be a Python before registering it as one, and so does this.
-                    completion.interpreter_for(interpreter, run=True)
-                except ValueError as error:
-                    refusals.append("the interpreter at " + str(interpreter)
-                                    + " did not answer as a Python this adapter can run: "
-                                    + str(error))
+    refusals.extend(runtime_complaints(host))
+
+    # The comparison the record writer will make, made before anything is removed. A plugin-owned
+    # record is never retired -- it already names the plugin -- so the install compares it on
+    # identity and refuses when it differs, and the table is removed before that write. Reaching
+    # it means stopping with no table and a record this cannot replace, and no rerun gets further.
+    # Absent and empty arguments are the same registration to every reader here and different ones
+    # to that writer, which is why this asks the writer rather than asking again in its own words.
+    projected = mcp_record_install(host, options, apply=False)
+    if projected["outcome"] == REFUSED:
+        refusals.append("the bridge record already installed is not the one this would write, and"
+                        " the table is removed before the write: " + str(projected["detail"])
+                        + ". Settle that record first")
 
     # Checked here, before the standdown, because the packaged launcher reads one fixed path and
     # ignores this override: with it set, the plugin-owned document would be written where no
@@ -887,8 +919,16 @@ def plugin_refusals(host):
         found.append("the plugin is no longer registered in "
                      + str(inventory.config_path(host["codexHome"])) + " ("
                      + str(plugin["configEntry"]) + ")")
-    if plugin.get("enabled") is False:
-        found.append("the plugin entry " + str(plugin.get("entryKey")) + " is disabled")
+    if plugin.get("enabled") is not True:
+        found.append(
+            "the plugin entry " + str(plugin.get("entryKey")) + " is disabled"
+            if plugin.get("enabled") is False else
+            "the plugin entry " + str(plugin.get("entryKey")) + " does not record enabled = true"
+            " (" + repr(plugin.get("enabled")) + ")")
+    # The runtime the settings about to be written will name. preflight probes it once and every
+    # step here runs afterwards, so a version replacement that took the adapter away between them
+    # would be recorded as if it were still there.
+    found.extend(runtime_complaints(host))
     if not plugin.get("cacheVersion"):
         found.append("no single installed plugin version could be named"
                      + (": " + str(plugin["detail"]) if plugin.get("detail") else ""))
@@ -965,14 +1005,17 @@ def skill_unlink(host, options, *, apply=False):
         if owner is None or not (path.resolve() / "SKILL.md").is_file() \
                 or str(path.resolve()) != item.get("target"):
             left.append(str(path))
-            continue
-        path.unlink()
-        removed.append(str(path))
     if left:
         return _answer("skill unlink", REFUSED,
                        "these links are no longer the ones ownership was established on, so they"
                        " were left: " + ", ".join(left),
-                       removed=removed, applied=bool(removed), wrote=bool(removed))
+                       removed=removed, applied=False, wrote=False)
+    # Every proof first, then every removal, the way the settings retire does it. Proving and
+    # unlinking in one pass left the links before the mismatch already gone and the ones after it
+    # in place, so a refusal reported a manual installation that was in fact half dismantled.
+    for item in candidates:
+        Path(item["path"]).unlink()
+        removed.append(item["path"])
     # Read once more, for the same reason the hook file is: what is in reach is not preventing a
     # link that arrives during the removals, but refusing to report success over one.
     back = inventory.read_skill_links(host["codexHome"], host["repoRoot"])

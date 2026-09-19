@@ -77,6 +77,16 @@ after it. That last one is a weaker guarantee than the other two and is named as
 directory has no lock, so a link arriving during the removals is reported rather than prevented,
 and the run refuses instead of reporting success over it.
 
+One limitation of the locks themselves, stated rather than papered over. The ownership lock is
+`hostrecord.Locked`, because that is the lock `register-mcp` takes and a lock only excludes those
+who take the same one. `Locked` treats a lock file older than 300 seconds as stale and removes it,
+so a step that stays inside the lock for longer than that -- a cross-filesystem archive of a large
+document, say -- can have its lock taken by a waiter while it is still working. Taking a different
+lock here would not fix it; it would silently stop excluding the other owner, which is worse. The
+repair belongs to `hostrecord` and to every command that takes that lock, and `hostrecord` already
+carries the corrected mechanism it would use: `Exclusive`, which holds an advisory lock on a file
+that is never unlinked and expires only when its holder dies.
+
 Three windows follow, and all three are printed by the run:
 
 - between 1 and 2 the old registration runs with no settings to read and releases without recording;

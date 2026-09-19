@@ -1773,6 +1773,106 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(outcomes["skill unlink"], "not_reached")
         self.assertIsNotNone(host.settings())
 
+    def test_a_hand_edited_entry_naming_the_packaged_adapter_is_reported(self):
+        """The detector walked an inventory that carries no command, so it never fired."""
+        host = self.ready()
+        document = host.hooks_document()
+        document["hooks"]["Stop"].append({"hooks": [{
+            "type": "command",
+            "command": str(host.version / "bin" / "crw-completion-hook"),
+        }]})
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("names the packaged adapter", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), document)
+
+    def test_a_plugin_entry_without_enabled_is_not_read_as_enabled(self):
+        """Absent is not true: whether Codex loads the replacement was never established."""
+        host = self.ready()
+        (host.home / "config.toml").write_text(
+            host.config().replace('[plugins."crw@crw"]\nenabled = true',
+                                  '[plugins."crw@crw"]'), encoding="utf-8")
+        before = (host.hooks_document(), host.settings(), host.record())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("does not record enabled = true", answer["results"][0]["detail"])
+        self.assertEqual((host.hooks_document(), host.settings(), host.record()), before)
+
+    def test_an_installer_that_inspected_nothing_is_not_a_readable_inventory(self):
+        """A nonzero exit is ordinary here; a nonzero exit that printed nothing is not."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        broken = Path(self.directory) / "fakerepo" / "scripts"
+        broken.mkdir(parents=True)
+        (broken / "install.py").write_text("import sys\nsys.exit(2)\n", encoding="utf-8")
+        answer = inventory.read_skill_links(host.home, broken.parent)
+        self.assertTrue(answer["unreadable"], json.dumps(answer)[:400])
+        self.assertIn("exited 2", answer["unreadable"])
+        # Ownership is still decided by reading the directory, not by the installer's verdict.
+        self.assertTrue([item for item in answer["crwOwned"] if item["path"].endswith("crw-run")])
+
+    def test_a_link_replaced_late_leaves_every_other_link_in_place(self):
+        """Every proof first, then every removal: a refusal must not dismantle half of it."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        replaced = host.home / "skills" / "crw-run"
+        replaced.unlink()
+        replaced.symlink_to(host.root)
+        answer = steps.skill_unlink(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:500])
+        self.assertEqual(answer["removed"], [])
+        self.assertFalse(answer["applied"])
+        left = sorted(p.name for p in (host.home / "skills").iterdir()
+                      if p.name.startswith("crw-"))
+        self.assertEqual(len(left), 7, json.dumps(left))
+
+    def test_a_plugin_record_that_could_not_be_rewritten_stops_before_the_table(self):
+        """Absent and empty arguments are one registration here and two to the record writer."""
+        host = self.ready()
+        path = host.home / "crw-bridge-mcp.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["owner"] = "plugin"
+        document.pop("args", None)
+        path.write_text(json.dumps(document), encoding="utf-8")
+        before = (host.config(), host.record(), host.hooks_document(), host.settings())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("is not the one this would write", answer["results"][0]["detail"])
+        self.assertEqual((host.config(), host.record(), host.hooks_document(), host.settings()),
+                         before)
+
+    def test_an_adapter_removed_after_preflight_stops_the_first_removal(self):
+        """The settings about to be written name it, so the probe runs again before they are."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(steps.plugin_refusals(snapshot), [])
+        (host.version / "bin" / "crw-completion-hook").unlink()
+        # Stubbed for the same reason the payload case stubs it: preflight probes the adapter
+        # live, so the window this is about begins after preflight passed.
+        original = steps.preflight
+        steps.preflight = lambda host, options: steps._answer(
+            "preflight", steps.SETTLED, "stubbed: this case is about the window after preflight")
+        self.addCleanup(setattr, steps, "preflight", original)
+        before = (host.hooks_document(), host.settings())
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["settings retire"], "refused", json.dumps(results)[:700])
+        refusal = [item for item in results if item["step"] == "settings retire"][0]
+        self.assertIn("crw-completion-hook", refusal["detail"])
+        self.assertEqual((host.hooks_document(), host.settings()), before)
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
