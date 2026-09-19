@@ -2992,11 +2992,57 @@ RESOLVES_LIKE_PYTHON = {
           "        case 1:",
           "            class carrier:",
           "                pass",
-          "    verdict = \"needle\" in carrier()"),
-         "Holder.verdict", True,
-         "and the third, for the same reason. An arm that matches is a fact about the run, so"
-         " the body still reaches the module function and the place that reads it is owed a"
-         " declaration."),
+         "    verdict = \"needle\" in carrier()"),
+        "Holder.verdict", True,
+        "and the third, for the same reason. An arm that matches is a fact about the run, so"
+        " the body still reaches the module function and the place that reads it is owed a"
+        " declaration."),
+    "an opener alias handed through a conditional":
+        (TEXT,
+         ("def helper(flag):",
+          "    fopen = open if flag else open",
+          "    stream = fopen(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper(True)"),
+         "consumer", True,
+         "the same rebinding written with a branch. Asking _dotted for the value answers None"
+         " for every pass-through form, so the alias was lost and the handle with it -- and the"
+         " check that emits value followers did not see this loop either, because it anchored"
+         " on one way of taking a binding rather than on taking one."),
+    "a source-reading alias a parameter shadows":
+        (TEXT,
+         ("reader = ast.parse",
+          "",
+          "def helper(reader):",
+          "    return reader(HERE)",
+          "",
+          "def consumer():",
+          "    return helper(lambda value: \"ordinary\")"),
+         "consumer", False,
+         "the spelling table is this module's; the binding is the analysed scope's. A parameter"
+         " called reader holds whatever its caller passed, so a call through it says nothing"
+         " about source text and the declaration it forced was owed to nobody."),
+    "a refusal owner an assignment aliases":
+        (REFUSAL,
+         ("answers = reading",
+          "",
+          "def consumer():",
+          "    return answers.UNREADABLE"),
+         "consumer", True,
+         "answers = reading names the module an import would name. Recording qualifiers only"
+         " from import statements leaves the ordinary assignment unaccounted, and a place that"
+         " settles for a refusal through it is never reported at all."),
+    "an assignment aliasing something that owns no answer":
+        (REFUSAL,
+         ("answers = json",
+          "",
+          "def consumer():",
+          "    return answers.UNREADABLE"),
+         "consumer", False,
+         "its pair: following assignments must not make every name a module that exports an"
+         " answer. The owner is still asked, exactly as it is for an import."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3918,12 +3964,19 @@ def _class_aliases(tree):
                 if binding is None:
                     continue
                 targets, value = binding
-                spelling = (_dotted(value) or "").rpartition(".")[2]
-                named_key = _class_named(by_spelling, spelling, scope)
-                reached = (named_key if named_key in classes
-                           else here.get(spelling)
-                           or named.get(MODULE_LEVEL, {}).get(spelling))
-                for target in targets:
+                # Every name the value may hand through, so Alias = First if flag else Second
+                # is read as the two bindings it is. Arms that agree resolve; arms that name
+                # different classes make the alias undecidable by the rule below, which is the
+                # honest answer rather than whichever arm was written first.
+                spellings_here = [source.id for source in _passed_through(value)]
+                if not spellings_here:
+                    spellings_here = [(_dotted(value) or "").rpartition(".")[2]]
+                for spelling, target in [(one, target) for one in spellings_here
+                                         for target in targets]:
+                    named_key = _class_named(by_spelling, spelling, scope)
+                    reached = (named_key if named_key in classes
+                               else here.get(spelling)
+                               or named.get(MODULE_LEVEL, {}).get(spelling))
                     bound = _dotted(target)
                     if not bound:
                         continue
@@ -5820,8 +5873,12 @@ def _opener_spellings(tree, places):
             if binding is None:
                 continue
             targets, value = binding
+            # Through the pass-through vocabulary, because fopen = open if flag else open is
+            # the same rebinding written with a branch. _dotted answers None for every one of
+            # those forms, so reading it alone lost the alias and the handle with it.
             spelling = _dotted(value)
-            if spelling is None or (spelling not in bare and spelling not in dotted):
+            if not (any(source.id in bare for source in _passed_through(value))
+                    or (spelling is not None and spelling in dotted)):
                 continue
             where = places.get(id(node), (MODULE_LEVEL, None))[0]
             for target in targets:
@@ -5958,7 +6015,12 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             return repr(node.value) if node.value.endswith(".py") else None
         if isinstance(node, ast.Call):
             spelling = _dotted(node.func)
-            if spelling in hands_source:
+            if (spelling in hands_source
+                    and not (isinstance(node.func, ast.Name) and id(node.func) in shadowed)):
+                # Unless the scope binds that name itself: a parameter called reader holds
+                # whatever its caller passed, and a call through it says nothing about this
+                # module's source. The spelling table is this module's; the binding is the
+                # analysed scope's.
                 return spelling
             # A READ taken on a handle hands source text back: a helper answering
             # HERE.read_text() gives its caller the text as surely as one answering ast.parse.
@@ -6140,6 +6202,30 @@ def refusals_reached(source):
                 if alias.name != "*":
                     qualifies.setdefault(where, {}).setdefault(
                         alias.asname or alias.name, set()).add(alias.name)
+    owners_here = spellings.get("owner", frozenset())
+    # answers = reading names the same module an import would, so a qualifier reached that way
+    # is the owner just as plainly. Followed to a fixpoint because b = a is one more step, and
+    # through the pass-through vocabulary for the same reason every other binding here is.
+    spreading = True
+    while spreading:
+        spreading = False
+        for node in ast.walk(tree):
+            binding = _assigned(node)
+            if binding is None:
+                continue
+            targets, value = binding
+            where = places.get(id(node), (MODULE_LEVEL, None))[0]
+            for source in _passed_through(value):
+                named = (qualifies.get(where, {}).get(source.id)
+                         or qualifies.get(MODULE_LEVEL, {}).get(source.id)
+                         or ({source.id} if source.id in owners_here else set()))
+                for target in targets:
+                    if not isinstance(target, ast.Name):
+                        continue
+                    holds = qualifies.setdefault(where, {}).setdefault(target.id, set())
+                    if named - holds:
+                        holds |= named
+                        spreading = True
     # To a fixpoint, because self.second = self.first holds the refusal only once the pass
     # knows that self.first does.
     held, growing = {}, True
@@ -6933,12 +7019,26 @@ class SevenReadingsTests(unittest.TestCase):
         for node in ast.walk(parsed):
             if not isinstance(node, ast.For):
                 continue
-            if not (isinstance(node.iter, ast.Call)
+            # A loop that takes a binding's value, however it takes it: straight from
+            # _bindings, or by unpacking what _assigned answered. Anchoring on the first shape
+            # alone is how an opener alias written with a branch reached a reviewer before it
+            # reached this check -- the loop was a value follower and this sweep did not see it.
+            spelled = []
+            if (isinstance(node.iter, ast.Call)
                     and getattr(node.iter.func, "id", None) == "_bindings"):
+                spelled = [part.id for part in getattr(node.target, "elts", [])
+                           if isinstance(part, ast.Name)]
+            else:
+                for statement in ast.walk(node):
+                    if (isinstance(statement, ast.Assign)
+                            and isinstance(statement.targets[0], ast.Tuple)
+                            and getattr(statement.value, "id", None) == "binding"):
+                        spelled = [part.id for part in statement.targets[0].elts
+                                   if isinstance(part, ast.Name)]
+                        break
+            if not spelled:
                 continue
-            spelled = [part.id for part in getattr(node.target, "elts", [])
-                       if isinstance(part, ast.Name)]
-            value = spelled[1] if len(spelled) > 1 else (spelled[0] if spelled else None)
+            value = spelled[1] if len(spelled) > 1 else spelled[0]
             decided, routed = set(), False
             for call in (inner for statement in node.body for inner in ast.walk(statement)
                          if isinstance(inner, ast.Call)):
@@ -6946,6 +7046,11 @@ class SevenReadingsTests(unittest.TestCase):
                 first = getattr(call.args[0], "id", None) if call.args else None
                 if named == "_passed_through" and first == value:
                     routed = True
+                if named == "_dotted" and first == value:
+                    # Deciding the form by asking for a dotted spelling is deciding it: _dotted
+                    # answers None for every pass-through form, so a loop that reads only its
+                    # answer sees none of them.
+                    decided |= {"Name", "Attribute"}
                 if named != "isinstance" or first != value:
                     continue
                 decided |= forms_named(call.args[1:])
