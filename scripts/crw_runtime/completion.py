@@ -1991,8 +1991,8 @@ def status(codex_home=None, environ=None, event=EVENT):
     # reads back fine and fails some other check still records who owns the registration, and
     # taking the default there established an absence for a plugin-owned host and suppressed
     # settings_unusable, the cause that would have named the actual repair. An ABSENT document
-    # is neither: owner_of answers that as the user owner on purpose, because the plugin writes
-    # a document when it takes the registration.
+    # is neither, and it establishes nothing here: owner_of answers an absent KEY as the user
+    # owner, but a document that is not there at all is a host this reading cannot identify.
     if found is None or not found.usable or found.state == reading.ABSENT:
         # Nothing read, or nothing there, and neither establishes an owner. An ABSENT document
         # used to answer "the hook file is where the registration lives", borrowing owner_of's
