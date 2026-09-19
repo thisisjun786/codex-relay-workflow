@@ -122,6 +122,18 @@ def receipt_access(payload, key):
     return field(payload, "settings", "actual", key)
 
 
+def receipt_permission_profile(payload):
+    """The permission profile a creation response reported, or MISSING.
+
+    The bridge passes it through without interpreting it, so it arrives raw at
+    creation.activePermissionProfile, and inside permissionReceipt on the worktree path.
+    """
+    found = field(payload, "creation", "activePermissionProfile")
+    if found is MISSING:
+        found = field(payload, "permissionReceipt", "activePermissionProfile")
+    return found
+
+
 def unreadable_access(value):
     """A null environment selection means unknown in the relay's own normalisation, and unknown
     is never flattened into empty here either. An empty list is a selection; a null is not."""
@@ -1316,6 +1328,30 @@ def reading_capability(record, relay):
                                           "the store's settings disagree with the creation receipt"
                                           " at " + ", ".join(apart) + ", so this trial would run"
                                           " with access the receipt never recorded")))
+
+            # The permission profile a resume is checked against. The relay compares the whole
+            # object the creation response gave, so a record holding an id-shaped stand-in is
+            # reported as unverifiable on a task whose permissions never changed. A profile the
+            # store did not anticipate is the same refusal, and neither is visible before the
+            # send unless it is read here.
+            profile = receipt_permission_profile(receipt)
+            expected = field(settings, "expectedPermissionProfile")
+            if profile is MISSING or profile is None:
+                cells.append(cell("permissionProfile:" + str(task), NOT_APPLICABLE, probe=probe,
+                                  provenance=EXECUTED,
+                                  evidence="the creation response reported no permission profile,"
+                                           " so a resume has nothing to be checked against"))
+            else:
+                cells.append(cell("permissionProfile:" + str(task),
+                                  VERIFIED if structurally_same(profile, expected)
+                                  else NOT_VERIFIED, probe=probe, provenance=EXECUTED,
+                                  evidence=("the store expects the whole profile this creation"
+                                            " reported" if structurally_same(profile, expected)
+                                            else "the creation reported "
+                                            + json.dumps(shown(profile)) + " and the store"
+                                            " expects " + json.dumps(shown(expected))
+                                            + ", so the first send would be withheld as an"
+                                            " unverifiable permission profile")))
     return cells, seen
 
 

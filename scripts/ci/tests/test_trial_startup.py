@@ -34,6 +34,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import trial_startup as startup  # noqa: E402
 
+# The whole object a creation response reports, which is what a resume is checked against.
+PROFILE = {"id": "profile-1", "name": "a profile", "extends": None, "rules": []}
+
 READINGS = ("processPersistence", "parentLifecycle", "capability", "storeIdentity", "boundaries",
             "assignmentState")
 
@@ -210,7 +213,7 @@ class World:
         # on when this call reached Popen. The two differ by however long the child took to
         # exist, which is small here and was not small on a loaded CI runner: the uptime cell
         # read under the bound there while this waited above it.
-        wanted = min(self.record["supervisor"]["minimumAliveSeconds"], 1) + 0.2
+        wanted = min(self.record["supervisor"]["minimumAliveSeconds"], 1) + 0.1
         deadline = time.time() + 10
         while time.time() < deadline:
             started = startup.process_started_at(self.supervisor.pid)
@@ -300,7 +303,8 @@ class World:
     def _settings(self):
         return {"model": "a-model", "reasoningEffort": "xhigh", "sandbox": {"type": "dangerFullAccess"},
                 "approvalPolicy": "never", "cwd": str(self.root / "workspace"),
-                "runtimeWorkspaceRoots": [], "environments": []}
+                "runtimeWorkspaceRoots": [], "environments": [],
+                "expectedPermissionProfile": PROFILE}
 
     def _write_captures(self):
         settings = self._settings()
@@ -314,7 +318,10 @@ class World:
             echo["cwd"] = self.payloads["taskCwd"][task]
             self.captures["receipt-" + task + ".json"] = {
                 "taskId": task,
-                "creation": {"thread": {"id": task, "environments": settings["environments"]}},
+                # The profile arrives raw beside the thread, not inside it, and the store's
+                # expectation is the whole object rather than an id-shaped stand-in.
+                "creation": {"thread": {"id": task, "environments": settings["environments"]},
+                             "activePermissionProfile": PROFILE},
                 "settings": {"requested": echo, "actual": echo, "findings": []}}
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
             self.captures["lifecycle-" + task + ".json"] = {
@@ -389,8 +396,8 @@ class World:
             "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
                       "challengeNonce": self.NONCE},
             "supervisor": {"pid": os.getpid(), "witness": str(self.trial / "supervisor.jsonl"),
-                           "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 0.2,
-                           "witnessAdvanceSeconds": 0.3, "service": False},
+                           "launchedAt": startup.stamp(now - 120), "minimumAliveSeconds": 0.05,
+                           "witnessAdvanceSeconds": 0.05, "service": False},
             "assignment": {"relationshipId": self.RELATIONSHIP, "parentTaskId": self.PARENT_A,
                            "childTaskId": self.CHILD_A, "issueKey": self.ISSUE_A,
                            "executionGeneration": 1, "artifacts": [str(self.artifact)],
@@ -412,7 +419,7 @@ class World:
         record = startup.load_start(str(self.trial / "start.json"),
                                     environment=self.environment())
         record["_now"] = startup.datetime.datetime.now(startup.datetime.timezone.utc)
-        return startup.preflight(record, sleeper=lambda seconds: time.sleep(min(seconds, 0.4)))
+        return startup.preflight(record, sleeper=lambda seconds: time.sleep(min(seconds, 0.1)))
 
     def preflight_with(self, sleeper):
         """The same run with the pause between the two witness observations under the test's
@@ -1173,6 +1180,10 @@ class PayloadContract(TrialCase):
         # The runtime host record's own shape, which is not a relay payload either: the owned
         # pointer is what says which command a host reaches the runtime through.
         own |= {"pointer"}
+        # The permission profile, which the bridge passes through raw: the creation
+        # response reports it and the settings record carries the expectation.
+        own |= {"activePermissionProfile", "permissionReceipt",
+                "expectedPermissionProfile"}
         self.assertEqual(reads - declared - own, set(),
                          "a field is read without being declared in the payload contract")
 
@@ -2026,7 +2037,7 @@ class TenthHostedRound(TrialCase):
             self.world.launcher.chmod(0o755)
             # And the run's own pause still has to happen, or the witness would not advance and
             # this case would fail for that instead.
-            time.sleep(min(seconds, 0.4))
+            time.sleep(min(seconds, 0.1))
 
         document = self.world.preflight_with(move)
         self.assertFalse(document["launcherStillTheSameBytes"]["passed"])
@@ -2135,7 +2146,7 @@ class TwelfthHostedRound(TrialCase):
             self.world.launcher.write_text(original + "\n# briefly another build\n",
                                            encoding="utf-8")
             self.world.launcher.chmod(0o755)
-            time.sleep(min(seconds, 0.4))
+            time.sleep(min(seconds, 0.1))
             self.world.launcher.write_text(original, encoding="utf-8")
             self.world.launcher.chmod(0o755)
 
@@ -2920,7 +2931,7 @@ class TwentyNinthHostedRound(TrialCase):
         def sleeper(seconds):
             change()
             self.world.flush()
-            time.sleep(min(seconds, 0.4))
+            time.sleep(min(seconds, 0.1))
 
         return self.world.preflight_with(sleeper)
 
@@ -3397,6 +3408,72 @@ class ThirtyFifthHostedRound(TrialCase):
                       and any(getattr(t, "id", None) == "POLICY_DEFAULTS" for t in node.targets))
         self.assertEqual(startup.POLICY_DEFAULTS, theirs,
                          "the checker's copy of the policy defaults is not the relay's")
+
+
+class ThirtySixthHostedRound(TrialCase):
+    """The permission profile a resume is checked against, which nothing here was reading.
+
+    The relay compares the whole object a creation response reported against the settings row's
+    expectation and withholds the send as an unverifiable permission profile when they differ.
+    A preflight that never read it published readiness for a trial whose first send cannot land.
+    """
+
+    def with_profile(self, reported, expected):
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            if reported is None:
+                capture["creation"].pop("activePermissionProfile", None)
+            else:
+                capture["creation"]["activePermissionProfile"] = reported
+        settings = self.world.payloads["settings-show"]["payload"]["settings"]
+        if expected is None:
+            settings.pop("expectedPermissionProfile", None)
+        else:
+            settings["expectedPermissionProfile"] = expected
+        self.world.start_supervisor()
+        self.world.flush()
+        return self.world.preflight()
+
+    def test_a_profile_the_store_did_not_anticipate_refuses_the_start(self):
+        document = self.with_profile({"id": "profile-good", "extends": None},
+                                     {"id": "profile-bad", "extends": None})
+        # Readiness first: it is the defect itself, and it is answerable whether or not a reading
+        # of its own exists to name it.
+        self.assertFalse(document["readyToStart"],
+                         "a trial whose first send cannot land was reported ready")
+        cell = cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("unverifiable permission profile", cell["evidence"])
+
+    def test_an_id_shaped_stand_in_is_not_the_profile(self):
+        # The later check is object equality, so a record holding only the id can never match.
+        document = self.with_profile({"id": "profile-1", "name": "a profile", "extends": None},
+                                     {"id": "profile-1"})
+        self.assertEqual(
+            cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_no_profile_reported_is_not_applicable_rather_than_a_failure(self):
+        document = self.with_profile(None, None)
+        cell = cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_APPLICABLE)
+        self.assertTrue(cell["met"])
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
+    def test_a_profile_the_store_carries_whole_verifies(self):
+        # Support: the arrangement a trial wants.
+        whole = {"id": "profile-1", "name": "a profile", "extends": None, "rules": []}
+        document = self.with_profile(whole, dict(whole))
+        self.assertEqual(
+            cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]["value"],
+            VERIFIED)
+
+    def test_the_relay_is_what_checks_it(self):
+        # Support, and the reason this reading exists: the comparison it mirrors.
+        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
+                  / "settings.py").read_text(encoding="utf-8")
+        self.assertIn('profile = response.get("activePermissionProfile")', source)
+        self.assertIn('self.data.get("expectedPermissionProfile")', source)
 
 
 if __name__ == "__main__":                                           # pragma: no cover
