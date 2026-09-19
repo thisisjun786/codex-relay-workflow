@@ -826,5 +826,42 @@ class TheSecondReviewRoundFoundTheseToo(LinkageTestCase):
         self.assertIn(OTHER_PARENT, moved["authorizedScope"]["allowedRecipients"])
         self.assertNotIn(PARENT, moved["authorizedScope"]["allowedRecipients"])
 
+class TheObservationsFromTheSameRound(LinkageTestCase):
+    def test_a_sender_scope_the_sender_does_not_own_is_reported(self):
+        """An unmatched from_scope fell back to the sender's other scopes, so a message could
+        be answered linked with no findings about a scope it never named."""
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        answer = self.linkage.counterpart(PARENT, CHILD, from_scope="PROJ-NOT-MINE")
+        self.assertIn("foreign_sender_scope", answer["findings"])
+
+    def test_an_upward_walk_from_a_task_owning_several_scopes_says_so(self):
+        """owner_of_task chose one with LIMIT 1, dropping the other hierarchies silently."""
+        self.supervise()
+        self.supervise(initiative="INIT-2", project=OTHER_PROJECT, parent=self.parent(),
+                       supervisor=self.supervisor(OTHER_SUPERVISOR), kind=linkage.REFERENCE)
+        answer = self.linkage.up(task_id=PARENT)
+        self.assertEqual(answer["state"], "ambiguous")
+        self.assertEqual(answer["levels"], [])
+        self.assertEqual(
+            sorted(answer["contention"][0]["candidates"]), sorted([PROJECT, OTHER_PROJECT]))
+        # Naming the scope answers it.
+        named = self.linkage.up(task_id=PARENT, scope_key=OTHER_PROJECT)
+        self.assertEqual(named["state"], "resolved")
+        self.assertEqual(named["levels"][0]["scopeKey"], OTHER_PROJECT)
+
+    def test_an_unreadable_answer_keeps_the_fault_that_caused_it(self):
+        """Every sqlite3.Error collapsed into one word, so corruption, schema drift and a
+        query fault were indistinguishable to whoever had to act on them."""
+        self.supervise()
+        self.store.db.close()
+        for answer in (self.linkage.down(linkage.INITIATIVE, INITIATIVE),
+                       self.linkage.up(task_id=PARENT),
+                       self.linkage.counterpart(PARENT, CHILD)):
+            self.assertEqual(answer["state"], "unreadable")
+            self.assertEqual(answer["findings"] if "findings" in answer else [], [])
+            self.assertTrue(answer["detail"], "the fault was discarded with the answer")
+
 if __name__ == "__main__":
     unittest.main()

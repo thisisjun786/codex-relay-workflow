@@ -10,7 +10,7 @@ registration is not the execution anyone authorized.
 
 import json
 
-from .errors import RefusalReason, RegistrationError
+from .errors import RefusalReason, RegistrationError, RelayError
 from .identity import relationship_id
 from .models import Endpoint
 
@@ -186,6 +186,13 @@ class Registry:
                 raise refusal.error()
             return self.get(rid)
         now = self.clock.iso()
+        self._raced = None
+        outgoing = None
+        if supersedes:
+            previous = self.store.one(
+                "SELECT child_task_id FROM relationships WHERE relationship_id = ?",
+                (supersedes,))
+            outgoing = previous["child_task_id"] if previous else None
         if project_key is not None:
             # Decide the lower level BEFORE anything is inserted, in a transaction that writes
             # only the contest if there is one. Inserting the relationship first and then
@@ -194,12 +201,6 @@ class Registry:
             # A replacement takes over the issue scope from the assignment it supersedes, so
             # that outgoing child is not a rival. Named explicitly rather than inferred, so
             # anyone ELSE holding the scope is still a refusal.
-            outgoing = None
-            if supersedes:
-                previous = self.store.one(
-                    "SELECT child_task_id FROM relationships WHERE relationship_id = ?",
-                    (supersedes,))
-                outgoing = previous["child_task_id"] if previous else None
             pending = None
             with self.store.transaction() as db:
                 candidate = {
@@ -214,6 +215,21 @@ class Registry:
                     self.linkage.record_conflict_in(db, pending, at=now)
             if pending is not None:
                 raise pending.error()
+        try:
+            return self._register_in_transaction(
+                rid, parent, child, issue_key, roots, recipients, scope_ref,
+                dispatch_request_id, dispatch_turn_id, supersedes, project_key, now, outgoing)
+        except RelayError:
+            raced = getattr(self, "_raced", None)
+            if raced is not None:
+                self._raced = None
+                with self.store.transaction() as db:
+                    self.linkage.record_conflict_in(db, raced, at=now)
+            raise
+
+    def _register_in_transaction(self, rid, parent, child, issue_key, roots, recipients,
+                                 scope_ref, dispatch_request_id, dispatch_turn_id,
+                                 supersedes, project_key, now, outgoing):
         with self.store.transaction() as db:
             # One issue, one responsible child, decided in the SAME transaction as the insert.
             # Checked beforehand, two connections could both see no rival and then insert
@@ -284,6 +300,12 @@ class Registry:
                 refusal = self.linkage.attach_in(db, fresh, project_key, at=now,
                                                  replacing=outgoing if supersedes else None)
                 if refusal is not None:
+                    # This one arose only in the window between the pre-check and this
+                    # transaction, so its contest has not been recorded. Raising here rolls
+                    # the whole registration back, which is right, and takes any conflict row
+                    # written in this transaction with it - so it is re-recorded afterwards,
+                    # in its own transaction, rather than lost with the rollback.
+                    self._raced = refusal
                     raise refusal.error()
         return self.get(rid)
 

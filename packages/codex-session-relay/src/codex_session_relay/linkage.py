@@ -998,6 +998,11 @@ class Linkage:
                 narrowed = [b for b in senders if b["scopeKey"] == from_scope]
                 if narrowed:
                     senders = narrowed
+                else:
+                    # Symmetric with quoted_scope below. Falling back to the sender's other
+                    # scopes could answer linked with no findings about a scope the message
+                    # never named, which is the opposite of what quoting a source scope means.
+                    findings.append("foreign_sender_scope")
             wrong_scope = None
             if quoted_scope is not None:
                 narrowed = [b for b in recipients if b["scopeKey"] == quoted_scope]
@@ -1064,10 +1069,15 @@ class Linkage:
                 "from": sender, "counterpart": recipient, "currentOwner": current,
                 "findings": sorted(set(findings)),
             }
-        except sqlite3.Error:
+        except sqlite3.Error as fault:
             return {
                 "state": "unreadable", "readable": False, "link": None,
                 "from": None, "counterpart": None, "currentOwner": None, "findings": [],
+                # findings stays empty - a store that could not be read has nothing to report
+                # ABOUT the linkage - but the fault itself is a diagnostic worth keeping, and
+                # collapsing corruption, schema drift and a query fault into one word threw it
+                # away.
+                "detail": type(fault).__name__ + ": " + str(fault),
             }
 
     def _bindings_for(self, task_id):
@@ -1150,9 +1160,10 @@ class Linkage:
                         "levels": [], "gaps": gaps, "contention": contention}
             return {"state": "resolved", "readable": True,
                     "levels": levels, "gaps": gaps, "contention": contention}
-        except sqlite3.Error:
+        except sqlite3.Error as fault:
             return {"state": "unreadable", "readable": False,
-                    "levels": [], "gaps": [], "contention": []}
+                    "levels": [], "gaps": [], "contention": [],
+                    "detail": type(fault).__name__ + ": " + str(fault)}
 
     def _descend(self, scope_kind, scope_key, levels, gaps, contention, *, depth):
         owner = self.owner(scope_kind, scope_key)
@@ -1184,12 +1195,25 @@ class Linkage:
             self._descend(edge["lower"]["scopeKind"], edge["lower"]["scopeKey"],
                           levels, gaps, contention, depth=depth + 1)
 
-    def up(self, *, task_id=None, issue_key=None, relationship_id=None):
+    def up(self, *, task_id=None, issue_key=None, relationship_id=None, scope_key=None):
         """Child to parent to supervisor, reporting a missing upper level as a gap."""
         import sqlite3
 
         try:
-            start = self._starting_scope(task_id, issue_key, relationship_id)
+            if task_id is not None and scope_key is None:
+                held = [b for b in self._bindings_for(task_id) if b["status"] in LIVE]
+                if len({b["scopeKey"] for b in held}) > 1:
+                    # The role contract lets one task own several scopes of one role, so
+                    # choosing between them here would drop valid hierarchies without saying
+                    # so. The caller names which one, and until it does the answer is the
+                    # ambiguity rather than one arbitrary branch.
+                    return {
+                        "state": "ambiguous", "readable": True, "levels": [], "gaps": [],
+                        "contention": [{"contention": "ambiguous_scope", "taskId": task_id,
+                                        "candidates": sorted({b["scopeKey"] for b in held})}],
+                    }
+            start = self._starting_scope(task_id, issue_key, relationship_id,
+                                         scope_key=scope_key)
             if start is None:
                 return {"state": "unregistered", "readable": True, "levels": [],
                         "gaps": [{"gap": "unscoped_assignment", "relationshipId":
@@ -1236,11 +1260,12 @@ class Linkage:
                 scope_kind, scope_key = row["upper_kind"], row["upper_key"]
             return {"state": "resolved", "readable": True, "levels": levels,
                     "gaps": gaps, "contention": contention}
-        except sqlite3.Error:
+        except sqlite3.Error as fault:
             return {"state": "unreadable", "readable": False, "levels": [], "gaps": [],
-                    "contention": []}
+                    "contention": [],
+                    "detail": type(fault).__name__ + ": " + str(fault)}
 
-    def _starting_scope(self, task_id, issue_key, relationship_id):
+    def _starting_scope(self, task_id, issue_key, relationship_id, *, scope_key=None):
         if relationship_id is not None:
             row = self.store.one(
                 "SELECT issue_key FROM relationships WHERE relationship_id = ?",
@@ -1258,6 +1283,10 @@ class Linkage:
                 return None
             return (ISSUE, issue_key)
         if task_id is not None:
+            if scope_key is not None:
+                held = [b for b in self._bindings_for(task_id)
+                        if b["status"] in LIVE and b["scopeKey"] == scope_key]
+                return (held[0]["scopeKind"], held[0]["scopeKey"]) if held else None
             binding = self.owner_of_task(task_id)
             if binding is None:
                 return None
