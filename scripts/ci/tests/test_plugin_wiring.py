@@ -251,25 +251,39 @@ class OwnershipTest(unittest.TestCase):
             "--guard-timeout", str(completion.LAUNCHER_CEILING_SECONDS), "--apply")
         self.assertEqual(status, 0, output)
 
-    def test_a_relative_settings_override_is_refused_for_the_plugin_owner(self):
-        """The launcher resolves it from the session workspace, not from where this ran."""
-        environment = dict(os.environ, CRW_COMPLETION_HOOK_CONFIG="hook/settings.json")
-        finished = subprocess.run(
+    def install_with_override(self, override, *extra):
+        environment = dict(os.environ, CRW_COMPLETION_HOOK_CONFIG=override)
+        return subprocess.run(
             [sys.executable, str(RUNTIME_INSTALL), "hook", "--adapter", "completion",
              "--codex-home", str(self.home.codex_home), "--dest", str(self.home.destination),
-             "--owner", "plugin", "--apply"], capture_output=True, text=True, env=environment)
-        self.assertNotEqual(finished.returncode, 0, finished.stdout)
-        self.assertIn("CRW_COMPLETION_HOOK_CONFIG", finished.stdout)
-        self.assertFalse(self.home.settings.exists(), finished.stdout)
+             *extra, "--apply"], capture_output=True, text=True, env=environment)
 
-    def test_an_absolute_settings_override_is_accepted(self):
-        """The positive control: only the spelling that cannot be found again is refused."""
+    def test_no_settings_override_survives_a_plugin_install(self):
+        """Relative or absolute, the hook rediscovers the path from the session's own
+        environment and not from this one, so neither spelling can be relied on.
+
+        An absolute override is the worse of the two, because installation succeeds and every
+        later Stop reads the Codex home where nothing was written.
+        """
+        for override in ("hook/settings.json",
+                         str(self.home.codex_home / "elsewhere" / "settings.json")):
+            finished = self.install_with_override(override, "--owner", "plugin")
+            self.assertNotEqual(finished.returncode, 0, override + ": " + finished.stdout)
+            self.assertIn("CRW_COMPLETION_HOOK_CONFIG", finished.stdout, override)
+            self.assertFalse(self.home.settings.exists(), finished.stdout)
+            self.assertFalse((self.home.codex_home / "elsewhere").exists(), finished.stdout)
+
+    def test_plugin_settings_land_where_the_launcher_derives_them(self):
+        """The invariant the refusal exists to leave behind."""
+        self.assertEqual(self.home.hook("--owner", "plugin", "--apply")[0], 0)
+        self.assertEqual(self.home.settings,
+                         self.home.codex_home / completion.CONFIG_NAME)
+        self.assertTrue(self.home.settings.exists())
+
+    def test_the_user_owner_still_takes_an_override(self):
+        """It writes the path it resolved into the command it registers, so it survives."""
         settled = self.home.codex_home / "elsewhere" / "settings.json"
-        environment = dict(os.environ, CRW_COMPLETION_HOOK_CONFIG=str(settled))
-        finished = subprocess.run(
-            [sys.executable, str(RUNTIME_INSTALL), "hook", "--adapter", "completion",
-             "--codex-home", str(self.home.codex_home), "--dest", str(self.home.destination),
-             "--owner", "plugin", "--apply"], capture_output=True, text=True, env=environment)
+        finished = self.install_with_override(str(settled))
         self.assertEqual(finished.returncode, 0, finished.stdout + finished.stderr)
         self.assertTrue(settled.exists(), finished.stdout)
 

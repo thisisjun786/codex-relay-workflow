@@ -163,23 +163,30 @@ def override_complaints(owner, environ=None):
 
     The user owner writes the path it resolved into the command it registers, so a relative
     override is settled once, at install time, and never resolved again. A plugin-declared
-    command carries no such argument: the launcher resolves the override itself, from the
-    session's own workspace, which is not where the install ran. The same spelling then names
-    a different file or none, and a Stop that cannot find its settings releases in silence.
+    command carries no such argument at all, and that is the whole difference. The launcher
+    has to rediscover the path at every Stop, from an environment this install cannot reach
+    into: it reads the same variable and then falls back to the Codex home. An override is
+    therefore refused whatever it is spelled like. A relative one names a different file in
+    every workspace; an absolute one names the right file only in processes that happen to
+    carry the same variable, and a Codex started from another shell reads the Codex home,
+    where this install wrote nothing, and releases every Stop in silence.
 
     Refused at installation rather than papered over in the launcher, because this is the one
-    moment where both meanings of the value are visible at once.
+    moment where the install and the sessions that follow it are both in view. What it leaves
+    behind is an invariant the launcher can rely on: plugin-owned settings are at the path it
+    derives on its own.
     """
     if owner != OWNER_PLUGIN:
         return []
     environ = os.environ if environ is None else environ
     override = environ.get(CONFIG_ENV)
-    if override and not os.path.isabs(str(Path(override).expanduser())):
-        return [CONFIG_ENV + " is set to the relative path " + str(override) + ", and a "
-                + OWNER_PLUGIN + "-owned registration resolves it again from each session's"
-                " own workspace rather than from here; every Stop would look for a different"
-                " file. Set it to an absolute path, or unset it and let the settings sit in"
-                " the Codex home"]
+    if override:
+        return [CONFIG_ENV + " is set to " + str(override) + ", and a " + OWNER_PLUGIN
+                + "-owned registration carries no settings argument: the hook rediscovers the"
+                " path at every Stop from the environment that session was started with, not"
+                " from this one. A Codex started without this variable reads the Codex home,"
+                " where this install would have written nothing, and releases every Stop"
+                " saying nothing. Unset it so the settings land where the hook looks"]
     return []
 
 
