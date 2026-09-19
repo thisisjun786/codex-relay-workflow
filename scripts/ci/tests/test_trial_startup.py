@@ -2488,9 +2488,12 @@ class EighteenthHostedRound(TrialCase):
     def test_readiness_is_refused_when_the_window_opens_during_the_run(self):
         # A window a moment ahead, and a witness observation longer than that moment.
         self.world.start_supervisor()
-        self.world.record["window"] = {"opensAt": startup.stamp(time.time() + 0.2),
+        # The moment has to be far enough ahead that loading the record still finds it ahead,
+        # and near enough that the run covers it. A slow host lengthens the run, which is the
+        # side that helps, and delays the load, which is the side that does not.
+        self.world.record["window"] = {"opensAt": startup.stamp(time.time() + 0.5),
                                        "closesAt": startup.stamp(time.time() + 600)}
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.4
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.8
         self.world.flush()
         document = startup.preflight(
             startup.load_start(str(self.world.trial / "start.json"),
@@ -2642,11 +2645,15 @@ class TwentySecondHostedRound(TrialCase):
     def test_a_capture_that_expires_during_the_run_fails_at_the_end(self):
         self.world.start_supervisor()
         self.world.record["captureMaxAgeSeconds"] = 1
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.3
+        # This case needs the captures fresh when they are read and stale by the end, so the age
+        # they start at leaves room before the bound and the run then carries them past it. Aged
+        # most of the way beforehand, a slow host spent that room before the first reading and
+        # the captures arrived already stale, which is a different case than this one.
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 1.0
         for kind in ("parentLifecycle", "creationReceipt", "registration", "peerDoctor"):
             for name in self.world.record["captures"][kind]:
                 self.world.record["captures"][kind][name]["capturedAt"] = startup.stamp(
-                    time.time() - 0.9)
+                    time.time() - 0.3)
         self.world.flush()
         document = startup.preflight(
             startup.load_start(str(self.world.trial / "start.json"),
