@@ -57,8 +57,10 @@ no existing parent. Where the request is an explicit designation to execute that
 agreed projects, that initiative runs through its projects' own parents under
 [Initiative supervision](references/initiative-supervision.md), which also settles which task
 holds the supervisor binding: this one where it is free to take it, and not this one where it is
-already some project's parent. Planning, a status
-read and a citation are the three requests that are not that designation.
+already some project's parent. Planning, a status read, a
+citation, an explanation of how the entry works, a usage question, and a quoted or unsubmitted
+example are none of them that designation, and that list is not closed: what makes one is the
+explicit request to execute, never the presence of a link.
 
 Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
 no-merge, or current-task limits override the default. An issue or milestone
