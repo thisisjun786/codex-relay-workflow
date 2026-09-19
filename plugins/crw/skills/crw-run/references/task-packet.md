@@ -398,7 +398,13 @@ because senders choose their own ids and two peers can easily pick the same one.
 again under a key already answered is answered with that same disposition rather than acted on
 twice. One that repeats a key while carrying different content is neither a replay nor a new
 instruction but a collision, and it is raised rather than silently given the earlier answer, which
-is also what stops a predictable id from being spent in advance to suppress the real request. That is what makes an uncertain send safe to reconcile by
+is also what stops a predictable id from being spent in advance to suppress the real request.
+
+A message the receiver could not corroborate has no corroborated sender to key on, and it is still
+decided, so it is keyed on what the receiver can determine by itself: the identity the message
+actually arrived under, together with its id. That key is fixed when the proposal is first decided
+and does not move afterwards, because a sender that becomes corroborated later would otherwise hand
+a retry a fresh key and a second application of a decision already made. That is what makes an uncertain send safe to reconcile by
 asking rather than by sending again, and it is why a replayed handoff, correction or decision
 cannot restart work that already ran.
 
