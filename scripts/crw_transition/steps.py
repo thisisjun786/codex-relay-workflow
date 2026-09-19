@@ -1196,6 +1196,13 @@ def _preserve_registration(host, again):
 
     The archive lands under the record's own superseded stem, which is where _retired_record
     already looks, so this is the existing recovery path rather than a second mechanism.
+
+    A fresh archive every time a recordless table is removed, even when the host already carries
+    one. An older archive is history, not proof that it describes THIS table: a host can carry an
+    archive for one executable while its table registers another, and skipping the archive
+    because some archive exists let an interrupted rerun restore the older identity over the one
+    that was live. There is at most one archive per removal, because a run that finds no table
+    answers before it reaches this.
     """
     registration = (again.get("registration") or {})
     command = registration.get("command")
@@ -1266,7 +1273,7 @@ def mcp_table_standdown(host, options, *, apply=False):
             return _answer("mcp table standdown", REFUSED,
                            "removing the block would have changed bytes outside it")
         preserved = None
-        if host["mcp"].get("record") is None and _retired_record(host) is None:
+        if host["mcp"].get("record") is None:
             # Nothing else on this host keeps what this table registers, so it is archived before
             # the bytes go. Under the same lock, because a record written in between is one this
             # would otherwise duplicate.

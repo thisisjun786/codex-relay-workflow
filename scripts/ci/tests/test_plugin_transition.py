@@ -3068,6 +3068,43 @@ class TheFindingsFromReview(TransitionCase):
         # And the archive that carried it across is named in the answer that made it.
         self.assertTrue(removed["preserved"], json.dumps(removed)[:600])
 
+    @needs_reader
+    def test_a_stale_archive_does_not_stand_in_for_the_table_being_removed(self):
+        """An old archive is history, not a description of the table about to be removed."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import bridgerecord
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom = host.version / "bin" / "codex-thread-bridge-of-its-own"
+        custom.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        custom.chmod(0o755)
+        host.link_skills()
+        host.register_hook()
+        registered = run([RUNTIME, "register-mcp", "--owner", "user", "--codex-home", host.home,
+                          "--bridge-command", custom, "--bridge-arg=--from-the-old-install",
+                          "--apply"])
+        self.assertEqual(registered.returncode, 0, registered.stdout[-600:])
+        (host.home / "crw-bridge-mcp.json").unlink()
+        # An archive this host kept from some earlier run, naming a different bridge entirely.
+        stale = bridgerecord.document(
+            command=str(host.version / "bin" / "codex-thread-bridge"), arguments=["--old"],
+            name=inventory.SERVER_NAME, issue="CRW-115", owner="user")
+        (host.home / (bridgerecord.RECORD_NAME + ".superseded-20000101T000000Z")).write_text(
+            json.dumps(stale), encoding="utf-8")
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        removed = steps.mcp_table_standdown(snapshot, {}, apply=True)
+        self.assertEqual(removed["outcome"], "settled", json.dumps(removed)[:600])
+        again = inventory.snapshot(host.home, repo_root=ROOT)
+        # The live table's identity, not the one the older archive happens to carry.
+        self.assertEqual(steps.bridge_command(again), str(custom))
+        written = steps.mcp_record_install(again, {}, apply=True)
+        self.assertEqual(written["outcome"], "settled", json.dumps(written)[:600])
+        self.assertEqual(host.record()["args"], ["--from-the-old-install"])
+        self.assertTrue(removed["preserved"], json.dumps(removed)[:600])
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
