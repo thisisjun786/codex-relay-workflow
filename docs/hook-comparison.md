@@ -50,7 +50,11 @@ ends, which is nothing.
 
 Each cell is filled by the reading its own question called for. A reading that could not be made
 answers `unreadable` and names why; it never answers false and never takes the value of the cell
-beside it.
+beside it. Since CRW-103 that answer is a distinct type rather than a spelling of one, so a
+consumption site that treats it as the value it sits beside raises there instead of being let
+through. In the result document it is written as `{"notRead": ..., "why": ...}`: an object,
+precisely so that no cell's answer can equal it, and its reason repeats the cell's own `detail`
+because the places that hold one are not all cells.
 
 | Cell | Answered by | Read from | Never established by |
 | -- | -- | -- | -- |
@@ -205,7 +209,7 @@ One JSON object on stdout, and nothing else on stdout.
 | `pythonVersion` | the interpreter that ran it |
 | `mode` and `isolation` | the mode the on arm was registered in, and what makes holding legitimate here |
 | `arms` | per arm, the install reading, the registration reading, the Codex home and the argv of the install |
-| `scenarios` | per scenario, per arm, every cell as a value with the source that answered it, the path it was read from, whether it was readable, and the detail when it was not; beside the observation and decision the scenario declared in advance, and the provenance of what was handed to the command |
+| `scenarios` | per scenario, per arm, every cell as a value with the source that answered it, the path it was read from, whether it was readable, and the detail when it was not; a reading that could not be taken is written as an object rather than as an answer; beside the observation and decision the scenario declared in advance, and the provenance of what was handed to the command |
 | `measures` | the six, each with its answer, the rows it was computed from, and its narrowing sentence |
 | `supplemental` | observations reported under their own name because they are not one of the six |
 | `wroteOnlyInsideItsRoot` | every place the run wrote, and whether each resolves inside the directory it created for itself |
