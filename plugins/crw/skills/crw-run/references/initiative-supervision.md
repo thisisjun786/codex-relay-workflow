@@ -74,8 +74,14 @@ its comments and updates. The supervision record that makes recovery possible is
 Read in this order and stop at the first level that already exists, because every later step
 assumes the earlier one was checked:
 
-1. **The supervisor.** If this initiative already has one, that task is the supervisor. Read its
-   record and status without waking it, and continue there rather than binding a second.
+1. **The supervisor.** If this initiative already has one, that task is the supervisor and this
+   designation belongs to it rather than to a second binding. Where this task is that supervisor,
+   continue here. Where it is another task, read its record and status first, then deliver the
+   designation the way a parent is addressed: the ordinary message path when it is idle, its
+   verified active turn when one is running, each carrying the
+   [restoration block](task-packet.md#restoration-block). Where no supported route reaches it,
+   report the exact resume action its owner has to take and bind nothing, because a status read is
+   not the execution that was asked for.
 2. **Each project's parent.** A project in the set with a parent keeps it. Read that parent's
    coordination record for its issue scope, delivery limits and current state.
 3. **Each parent's children.** A live child is the owner of its issue. It is not reassigned, not

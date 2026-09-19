@@ -341,10 +341,14 @@ facts, and none of them follows from this reply.
 
 ## Restoration block
 
-Every message into a task whose context the sender cannot see carries this block: a needs-changes
-correction, a review fix, a resume the coordinator publishes after handling something
-on the task's behalf, a restart after that task was compacted, and a project handoff into an
-existing parent, running or idle. The first work
+These messages carry this block: a needs-changes correction, a review fix, a resume the coordinator
+publishes after handling something on the task's behalf, a restart after that task was compacted,
+a project handoff into an existing parent whether it is running or idle, and a designation
+delivered to an existing supervisor. Each of them asks a task to pick work back up, and each has a
+sender holding assignment facts the recipient may no longer have. Ordinary coordination between
+peers is not in that set: a proposal or an acceptance passes between owners who each keep their
+own record, and the sender holds neither the recipient's workflow nor its durable locators to
+restate. The first work
 prompt stated the assignment once. Ten turns, one compaction and three review rounds
 later, none of it is reliably still in the task's context, and a correction that
 assumes otherwise is answered from whatever the task still happens to remember.
