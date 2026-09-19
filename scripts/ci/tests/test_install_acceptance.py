@@ -182,6 +182,11 @@ TEXT_EVIDENCE = {
         "which form a reader here accepts is a property of how it is written, and the module"
         " object cannot be asked: a function that tests ast.Assign and one that tests both are"
         " the same callable to it. Reading the file is the only way to see the difference.",
+    "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary":
+        "the same for the forms a value is followed through: which of them a resolver reads is"
+        " written in the resolver and nowhere in the object, so the vocabulary and the coverage"
+        " are both read off this file. This is the derivation that emits its own blind spots,"
+        " and it has to read the source to have any to emit.",
     "test_every_place_that_settles_for_a_refusal_is_declared":
         "the places that name a refusal are in the text, so this inventory is derived from this"
         " file the same way -- and it is derived by accounting for every occurrence rather than"
@@ -267,6 +272,34 @@ SOURCE_UNDECIDED_CALLS = {
 # file's own text, so a new reader of the bare form fails the module rather than waiting to be
 # found, and an entry that stops being true fails too.
 ASSIGN_ONLY_ON_PURPOSE = {}
+
+# Where a value-following resolver here reads fewer forms than the pass-through vocabulary.
+# `that = self if flag else self` hands the receiver through a conditional, and a resolver
+# reading ast.Name alone sees none of it -- which is how a reviewer found one rather than this
+# module finding it. Which forms each resolver reads is written in the resolver, so the set is
+# DERIVED from this file: the vocabulary comes from _passed_through's own text, and a resolver
+# taking values from _bindings without covering it is emitted here and has to be declared.
+#
+# Each entry carries a sample and the place it must not reach, and the sample is RUN. A blind
+# spot with nothing that can fail is the same "derived, therefore complete" claim wearing a
+# different sentence, which is the fallacy this module exists to refuse.
+FOLLOWS_FEWER_VALUE_FORMS = {
+    "_instance_classes": (
+        ("class Holder:",
+         "    def carrier(self):",
+         "        return reading.UNREADABLE",
+         "",
+         "def consumer(flag):",
+         "    holder = Holder() if flag else Holder()",
+         "    return holder.carrier()"),
+        "consumer",
+        "it reads the constructor written beside the name and does not follow a value through"
+        " at all, so an instance handed over by a conditional is not tracked and the consumer"
+        " below goes unreported. Widening it means deciding which class the name holds when the"
+        " arms disagree, and that is a question about the run rather than about the text -- so"
+        " the limit is stated here, with the case that measures it, rather than claimed away.",
+    ),
+}
 
 # What this derivation still cannot see, as data rather than as a sentence. Each form is planted
 # by a control that requires the derivation NOT to see it, so the list cannot rot in either
@@ -2691,11 +2724,96 @@ RESOLVES_LIKE_PYTHON = {
           "        def consumer():",
           "            return accepted",
           "        return consumer",
-          "    return middle"),
-         "outer.middle.consumer", True,
-         "its pair: with no parameter taking the name the grandchild really does read what the"
-         " outer scope bound, so stopping at intervening scopes must not have stopped"
-         " inheritance itself."),
+         "    return middle"),
+        "outer.middle.consumer", True,
+        "its pair: with no parameter taking the name the grandchild really does read what the"
+        " outer scope bound, so stopping at intervening scopes must not have stopped"
+        " inheritance itself."),
+    "a receiver handed through a conditional":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def answer(self, flag):",
+          "        that = self if flag else self",
+          "        return that.carrier()"),
+         "answer", True,
+         "the receiver reaches the class on either branch. Reading ast.Name alone sees no"
+         " branch at all, which is the whole family of pass-through forms this resolver was"
+         " missing rather than one spelling of it."),
+    "a conditional that hands through something else":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def answer(self, flag, other):",
+          "        that = other if flag else other",
+          "        return that.carrier()"),
+         "answer", False,
+         "its pair: following the branches must not make every conditional a receiver. What"
+         " those arms hold is the caller's, and a call through it says nothing about this"
+         " class."),
+    "a class-body name another class body bound":
+        (REFUSAL,
+         ("x = \"fine\"",
+          "",
+          "class First:",
+          "    x = reading.UNREADABLE",
+          "",
+          "class Second:",
+          "    y = x",
+          "    def answer(self):",
+          "        return self.y"),
+         "answer", False,
+         "two class bodies written at module level are the same scope to a table keyed by"
+         " function, so one class's temporary is carried into the other. Python binds Second.y"
+         " to the module's ordinary value, and a declaration is owed for a refusal that is not"
+         " there."),
+    "a class-body name its own body bound":
+        (REFUSAL,
+         ("class First:",
+          "    x = reading.UNREADABLE",
+          "    y = x",
+          "    def answer(self):",
+          "        return self.y"),
+         "answer", True,
+         "its pair: a body really does see what it bound a line earlier, so separating siblings"
+         " must not have closed each class off from itself."),
+    "a property built from a lambda written above it":
+        (REFUSAL,
+         ("class Holder:",
+          "    getter = lambda self: reading.UNREADABLE",
+          "    carrier = property(getter)",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "the getter is a lambda bound in the class body, and the property scan looked it up"
+         " before the loop that registers those ran. The answer depended on which loop this"
+         " file happens to write first, which is a fact about this module and not about the"
+         " class it reads."),
+    "a property whose getter is named by keyword":
+        (REFUSAL,
+         ("class Holder:",
+          "    def getter(self):",
+          "        return reading.UNREADABLE",
+          "    carrier = property(fget=getter)",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "property(fget=getter) installs the getter that property(getter) does. Reading only"
+         " positional arguments makes the same descriptor invisible for the sake of where its"
+         " argument was written."),
+    "a property whose getter is positional":
+        (REFUSAL,
+         ("class Holder:",
+          "    def getter(self):",
+          "        return reading.UNREADABLE",
+          "    carrier = property(getter)",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "its pair: the positional spelling was already read, so admitting the keyword must not"
+         " have changed what the ordinary one builds."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3672,6 +3790,29 @@ def _visible_from(scope, made):
                for owner in made)
 
 
+def _passed_through(value):
+    """Every name a value expression may hand through, the branches of a conditional included.
+
+    `that = self if flag else self` binds the receiver whichever branch runs, and `a or b`,
+    `(y := a)` and `await a` hand one through just as plainly. A resolver reading only ast.Name
+    sees none of them, which is a narrower reach than the sentence beside it claims.
+
+    This is the vocabulary of pass-through forms this module reads; a resolver that follows a
+    value is expected to follow it through here, and the derived reach check below fails any
+    that reads ast.Name alone without saying why.
+    """
+    if isinstance(value, ast.Name):
+        yield value
+    elif isinstance(value, ast.IfExp):
+        yield from _passed_through(value.body)
+        yield from _passed_through(value.orelse)
+    elif isinstance(value, ast.BoolOp):
+        for inner in value.values:
+            yield from _passed_through(inner)
+    elif isinstance(value, (ast.NamedExpr, ast.Await)):
+        yield from _passed_through(value.value)
+
+
 def _assigned(node):
     """The targets and value of a binding statement, annotated or not, or None if it is neither.
 
@@ -4057,12 +4198,17 @@ def _held_by_class(tree, spelled, over=None):
         spreading = False
         for node in ast.walk(tree):
             function, klass = places.get(id(node), (MODULE_LEVEL, None))
-            local = bound.setdefault(function, set())
+            # Keyed by the class body as well as the scope: two class bodies written at module
+            # level are both <module> here, and merging them carries one class's temporary into
+            # the other's. A body still sees what the scope AROUND it bound, which is the union
+            # taken below, so this separates siblings without closing the class off.
+            local = (bound.setdefault((function, klass), set())
+                     | bound.get((function, None), set()))
             for named, value in _bindings(node):
                 if not _reachable(value, spelled, klass, local):
                     continue
                 if isinstance(named, ast.Name) and named.id not in local:
-                    local.add(named.id)
+                    bound.setdefault((function, klass), set()).add(named.id)
                     spreading = True
 
     for node in ast.walk(tree):
@@ -4071,7 +4217,8 @@ def _held_by_class(tree, spelled, over=None):
             through_class = (isinstance(target, ast.Attribute)
                              and _dotted(target.value) not in (None, "self", "cls"))
             if (klass is None and not through_class) or not _reachable(
-                    value, spelled, klass, bound.get(function, set())):
+                    value, spelled, klass,
+                    bound.get((function, klass), set()) | bound.get((function, None), set())):
                 continue
             if isinstance(target, ast.Attribute):
                 through = _dotted(target.value)
@@ -4411,34 +4558,10 @@ def _hands_on(tree, spelled):
             # A property is called by being read, so an attribute access naming one is a call.
             if decorated_by(node, ("property", "cached_property"), klass, where):
                 properties.setdefault((klass, where.rpartition(".")[2]), where)
-    # A descriptor made by calling property() rather than by decorating. alias = property(carrier)
-    # in a class body is the same getter under a second name, and reading self.alias runs it.
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        for statement in node.body:
-            binding = _assigned(statement)
-            if binding is None or not isinstance(statement.value, ast.Call):
-                continue
-            targets, _value = binding
-            if not resolves_to(statement.value.func, ("property", "cached_property"),
-                               places.get(id(node), (MODULE_LEVEL, None))[1],
-                               places.get(id(node), (MODULE_LEVEL, None))[0]):
-                continue
-            for given in list(statement.value.args)[:1]:
-                reached = methods.get((places.get(id(node), (MODULE_LEVEL, None))[1],
-                                       (_dotted(given) or "").rpartition(".")[2]))
-                if not reached:
-                    continue
-                for target in targets:
-                    for inner in ast.walk(target):
-                        if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
-                            properties.setdefault(
-                                (places.get(id(node), (MODULE_LEVEL, None))[1], inner.id),
-                                reached)
-    # The places that ARE getters, so a class alias naming one can be recognised as naming a
-    # property rather than an ordinary method.
-    property_places = set(properties.values())
+    # Lambda methods FIRST, because the property scan below looks a getter up by name and
+    # getter = lambda self: ... is registered here. Reading them in the other order makes the
+    # answer depend on which loop this module happens to write first, which is a fact about
+    # this file rather than about the class it is reading.
     for node in ast.walk(tree):
         # carrier = lambda self: ... in a class body binds a method named carrier, and the
         # lambda's own place is what a call through it reaches.
@@ -4460,6 +4583,38 @@ def _hands_on(tree, spelled):
                 if first:
                     receivers[seat] = first[0].arg
 
+    # A descriptor made by calling property() rather than by decorating. alias = property(carrier)
+    # in a class body is the same getter under a second name, and reading self.alias runs it.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in node.body:
+            binding = _assigned(statement)
+            if binding is None or not isinstance(statement.value, ast.Call):
+                continue
+            targets, _value = binding
+            if not resolves_to(statement.value.func, ("property", "cached_property"),
+                               places.get(id(node), (MODULE_LEVEL, None))[1],
+                               places.get(id(node), (MODULE_LEVEL, None))[0]):
+                continue
+            # property(getter) and property(fget=getter) install the same descriptor, so the
+            # keyword spelling is read beside the positional one rather than left out.
+            for given in (list(statement.value.args)[:1]
+                          + [word.value for word in statement.value.keywords
+                             if word.arg == "fget"]):
+                reached = methods.get((places.get(id(node), (MODULE_LEVEL, None))[1],
+                                       (_dotted(given) or "").rpartition(".")[2]))
+                if not reached:
+                    continue
+                for target in targets:
+                    for inner in ast.walk(target):
+                        if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
+                            properties.setdefault(
+                                (places.get(id(node), (MODULE_LEVEL, None))[1], inner.id),
+                                reached)
+    # The places that ARE getters, so a class alias naming one can be recognised as naming a
+    # property rather than an ordinary method.
+    property_places = set(properties.values())
     # What a class body binds, and where. A def binds its own name there as surely as an
     # assignment does, and a binding written after a default has not happened yet when that
     # default runs, so the line is part of the answer.
@@ -4516,12 +4671,11 @@ def _hands_on(tree, spelled):
         for target, value in _bindings(node):
             # Through the same binding abstraction as everything else, so that: Holder = self
             # is the ordinary typed spelling of the same line rather than a form nobody reads.
-            if not isinstance(value, ast.Name):
-                continue
-            for inner in ast.walk(target):
-                if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
-                    receiver_alias.setdefault(where, {}).setdefault(
-                        value.id, set()).add(inner.id)
+            for source in _passed_through(value):
+                for inner in ast.walk(target):
+                    if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
+                        receiver_alias.setdefault(where, {}).setdefault(
+                            source.id, set()).add(inner.id)
 
     def its_own(node, function):
         """Whether the instance table's answer for this name is this scope's to read.
@@ -6340,6 +6494,92 @@ class SevenReadingsTests(unittest.TestCase):
                                      form + ": " + place + " cannot reach the declared thing and"
                                      " this reader named it anyway: " + json.dumps(places))
 
+    def test_every_value_follower_here_reads_the_whole_pass_through_vocabulary(self):
+        """Support: the reach over value forms, derived from this file and then measured.
+
+        Not a regression test for one defect. It is the property the issue asks for, applied to
+        the one thing this reader kept getting wrong: a resolver that follows a value either
+        reads the pass-through forms or does not, and reading ast.Name alone is a narrower reach
+        than the sentence beside it claims.
+
+        The vocabulary is taken from _passed_through's own text and the coverage from each
+        resolver's, so neither is remembered. A resolver taking values from _bindings without
+        covering the vocabulary -- directly, or through _passed_through or _reachable -- is
+        emitted and must be declared. Every declared entry is then RUN: the place it names has
+        to stay unreported, so an entry that gets covered later fails here and asks to be
+        deleted, and one that was never real fails immediately.
+        """
+        source = HERE.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+
+        def forms_named(where):
+            """Which ast node types these nodes name, read off their own text."""
+            return {inner.attr for node in where for inner in ast.walk(node)
+                    if isinstance(inner, ast.Attribute)
+                    and isinstance(inner.value, ast.Name) and inner.value.id == "ast"}
+
+        written_as = {node.name: node for node in parsed.body
+                      if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+        self.assertIn("_passed_through", written_as,
+                      "the vocabulary is derived from _passed_through, which is no longer here")
+        vocabulary = forms_named([written_as["_passed_through"]]) - {"Name"}
+        self.assertTrue(vocabulary,
+                        "the pass-through vocabulary derived as empty, so this check would pass"
+                        " by seeing nothing rather than by finding nothing")
+        # Asked of each binding loop rather than of the function around it. A resolver like
+        # _hands_on is many resolvers in one definition, and one of them reading ast.Name alone
+        # is invisible if the whole function is excused because some other part of it follows a
+        # value properly. That coarseness is the same fallacy one level up.
+        owner = {}
+        for top in parsed.body:
+            if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                for inner in ast.walk(top):
+                    owner[id(inner)] = top.name
+        narrow = {}
+        for node in ast.walk(parsed):
+            if not isinstance(node, ast.For):
+                continue
+            if not (isinstance(node.iter, ast.Call)
+                    and getattr(node.iter.func, "id", None) == "_bindings"):
+                continue
+            spelled = [part.id for part in getattr(node.target, "elts", [])
+                       if isinstance(part, ast.Name)]
+            value = spelled[1] if len(spelled) > 1 else (spelled[0] if spelled else None)
+            decided, routed = set(), False
+            for call in (inner for statement in node.body for inner in ast.walk(statement)
+                         if isinstance(inner, ast.Call)):
+                named = getattr(call.func, "id", None)
+                first = getattr(call.args[0], "id", None) if call.args else None
+                if named == "_passed_through" and first == value:
+                    routed = True
+                if named != "isinstance" or first != value:
+                    continue
+                decided |= forms_named(call.args[1:])
+            # A loop that hands the value to a helper is not deciding its reach; one that tests
+            # the value's type itself is, and what it does not test it cannot see.
+            if routed or not decided:
+                continue
+            if vocabulary - decided:
+                narrow.setdefault(owner.get(id(node), MODULE_LEVEL), set()).update(
+                    vocabulary - decided)
+        narrow = {name: sorted(missing) for name, missing in narrow.items()}
+        undeclared = sorted(set(narrow) - set(FOLLOWS_FEWER_VALUE_FORMS))
+        self.assertEqual(undeclared, [],
+                         "a resolver here follows values through fewer forms than the"
+                         " vocabulary and nobody wrote down which: "
+                         + json.dumps({name: narrow[name] for name in undeclared}))
+        stale = sorted(set(FOLLOWS_FEWER_VALUE_FORMS) - set(narrow))
+        self.assertEqual(stale, [],
+                         "declared as reading fewer forms, but it no longer does, so delete the"
+                         " entry: " + json.dumps(stale))
+        for name, (lines, place, why) in sorted(FOLLOWS_FEWER_VALUE_FORMS.items()):
+            with self.subTest(name):
+                self.assertTrue(why.strip(), name + " is declared without a reason")
+                self.assertNotIn(place, places_reached(REFUSAL, "\n".join(lines)),
+                                 name + ": the declared blind spot is inside the reach now, so"
+                                 " delete the entry rather than leave it claiming a limitation"
+                                 " that has gone")
+
     def test_no_reader_here_sees_only_the_unannotated_binding(self):
         """Support: a drift guard, derived from this file rather than written as a list.
 
@@ -7123,6 +7363,8 @@ HANDED = {
     "_assigned": NOTHING,
     "_names_module": NOTHING,
     "_visible_from": NOTHING,
+    "_passed_through": NOTHING,
+    "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
     "_class_spellings": NOTHING,
