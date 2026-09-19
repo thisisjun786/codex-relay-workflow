@@ -335,27 +335,49 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         unlink = [r for r in answer["results"] if r["step"] == "skill unlink"][0]
         self.assertIn(str(foreign), unlink["foreignLeft"])
 
-    def test_a_later_hook_is_preserved_and_its_renumbering_is_refused_first(self):
+    def test_a_hook_after_ours_in_the_same_group_is_refused_first_then_preserved(self):
+        """Removal pops out of its own group, so only later hooks in THAT group take a new index."""
         host = self.ready()
         document = host.hooks_document()
-        document["hooks"]["Stop"].append({"hooks": [{"type": "command", "command": "/bin/true"}]})
+        foreign = {"type": "command", "command": "/bin/true"}
+        document["hooks"]["Stop"][0]["hooks"].append(foreign)
         (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1)
         standdown = [r for r in answer["results"] if r["step"] == "hook standdown"][0]
         self.assertEqual(standdown["outcome"], "refused")
-        self.assertTrue(standdown["shiftedIdentities"])
+        self.assertEqual(standdown["shiftedIdentities"], ["user:Stop:0:1"])
         self.assertEqual(host.hooks_document(), document)
         code, answer = host.transition("--apply", "--accept-hook-renumbering")
         self.assertEqual(code, 0)
-        self.assertIn({"hooks": [{"type": "command", "command": "/bin/true"}]},
-                      host.hooks_document()["hooks"]["Stop"])
+        self.assertEqual(host.hooks_document()["hooks"]["Stop"][0]["hooks"], [foreign])
+
+    def test_a_hook_in_a_later_group_shifts_nothing_and_is_not_refused(self):
+        """An emptied group is left in place, so matcher indices never move.
+
+        Counting a later group's hook as shifted refused a transition that moves nothing and told
+        the operator its trust had been detached when it had not.
+        """
+        host = self.ready()
+        document = host.hooks_document()
+        foreign = {"hooks": [{"type": "command", "command": "/bin/true"}]}
+        document["hooks"]["Stop"].append(foreign)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
+        standdown = [r for r in answer["results"] if r["step"] == "hook standdown"][0]
+        self.assertEqual(standdown.get("shiftedIdentities", []), [])
+        groups = host.hooks_document()["hooks"]["Stop"]
+        self.assertEqual(groups, [{"hooks": []}, foreign])
+        # Its identity is what trust is recorded against, and it is unchanged.
+        _, seen = host.call("inspect")
+        self.assertEqual([item["identity"] for item in seen["host"]["hook"]["entries"]], [])
 
     def test_the_plugin_settings_are_never_written_while_a_registration_remains(self):
         """The never-two invariant: the settings step is unreachable unless standdown settled."""
         host = self.ready()
         document = host.hooks_document()
-        document["hooks"]["Stop"].append({"hooks": [{"type": "command", "command": "/bin/true"}]})
+        document["hooks"]["Stop"][0]["hooks"].append({"type": "command", "command": "/bin/true"})
         (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
         code, answer = host.transition("--apply")
         outcomes = self.host.outcomes(answer)
@@ -676,6 +698,10 @@ class TheFindingsFromReview(TransitionCase):
         document, name = inventory.newest_retired(host.home)
         self.assertEqual(document["markerRoot"], str(host.marker / "round11"),
                          "recovered " + str(name))
+        # Past the padding too: the suffix is compared as a number, so 1000 does not sort under 999.
+        stem = "crw-completion-hook.json.superseded-"
+        self.assertGreater(inventory.archive_order(host.home / (stem + "20260101T000000Z-1000"), stem),
+                           inventory.archive_order(host.home / (stem + "20260101T000000Z-999"), stem))
 
     def test_a_nested_server_table_is_not_proven_and_is_left_alone(self):
         """[mcp_servers.<name>.env] belongs to the same registration even though it is a header."""
@@ -705,6 +731,33 @@ class TheFindingsFromReview(TransitionCase):
         outcomes = {item["step"]: item["outcome"] for item in results}
         self.assertEqual(outcomes.get("mcp record retire"), "already_done", json.dumps(results)[:800])
         self.assertEqual(host.record(), installed)
+
+    def test_a_populated_override_is_refused_before_anything_is_removed(self):
+        """A valid document at the override path passes every other reading, so only this catches it.
+
+        The packaged launcher reads one fixed path and ignores this override, so the plugin-owned
+        document would be written where no launcher looks. Discovered at the write, that is
+        discovered after the working registration has been removed and both settings files moved
+        aside: an aborted transition that leaves the host with no completion hook at all.
+        """
+        host = self.ready()
+        elsewhere = host.root / "elsewhere.json"
+        elsewhere.write_text(json.dumps(host.settings()), encoding="utf-8")
+        before = (host.hooks_document(), host.settings(), host.record(), host.config())
+        done = run([CLI, "--codex-home", host.home, "transition", "--apply",
+                    "--accept-hook-trust-gap"],
+                   env={**os.environ, "CRW_COMPLETION_HOOK_CONFIG": str(elsewhere)})
+        answer = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(answer["results"][0]["outcome"], "refused")
+        self.assertIn("CRW_COMPLETION_HOOK_CONFIG", answer["results"][0]["detail"])
+        self.assertEqual({r["step"]: r["outcome"] for r in answer["results"][1:]},
+                         {r["step"]: "not_reached" for r in answer["results"][1:]})
+        # Nothing removed, nothing moved, and the override file itself untouched.
+        self.assertEqual((host.hooks_document(), host.settings(), host.record(), host.config()),
+                         before)
+        self.assertEqual(sorted(host.home.glob("*.superseded-*")), [])
+        self.assertTrue(elsewhere.is_file())
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""

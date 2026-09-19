@@ -306,19 +306,42 @@ def read_hook(codex_home, event=None, *, destination=None, repo_root=None):
                                            "why": "names the packaged adapter or the destination"
                                                   " but is not a registration this repository"
                                                   " wrote"})
-    identities = [item["identity"] for item in inventory_all]
-    # The union across every entry being removed, and only identities that are not themselves being
-    # removed. Assigning per entry kept the last one's list and under-reported what would shift.
+    # What actually shifts, and nothing else. Removal pops an entry out of ITS OWN matcher group's
+    # hooks list, and an emptied group is left in place, so matcher indices never move: only hooks
+    # later in the SAME group take a new index. A flattened list also counted a foreign hook in a
+    # later group, which refused a transition that shifts nothing and claimed a trust was detached
+    # when it was not.
+    def position(identity):
+        parts = identity.split(":")
+        return int(parts[-2]), int(parts[-1])
+
     ours = {entry["identity"] for entry in answer["entries"]}
+    removed = [position(identity) for identity in ours]
     shifted = []
-    for entry in answer["entries"]:
-        if entry["identity"] not in identities:
+    for item in inventory_all:
+        if item["identity"] in ours:
             continue
-        position = identities.index(entry["identity"])
-        shifted += [name for name in identities[position + 1:]
-                    if name not in ours and name not in shifted]
+        matcher, index = position(item["identity"])
+        if any(matcher == cut_matcher and index > cut_index
+               for cut_matcher, cut_index in removed):
+            shifted.append(item["identity"])
     answer["later"] = shifted
     return answer
+
+
+def archive_order(path, stem):
+    """Sort key for a retired archive: its stamp, then its collision suffix as a NUMBER.
+
+    Padding keeps lexical order only as far as the padding goes, and the next collision after it
+    sorts back under the previous one. Parsing the suffix removes the bound rather than moving it,
+    and an unparsable name sorts first so it can never be chosen as the newest.
+    """
+    tail = str(Path(path).name)[len(stem):]
+    stamp, _, suffix = tail.partition("-")
+    try:
+        return (stamp, int(suffix) if suffix else 0)
+    except ValueError:
+        return ("", -1)
 
 
 def newest_retired(codex_home):
@@ -329,7 +352,9 @@ def newest_retired(codex_home):
     the difference between re-enabling an installation and pointing it at a fresh empty store.
     """
     home = Path(codex_home)
-    found = sorted(p for p in home.glob(completion.CONFIG_NAME + ".superseded-*") if p.is_file())
+    stem = completion.CONFIG_NAME + ".superseded-"
+    found = sorted((p for p in home.glob(stem + "*") if p.is_file()),
+                   key=lambda path: archive_order(path, stem))
     for candidate in reversed(found):
         try:
             document = json.loads(candidate.read_text(encoding="utf-8"))

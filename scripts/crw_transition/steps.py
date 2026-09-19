@@ -70,7 +70,9 @@ def _executable(path):
 def _retired_record(host):
     """The most recently retired bridge record that still reads as one, or None."""
     home = Path(host["codexHome"])
-    found = sorted(p for p in home.glob(bridgerecord.RECORD_NAME + ".superseded-*") if p.is_file())
+    stem = bridgerecord.RECORD_NAME + ".superseded-"
+    found = sorted((p for p in home.glob(stem + "*") if p.is_file()),
+                   key=lambda path: inventory.archive_order(path, stem))
     for candidate in reversed(found):
         document, outcome, _detail = bridgerecord.read(candidate)
         if document is not None:
@@ -177,6 +179,14 @@ def preflight(host, options):
                 if not _executable(path):
                     refusals.append(label + " at " + str(path) + " is not an executable file, so"
                                     " recording it would name something that cannot run")
+
+    # Checked here, before the standdown, because the packaged launcher reads one fixed path and
+    # ignores this override: with it set, the plugin-owned document would be written where no
+    # launcher looks. Discovering that at the write means discovering it after the working
+    # registration has been removed and both settings files moved aside, which leaves the host with
+    # no completion hook and an explanation. A populated override also passes every other reading,
+    # so nothing else here catches it.
+    refusals.extend(completion.override_complaints(completion.OWNER_PLUGIN))
 
     document = host["settings"].get("document")
     budget = (document or {}).get("timeoutSeconds")
