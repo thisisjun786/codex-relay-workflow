@@ -1622,8 +1622,13 @@ is recorded. Four of the seven need an input the command cannot supply for itsel
 
 # The receipt directory has to exist before the first write, or the baseline redirect and the
 # install redirect below both fail -- and the second of those stops the install from running at
-# all rather than merely losing a file.
-mkdir -p <receipt>
+# all rather than merely losing a file. It has to be a NEW one. Every reading below is written
+# under a fixed name, and two of them are pairs where one run writes only one of the two names,
+# so a directory still holding an earlier run's files is two runs wearing one name: a guard
+# further down would find that run's snapshot and report a comparison this run never took.
+# mkdir without -p is the check, because it fails rather than adopting a directory already
+# there. Name the receipt under a parent that exists, and a new one for every run.
+mkdir <receipt>
 
 # One controller for the whole block, on 3.11 or newer. Five of the steps below read a Codex
 # configuration and they do not fail alike without a reader, so naming the interpreter once is
@@ -1754,20 +1759,28 @@ else
 fi
 
 # The comparison reads the two snapshots the receipt now holds, so a later reader can re-take
-# exactly this reading from the receipt alone. It runs only when there are two of them: on a
-# fresh Codex home the branch before the install wrote config.before.absent and no
-# config.before.toml at all, and this reader opens its inputs by name, so an unguarded run ends
-# in FileNotFoundError with no reading written anywhere. Where a side is absent there were no
-# model or permission keys to preserve on that side, and the row is recorded as that absence --
-# not as a preservation, and not as a failure. Which side was absent is not guessed here: the
-# config.before.* and config.after.* names in the receipt already say it.
+# exactly this reading from the receipt alone. Which branch runs is decided by what THIS run
+# recorded, and the absence markers are read first for that reason. On a fresh Codex home the
+# branch before the install wrote config.before.absent and no config.before.toml at all, and
+# this reader opens its inputs by name: a comparison that ran anyway would end in
+# FileNotFoundError with no reading written, or -- in a receipt carrying an older run's files
+# -- would compare that run's snapshot and record it as this run's preservation. Where a side
+# was absent there were no model or permission keys to preserve on that side, and the row is
+# recorded as that absence, not as a preservation and not as a failure. Which side it was is
+# not guessed here: the config.before.* and config.after.* names in the receipt already say it.
 # Name a 3.11 or later interpreter, because the reader arrives there. On a host whose python3
 # is the 3.10 floor this command exits before it reads anything, and the receipt then records
 # what the suite records on that interpreter: the reading was not made, and the row is
 # unreadable rather than preserved. The exit line and the captured stderr beside it are what
 # say so. Do not substitute a pattern match for it -- a value guessed out of TOML is a value
 # whose wrongness is invisible.
-if [ -f <receipt>/config.before.toml ] && [ -f <receipt>/config.after.toml ]; then
+if [ -f <receipt>/config.before.absent ] || [ -f <receipt>/config.after.absent ]; then
+    printf '%s\n%s\n' \
+        'no comparison was made: a side of it was absent during this run' \
+        'config.before.* and config.after.* in this receipt name which side' \
+        > <receipt>/config.preservation.absent
+    cat <receipt>/config.preservation.absent
+elif [ -f <receipt>/config.before.toml ] && [ -f <receipt>/config.after.toml ]; then
     "$controller" -c 'import sys, tomllib
 keys = ("model", "approval_policy", "sandbox_mode")
 for path in sys.argv[1:]:
@@ -1779,7 +1792,8 @@ for path in sys.argv[1:]:
     printf 'preservation exit=%s\n' "$?" > <receipt>/config.preservation.exit
     cat <receipt>/config.preservation.txt
 else
-    printf 'no comparison was made: this receipt does not hold both snapshots\n' \
+    printf '%s\n' \
+        'no comparison was made: a side of it has neither a snapshot nor an absence here' \
         > <receipt>/config.preservation.absent
     cat <receipt>/config.preservation.absent
 fi
