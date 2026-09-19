@@ -156,6 +156,13 @@ def outcome_for(wanted, found):
     # Compared on identity, and on identity alone, so this and the ownership check that runs
     # before it cannot disagree about what counts as the same record. An existing installedBy
     # is left where it is rather than rewritten, which is what keeps the rerun idempotent.
+    #
+    # Identity alone is not enough to call a record installed, though. A file that gained an
+    # unsupported version while keeping its identity is one the launcher refuses to act on, so
+    # reporting it unchanged would leave a run exiting 0 over a record that cannot start the
+    # bridge. Readable first, then the same registration.
+    if complaints(found.value):
+        return DIFFERS
     return UNCHANGED if same_registration(found.value, wanted) else DIFFERS
 
 

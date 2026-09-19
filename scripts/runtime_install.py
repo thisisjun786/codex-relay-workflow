@@ -2148,6 +2148,7 @@ def cmd_hook(args):
         event = args.event or completion.EVENT
         refused = (completion.registration_complaints(args.event)
                    + completion.budget_complaints(args.guard_timeout, args.timeout))
+        refused += completion.override_complaints(owner)
         interpreter = wanted = None
         if not refused:
             try:

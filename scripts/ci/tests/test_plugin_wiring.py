@@ -251,6 +251,29 @@ class OwnershipTest(unittest.TestCase):
             "--guard-timeout", str(completion.LAUNCHER_CEILING_SECONDS), "--apply")
         self.assertEqual(status, 0, output)
 
+    def test_a_relative_settings_override_is_refused_for_the_plugin_owner(self):
+        """The launcher resolves it from the session workspace, not from where this ran."""
+        environment = dict(os.environ, CRW_COMPLETION_HOOK_CONFIG="hook/settings.json")
+        finished = subprocess.run(
+            [sys.executable, str(RUNTIME_INSTALL), "hook", "--adapter", "completion",
+             "--codex-home", str(self.home.codex_home), "--dest", str(self.home.destination),
+             "--owner", "plugin", "--apply"], capture_output=True, text=True, env=environment)
+        self.assertNotEqual(finished.returncode, 0, finished.stdout)
+        self.assertIn("CRW_COMPLETION_HOOK_CONFIG", finished.stdout)
+        self.assertFalse(self.home.settings.exists(), finished.stdout)
+
+    def test_an_absolute_settings_override_is_accepted(self):
+        """The positive control: only the spelling that cannot be found again is refused."""
+        settled = self.home.codex_home / "elsewhere" / "settings.json"
+        environment = dict(os.environ, CRW_COMPLETION_HOOK_CONFIG=str(settled))
+        finished = subprocess.run(
+            [sys.executable, str(RUNTIME_INSTALL), "hook", "--adapter", "completion",
+             "--codex-home", str(self.home.codex_home), "--dest", str(self.home.destination),
+             "--owner", "plugin", "--apply"], capture_output=True, text=True, env=environment)
+        self.assertEqual(finished.returncode, 0, finished.stdout + finished.stderr)
+        self.assertTrue(settled.exists(), finished.stdout)
+
+
 
 # ---------------------------------------------------------------- the bridge MCP record
 
@@ -418,6 +441,17 @@ class BridgeRecordTest(unittest.TestCase):
         self.assertEqual(emitted["record"]["outcome"], bridgerecord.UNCHANGED, output)
         self.assertEqual(self.record.read_bytes(), before,
                          "the recorded issue is left where it is: " + output)
+
+    @unittest.skipUnless(TOML_READER, "reading the configuration needs Python 3.11")
+    def test_a_record_this_launcher_could_not_act_on_is_not_unchanged(self):
+        """Identity is not enough to call a record installed. A version the launcher refuses
+        would otherwise let this command exit 0 over a bridge that cannot start."""
+        self.assertEqual(self.register("--apply")[0], 0)
+        document = json.loads(self.record.read_text(encoding="utf-8"))
+        document["recordVersion"] = bridgerecord.RECORD_VERSION + 1
+        self.record.write_text(json.dumps(document), encoding="utf-8")
+        status, emitted, output = self.register("--apply")
+        self.assertNotEqual(status, 0, output)
 
     def test_the_record_identity_is_what_codex_starts(self):
         base = bridgerecord.document(command="/opt/x/bin/codex-thread-bridge",

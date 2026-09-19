@@ -158,6 +158,31 @@ def budget_complaints(guard_timeout, registered_timeout):
     return found
 
 
+def override_complaints(owner, environ=None):
+    """Whether the settings path this owner would install can be found again at every Stop.
+
+    The user owner writes the path it resolved into the command it registers, so a relative
+    override is settled once, at install time, and never resolved again. A plugin-declared
+    command carries no such argument: the launcher resolves the override itself, from the
+    session's own workspace, which is not where the install ran. The same spelling then names
+    a different file or none, and a Stop that cannot find its settings releases in silence.
+
+    Refused at installation rather than papered over in the launcher, because this is the one
+    moment where both meanings of the value are visible at once.
+    """
+    if owner != OWNER_PLUGIN:
+        return []
+    environ = os.environ if environ is None else environ
+    override = environ.get(CONFIG_ENV)
+    if override and not os.path.isabs(str(Path(override).expanduser())):
+        return [CONFIG_ENV + " is set to the relative path " + str(override) + ", and a "
+                + OWNER_PLUGIN + "-owned registration resolves it again from each session's"
+                " own workspace rather than from here; every Stop would look for a different"
+                " file. Set it to an absolute path, or unset it and let the settings sit in"
+                " the Codex home"]
+    return []
+
+
 def registration_complaints(event):
     """Whether a registration this command is about to make is one this adapter can act on.
 
