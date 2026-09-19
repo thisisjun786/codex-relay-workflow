@@ -2869,6 +2869,22 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("no SessionStart hook at all", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
+    def test_a_cache_that_makes_the_bridge_required_is_refused(self):
+        """Same command, same arguments, and a failure to start now ends the session."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "mcp.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        self.assertIs(document["mcpServers"]["codex-thread-bridge"]["required"], False)
+        document["mcpServers"]["codex-thread-bridge"]["required"] = True
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("required", answer["results"][0]["detail"])
+        self.assertIn("The replacement has to be that same map", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

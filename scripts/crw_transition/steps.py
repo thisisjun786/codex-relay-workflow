@@ -432,10 +432,19 @@ def _declared(root, repo_root):
                           + type(error).__name__ + ": " + str(error) + ")")
             document = {}
         for name, entry in ((document or {}).get("mcpServers") or {}).items():
-            words = [str((entry or {}).get("command") or "")]
-            words += [str(word) for word in ((entry or {}).get("args") or [])]
-            shape = _shape(words)
-            servers[name] = shape or ("a command this cannot read: " + repr(" ".join(words)))
+            entry = entry if isinstance(entry, dict) else {}
+            words = [str(entry.get("command") or "")]
+            words += [str(word) for word in (entry.get("args") or [])]
+            shape = _shape(words) or ("a command this cannot read: " + repr(" ".join(words)))
+            # Everything else the entry carries, compared rather than enumerated. required moved
+            # from false to true turns a bridge that may fail to start into one whose failure
+            # ends the session, and cwd decides what the relative launcher path in args resolves
+            # against -- neither touches the command, and a comparison of command and arguments
+            # alone reads both as this repository's registration. Fields nobody here knows about
+            # are compared for the same reason: what makes the cache the replacement is that it
+            # declares THIS entry, not one that merely starts the same program.
+            rest = {key: value for key, value in entry.items() if key not in ("command", "args")}
+            servers[name] = shape + " with " + json.dumps(rest, sort_keys=True, default=repr)
     return events, servers, unread
 
 
