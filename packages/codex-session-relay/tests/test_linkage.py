@@ -1616,5 +1616,30 @@ class TheEleventhRoundFoundTheseToo(LinkageTestCase):
         self.assertIsNotNone(held, "supersession took a claim it had already released")
         self.assertEqual(held["taskId"], CHILD)
 
+    def test_a_handover_driven_from_the_command_line_keeps_the_cxc_session(self):
+        """The CLI built the replacement Endpoint without a session, so every handover made
+        through it recorded none. That became destructive rather than merely incomplete once
+        reactivation started writing the endpoint: a returning owner's stored session was
+        overwritten with null by the very call meant to bring it up to date.
+        """
+        import argparse
+
+        from codex_session_relay import cli
+
+        self.linkage.bind_scope(
+            role=linkage.PARENT, scope_key=PROJECT,
+            endpoint=Endpoint(PARENT, HOST, cwd="/parent", cxc_session="cxc-first"))
+        parsed = cli.build_parser().parse_args([
+            "linkage-handover", "--role", "parent", "--scope", PROJECT,
+            "--expect-task", PARENT, "--task", OTHER_PARENT, "--host", HOST,
+            "--cwd", "/replacement", "--cxc-session", "cxc-replacement",
+            "--evidence", "the project changed hands", "--actor", "test",
+        ])
+        cli.cmd_linkage_handover(argparse.Namespace(linkage=self.linkage), parsed)
+        owner = self.linkage.owner(linkage.PROJECT, PROJECT)
+        self.assertEqual(owner["taskId"], OTHER_PARENT)
+        self.assertEqual(owner["cwd"], "/replacement")
+        self.assertEqual(owner["_bindings"]["cxcSession"], "cxc-replacement")
+
 if __name__ == "__main__":
     unittest.main()

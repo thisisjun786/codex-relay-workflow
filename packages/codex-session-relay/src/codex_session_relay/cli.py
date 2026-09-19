@@ -378,7 +378,8 @@ def cmd_linkage_attach(services, args) -> dict:
 def cmd_linkage_handover(services, args) -> dict:
     return services.linkage.handover(
         role=args.role, scope_key=args.scope, expect_task_id=args.expect_task,
-        endpoint=Endpoint(args.task, args.host, cwd=args.cwd),
+        endpoint=Endpoint(args.task, args.host, cwd=args.cwd,
+                          cxc_session=args.cxc_session),
         acknowledged=args.acknowledge or [], evidence=args.evidence, actor=args.actor,
     )
 
@@ -1927,6 +1928,11 @@ def build_parser() -> argparse.ArgumentParser:
     handover.add_argument("--task", required=True)
     handover.add_argument("--host", required=True)
     handover.add_argument("--cwd")
+    handover.add_argument("--cxc-session",
+                          help="the replacement owner's CXC session, recorded on the new"
+                               " binding exactly as linkage-bind and linkage-supervise record"
+                               " it. A handover writes the endpoint it is given, so omitting"
+                               " this stores no session for the incoming owner")
     handover.add_argument("--acknowledge", action="append",
                           help="a relationship id the replacement owner is taking on. Repeat"
                                " once per unfinished assignment; linkage-outstanding lists"
