@@ -1342,11 +1342,17 @@ def reading_capability(record, relay):
                                   evidence="the creation response reported no permission profile,"
                                            " so a resume has nothing to be checked against"))
             else:
+                # The relay's own equality, not this module's stricter one. This cell predicts a
+                # specific downstream check rather than judging the profile itself, so comparing
+                # more strictly than that check does makes the prediction wrong in the direction
+                # that refuses a send the relay would have allowed. structurally_same refuses to
+                # let false be zero, which is right where a difference matters and wrong here.
+                agrees = profile == expected
                 cells.append(cell("permissionProfile:" + str(task),
-                                  VERIFIED if structurally_same(profile, expected)
-                                  else NOT_VERIFIED, probe=probe, provenance=EXECUTED,
+                                  VERIFIED if agrees else NOT_VERIFIED,
+                                  probe=probe, provenance=EXECUTED,
                                   evidence=("the store expects the whole profile this creation"
-                                            " reported" if structurally_same(profile, expected)
+                                            " reported" if agrees
                                             else "the creation reported "
                                             + json.dumps(shown(profile)) + " and the store"
                                             " expects " + json.dumps(shown(expected))

@@ -3475,6 +3475,25 @@ class ThirtySixthHostedRound(TrialCase):
         self.assertIn('profile = response.get("activePermissionProfile")', source)
         self.assertIn('self.data.get("expectedPermissionProfile")', source)
 
+    def test_the_comparison_is_the_relays_own_rather_than_a_stricter_one(self):
+        # The relay compares with Python equality, where a nested false and a nested zero are the
+        # same value. Comparing more strictly than the check this cell predicts refuses a send
+        # the relay would have allowed.
+        document = self.with_profile({"id": "profile-1", "rule": False},
+                                     {"id": "profile-1", "rule": 0})
+        self.assertEqual(
+            cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]["value"],
+            VERIFIED)
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
+    def test_a_profile_that_really_differs_still_refuses(self):
+        # Support: the looser comparison is the relay's, not an absence of one.
+        document = self.with_profile({"id": "profile-1", "rule": False},
+                                     {"id": "profile-1", "rule": True})
+        self.assertEqual(
+            cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
 
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
