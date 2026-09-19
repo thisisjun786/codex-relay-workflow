@@ -164,12 +164,19 @@ subprocess started.
 | `writesOutsideRoot` | a write to a path the run never named |
 
 A write is recorded by the call that made it, and what that call DID is a third reading beside it,
-because two answers were wrong in both directions in turn. `changedTheFile` says `changed` for
-`O_TRUNC`, `O_TMPFILE`, `O_CREAT` with `O_EXCL` and for every call that changes a path outright;
-`only_able_to_change` for a writable open carrying none of them; and `may_have_changed` for a plain
-`O_CREAT`, which created the file if it was absent and changed nothing if it was there. One trace line
-cannot tell those apart - the two `openat` lines are identical down to the flags, the mode and the
-returned descriptor - so it reports that it does not know rather than picking. The path stays in the
+because two answers were wrong in both directions in turn. One rule decides all three answers, and it
+runs in the positive direction: a call is read as having **changed** something only where it could not
+have succeeded without doing it. So `changedTheFile` says `changed` for `O_TRUNC`, `O_TMPFILE`,
+`O_CREAT` with `O_EXCL`, and for a `mkdir`, `rmdir`, `unlink`, `symlink`, `link`, `mknod` or
+`truncate` - each of which either fails outright where its work is already done or performs its
+operation regardless. It says `only_able_to_change` for a writable open carrying none of those flags.
+It says `may_have_changed` where the line, and what it carries of the state before it, leave both
+readings open, and two call families land there. A plain `O_CREAT` created the file if it was absent
+and changed nothing if it was there, and the two `openat` lines are identical down to the flags, the
+mode and the returned descriptor. A successful `rename` between a name and itself, or between two
+names for one file, returns success and performs no other action, and its line carries two paths and a
+zero with no inode and nothing from before the call. Neither is answered either way, because answering
+would supply the half of the evidence the trace does not have. The path stays in the
 writes either way: the cell that judges asks where the process wrote, not how certain anyone is.
 Each path reported outside the root carries its own answer, and `changedAFile` and
 `mayHaveChangedAFile` count the two determined and undetermined kinds separately.
@@ -179,6 +186,13 @@ checkout's entry point. They are not resolved first, and that is deliberate: a r
 run answers about the filesystem as it is afterwards, so a symlink standing where the entry point belongs,
 repointed at the real file by the program it started, resolves to exactly the right answer. The resolved
 forms are recorded beside the readings and decide nothing.
+
+Containment does resolve, and a path this interpreter cannot resolve makes `writesOutsideRoot`
+**unreadable** rather than ending the comparison. A symlink loop raises `RuntimeError` on 3.10, 3.11 and
+3.12, `expanduser` raises one wherever it cannot name the home a path asks for, and a path carrying a NUL
+raises `ValueError` on every supported runtime - so a handler catching only `OSError` let one entry take
+down every reading the firing had already taken, including which executable started and from what command.
+The failure belongs to the one reading resting on that path, and the rest of the document is still owed.
 
 A parser that read nothing answers "nothing was written outside" exactly as convincingly as a run that
 wrote nothing outside. So every on-arm firing must have been **seen writing something inside the root**.

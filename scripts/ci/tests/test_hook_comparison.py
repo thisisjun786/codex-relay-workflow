@@ -17,6 +17,7 @@ case would buy nothing but minutes.
 """
 
 import ast
+import io
 import json
 import os
 from pathlib import Path
@@ -1409,6 +1410,212 @@ CHANGES_PER_CALL = {
     "rename": 2, "renameat": 2, "renameat2": 2,
 }
 
+# Every place the harness asks the FILESYSTEM where a path leads, and what kind of place each one
+# is. A reading has to ANSWER rather than raise: a path nobody can resolve is a reading that was
+# not taken, and the run still owes a document carrying every other reading it did take. Setup is
+# different in kind - if the run cannot make its own directory there is nothing to report on - but
+# the setup that runs before the document handler exists still has to refuse rather than end the
+# command with nothing on stdout at all.
+WHERE_A_PATH_IS_RESOLVED = {
+    "_leads_to": "a reading, which has to answer",
+    "main": "setup, before there is a document to carry a refusal",
+    "own_directory": "setup, reached from main's own handler",
+    "build": "setup, inside the run whose failure already becomes the refusal document",
+    "source_identity": "setup, inside the run whose failure already becomes the refusal document",
+    "<module>": "the checkout root, resolved once at import, with no run to report on",
+}
+
+# The two of those that must not let a resolution escape them. The rest already run inside the
+# handler that turns a failed run into the one document this command promises.
+MUST_NOT_LET_A_RESOLUTION_ESCAPE = ("_leads_to", "main")
+
+# Which writes in the table can succeed HAVING PERFORMED NO ACTION, and so cannot report a change
+# as certain. Written here rather than imported, and compared against an answer derived from the
+# harness's own table, so a call added to either side has to be decided rather than inherited.
+CAN_SUCCEED_HAVING_DONE_NOTHING = ("rename", "renameat", "renameat2")
+
+
+class _ArmStandIn(object):
+    """The three things witness_payload reads off an arm, without building a destination.
+
+    A real arm runs two installs and needs a relay. What the case below needs is one firing whose
+    trace carries a path nobody can resolve, which is a question about the reading rather than
+    about the install, and building the destination would only decide whether it can run at all.
+    """
+
+    def __init__(self, root):
+        self.run_root = Path(root)
+        self.launcher = Path(root) / "codex-session-relay"
+        self.tracer = {"usable": True, "tracer": "/usr/bin/strace", "because": None}
+
+
+class AReadingTheTraceCannotTakeSaysSoRatherThanAnsweringTests(unittest.TestCase):
+    """The third ground for done, at the two places in the witness that had not caught up to it.
+
+    Both are the same fold. A rename whose success establishes nothing was reported as a change
+    that had certainly happened, which is an unknown answered with the clean value. A path this
+    interpreter cannot resolve raised past the reading, which is an unknown answered by taking
+    down every reading beside it. Each case measures the behaviour first and then asks the
+    harness about it, so neither rests on what this file believes a syscall or an interpreter
+    does.
+    """
+
+    def scratch(self):
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-unreadable-"))
+        self.addCleanup(shutil.rmtree, str(root), True)
+        return root.resolve()
+
+    def test_a_rename_between_two_names_for_one_file_is_not_read_as_a_move(self):
+        """The kernel is measured performing the no-op, then the harness is asked about it."""
+        self.assertTrue(hasattr(harness, "_what_a_path_call_did"),
+                        "a successful rename is reported as a completed change, though a rename"
+                        " between two names for one file succeeds and moves neither of them")
+        root = self.scratch()
+        one, two = root / "one", root / "two"
+        one.write_text("x", encoding="utf-8")
+        os.link(str(one), str(two))
+        os.rename(str(one), str(two))
+        self.assertEqual([one.exists(), two.exists()], [True, True],
+                         "this kernel removed a name that the call is specified to leave alone,"
+                         " so what follows would be measuring something else")
+        seen = harness.parse_trace(
+            '11 rename("' + str(one) + '", "' + str(two) + '")            = 0\n', str(root))
+        self.assertEqual([entry["changedTheFile"] for entry in seen["writes"]],
+                         ["may_have_changed", "may_have_changed"],
+                         "the harness read a rename just measured performing no action as a"
+                         " change it had certainly made, and changedAFile counts that field")
+
+    def test_the_calls_whose_success_required_the_change_still_report_one(self):
+        """The control in the other direction, which is the half that makes the count mean
+        anything: uncertainty preserved everywhere measures nothing, and a real change read as
+        may-have-changed trades a false positive for a false negative."""
+        root = self.scratch()
+        seen = harness.parse_trace(
+            '11 mkdir("' + str(root / "made") + '", 0777)                = 0\n'
+            '11 unlink("' + str(root / "gone") + '")                     = 0\n'
+            '11 symlink("/elsewhere", "' + str(root / "link") + '")      = 0\n'
+            '11 mknod("' + str(root / "node") + '", S_IFIFO|0666)        = 0\n'
+            '11 truncate("' + str(root / "cut") + '", 0)                 = 0\n', str(root))
+        self.assertEqual(len(seen["writes"]), 5)
+        self.assertEqual(sorted(set(entry["changedTheFile"] for entry in seen["writes"])),
+                         ["changed"],
+                         "a call that fails outright where its work is already done was read as"
+                         " uncertain, so a change that did happen no longer reports as one")
+
+    def test_a_path_this_interpreter_cannot_resolve_is_unreadable_rather_than_a_raise(self):
+        """Two real ways a resolution fails with something that is not an OSError.
+
+        A NUL in the path raises ValueError on every interpreter this repository supports. A
+        symlink loop raises RuntimeError on 3.10, 3.11 and 3.12, and stopped raising on 3.13,
+        which rebuilt resolve() on realpath - so that half asserts the answer where the
+        interpreter can produce the failure and that nothing escaped where it cannot.
+        """
+        self.assertTrue(hasattr(harness, "RESOLUTION_FAILURES"),
+                        "what a resolution can fail with is not decided in one place, so a path"
+                        " that fails with anything but an OSError escapes the reading")
+        root = self.scratch()
+        answered = harness.owned(str(root) + "/carries-a\x00nul", root, harness.THROUGH)
+        self.assertTrue(harness.not_read(answered),
+                        "a path this interpreter cannot resolve at all was answered as though"
+                        " it had been resolved")
+        self.assertEqual(answered.state, "ACCESS_ERROR")
+        looped, partner = root / "loops-back", root / "and-back-again"
+        os.symlink(str(partner), str(looped))
+        os.symlink(str(looped), str(partner))
+        answer = harness.owned(str(looped), root, harness.THROUGH)
+        if _cannot_resolve_a_loop():
+            self.assertTrue(harness.not_read(answer),
+                            "a symlink loop raised past the reading instead of becoming one")
+            self.assertEqual(answer.state, "ACCESS_ERROR")
+        else:
+            self.assertIn(answer, (True, False),
+                          "an interpreter that resolves a loop without raising still gave no"
+                          " answer about where the path led")
+
+    def test_one_unresolvable_path_does_not_take_down_the_readings_beside_it(self):
+        """The half that is the finding: the loop is not the damage, the collateral is.
+
+        One firing's trace carries a healthy write and a path that cannot be resolved. What has
+        to survive is everything the run read that had nothing to do with that path - which
+        executable the kernel started, from what command, at what entry point, whether anything
+        re-executed, and the counts - while the one reading resting on that path says it was not
+        taken. A resolution raising past its caller loses all of them over one entry.
+        """
+        if not _cannot_resolve_a_loop():
+            self.skipTest("this interpreter resolves a symlink loop without raising, so the"
+                          " collateral this case is about cannot be produced on it")
+        root = self.scratch()
+        looped, partner = root / "loops-back", root / "and-back-again"
+        os.symlink(str(partner), str(looped))
+        os.symlink(str(looped), str(partner))
+        entry = str(ROOT / "scripts" / completion.ENTRY_POINT_NAME)
+        argv = [sys.executable, entry, "settings.json"]
+        fired = {"argv": list(argv), "tracerSaid": "", "tracerArgv": ["strace"],
+                 "tracePath": str(root / "firing.strace"),
+                 "trace": harness.parse_trace(
+                     '11 execve("' + sys.executable + '", ["' + '", "'.join(argv)
+                     + '"], 0x0 /* 0 vars */) = 0\n'
+                     '11 mkdir("' + str(root / "inside") + '", 0777)   = 0\n'
+                     '11 openat(AT_FDCWD, "' + str(looped) + '", O_WRONLY|O_CREAT|O_TRUNC,'
+                     ' 0666) = 3\n', str(root))}
+        try:
+            payload = harness.witness_payload(_ArmStandIn(root), fired)
+        except Exception as error:
+            self.fail("one entry nobody could resolve ended the whole reading with "
+                      + type(error).__name__ + ": " + str(error)[:200] + ", so every answer"
+                      " this firing had already taken was lost with it")
+        self.assertTrue(harness.not_read(payload["writesOutsideRoot"]),
+                        "the one reading that rests on an unresolvable path answered anyway")
+        self.assertEqual(payload["startedExecutable"], sys.executable,
+                         "a reading with nothing to do with that path did not survive it")
+        self.assertEqual(payload["startedCommand"], harness.COMMAND_AS_REGISTERED)
+        self.assertEqual(payload["startedEntryPoint"], entry)
+        self.assertEqual(payload["unexpectedExecutions"], [])
+        self.assertEqual(payload["witnessed"]["writesSeen"], 2,
+                         "the writes beside the unresolvable one were lost with it")
+
+    @unittest.skipUnless(HAVE_RELAY, "below the relay's floor main refuses for that reason"
+                                     " first, and the root is never reached")
+    def test_a_root_whose_home_nobody_can_name_is_a_refusal_rather_than_nothing_at_all(self):
+        """The same class at the other resolution site, and not a question about old runtimes.
+
+        expanduser() raises RuntimeError where it cannot name the home a path asks for, on all
+        five interpreters measured, 3.13 and 3.14 included. It runs before the handler that
+        turns a failed run into the one document this command promises, so catching only OSError
+        there ended the command with a traceback and nothing on stdout.
+        """
+        written = io.StringIO()
+        try:
+            with mock.patch.object(sys, "stdout", written):
+                status = harness.main(["--root", "~no-such-user-crw-102/somewhere"])
+        except Exception as error:
+            self.fail("the command ended with " + type(error).__name__ + ": "
+                      + str(error)[:200] + " and nothing on stdout, where it promises one"
+                      " document however the run turns out")
+        self.assertEqual(status, 2)
+        answer = json.loads(written.getvalue())
+        self.assertIn("RuntimeError", answer.get("refused", ""),
+                      "the run ended without a document saying what it could not do: "
+                      + json.dumps(answer)[:400])
+
+
+def _cannot_resolve_a_loop():
+    """Whether THIS interpreter raises on a symlink loop, asked by making one rather than by
+    comparing version numbers."""
+    where = tempfile.mkdtemp(prefix="hook-comparison-loop-")
+    try:
+        one, two = os.path.join(where, "a"), os.path.join(where, "b")
+        os.symlink(two, one)
+        os.symlink(one, two)
+        try:
+            Path(one).resolve()
+        except Exception:
+            return True
+        return False
+    finally:
+        shutil.rmtree(where, ignore_errors=True)
+
+
 class TheTraceParserCases(unittest.TestCase):
     """SUPPORT. Drift guards on the parser the witness rests on, not evidence for a criterion.
 
@@ -1419,6 +1626,25 @@ class TheTraceParserCases(unittest.TestCase):
 
     def parse(self, *lines):
         return harness.parse_trace("\n".join(lines) + "\n", "/somewhere")
+
+    def test_only_the_calls_that_can_succeed_having_done_nothing_answer_the_middle_value(self):
+        """SUPPORT, and the sweep predicate: asked of every write in the harness's own table
+        rather than of the three names a review happened to report."""
+        self.assertTrue(hasattr(harness, "_what_a_path_call_did"),
+                        "what a write's success establishes is not asked anywhere, so every"
+                        " successful write reports a change it may not have made")
+        writes = sorted(name for name, one in harness.TRACED_CALLS.items()
+                        if one[0] == harness.WRITES)
+        uncertain = sorted(name for name in writes
+                           if harness._what_a_path_call_did(name) == harness.MAY_HAVE_CHANGED)
+        self.assertEqual(uncertain, sorted(CAN_SUCCEED_HAVING_DONE_NOTHING),
+                         "the set of writes whose success establishes nothing has moved. Either"
+                         " a call joined the table that can succeed having performed no action,"
+                         " or one that cannot stopped reporting the change its success required:"
+                         " " + json.dumps(uncertain))
+        self.assertGreater(len(set(writes) - set(uncertain)), 10,
+                           "almost every write in this table still has to report the change its"
+                           " success required, and this many no longer do")
 
     def test_an_interrupted_call_is_rejoined_with_the_half_that_resumed_it(self):
         seen = self.parse(
@@ -2863,7 +3089,10 @@ UNREADABLE_PRODUCERS = {
     "working_tree": ("UNREADABLE", "ACCESS_ERROR", "UNREADABLE"),
     "_digest": ("UNREADABLE", "ACCESS_ERROR"),
     "repository_commit": ("UNREADABLE", "ACCESS_ERROR", "UNREADABLE"),
-    "owned": ("ACCESS_ERROR",),
+    # Containment's resolution, which moved out of owned() into the one place this file asks
+    # the filesystem where a path leads. The question could not be asked of that path at all,
+    # so it answers with the access error rather than with the plainer one.
+    "_leads_to": ("ACCESS_ERROR",),
     # The witness answers with an access error where the host carries no tracer - the question
     # could not be asked at all - and with an unreadable one where a tracer ran and what it wrote
     # could not be read. Two different facts about the same missing answer, kept apart here for
@@ -2923,6 +3152,32 @@ class TheReadFailureInventoriesAreDerivedTests(unittest.TestCase):
     A sentence naming how many producers or consumers were migrated is the thing that goes stale,
     and this file's own history is checks whose reach was narrower than the property they claimed.
     """
+
+    def test_every_place_that_asks_where_a_path_leads_is_declared(self):
+        """SUPPORT, and the sweep predicate for the resolution: one decision rather than an
+        except clause added wherever a failure was last reported."""
+        tree = _harness_tree()
+        _parents, owner = _owners(tree)
+        found = {}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("resolve", "expanduser")):
+                found.setdefault(owner.get(node, "<module>"), set()).add(node.func.attr)
+        self.assertEqual(sorted(found), sorted(WHERE_A_PATH_IS_RESOLVED),
+                         "a place asks the filesystem where a path leads that this check does"
+                         " not name. Say whether it is a reading, which has to answer rather"
+                         " than raise, or setup whose failure is allowed to become the refusal:"
+                         " " + json.dumps(sorted(found)))
+        for name in MUST_NOT_LET_A_RESOLUTION_ESCAPE:
+            caught = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Try) and owner.get(node) == name:
+                    caught.extend(getattr(handler.type, "id", "")
+                                  for handler in node.handlers)
+            self.assertIn("RESOLUTION_FAILURES", caught,
+                          name + " resolves a path without catching the one set this file"
+                                 " decided a resolution can fail with, so a failure there ends"
+                                 " the command instead of being reported in it")
 
     def test_every_producer_of_a_reading_that_was_not_taken_is_declared(self):
         tree = _harness_tree()

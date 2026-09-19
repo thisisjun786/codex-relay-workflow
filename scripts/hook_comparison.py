@@ -1118,6 +1118,26 @@ TRACE_STRING_LIMIT = 4096
 # and a truncate follow it and land on whatever it points at. Containment has to ask about
 # the one the call actually touched, and answering both at once was measured rejecting a
 # contained run for creating a link inside the root that pointed out of it.
+# What asking the filesystem where a path leads can fail with, in ONE place because it is one
+# fact and it is not the obvious one. OSError is what everybody catches. Measured on 3.10.20,
+# 3.11.15, 3.12.13, 3.13.14 and 3.14.4 rather than read out of the documentation:
+#   a symlink loop, resolved whole   RuntimeError on 3.10, 3.11 and 3.12; no raise on 3.13 and
+#                                    3.14, which rebuilt resolve() on realpath. Resolving only
+#                                    a parent never raised on any of the five.
+#   expanduser over a home nobody    RuntimeError on all five, 3.13 and 3.14 included, which is
+#   can name                         why this is not a question about old interpreters only.
+#   a path carrying a NUL            ValueError on all five.
+# All three answer the same question, so a site that catches one and not the others ends the
+# command over a path it could have reported as unread - and takes every answer in the run that
+# had nothing to do with that path down with it.
+#
+# Allowed around the observation ITSELF and nowhere wider. RuntimeError and ValueError also
+# arrive from mistakes in this file, and a handler big enough to hold ordinary logic beside the
+# call would relabel those as "unreadable": the harness hiding the kind of defect it exists to
+# expose, behind the word it keeps for an honest gap. That is worse than the failure being
+# fixed here, so the rule is the narrow catch rather than the wide one.
+RESOLUTION_FAILURES = (OSError, RuntimeError, ValueError)
+
 ENTRY = "the entry it names"
 THROUGH = "whatever the entry leads to"
 
@@ -1210,6 +1230,9 @@ MAY_HAVE_CHANGED = "may_have_changed"
 ONLY_ABLE_TO_CHANGE = "only_able_to_change"
 WHAT_AN_OPEN_DID = (CHANGED, MAY_HAVE_CHANGED, ONLY_ABLE_TO_CHANGE)
 
+# The calls whose success does not establish that anything moved. See _what_a_path_call_did.
+RENAMES = ("rename", "renameat", "renameat2")
+
 CHANGING_FLAGS = ("O_TRUNC", "O_TMPFILE")
 CREATED_IT = ("O_CREAT", "O_EXCL")
 
@@ -1252,7 +1275,10 @@ WITNESS_DOES_NOT_COVER = (
     " It errs towards reporting a write that may not have happened rather than towards"
     " missing one. changedTheFile beside each entry says which of THREE it is, because a"
     " plain O_CREAT created the file if it was absent and changed nothing if it was there,"
-    " and this trace does not say which, so it says may_have_changed rather than picking",
+    " and this trace does not say which, so it says may_have_changed rather than picking."
+    " A successful rename is read the same way and for the same reason: a rename between two"
+    " names for one file returns success and performs no other action, and one line carrying"
+    " two paths and a zero cannot tell that from a move",
     "a change to an inode that is not a change to a path: the link count a hard link moves,"
     " and ownership, timestamps and extended attributes generally. The link is recorded as"
     " written and the file it was linked from is not",
@@ -1292,6 +1318,36 @@ def _what_an_open_did(flags):
     if "O_CREAT" in flags:
         return MAY_HAVE_CHANGED
     return ONLY_ABLE_TO_CHANGE
+
+
+def _what_a_path_call_did(name):
+    """Whether a call that names a path established, by succeeding, that it changed one.
+
+    One rule, running the same direction as _what_an_open_did: a call is reported as having
+    CHANGED something only where it could not have succeeded without doing it. Where the traced
+    line, and what it carries of the state before it, leave both readings open, the answer is
+    the middle one - because answering either way supplies the half of the evidence the trace
+    does not have.
+
+    Nearly every write in the table clears that bar, and the checks hold them to it. A mkdir
+    that succeeded made a directory, an unlink that succeeded removed a name, a symlink that
+    succeeded created a link, a mknod that succeeded made a node: each fails outright where the
+    thing it would do is already done, so succeeding IS the change.
+
+    The rename family does not clear it, and its own specification is the reason rather than a
+    guess about kernels. A rename whose two arguments name the same entry, or name two links to
+    one file, returns successfully and performs no other action - measured here doing exactly
+    that, with both names still in place afterwards. One traced line carries two paths and a
+    zero: no inode, and nothing from before the call. That is the shape of a plain O_CREAT one
+    call family over, and it gets the same middle answer.
+
+    A truncate stays certain, and it is worth saying why because it looks like the same case:
+    it performs its operation whether or not the length already matched, and truncating a file
+    that was already empty was measured moving its modification time.
+    """
+    if name in RENAMES:
+        return MAY_HAVE_CHANGED
+    return CHANGED
 
 
 def _arguments_of(text):
@@ -1579,7 +1635,8 @@ def parse_trace(text, cwd):
             # A call in this table changes every path position the table declares for it, which
             # is why the link source is no longer one of them.
             answer["writes"].append({"line": number, "pid": pid, "call": name, "path": path,
-                                     "reaches": reaches, "changedTheFile": CHANGED})
+                                     "reaches": reaches,
+                                     "changedTheFile": _what_a_path_call_did(name)})
     for pid, name in sorted(unfinished):
         answer["unreadable"].append({"line": None, "text": name,
                                      "why": "a call interrupted in process " + str(pid) + " and"
@@ -2341,6 +2398,24 @@ def own_directory(where):
     return Path(tempfile.mkdtemp(prefix="hook-comparison-", dir=str(where))).resolve()
 
 
+def _leads_to(path):
+    """Where a path leads, asked of the filesystem, answered rather than raised.
+
+    The one place this file puts that question as a READING, so what a resolution can fail with
+    is decided once instead of at each call site. Both sides of the catch are deliberate. A
+    resolution that raises past its caller ends the comparison and takes down every reading
+    beside it, though the failure was about one path; and a catch stretched over the logic
+    around the call would turn this file's own mistakes into the word it keeps for a reading
+    nobody could take.
+    """
+    try:
+        return Path(path).resolve()
+    except RESOLUTION_FAILURES as error:
+        return Unreadable("where " + str(path) + " leads could not be established: "
+                          + type(error).__name__ + ": " + str(error),
+                          state=reading.ACCESS_ERROR)
+
+
 def owned(path, root, reaches=ENTRY):
     """Whether the thing this call wrote is inside the run's own directory: in, out, or unread.
 
@@ -2366,15 +2441,15 @@ def owned(path, root, reaches=ENTRY):
     outside the root: reporting it as outside names the wrong repair and claims to know where it
     led.
     """
-    try:
-        spelled = Path(path)
-        here = Path(root).resolve()
-        wrote = (spelled.resolve() if reaches == THROUGH
-                 else spelled.parent.resolve() / spelled.name)
-    except OSError as error:
-        return Unreadable("this path could not be resolved, so where it leads is not"
-                          " established: " + type(error).__name__ + ": " + str(error),
-                          state=reading.ACCESS_ERROR)
+    spelled = Path(path)
+    here = _leads_to(root)
+    if not_read(here):
+        return here
+    wrote = _leads_to(spelled if reaches == THROUGH else spelled.parent)
+    if not_read(wrote):
+        return wrote
+    if reaches != THROUGH:
+        wrote = wrote / spelled.name
     try:
         wrote.relative_to(here)
     except (ValueError, OSError):
@@ -2618,8 +2693,9 @@ def main(argv=None):
     try:
         root = own_directory(args.root) if keep else Path(
             tempfile.mkdtemp(prefix="hook-comparison-")).resolve()
-    except OSError as error:
-        _print(refusal("a directory for this run could not be created: " + str(error)))
+    except RESOLUTION_FAILURES as error:
+        _print(refusal("a directory for this run could not be created: "
+                       + type(error).__name__ + ": " + str(error)))
         return 2
     answer = None
     try:
