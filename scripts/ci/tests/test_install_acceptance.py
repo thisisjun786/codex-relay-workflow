@@ -277,6 +277,11 @@ SOURCE_UNDECIDED_CALLS = {
     "zip": (THE_FLOOR, "a builtin type the floor cannot read either"),
     "next": (EVERY_INTERPRETER, "a builtin whose signature is not introspectable"),
     "range": (EVERY_INTERPRETER, "a builtin type; calling it counts the scopes between two"),
+    "ast.Name": (EVERY_INTERPRETER,
+                 "a node type from the ast module, constructed to stand for the parameter a"
+                 " default binds. Its signature is not introspectable and it hands back a"
+                 " node rather than anything read from a file."),
+    "ast.Store": (EVERY_INTERPRETER, "the context that node is given, and the same answer"),
 }
 
 # Every place that asks whether a statement binds a name. `carrier: property = property(getter)`
@@ -3038,11 +3043,50 @@ RESOLVES_LIKE_PYTHON = {
         (REFUSAL,
          ("answers = json",
           "",
-          "def consumer():",
-          "    return answers.UNREADABLE"),
-         "consumer", False,
-         "its pair: following assignments must not make every name a module that exports an"
-         " answer. The owner is still asked, exactly as it is for an import."),
+         "def consumer():",
+         "    return answers.UNREADABLE"),
+        "consumer", False,
+        "its pair: following assignments must not make every name a module that exports an"
+        " answer. The owner is still asked, exactly as it is for an import."),
+    "source text a parameter default holds":
+        (TEXT,
+         ("def outer(text=HERE.read_text()):",
+          "    def consumer():",
+          "        return text",
+          "    return consumer"),
+         "outer.consumer", True,
+         "a default is a binding: the parameter holds that text whenever the caller omits the"
+         " argument, and the closure under it reads what the default left there. Seeding only"
+         " from assignment-like statements loses the name, and the place reading it is never"
+         " reported at all."),
+    "a refusal a parameter default holds":
+        (REFUSAL,
+         ("def outer(accepted=reading.UNREADABLE):",
+          "    def consumer():",
+          "        return accepted",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the same binding on the refusal side, because a default is a default whichever"
+         " question is being asked of it."),
+    "an ordinary parameter default":
+        (REFUSAL,
+         ("def outer(accepted=\"fine\"):",
+          "    def consumer():",
+          "        return accepted",
+          "    return consumer"),
+         "outer.consumer", False,
+         "its pair: reading defaults must not make every parameter hold an answer. What the"
+         " default is remains the question, and an ordinary string is not one."),
+    "a parameter default the inner scope takes back":
+        (REFUSAL,
+         ("def outer(accepted=reading.UNREADABLE):",
+          "    def consumer(accepted):",
+          "        return accepted",
+          "    return consumer"),
+         "outer.consumer", False,
+         "the other pair: the closure binds the name itself, so what it reads is its caller's"
+         " and not the default outside. Seeding from defaults must not step over the shadow"
+         " rule that was built for exactly this."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4055,6 +4099,29 @@ def _visible_from(scope, made):
     """
     return any(owner == MODULE_LEVEL or scope == owner or scope.startswith(owner + ".")
                for owner in made)
+
+
+def _defaults(node):
+    """Each parameter paired with the default it is given, which is a binding like any other.
+
+    def outer(text=HERE.read_text()) makes text hold that text whenever the caller omits the
+    argument, and a closure under outer reads it. Seeding only from assignment-like statements
+    loses the name entirely, so the place that reads it is never reported.
+
+    Asked of the definition node, because _places labels that with the scope the definition
+    OPENS -- which is exactly the scope a parameter is bound in, however the default beside it
+    was written.
+    """
+    args = getattr(node, "args", None)
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        return []
+    positional = args.posonlyargs + args.args
+    given = list(args.defaults)
+    paired = list(zip(positional[len(positional) - len(given):], given)) if given else []
+    paired += [(arg, default) for arg, default in zip(args.kwonlyargs, args.kw_defaults)
+               if default is not None]
+    return [(ast.copy_location(ast.Name(id=arg.arg, ctx=ast.Store()), arg), default)
+            for arg, default in paired]
 
 
 def _passed_through(value):
@@ -5470,7 +5537,7 @@ def _hands_on(tree, spelled):
             for node in ast.walk(tree):
                 function, klass = places.get(id(node), (MODULE_LEVEL, None))
                 held = bound.setdefault(function, set())
-                for named, value in _bindings(node):
+                for named, value in list(_bindings(node)) + _defaults(node):
                     if not _reachable(value, reaching(function, klass), klass,
                                       visible(function)):
                         continue
@@ -7863,6 +7930,7 @@ HANDED = {
     "_names_module": NOTHING,
     "_visible_from": NOTHING,
     "_passed_through": NOTHING,
+    "_defaults": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
     "test_a_decorator_alias_resolves_in_the_scope_that_imported_it": NOTHING,
