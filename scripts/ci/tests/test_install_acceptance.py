@@ -384,6 +384,14 @@ DECORATOR_ALIAS_CONTROLS = {
 # module. The control below plants the second of those and requires it to be absent, so the
 # boundary is a measured fact rather than a caveat.
 #
+# A fourth shape, added because review found it after this inventory was built and the first
+# three did not cover it. The predicate recognises a site that CONSULTS a scope-keyed map; it
+# is blind to one that BUILDS its own map keyed by a bare name, because such a site never
+# consults anything and so never calls either helper. _default_applies was exactly that, and
+# this inventory would not have caught it. The control below requires that blindness to stay
+# true, so it is a known gap rather than a surprise -- but a known gap is what it is, and the
+# next site of that shape will reach a reviewer before it reaches this list.
+#
 # COVERAGE IS NOT CORRECTNESS. This says every site asks the question; the paired cases in
 # RESOLVES_LIKE_PYTHON say the answers match Python. Neither claim substitutes for the other.
 DECIDES_AN_OWNER_WITHOUT_DISTANCE = {
@@ -3281,13 +3289,52 @@ RESOLVES_LIKE_PYTHON = {
          ("def helper(path=HERE):",
           "    return path.read_text()",
           "",
-          "def consumer(other):",
-          "    return helper(other)"),
-         "consumer", False,
-         "the pair that decides whether the fix above is a fix or a flood. Recording every"
-         " default as a handle unconditionally taints the supplied argument too and turns one"
-         " missing consumer into a crowd of invented ones, so a default every call overrides"
-         " binds nothing here."),
+         "def consumer(other):",
+         "    return helper(other)"),
+        "consumer", False,
+        "the pair that decides whether the fix above is a fix or a flood. Recording every"
+        " default as a handle unconditionally taints the supplied argument too and turns one"
+        " missing consumer into a crowd of invented ones, so a default every call overrides"
+        " binds nothing here."),
+    "two scopes writing the same helper and parameter":
+        (TEXT,
+         ("def good():",
+          "    def helper(path=HERE):",
+          "        return path.read_text()",
+          "    def reader(other):",
+          "        return helper(other)",
+          "    return reader",
+          "",
+          "def bad():",
+          "    def helper(path=HERE):",
+          "        return path.read_text()",
+          "    def reader():",
+          "        return helper()",
+          "    return reader"),
+         "good.reader", False,
+         "whether a default is ever left to itself belongs to the definition, not to the"
+         " spelling of its name. Keyed by name across the file, the scope whose call omits the"
+         " argument answers for the scope whose call supplies one -- which is the file-wide"
+         " keying this module keeps removing, written into the fix that removed the last of"
+         " it."),
+    "the scope whose call really does omit the argument":
+        (TEXT,
+         ("def good():",
+          "    def helper(path=HERE):",
+          "        return path.read_text()",
+          "    def reader(other):",
+          "        return helper(other)",
+          "    return reader",
+          "",
+          "def bad():",
+          "    def helper(path=HERE):",
+          "        return path.read_text()",
+          "    def reader():",
+          "        return helper()",
+          "    return reader"),
+         "bad.reader", True,
+         "the other half of the same sample: separating the two definitions must not stop the"
+         " one that really is left to its default from being read."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4325,7 +4372,7 @@ def _defaults(node):
             for arg, default in paired]
 
 
-def _default_applies(tree):
+def _default_applies(tree, places):
     """Which parameter defaults any call in this source actually leaves to the default.
 
     A default binds the parameter only when the caller omits the argument. Recording every
@@ -4333,33 +4380,50 @@ def _default_applies(tree):
     one missing consumer into a crowd of invented ones -- so a default every call overrides is
     not a binding here at all.
 
-    Answered per (function, parameter) over the whole source rather than per call site: if ANY
-    call omits it the default really does apply somewhere, and this reader errs towards
-    reporting. Observable boundary, stated because it is one: a call through a name this text
-    does not resolve to the definition is not counted, so a function only ever called that way
-    is read as never taking its default.
+    Keyed by the DEFINITION's own scope, not by its bare name: two scopes may each write a
+    helper with the same parameter, and merging their calls lets one scope's omitted argument
+    answer for the other's supplied one. A call resolves to the definition its own scope can
+    see, innermost first, the way every other name is resolved here.
+
+    Answered per definition and parameter across that definition's calls rather than per call
+    site: if ANY call omits it the default really does apply somewhere, and this reader errs
+    towards reporting. Observable boundary, stated because it is one: a call through a name
+    this text cannot resolve to a definition is not counted, so a function only ever called
+    that way is read as never taking its default.
     """
-    supplied, defined = {}, {}
+    supplied, defined, owned = {}, {}, {}
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            spelled = node.args.posonlyargs + node.args.args
-            given = list(node.args.defaults)
-            for index, argument in enumerate(spelled[len(spelled) - len(given):]
-                                             if given else []):
-                defined[(node.name, argument.arg)] = len(spelled) - len(given) + index
-            for argument, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
-                if default is not None:
-                    defined[(node.name, argument.arg)] = None
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        at = places.get(id(node), (MODULE_LEVEL, None))[0]
+        owned.setdefault(at.rpartition(".")[0] or MODULE_LEVEL, {})[node.name] = at
+        spelled = node.args.posonlyargs + node.args.args
+        given = list(node.args.defaults)
+        for index, argument in enumerate(spelled[len(spelled) - len(given):] if given else []):
+            defined[(at, argument.arg)] = len(spelled) - len(given) + index
+        for argument, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+            if default is not None:
+                defined[(at, argument.arg)] = None
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        called = (_dotted(node.func) or "").rpartition(".")[2]
-        for (owner, argument), where in defined.items():
-            if owner != called:
+        named = (_dotted(node.func) or "").rpartition(".")[2]
+        reach = ([] if places.get(id(node), (MODULE_LEVEL, None))[0] == MODULE_LEVEL
+                 else places.get(id(node), (MODULE_LEVEL, None))[0].split("."))
+        target = None
+        while reach and target is None:
+            target = owned.get(".".join(reach), {}).get(named)
+            reach.pop()
+        if target is None:
+            target = owned.get(MODULE_LEVEL, {}).get(named)
+        if target is None:
+            continue
+        for (place, argument), where in defined.items():
+            if place != target:
                 continue
             handed = (where is not None and len(node.args) > where) or any(
                 word.arg == argument for word in node.keywords)
-            supplied.setdefault((owner, argument), set()).add(handed)
+            supplied.setdefault((place, argument), set()).add(handed)
     return {pair for pair, seen in supplied.items() if False in seen}
 
 
@@ -6256,7 +6320,7 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None, t
     bare, dotted, rebound = openers or _opener_spellings(tree, places)
     taken_at = taken_at or {}
     # Once, not per node: which defaults any call actually leaves to the default.
-    left_to_the_default = _default_applies(tree)
+    left_to_the_default = _default_applies(tree, places)
 
     def seen_in(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
@@ -6314,7 +6378,7 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None, t
             # the same file.
             for target, value in list(_bindings(node)) + [
                     (named, default) for named, default in _defaults(node)
-                    if (getattr(node, "name", None), named.id) in left_to_the_default]:
+                    if (scope, named.id) in left_to_the_default]:
                 if not reaches(value, scope):
                     continue
                 named = _dotted(target)
@@ -7343,6 +7407,15 @@ class SevenReadingsTests(unittest.TestCase):
                          "_visible_from decides an owner without calling either helper, so the"
                          " predicate should not see it -- if it does, the boundary written"
                          " above is no longer true and the wording has to change")
+        # The fourth boundary, measured the same way. _default_applies decides which definition
+        # a name refers to by building its own map rather than consulting a scope-keyed one, so
+        # this predicate is blind to it -- which is how a file-wide key of that shape reached a
+        # reviewer after this inventory existed. The blindness is recorded rather than implied.
+        self.assertNotIn("_default_applies", set(asks) | measures,
+                         "_default_applies builds its own binding map instead of consulting a"
+                         " scope-keyed one, so the predicate should not see it. If it does, the"
+                         " fourth boundary above has stopped being true and the honest gap this"
+                         " list declares has changed shape")
 
     def test_no_class_body_binding_shadows_without_asking_whether_it_happened(self):
         """The certainty rule, swept over every place that decides it rather than one branch.
