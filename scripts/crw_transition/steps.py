@@ -176,6 +176,24 @@ def preflight(host, options):
                     refusals.append(label + " at " + str(path) + " is not an executable file, so"
                                     " recording it would name something that cannot run")
 
+    document = host["settings"].get("document")
+    budget = (document or {}).get("timeoutSeconds")
+    if isinstance(budget, (int, float)) and not isinstance(budget, bool) \
+            and budget >= completion.LAUNCHER_CEILING_SECONDS:
+        # Checked here rather than at the write. The packaged launcher caps its own deadline at
+        # that ceiling and has to outlast the adapter it runs, so these settings cannot become
+        # plugin-owned -- and finding that out after the registration has been removed would leave
+        # the host with no completion hook and a refusal.
+        refusals.append("the settings record a guard budget of " + str(budget) + "s, and a"
+                        " plugin-owned document has to stay under "
+                        + str(completion.LAUNCHER_CEILING_SECONDS) + "s so the packaged launcher"
+                        " outlasts the adapter it runs. Lower it before transitioning")
+    policy = (document or {}).get("journalPolicy")
+    if policy and policy != completion.EVERY_INVOCATION:
+        refusals.append("the settings record journalPolicy " + str(policy) + ", and the document"
+                        " this command builds always records " + completion.EVERY_INVOCATION
+                        + ", so transitioning would change what this host records without being"
+                          " asked")
     for entry in host["hook"]["entries"]:
         if not entry["proven"]:
             refusals.append("the registration " + entry["identity"] + " runs a program this"
@@ -593,7 +611,10 @@ def disable(host, options, *, apply=False):
     results = []
     owners = {"hook settings": host["settings"]["owner"],
               "bridge record": host["mcp"]["recordOwner"]}
-    for step, path in (("hook settings", completion.configuration_path(host["codexHome"])),
+    # The fixed path, for the same reason the install writes it: the packaged launcher reads that
+    # one file and ignores the settings override, so retiring whatever an override happens to name
+    # would leave the document the launcher actually reads in place and stop nothing.
+    for step, path in (("hook settings", Path(host["codexHome"]) / completion.CONFIG_NAME),
                        ("bridge record", Path(host["mcp"]["recordPath"]))):
         if not Path(path).exists():
             results.append(_answer(step, ALREADY, str(path) + " is not there"))
@@ -628,7 +649,19 @@ def preserved_paths(host):
 
 
 def remove(host, options, *, apply=False):
+    """Retire the records, then the links, and only in that order.
+
+    The links go last and only when the records were settled. Unlinking after a refused disable
+    would take the skills away from an installation this command just declined to touch, which is
+    the manual install losing its skills because the plugin's records were not ours to retire.
+    """
     results = disable(host, options, apply=apply)
+    if any(item["outcome"] in (REFUSED, BUSY) for item in results):
+        results.append(_answer("skill unlink", NOT_REACHED,
+                               "the records were not retired, so the links are left where they"
+                               " are: removing them now would take the skills from an install"
+                               " this command did not disable"))
+        return results
     results.append(skill_unlink(host, options, apply=apply))
     return results
 

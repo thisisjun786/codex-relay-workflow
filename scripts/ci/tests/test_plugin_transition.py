@@ -619,6 +619,44 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(host.record()["args"],
                          json.loads(retired[0].read_text(encoding="utf-8"))["args"])
 
+    def test_remove_leaves_the_links_when_the_records_were_not_retired(self):
+        """Unlinking after a refused disable takes the skills from an install we did not touch."""
+        host = self.ready()
+        code, answer = host.call("remove", "--apply")
+        self.assertEqual(code, 1)
+        unlink = [r for r in answer["results"] if r["step"] == "skill unlink"][0]
+        self.assertEqual(unlink["outcome"], "not_reached")
+        self.assertTrue(sorted((host.home / "skills").iterdir()))
+
+    def test_an_event_this_package_does_not_declare_is_refused_before_anything_is_read(self):
+        host = self.ready()
+        done = run([CLI, "--codex-home", host.home, "--event", "SessionStart", "transition",
+                    "--apply", "--accept-hook-trust-gap"])
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("declares only the Stop hook", json.loads(done.stdout)["error"])
+
+    def test_a_guard_budget_the_launcher_cannot_outlast_is_refused_at_preflight(self):
+        host = self.host.manual_install()
+        settings = host.settings()
+        settings["timeoutSeconds"] = 9
+        (host.home / "crw-completion-hook.json").write_text(json.dumps(settings), encoding="utf-8")
+        host.install_plugin()
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("guard budget", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_journal_policy_this_command_cannot_carry_is_refused_at_preflight(self):
+        host = self.host.manual_install()
+        settings = host.settings()
+        settings["journalPolicy"] = "faults_only"
+        (host.home / "crw-completion-hook.json").write_text(json.dumps(settings), encoding="utf-8")
+        host.install_plugin()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("journalPolicy", answer["results"][0]["detail"])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

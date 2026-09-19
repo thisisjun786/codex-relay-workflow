@@ -27,7 +27,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from crw_runtime import completion  # noqa: E402
 from crw_transition import inventory, steps  # noqa: E402
+
+
+def completion_event():
+    return completion.EVENT
 
 # The same three the runtime installer uses, so a caller reading both does not have to learn two
 # meanings for one number.
@@ -41,6 +46,12 @@ def emit(document):
 
 def host_of(args):
     home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    named = getattr(args, "event", None)
+    if named and named != completion_event():
+        # The package declares one event. Transitioning another would remove a registration on it
+        # and hand ownership to a declaration that does not cover it, leaving nothing registered.
+        raise ValueError("this package declares only the " + completion_event() + " hook, so "
+                         + repr(named) + " is not an event this transition can move")
     return inventory.snapshot(home, repo_root=ROOT,
                               destination=Path(args.dest) if args.dest else None,
                               event=getattr(args, "event", None))
@@ -167,6 +178,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return args.handler(args)
+    except ValueError as error:
+        emit({"command": getattr(args, "command", None), "outcome": "refused",
+              "error": str(error), "note": "nothing was read and nothing was written."})
+        return EXIT_USAGE
     except KeyboardInterrupt:
         emit({"command": getattr(args, "command", None), "outcome": "interrupted",
               "note": "the run was interrupted. Nothing further was written; rerun to decide"
