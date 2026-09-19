@@ -3118,28 +3118,25 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
     # did not, so whatever is at that path is somebody else's and reporting it as residue
     # would be this command naming another run's live working file for deletion.
     residual = [] if contended else ([str(lock)] if lock.exists() else [])
-    # The selection as it stands now, not as this run left it. None is "could not be read",
-    # which is a third answer and never folded into either of the other two.
+    # The state as it stands NOW, read as the PAIR the next run's decision takes rather than
+    # as the selection alone. 'selected' is the narrow reading that authorises finishing a
+    # promotion; 'protected' is the conservative one that keeps a directory something may
+    # still reach. The destination is this environment's parent, which is how the name was
+    # derived in the first place. An unreadable record leaves both None, and None is never
+    # folded into either of the other answers.
     current = hostrecord.load(record_path, definition_version)
-    selects = _names_environment(current.value, environment, data) if current.usable else None
+    if current.usable:
+        protected, protection = protected_environment(current.value, environment,
+                                                      environment.parent, data)
+        selected = protection["recordSelectsIt"]
+    else:
+        protected, selected = None, None
 
+    # Ordered as staging.decide() orders it, because that is whose behaviour this describes:
+    # an unreadable claim is answered before the state is consulted at all, and only then does
+    # the selected/protected pair choose between finishing, keeping and reclaiming.
     if settled:
         record_requires = None
-    elif selects is None:
-        record_requires = (
-            "read " + str(record_path) + " before acting on this. The host record could not be"
-            " read here, so whether it still selects this environment could not be"
-            " established -- and that is exactly what decides whether rerunning install"
-            " finishes the missing bookkeeping or removes and rebuilds this directory instead."
-            " Do not rerun to settle the record until that reading succeeds.")
-    elif selects is False:
-        record_requires = (
-            "nothing needs doing about this record, and DO NOT rerun install here to settle"
-            " it. Another run moved the selection on after this one promoted, so the"
-            " environment this claim describes is no longer the one the host uses and a claim"
-            " recording a superseded staging records nothing anybody reads. With the selection"
-            " moved, the next run reads this directory as an abandoned staging and would"
-            " remove and rebuild it rather than finish any bookkeeping.")
     elif contended:
         record_requires = (
             "wait for the run that holds " + str(lock) + " and then run install again against"
@@ -3149,7 +3146,22 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " records it. The other run may be writing that very claim. Nothing here is this"
             " run's to remove -- that lock file is a live writer's, and taking it away would"
             " let a second writer into a read-modify-write that is still running.")
-    elif left.usable:
+    elif not left.usable:
+        record_requires = (
+            "make the claim at " + str(path) + " readable or remove it, then run install"
+            " again. The replacement itself finished and this environment is in service, so it"
+            " must not be deleted -- but rerunning alone will NOT repair this one: a claim that"
+            " cannot be read is not a claim this command may act on, so the next run reports"
+            " the directory and leaves it exactly as it stands rather than finishing the"
+            " promotion.")
+    elif selected is None:
+        record_requires = (
+            "read " + str(record_path) + " before acting on this. The host record could not be"
+            " read here, so what the next run would do with this directory could not be"
+            " established -- and that is the difference between finishing the missing"
+            " bookkeeping, leaving the directory alone, and removing and rebuilding it. Do not"
+            " rerun to settle the record until that reading succeeds.")
+    elif selected is True:
         record_requires = (
             "clear whatever stopped the write at " + str(path) + " -- the error is in"
             " 'detail' -- and then run install again against the same destination. The"
@@ -3161,14 +3173,22 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " the same thing stops it reaches the same failure and returns this same result,"
             " without rebuilding or removing anything. Until it settles, this destination"
             " carries a runtime that is in service and a claim that does not say so.")
+    elif protected:
+        record_requires = (
+            "leave this directory alone, and do not expect a rerun to settle it. The host"
+            " record no longer selects this environment, so there is no promotion here for the"
+            " next run to finish -- but something still reaches it, or a reading that would"
+            " say otherwise failed, so the next run keeps it and reports it rather than"
+            " removing it. A promotion that died before moving the pointer leaves exactly this"
+            " shape. Nothing is lost and nothing is at risk; the claim stays unsettled for a"
+            " staging this record has moved past.")
     else:
         record_requires = (
-            "make the claim at " + str(path) + " readable or remove it, then run install"
-            " again. The replacement itself finished and this environment is in service, so it"
-            " must not be deleted -- but rerunning alone will NOT repair this one: a claim that"
-            " cannot be read is not a claim this command may act on, so the next run reports"
-            " the directory and leaves it exactly as it stands rather than finishing the"
-            " promotion.")
+            "nothing needs doing about this record, and DO NOT rerun install here to settle"
+            " it. Another run moved the selection on after this one promoted, and nothing"
+            " selects this environment or points at it now, so a claim recording it records"
+            " nothing anybody reads. The next run reads this directory as an abandoned staging"
+            " and would remove and rebuild it rather than finish any bookkeeping.")
     residue_requires = None if not residual else (
         "look at " + str(lock) + " before anything else touches it. A lock file is there and"
         " whether it outlived the call that took it or belongs to a run still writing could"

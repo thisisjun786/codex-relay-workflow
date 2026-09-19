@@ -5963,6 +5963,24 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=write_then_strand))
+        if breaking == "settle the staging claim after the selection alone moves on":
+            # The selection moves and the POINTER does not, which is what a promotion that
+            # died between its two writes leaves. staging.decide() keeps a directory the
+            # pointer still names, so this is not the abandoned-staging case however the
+            # selection reads.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def deselect_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=deselect_then_fail))
         if breaking == "settle the staging claim after the selection moves on":
             # An install that was queued on the promotion lock promotes its OWN environment the
             # moment this run releases it, which is the window _settle_claim runs in. Both
@@ -6397,6 +6415,36 @@ class SettledRecordTests(unittest.TestCase):
                       "the record still did not land, which is reported as itself")
         self.assertTrue(claim.get("recoveryRequires"),
                         "with what to do instead: wait for the run that holds it")
+
+    def test_a_directory_the_pointer_still_names_is_not_called_abandoned(self):
+        """The next run decides on a PAIR, so advice drawn from the selection alone is wrong.
+
+        A promotion writes the selection before it moves the pointer, so one that dies between
+        them leaves the record naming somewhere else while the host still reaches this
+        environment through the pointer. staging.decide() keeps a directory the pointer names.
+        Reading only the selection called that abandoned and promised a reclaim the next run
+        will never perform.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the selection alone moves on")
+            kept = _advice(payload, host)
+            again, second = UpdateRecoveryTests()._run(host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            abandoned = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim after the selection moves on")[1],
+                other)
+
+        self.assertEqual(second["stagingDecision"], staging.KEEP,
+                         "the next run keeps a directory the pointer still names: "
+                         + json.dumps(second)[:400])
+        self.assertIs(payload.get("claimSettled"), False)
+        self.assertTrue(abandoned, "the contrast needs the other case to say something")
+        self.assertNotEqual(kept, abandoned,
+                            "so this must not be told what the genuinely abandoned case is"
+                            " told: " + kept[:300])
 
     def test_advice_is_not_promised_from_a_selection_that_has_moved_on(self):
         """Settling runs outside the promotion lock, so the selection can move under it.
