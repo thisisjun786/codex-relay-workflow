@@ -527,6 +527,58 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(code, 1)
         self.assertIn("more than one cached version", answer["results"][0]["detail"])
 
+    def test_a_later_table_with_an_enabled_key_is_not_read_as_the_plugin(self):
+        host = self.ready()
+        host.append_config('[some.other.table]\nenabled = false\n')
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
+
+    def test_a_bridge_table_carrying_another_field_is_refused_and_left_intact(self):
+        host = self.ready()
+        text = host.config().replace(
+            '[mcp_servers.codex-thread-bridge]',
+            '[mcp_servers.codex-thread-bridge]\nstartup_timeout_sec = 30')
+        (host.home / "config.toml").write_text(text, encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("more or other than the command", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), text)
+
+    def test_a_registration_naming_an_unrelated_file_does_not_retire_it(self):
+        host = self.ready()
+        bystander = Path(self.directory) / "not-settings.json"
+        bystander.write_text('{"mine": true}', encoding="utf-8")
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].rsplit(" ", 1)[0] + " " + str(bystander)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        host.transition("--apply", "--accept-hook-trust-gap")
+        self.assertTrue(bystander.is_file())
+        self.assertEqual(json.loads(bystander.read_text(encoding="utf-8")), {"mine": True})
+
+    def test_an_override_would_write_where_no_launcher_reads_so_it_refuses(self):
+        host = self.ready()
+        done = run([CLI, "--codex-home", host.home, "transition", "--apply"],
+                   env={**os.environ, "CRW_COMPLETION_HOOK_CONFIG": str(host.root / "e.json")})
+        answer = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 1)
+        # It refuses at preflight, because with the override in force the live settings are read
+        # from a path nothing wrote, so no destination can be derived either. What matters is that
+        # nothing was written and no document landed where no launcher reads.
+        self.assertEqual(answer["results"][0]["outcome"], "refused")
+        self.assertFalse((host.root / "e.json").exists())
+        self.assertEqual({r["step"]: r["outcome"] for r in answer["results"][1:]},
+                         {r["step"]: "not_reached" for r in answer["results"][1:]})
+
+    def test_the_arguments_survive_in_the_retired_record(self):
+        host = self.ready()
+        host.transition("--apply")
+        retired = sorted(host.home.glob("crw-bridge-mcp.json.superseded-*"))
+        self.assertTrue(retired)
+        self.assertEqual(json.loads(retired[0].read_text(encoding="utf-8"))["owner"], "user")
+        self.assertEqual(host.record()["args"],
+                         json.loads(retired[0].read_text(encoding="utf-8"))["args"])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

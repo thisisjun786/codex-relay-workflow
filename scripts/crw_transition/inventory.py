@@ -33,6 +33,9 @@ REPO_MARKERS = ("plugins/crw/.codex-plugin/plugin.json", "scripts/crw_runtime/co
 
 STATE_KEY = re.compile(r'^\s*\[hooks\.state\."([^"]+)"\]\s*$')
 PLUGIN_KEY = re.compile(r'^\s*\[plugins\."([^"]+)"\]\s*$')
+# Any table header at all, because what ends a table is the next one starting, not the next table
+# of the same kind. Reading past it attributed a later table's keys to this one.
+TABLE = re.compile(r"^\s*\[")
 
 
 def checkout_of(path):
@@ -61,6 +64,28 @@ def read_config_text(codex_home):
     return reading.read_text(config_path(codex_home), "the Codex configuration")
 
 
+def table_span(text, header):
+    """The exact lines of one TOML table, header to the line before the next table, or None.
+
+    Proof of authorship is equality with what this repository renders, and equality needs a whole
+    span: a table that keeps the rendered command and args and appends another field CONTAINS the
+    rendered block, so a containment test calls it ours and a removal then deletes two of its three
+    lines and leaves the rest orphaned under no table at all.
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != header:
+            continue
+        collected = [line]
+        for following in lines[index + 1:]:
+            if TABLE.match(following):
+                break
+            collected.append(following)
+        while collected and not collected[-1].strip():
+            collected.pop()
+        return "\n".join(collected) + "\n"
+    return None
+
 def read_plugin(codex_home, *, name=PLUGIN_NAME):
     """Whether the plugin is installed AND registered, and what its cache actually holds.
 
@@ -85,6 +110,8 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
                     answer["configEntry"] = reading.PRESENT
                     answer["entryKey"] = block
                 continue
+            if TABLE.match(line):
+                block = None
             trust = STATE_KEY.match(line)
             if trust and trust.group(1).split(":")[0].split("@")[0] == name:
                 answer["trustKeys"].append(trust.group(1))
@@ -220,9 +247,17 @@ def read_hook(codex_home, event=None, *, destination=None):
                                                   " but is not a registration this repository"
                                                   " wrote"})
     identities = [item["identity"] for item in inventory_all]
+    # The union across every entry being removed, and only identities that are not themselves being
+    # removed. Assigning per entry kept the last one's list and under-reported what would shift.
+    ours = {entry["identity"] for entry in answer["entries"]}
+    shifted = []
     for entry in answer["entries"]:
-        position = identities.index(entry["identity"]) if entry["identity"] in identities else -1
-        answer["later"] = [name for name in identities[position + 1:]] if position >= 0 else []
+        if entry["identity"] not in identities:
+            continue
+        position = identities.index(entry["identity"])
+        shifted += [name for name in identities[position + 1:]
+                    if name not in ours and name not in shifted]
+    answer["later"] = shifted
     return answer
 
 
@@ -301,8 +336,13 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
                 # the registration it finds there. Anything else is somebody's own edit.
                 rendered = codexconfig.render(name, registration.get("command"),
                                               registration.get("args") or [])
-                answer["tableProven"] = rendered.strip() in text.value
+                span = table_span(text.value, "[mcp_servers." + codexconfig.key(name) + "]")
                 answer["renderedTable"] = rendered
+                answer["tableSpan"] = span
+                answer["tableProven"] = span is not None and span.strip() == rendered.strip()
+                if span is not None and not answer["tableProven"]:
+                    answer["detail"] = ("the table holds more or other than the command and"
+                                        " arguments this repository renders for it")
     document, outcome, detail = bridgerecord.read(Path(answer["recordPath"]))
     answer["record"] = document
     answer["recordOutcome"] = outcome

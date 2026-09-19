@@ -52,6 +52,16 @@ def _executable(path):
     return bool(path) and Path(path).is_file() and os.access(str(path), os.X_OK)
 
 
+def _retired_record(host):
+    """The most recently retired bridge record that still reads as one, or None."""
+    home = Path(host["codexHome"])
+    found = sorted(p for p in home.glob(bridgerecord.RECORD_NAME + ".superseded-*") if p.is_file())
+    for candidate in reversed(found):
+        document, outcome, _detail = bridgerecord.read(candidate)
+        if document is not None:
+            return document
+    return None
+
 def bridge_command(host):
     """The bridge the plugin record will name: what the host already used, or the pointer path."""
     record = (host["mcp"].get("record") or {})
@@ -61,6 +71,9 @@ def bridge_command(host):
     registration = host["mcp"].get("registration") or {}
     if registration.get("command"):
         return registration["command"]
+    retired = _retired_record(host)
+    if retired and retired.get("bridgeExecutable"):
+        return retired["bridgeExecutable"]
     destination = host.get("destination")
     return str(Path(destination) / "current" / "bin" / "codex-thread-bridge") \
         if destination else None
@@ -190,7 +203,8 @@ def preflight(host, options):
     if mcp["table"] == reading.PRESENT and not mcp["tableProven"]:
         refusals.append("the " + inventory.SERVER_NAME + " table in " + mcp["configPath"]
                         + " is not the block this repository renders for the registration it"
-                          " holds, so it is somebody's own edit and is left in place")
+                          " holds, so it is somebody's own edit and is left in place"
+                        + (": " + str(mcp["detail"]) if mcp.get("detail") else ""))
     if mcp["recordOutcome"] not in (None, bridgerecord.ABSENT):
         refusals.append("the bridge record at " + mcp["recordPath"] + " could not be acted on ("
                         + str(mcp["recordOutcome"]) + ")")
@@ -274,11 +288,20 @@ def hook_standdown(host, options, *, apply=False):
 
 def settings_retire(host, options, *, apply=False):
     """Move the settings the removed registration named aside, never delete them."""
+    # A registration's third argument is whatever was typed there. It is retired only when the file
+    # it names actually reads as this hook's settings, because a canonical-looking command naming an
+    # unrelated existing file would otherwise have that file moved aside.
+    fixed = str(Path(host["codexHome"]) / completion.CONFIG_NAME)
     named = [entry.get("settings") for entry in host["hook"]["entries"] if entry.get("settings")]
     paths = []
-    for candidate in named + [host["settings"]["path"]]:
-        if candidate and candidate not in paths and Path(candidate).exists():
-            paths.append(candidate)
+    for candidate in named + [host["settings"]["path"], fixed]:
+        if not candidate or candidate in paths or not Path(candidate).exists():
+            continue
+        if candidate != fixed:
+            document, outcome, _detail, _found = completion.read_configuration(Path(candidate))
+            if document is None:
+                continue
+        paths.append(candidate)
     if not paths:
         return _answer("settings retire", ALREADY, "no settings file is there to retire")
     document = host["settings"]["document"]
@@ -345,10 +368,20 @@ def settings_install(host, options, *, apply=False, previous=None):
             adapter_interpreter=interpreter, adapter_entry_point=adapter)
     except ValueError as error:
         return _answer("settings install", REFUSED, str(error))
-    path = completion.configuration_path(host["codexHome"])
-    if not apply:
-        # Projected past the retire step deliberately. Deciding against the file still on disk
-        # would answer DIFFERS and refuse a sequence that settles once step 2 has run.
+    # The packaged launcher reads one path and ignores the settings override, deliberately, so the
+    # plugin-owned document goes to that path and nowhere else. Honouring an override here would
+    # write a document no launcher will ever open, and a Stop that cannot find its settings releases
+    # in silence.
+    path = Path(host["codexHome"]) / completion.CONFIG_NAME
+    override = completion.override_complaints(completion.OWNER_PLUGIN)
+    if override:
+        return _answer("settings install", REFUSED, "; ".join(override))
+    live = host["settings"]["document"]
+    if not apply and (live is None or completion.owner_of(live) == completion.OWNER_USER):
+        # Projected past the retire step deliberately, and ONLY past that step. Deciding against a
+        # user-owned file still on disk would answer DIFFERS and refuse a sequence that settles once
+        # step 2 has run; hiding a plugin-owned document that says something else would promise a
+        # write that will not happen.
         return _answer("settings install", WOULD,
                        "would write these settings after the retire step; nothing was written",
                        configuration={"configuration": str(path), "wanted": wanted},
@@ -390,7 +423,7 @@ def mcp_table_standdown(host, options, *, apply=False):
         return _answer("mcp table standdown", REFUSED,
                        "the table is not the block this repository renders, so it is left alone")
     path = Path(mcp["configPath"])
-    block = mcp["renderedTable"].strip()
+    block = (mcp.get("tableSpan") or mcp["renderedTable"]).strip()
     if not apply:
         return _answer("mcp table standdown", WOULD, "would remove the " + inventory.SERVER_NAME
                        + " table from " + str(path))
@@ -423,17 +456,20 @@ def mcp_record_install(host, options, *, apply=False):
     command = bridge_command(host)
     if not command:
         return _answer("mcp record install", REFUSED, "no bridge executable could be named")
+    registration = host["mcp"].get("registration") or {}
+    retired = _retired_record(host)
+    # After the table is removed the registration is gone, so an interrupted run would rebuild the
+    # record with no arguments. The retired record is where they survive.
+    arguments = registration.get("args") or (retired or {}).get("args") or []
     try:
-        wanted = bridgerecord.document(command=command, arguments=(
-            (host["mcp"].get("registration") or {}).get("args") or []),
-            name=inventory.SERVER_NAME, issue="CRW-115",
-            owner=bridgerecord.OWNER_PLUGIN)
+        wanted = bridgerecord.document(command=command, arguments=arguments,
+                                       name=inventory.SERVER_NAME, issue="CRW-115",
+                                       owner=bridgerecord.OWNER_PLUGIN)
     except ValueError as error:
         return _answer("mcp record install", REFUSED, str(error))
-    if not apply:
-        # Projected past the retire step for the same reason the settings step is: the user-owned
-        # record is still on disk here, and deciding against it would answer DIFFERS and refuse a
-        # sequence that settles once step 5a has run.
+    if not apply and host["mcp"]["recordOwner"] in (None, bridgerecord.OWNER_USER):
+        # Projected past the retire step for the same reason the settings step is, and with the same
+        # limit: a plugin-owned record that says something else is a refusal, not a projection.
         return _answer("mcp record install", WOULD,
                        "would write this record after the retire step; nothing was written",
                        record={"record": host["mcp"]["recordPath"], "wanted": wanted},
