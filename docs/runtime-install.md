@@ -1805,9 +1805,13 @@ worth stating because it was not always true: the closing `diagnose` used to be 
 operator was sent for `residualPaths` when only an install failure result carried that field.
 `failedStep`, `retriable`, `residualPaths`, `removedCandidate` and `pointer` come from the
 install result kept above. `diagnose` emits `residualPaths` and `residue` of its own, read
-from the destination as it stands: an entry is residue exactly when the installer's own
-decision would reclaim it, so what the diagnosis calls clearable and what the next install
-would take are one set rather than two opinions. A staging the record selects, one somebody
+from the destination as it stands: an entry is residue when the installer's own decision
+would reclaim it, so this reports that decision rather than a second opinion about the same
+directory. It is not guaranteed to be the same SET as a later install's: this command asks
+about the pointer the host record names, `cmd_install` asks about the destination it was
+invoked with, and on a host whose recorded pointer lies elsewhere those differ -- with this
+command the conservative of the two. Which question the installer should ask is a decision
+about the installer and is not this issue's to make. A staging the record selects, one somebody
 still holds, one whose owner could not be established, and a finished environment nothing
 selects are each reported with that decision's own reason and none of them is listed for
 removal — a dead staging lock says no installer holds the directory, never that nothing is

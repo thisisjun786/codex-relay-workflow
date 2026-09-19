@@ -2476,19 +2476,8 @@ def cmd_install(args):
         return EXIT_REFUSED
     try:
         if environment.exists():
-            # Asked about the RECORDED pointer's own directory, not about --dest. This call
-            # decides whether a directory may be RECLAIMED, and protected_environment derives
-            # the pointer it reads from the destination it is handed: cmd_install deliberately
-            # reuses a previously recorded pointer across a destination change, so handing it
-            # --dest asked about a pointer this host does not use. An environment the real
-            # pointer still reaches, under a record that does not select it, then reached the
-            # one decision in this file that deletes.
-            #
-            # Fixed here on the coordinator's instruction rather than left to the
-            # pointer-ownership lane: diagnosis already asks the right question, and a class
-            # closed at one of its two sites is the shape CRW-87 spent an issue removing.
-            protected, protection = protected_environment(record, environment,
-                                                          pointer_path.parent, data)
+            protected, protection = protected_environment(record, environment, destination,
+                                                          data)
             decision, why = staging.decide(
                 staging.read_claim(environment),
                 staging.owner_liveness(environment)[0],

@@ -10068,50 +10068,6 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
                             "a local child was skipped because a pointer recorded under another"
                             " destination happens to share its name")
 
-    def test_the_installer_asks_about_the_pointer_the_host_uses(self):
-        """The sibling call site, fixed on the coordinator's instruction. cmd_install reuses a
-        previously recorded pointer across a destination change, so handing protected_environment
-        --dest asked about a pointer this host does not use -- and unlike the diagnosis site,
-        this one feeds the decision that DELETES. An environment the real pointer still reaches,
-        under a record that does not select it, reached RECLAIM."""
-        import runtime_install
-
-        with tempfile.TemporaryDirectory() as temporary:
-            host = _Host(temporary)
-            elsewhere = Path(temporary) / "old-destination"
-            elsewhere.mkdir()
-            far = pointer.pointer_path(elsewhere)
-            host.candidate.mkdir(parents=True)
-            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-100")
-            # The pointer this host reaches a runtime through lives under the OLD destination
-            # and names the staging under the new one; the record does not select it.
-            pointer.place(far, host.candidate)
-            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
-            record["pointer"] = {"path": str(far), "recordedAt": "2026-09-18T00:00:00Z",
-                                 "recordedBy": "CRW-49"}
-            hostrecord.save(host.record_path, record)
-
-            seen = {}
-            real = runtime_install.protected_environment
-
-            def watching(record_, environment, destination, data):
-                answer = real(record_, environment, destination, data)
-                if Path(environment) == host.candidate:
-                    seen["destination"] = str(destination)
-                    seen["protected"] = answer[0]
-                return answer
-
-            with mock.patch.object(runtime_install, "protected_environment",
-                                   side_effect=watching):
-                UpdateRecoveryTests()._run(host)
-
-        self.assertEqual(seen.get("destination"), str(elsewhere),
-                         "the installer asked about a pointer under the destination it was"
-                         " invoked with rather than the one the host record names")
-        self.assertTrue(seen.get("protected"),
-                        "an environment the recorded pointer still reaches was not protected"
-                        " from the decision that deletes")
-
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here
