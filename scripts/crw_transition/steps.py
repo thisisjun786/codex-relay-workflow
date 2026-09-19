@@ -49,7 +49,7 @@ def stamp():
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def retire(path, into=None, stem=None):
+def retire(path, into=None, stem=None, when=None):
     """Move a record aside under a name nothing reads, and never delete it.
 
     into/stem exist for one case: a manual install created with CRW_COMPLETION_HOOK_CONFIG records
@@ -62,12 +62,17 @@ def retire(path, into=None, stem=None):
     Retiring rather than deleting is the whole difference between a transition and a data loss: the
     old settings carry the marker root, the database and the journal an operator may still need to
     read, and this tool is not entitled to decide they are finished with.
+
+    when exists because the stamp in the name is an ORDER, not a clock: the recovery reads the
+    greatest one. A caller that must land after everything already there passes the stamp it has
+    to reach, and the collision suffix below puts it after an archive that already carries it.
     """
     # Second granularity is not enough on its own: two retirements of the same path within one
     # second would name the same archive and os.replace would delete the first one. The name is
     # taken with O_EXCL, so an existing archive is never the destination.
-    base = str(Path(into) / (stem + ".superseded-" + stamp())) if into \
-        else str(path) + ".superseded-" + stamp()
+    moment = when or stamp()
+    base = str(Path(into) / (stem + ".superseded-" + moment)) if into \
+        else str(path) + ".superseded-" + moment
     target, suffix = base, 0
     while True:
         try:
@@ -1216,6 +1221,11 @@ def _preserve_registration(host, again):
     because some archive exists let an interrupted rerun restore the older identity over the one
     that was live. There is at most one archive per removal, because a run that finds no table
     answers before it reaches this.
+
+    The archive is named to sort after every archive already there rather than by the clock. The
+    recovery chooses the greatest stamp, so an archive carrying a future one -- a clock moved
+    back, a file copied from elsewhere -- would otherwise outrank the identity actually taken off
+    this host, and the rerun would install the stale executable and arguments.
     """
     registration = (again.get("registration") or {})
     command = registration.get("command")
@@ -1232,9 +1242,12 @@ def _preserve_registration(host, again):
                       " that identity cannot be archived (" + str(error) + "), so removing the"
                       " table would be the last copy of it")
     temporary = home / (bridgerecord.RECORD_NAME + ".preserving-" + str(os.getpid()))
+    stem = bridgerecord.RECORD_NAME + ".superseded-"
+    reached = max([inventory.archive_order(found, stem)[0]
+                   for found in home.glob(stem + "*") if found.is_file()] + [stamp()])
     try:
         temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-        return retire(temporary, into=home, stem=bridgerecord.RECORD_NAME), None
+        return retire(temporary, into=home, stem=bridgerecord.RECORD_NAME, when=reached), None
     except OSError as error:
         temporary.unlink(missing_ok=True)
         return None, ("the table registers " + repr(str(command)) + " and no record keeps it, and"

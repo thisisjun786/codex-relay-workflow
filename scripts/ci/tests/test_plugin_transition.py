@@ -3105,6 +3105,39 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(host.record()["args"], ["--from-the-old-install"])
         self.assertTrue(removed["preserved"], json.dumps(removed)[:600])
 
+    @needs_reader
+    def test_an_archive_dated_in_the_future_does_not_outrank_the_one_just_made(self):
+        """The stamp in an archive name is an order the recovery reads, not a clock it trusts."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import bridgerecord
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom = host.version / "bin" / "codex-thread-bridge-of-its-own"
+        custom.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        custom.chmod(0o755)
+        host.link_skills()
+        host.register_hook()
+        registered = run([RUNTIME, "register-mcp", "--owner", "user", "--codex-home", host.home,
+                          "--bridge-command", custom, "--bridge-arg=--from-the-old-install",
+                          "--apply"])
+        self.assertEqual(registered.returncode, 0, registered.stdout[-600:])
+        (host.home / "crw-bridge-mcp.json").unlink()
+        ahead = bridgerecord.document(
+            command=str(host.version / "bin" / "codex-thread-bridge"), arguments=["--old"],
+            name=inventory.SERVER_NAME, issue="CRW-115", owner="user")
+        (host.home / (bridgerecord.RECORD_NAME + ".superseded-20300101T000000Z")).write_text(
+            json.dumps(ahead), encoding="utf-8")
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        removed = steps.mcp_table_standdown(snapshot, {}, apply=True)
+        self.assertEqual(removed["outcome"], "settled", json.dumps(removed)[:600])
+        again = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(steps.bridge_command(again), str(custom))
+        self.assertEqual(steps.mcp_record_install(again, {}, apply=True)["outcome"], "settled")
+        self.assertEqual(host.record()["args"], ["--from-the-old-install"])
+
     def test_a_single_quoted_launcher_path_is_not_the_one_this_package_declares(self):
         """Single quotes stop the expansion, so the literal directory is what the shell passes."""
         host = self.ready()
