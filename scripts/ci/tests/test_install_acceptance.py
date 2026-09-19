@@ -904,6 +904,30 @@ RESOLVES_LIKE_PYTHON = {
           "        return this.carrier()"),
          "consumer", False,
          "the pair of the case above, which was already right and has to stay right."),
+    "a subclass rebinding an inherited attribute":
+        (REFUSAL,
+         ("class Base:",
+          "    carrier = reading.UNREADABLE",
+          "",
+          "class Child(Base):",
+          "    carrier = \"fine\"",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", False,
+         "the attribute side of the same shape: lookup stops at the first class that binds the"
+         " name, so Child.carrier is what self.carrier reads and the base's refusal is not"
+         " reached through it."),
+    "an inherited attribute with nothing standing over it":
+        (REFUSAL,
+         ("class Base:",
+          "    carrier = reading.UNREADABLE",
+          "",
+          "class Child(Base):",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "its pair: an attribute a base binds really is held by everything under it, which is"
+         " what the propagation exists for and must keep doing."),
     "source text handed on from a file object opened in the same expression":
         (TEXT,
          ("def helper():",
@@ -1795,27 +1819,45 @@ def _held_by_class(tree, spelled, over=None):
                     local.add(named.id)
                     spreading = True
 
+    # Every name a class binds for itself, whatever it binds it to, so a subclass standing in
+    # front of an inherited name can be told from one that inherits it. Recorded beside the
+    # held names rather than derived after them, because the value decides whether a name is
+    # HELD and the binding alone decides whether it SHADOWS.
+    rebound = {}
     for node in ast.walk(tree):
         function, klass = places.get(id(node), (MODULE_LEVEL, None))
         for target, value in _bindings(node):
             through_class = (isinstance(target, ast.Attribute)
                              and _dotted(target.value) not in (None, "self", "cls"))
-            if (klass is None and not through_class) or not _reachable(
-                    value, spelled, klass, bound.get(function, set())):
+            if klass is None and not through_class:
                 continue
             if isinstance(target, ast.Attribute):
                 through = _dotted(target.value)
                 # Example.unread = ... names the class as statically as self.unread does.
                 owner = klass if through in ("self", "cls") else (
                     (through or "").rpartition(".")[2] or None)
-                if owner is not None:
-                    held.setdefault(owner, set()).add(target.attr)
+                named = target.attr
             elif (isinstance(target, ast.Name) and klass is not None
                     and any(id(statement) in in_class_body
                             for statement in ast.walk(node) if statement is node)):
                 # A bare binding in a class BODY, wherever the class is written. One inside a
                 # method is that method's local and no attribute of anything.
-                held.setdefault(klass, set()).add(target.id)
+                owner, named = klass, target.id
+            else:
+                continue
+            if owner is None:
+                continue
+            rebound.setdefault(owner, set()).add(named)
+            if _reachable(value, spelled, klass, bound.get(function, set())):
+                held.setdefault(owner, set()).add(named)
+    # A def or a nested class in a class body binds that name too, and stands in front of an
+    # inherited attribute exactly as an assignment does.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in node.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                rebound.setdefault(node.name, set()).add(statement.name)
     # An attribute declared on a base is held by everything under it, the way a method is.
     parents = {node.name: [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
@@ -1824,7 +1866,10 @@ def _held_by_class(tree, spelled, over=None):
         growing = False
         for klass, bases in parents.items():
             for base in bases:
-                gained = held.get(base, set()) - held.get(klass, set())
+                # Lookup stops at the first class that binds the name, so a subclass that
+                # rebinds an inherited one is not holding what the base held.
+                gained = (held.get(base, set()) - held.get(klass, set())
+                          - rebound.get(klass, set()))
                 if gained:
                     held.setdefault(klass, set()).update(gained)
                     growing = True
