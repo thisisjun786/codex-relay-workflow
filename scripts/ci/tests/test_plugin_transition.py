@@ -2039,6 +2039,130 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(host.settings(), settings)
         self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
 
+    def test_a_recheck_refusal_after_the_retire_puts_the_settings_back(self):
+        """The retire is made for the standdown, so every way of not reaching it undoes it."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        settings = host.settings()
+        document = host.hooks_document()
+        calls = []
+        original = steps.plugin_refusals
+
+        def failing(host_view):
+            """Usable for the retire, gone by the standdown: the plugin removed in between."""
+            calls.append(1)
+            return [] if len(calls) == 1 else ["the plugin entry crw@crw is disabled"]
+
+        steps.plugin_refusals = failing
+        self.addCleanup(setattr, steps, "plugin_refusals", original)
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["settings retire"], "settled", json.dumps(results)[:700])
+        self.assertEqual(outcomes["hook standdown"], "refused")
+        self.assertEqual(host.settings(), settings)
+        self.assertEqual(host.hooks_document(), document)
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
+    def test_a_busy_hook_lock_after_the_retire_puts_the_settings_back(self):
+        """A lock another run holds is one more way of not reaching the standdown."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        settings = host.settings()
+        held = Path(str(host.home / "hooks.json") + hostrecord.LOCK_SUFFIX)
+        held.write_text("1", encoding="utf-8")
+        self.addCleanup(held.unlink, missing_ok=True)
+        original = hostrecord.LOCK_TIMEOUT_SECONDS
+        hostrecord.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, hostrecord, "LOCK_TIMEOUT_SECONDS", original)
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["settings retire"], "settled", json.dumps(results)[:700])
+        self.assertEqual(outcomes["hook standdown"], "busy")
+        self.assertEqual(host.settings(), settings)
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
+    def test_a_rollback_copy_that_fails_leaves_no_partial_settings(self):
+        """A half-written document at the live path is what the hook would then read."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        retired = steps.settings_retire(snapshot, {}, apply=True)
+        origin = Path(retired["retired"][0]["from"])
+        archive = Path(retired["retired"][0]["to"])
+        genuine_replace, genuine_copy = os.replace, shutil.copy2
+
+        def crossing(source, target):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        def failing(source, target, **keywords):
+            Path(target).write_text("half a doc", encoding="utf-8")
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        os.replace, shutil.copy2 = crossing, failing
+        self.addCleanup(setattr, shutil, "copy2", genuine_copy)
+        self.addCleanup(setattr, os, "replace", genuine_replace)
+        restored, kept = steps._restore_retired([retired])
+        os.replace, shutil.copy2 = genuine_replace, genuine_copy
+        self.assertEqual(restored, [])
+        self.assertTrue([item for item in kept if "ENOSPC" in item or "No space" in item],
+                        json.dumps(kept))
+        self.assertFalse(origin.exists(), "a partial document was left where the hook reads")
+        self.assertTrue(archive.is_file())
+        self.assertEqual(sorted(host.home.glob(".crw-restore-*")), [])
+
+    def test_a_registered_path_absent_at_the_reading_is_still_watched(self):
+        """Dropping an absent candidate before the locks means never looking at it again.
+
+        The window is inside this one function: the candidate list is built from what is on disk,
+        and a file created after that and before the locks is in neither the proof loop nor the
+        archive. So the case writes it while the locks are being taken.
+        """
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        document = json.loads(custom.read_text(encoding="utf-8"))
+        custom.unlink()
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        document["markerRoot"] = str(host.marker / "somebody-else")
+        original = hostrecord.Locked
+        made = []
+
+        class Arriving(original):
+            """The installer that owns that registration, writing its settings back right here."""
+
+            def __init__(self, target, timeout=None):
+                if not made:
+                    made.append(1)
+                    custom.write_text(json.dumps(document), encoding="utf-8")
+                super().__init__(target, timeout)
+
+        hostrecord.Locked = Arriving
+        self.addCleanup(setattr, hostrecord, "Locked", original)
+        answer = steps.settings_retire(snapshot, {}, apply=True)
+        hostrecord.Locked = original
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertIn("was absent when this host was read", answer["detail"])
+        self.assertEqual(json.loads(custom.read_text(encoding="utf-8")), document)
+        self.assertTrue(fixed.is_file())
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

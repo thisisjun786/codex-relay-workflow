@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -636,9 +637,17 @@ def settings_retire(host, options, *, apply=False):
     # takes the newest, so ordering decides which document a rerun rebuilds from: archived first, an
     # unrelated file at the fixed path became the newest archive and silently supplied the marker
     # root, the database and the journal after an interruption.
-    paths = []
+    paths, watched = [], []
     for candidate in [host["settings"]["path"], fixed] + named:
-        if not candidate or candidate in paths or not Path(candidate).exists():
+        if not candidate or candidate in paths or candidate in watched:
+            continue
+        if not Path(candidate).exists():
+            # Absent now, and still named by a registration or by the fixed path. Kept rather
+            # than dropped: a supported installer creating it between this filter and the
+            # standdown leaves settings nothing here looked at, its store and journal abandoned
+            # while the run reports success. It is locked with the rest and looked at again
+            # inside that lock.
+            watched.append(candidate)
             continue
         if candidate != fixed:
             document, outcome, _detail, _found = completion.read_configuration(Path(candidate))
@@ -680,8 +689,15 @@ def settings_retire(host, options, *, apply=False):
     # standdown never reached: those registrations stay installed and release in silence, which is
     # a partial retirement reported as a refusal.
     with contextlib.ExitStack() as locks:
-        for candidate in paths:
+        for candidate in paths + watched:
             locks.enter_context(hostrecord.Locked(Path(candidate)))
+        for candidate in watched:
+            if Path(candidate).exists():
+                return _answer("settings retire", REFUSED,
+                               str(candidate) + " was absent when this host was read and is there"
+                               " now, so a registration's settings appeared while this ran and"
+                               " nothing here proved them. Nothing was archived; rerun to decide"
+                               " against the settings as they now stand", retired=[])
         for candidate in paths:
             # The snapshot proved what this file said; the lock only serialises the rename. A
             # writer that finished in between has settings this command never read, and archiving
@@ -1178,12 +1194,55 @@ def _restore_retired(results):
                     # The retire crosses filesystems by copying, and so does the way back. Without
                     # this the original path stays absent on exactly the layout retire was taught
                     # to handle, and the registration still installed reads nothing.
-                    shutil.copy2(str(archive), str(origin))
+                    #
+                    # Copied beside the path and moved onto it, never written into it directly: a
+                    # copy that fails halfway -- the destination filling up is the ordinary way --
+                    # would otherwise leave a partial document at the live path, which every later
+                    # attempt then reads as occupied and skips while the hook reads it as its
+                    # settings.
+                    handle, temporary = tempfile.mkstemp(dir=str(origin.parent),
+                                                         prefix=".crw-restore-")
+                    os.close(handle)
+                    try:
+                        shutil.copy2(str(archive), temporary)
+                        os.replace(temporary, str(origin))
+                    except BaseException:
+                        Path(temporary).unlink(missing_ok=True)
+                        raise
                     os.unlink(str(archive))
                 restored.append(str(origin))
         except (OSError, hostrecord.Busy) as error:
             kept.append(str(archive) + " (" + type(error).__name__ + ": " + str(error) + ")")
     return restored, kept
+
+
+def _rollback_if_unfinished(results):
+    """Undo the retire when the standdown it was made for did not happen.
+
+    One place rather than one per exit. The settings are retired FOR the standdown, so every way
+    a run can end between them leaves the identical host: a registration still installed whose
+    settings are archived, releasing every Stop in silence. The standdown refusing is only the
+    first of those ways -- the plugin recheck in front of it can refuse, and the hook file's lock
+    can be held by another run -- and a rollback written at one exit is a rollback missing from
+    the others.
+    """
+    done = {item["step"]: item for item in results}
+    retire = done.get("settings retire")
+    if not retire or retire["outcome"] != SETTLED:
+        return
+    standdown = done.get("hook standdown")
+    if standdown is not None and standdown["outcome"] in DONE:
+        return
+    restored, kept = _restore_retired(results)
+    # Reported on the answer that ended the run, which is the one an operator reads first.
+    stopper = next((item for item in reversed(results)
+                    if item["outcome"] not in (NOT_REACHED,)), retire)
+    stopper["settingsRestored"] = restored
+    stopper["settingsLeftArchived"] = kept
+    if restored:
+        stopper["detail"] = (str(stopper["detail"]) + ". The settings this run had already"
+                             " archived were put back at " + ", ".join(restored) + ", so the"
+                             " registration still there keeps working")
 
 
 def transition(host, options, *, apply=False):
@@ -1242,19 +1301,6 @@ def transition(host, options, *, apply=False):
                 lock.__exit__(None, None, None)
                 lock = None
             if answer["outcome"] == REFUSED:
-                if name == "hook standdown":
-                    # The one refusal that can arrive with something already taken away. The
-                    # settings were retired for this standdown; if it will not happen, they go
-                    # back, so the still-registered adapter keeps reading the document it was
-                    # installed with instead of releasing in silence until an operator agrees to
-                    # a consent question this run raised.
-                    restored, kept = _restore_retired(results)
-                    answer["settingsRestored"] = restored
-                    answer["settingsLeftArchived"] = kept
-                    if restored:
-                        answer["detail"] = str(answer["detail"]) + ". The settings this run had"
-                        answer["detail"] += " already archived were put back at " + ", ".join(
-                            restored) + ", so the registration still there keeps working"
                 remaining = [n for n, _ in ORDER][
                     [n for n, _ in ORDER].index(name) + 1:]
                 results += [_answer(n, NOT_REACHED, "an earlier step refused") for n in remaining]
@@ -1272,6 +1318,8 @@ def transition(host, options, *, apply=False):
     finally:
         if lock is not None:
             lock.__exit__(None, None, None)
+    if apply:
+        _rollback_if_unfinished(results)
     if apply and all(item["outcome"] in DONE for item in results):
         results.append(hook_recheck(host))
     return results
