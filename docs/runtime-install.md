@@ -589,7 +589,7 @@ rather than folded into one.
 | Field | Answers |
 | --- | --- |
 | `promoted` | whether THIS run replaced a runtime. A resumed promotion did; adopting bookkeeping for an installation the record already selected did not |
-| `inService` | whether this destination must be kept. True while the record selects this environment or the owned pointer names it, and true when that could not be read at all, because an environment nobody could establish as free is not one that is free. False only when the readings say so |
+| `inService` | whether this destination must be kept. True while the record selects this environment or the owned pointer names it, true once its claim has settled -- a runtime promoted once may still have a process running out of it, which is why `staging.decide()` never reclaims a settled claim either -- and true when none of that could be read, because an environment nobody could establish as free is not one that is free. False only when the readings say so |
 | `claimSettled` | whether the claim recording it was written |
 | `claim` | the claim's own two outcomes -- `settled` for the record landing, `released` for the call finishing -- with the readback and the selection snapshot that decided them, any residual path, and what raised |
 | `recoveryRequires` | what has to be done next, under the same key a refusal reports it |

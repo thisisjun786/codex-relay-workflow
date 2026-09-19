@@ -3207,7 +3207,13 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
     # a snapshot nobody could take keeps the environment, which is the same shape
     # protected_environment itself uses and for the same reason -- the cost of keeping a
     # directory is a report, and the cost of releasing a live one is the accident.
-    in_service = protected is not False
+    #
+    # A SETTLED CLAIM KEEPS IT TOO, however the selection has moved. staging.decide() answers
+    # KEEP for every COMPLETE claim and says why: it is a runtime that was promoted once, and
+    # a process started from it may still be running out of it. This cell is what the
+    # documented contract points a wrapper at for that decision, so leaving it to 'protected'
+    # alone would have a compliant wrapper delete exactly what this command refuses to.
+    in_service = settled or protected is not False
 
     # Ordered as staging.decide() orders it, because that is whose behaviour this describes:
     # an unreadable claim is answered before the state is consulted at all, and only then does

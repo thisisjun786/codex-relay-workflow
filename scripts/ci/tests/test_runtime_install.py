@@ -5984,6 +5984,25 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=busy_after_moving_on))
+        if breaking == "supersede after the claim settles":
+            # The claim lands, and a competing install promotes its own environment before the
+            # snapshot takes the promotion lock. Nothing raises: this is a SUCCESSFUL update
+            # whose environment has since been superseded, and staging.decide() keeps such a
+            # directory for ever because a process may still be running out of it.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def supersede_after_settling(environment, state, **kwargs):
+                written = real_write(environment, state, **kwargs)
+                if state == staging.COMPLETE:
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    runtime_install.pointer.place(host.pointer_path, host.previous)
+                return written
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=supersede_after_settling))
         if breaking == "settle the staging claim after the pointer goes":
             # The record still selects this environment and the owned pointer no longer names
             # it. A rerun is then not bookkeeping: _finish_promotion replaces the link before
@@ -6525,6 +6544,32 @@ class SettledRecordTests(unittest.TestCase):
         self.assertIs(superseded.get("inService"), False,
                       "and one a later promotion superseded is not, whatever this run did: "
                       + json.dumps(superseded.get("claim") or {})[:400])
+
+    def test_a_settled_claim_keeps_the_destination_after_supersession(self):
+        """staging.decide() never reclaims a COMPLETE claim, and this cell must agree.
+
+        A runtime promoted once may still have a process running out of it, which is why the
+        COMPLETE branch keeps such a directory however the selection has moved. The documented
+        contract points a wrapper at 'inService' for that decision, so leaving it to the
+        selection and pointer alone would have a compliant wrapper delete exactly what this
+        command refuses to.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="supersede after the claim settles")
+            claim = staging.read_claim(host.candidate)
+            decision, why = staging.decide(
+                claim, staging.DEAD, occupied=True, protected=False, selected=False)
+
+        self.assertTrue(staging.settled(claim), "the claim really did settle")
+        self.assertEqual(code, 0, "and the update itself succeeded")
+        self.assertIs(payload.get("claimSettled"), True)
+        self.assertEqual(decision, staging.KEEP,
+                         "this command would keep the directory: " + why)
+        self.assertIs(payload.get("inService"), True,
+                      "so the result must not tell a wrapper it may be released: "
+                      + json.dumps(payload.get("claim") or {})[:400])
 
     def test_an_unreadable_snapshot_keeps_the_destination(self):
         """The one direction this cell may not fail in.
