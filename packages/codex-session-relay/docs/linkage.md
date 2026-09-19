@@ -43,7 +43,7 @@ and no second database.
     bindingId   = "bnd-" + sha256(role|scopeKind|scopeKey|taskId)[:32]
     linkId      = "lnk-" + sha256(kind|upperKind|upperKey|lowerKind|lowerKey)[:32]
     peer linkId = "lnk-" + sha256("peer"|"project"|lower|"project"|higher)[:32]
-    directiveId = "dir-" + sha256(scopeKind|scopeKey|fromScopeKey|digest)[:32]
+    directiveId = "dir-" + sha256(scopeKind|scopeKey|fromScopeKey|digest|revision)[:32]
 
 128 bits, not the 64 the contract's `relationshipId` keeps. That one is frozen and cannot be
 widened; these are relay-owned, and a collision here would silently MERGE two scopes or two
@@ -62,6 +62,14 @@ was, so the old row stays, archived, with `supersededBy` pointing at its replace
 A **peer** id sorts its two scope keys before hashing. A peer relation is symmetric, so two
 parents registering it from opposite ends have to converge on one record rather than on two
 mirror images.
+
+A **directive** carries the revision of the link it arrived on, which is the one identity here
+that deliberately does NOT converge across a handover. Replaying an instruction to the same
+scope is meant to land on the same record, and a replacement supervisor re-issuing a
+byte-identical instruction is a different fact: a handover advances the edge's revision, so
+without it the second directive derived its predecessor's id and the two became
+indistinguishable. Derive the id with the revision the edge carries when the directive is
+recorded, not the one it had when the instruction was written.
 
 ## The hierarchy, and what cannot enter it
 

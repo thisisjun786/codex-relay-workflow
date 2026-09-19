@@ -1237,5 +1237,144 @@ class TheSeventhRoundFoundTheseToo(LinkageTestCase):
         self.assertEqual(answer["state"], "unlinked")
         self.assertIsNone(answer["link"])
 
+class TheEighthRoundFoundTheseToo(LinkageTestCase):
+    def test_project_history_alone_does_not_let_a_foreign_parent_attach(self):
+        """The relaxation for a moving assignment was too wide.
+
+        Accepting any assignment whose issue merely HAS project history let an unrelated
+        registration under a foreign parent repoint the issue edge away from the project's
+        live owner, which is the guard's whole job. It is relaxed only for a genuine
+        successor: one that supersedes a relationship itself scoped to this project.
+        """
+        self.supervise()
+        self.supervise(project=OTHER_PROJECT, parent=self.parent(OTHER_PARENT))
+        first = self.register()
+        self.linkage.attach_issue(first["relationshipId"], PROJECT)
+        self.registry.set_status(first["relationshipId"], "cancelled", actor="test")
+        unrelated = self.registry.register(
+            parent=Endpoint(OTHER_PARENT, HOST), child=Endpoint("01child-far", HOST),
+            issue_key=ISSUE, artifact_roots=[self.root],
+            allowed_recipients=[OTHER_PARENT], dispatch_request_id="dispatch-unrelated",
+            dispatch_turn_id="turn-unrelated")
+        self.assertRefused(
+            RefusalReason.FOREIGN_SCOPE,
+            self.linkage.attach_issue, unrelated["relationshipId"], PROJECT)
+
+    def test_an_assignment_parked_on_a_third_parent_still_blocks_a_handover(self):
+        """attached() asked only about the OUTGOING owner, so work moved to somebody who is
+        not the incoming owner slipped through and the project owner and its issue edges ended
+        up naming different tasks."""
+        self.supervise()
+        original = self.register()
+        rid = original["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.register(
+            parent=Endpoint("01parent-three", HOST), child=Endpoint("01child-two", HOST),
+            issue_key=ISSUE, artifact_roots=[self.root],
+            allowed_recipients=["01parent-three"], dispatch_request_id="dispatch-third",
+            dispatch_turn_id="turn-third", supersedes=rid)
+        self.assertEqual(self.linkage.attached(PROJECT, PARENT), [])
+        self.assertRefused(
+            RefusalReason.HANDOVER_WOULD_STRAND,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.parent(OTHER_PARENT),
+            acknowledged=self.linkage.outstanding(PROJECT),
+            evidence="work parked on a third parent", actor="test")
+
+    def test_the_same_child_registered_again_does_not_let_its_predecessor_archive_it(self):
+        """The guard compared TASKS, which is enough while a replacement uses a different
+        child and wrong the moment the same one is registered again for the same issue: the
+        ids matched, the archived predecessor looked like the owner, and its status writes
+        reached the successor's binding and edge."""
+        self.supervise()
+        first = self.register()
+        self.linkage.attach_issue(first["relationshipId"], PROJECT)
+        self.registry.set_status(first["relationshipId"], "archived", actor="test")
+        # The project changes hands, then the SAME child is assigned the same issue again
+        # under the new parent. That is a different relationship with the same child, which is
+        # the shape a task-keyed guard cannot tell from its own predecessor.
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[],
+            evidence="the archived assignment left nothing behind", actor="test")
+        again = self.registry.register(
+            parent=Endpoint(OTHER_PARENT, HOST, cwd="/parent"), child=Endpoint(CHILD, HOST),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[OTHER_PARENT],
+            dispatch_request_id="dispatch-again", dispatch_turn_id="turn-again",
+            project_key=PROJECT)
+        self.assertNotEqual(again["relationshipId"], first["relationshipId"])
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
+        # A late status write on the predecessor must not reach the successor's level.
+        self.registry.set_status(first["relationshipId"], "cancelled", actor="test")
+        self.assertIsNotNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+        self.assertEqual(
+            self.linkage.attachment(again["relationshipId"])["projectKey"], PROJECT)
+
+
+class TheNinthRoundFoundTheseToo(LinkageTestCase):
+    def scoped(self):
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        return relationship["relationshipId"]
+
+    def test_the_same_child_under_a_second_parent_is_still_a_duplicate_assignment(self):
+        """The rival check excluded rows sharing this child.
+
+        That was meant to let a caller restate its own assignment, but an identical
+        restatement derives the SAME relationship id and returns long before the check, so
+        the only thing the exclusion actually admitted was one child registered for one issue
+        under TWO parents: two live assignments, both parents authorized to deliver, and a
+        project whose owner matches neither.
+        """
+        original = self.scoped()
+        self.assertRefused(
+            RefusalReason.DUPLICATE_ASSIGNMENT, self.registry.register,
+            parent=self.parent(OTHER_PARENT), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root],
+            allowed_recipients=[OTHER_PARENT], dispatch_request_id="dispatch-second-parent",
+            dispatch_turn_id="turn-second-parent")
+        live = self.store.all(
+            "SELECT relationship_id FROM relationships WHERE issue_key = ?"
+            "  AND status IN ('active','paused') AND superseded_by IS NULL", (ISSUE,))
+        self.assertEqual([row["relationship_id"] for row in live], [original])
+
+    def test_resuming_after_the_project_changed_hands_is_refused(self):
+        """Archiving releases the issue and leaves nothing live for attached() to see, so the
+        project hands on with no work to strand and no refusal. Coming back afterwards
+        restored an edge under a parent the project no longer has, and the relationship and
+        the delivery authorization derived from it named the old parent while linkage named
+        the new one - the split routing a handover exists to prevent."""
+        rid = self.scoped()
+        self.registry.set_status(rid, "archived", actor="test")
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[],
+            evidence="the archived assignment left nothing behind", actor="test")
+        self.assertRefused(
+            RefusalReason.FOREIGN_SCOPE, self.registry.resume, rid,
+            expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+        self.assertEqual(self.registry.get(rid)["status"], "archived",
+                         "the refused resume moved the relationship anyway")
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], OTHER_PARENT)
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+
+    def test_a_project_left_without_a_parent_does_not_get_its_issue_edge_back(self):
+        """The same restoration under a project nobody owns at all. attach_in refuses a fresh
+        attachment to a parentless project, and reactivation is the other way in."""
+        rid = self.scoped()
+        self.registry.set_status(rid, "archived", actor="test")
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE scope_bindings SET status = 'archived'"
+                "  WHERE scope_kind = ? AND scope_key = ? AND role = ?",
+                (linkage.PROJECT, PROJECT, linkage.PARENT))
+        self.assertRefused(
+            RefusalReason.FOREIGN_SCOPE, self.registry.resume, rid,
+            expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+        self.assertEqual(self.registry.get(rid)["status"], "archived")
+
 if __name__ == "__main__":
     unittest.main()

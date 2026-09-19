@@ -210,6 +210,9 @@ class Registry:
                     "superseded_by": None, "parent_task_id": parent.task_id,
                     "child_task_id": child.task_id, "child_host_id": child.host_id,
                     "child_cwd": child.cwd, "child_cxc_session": child.cxc_session,
+                    # Carried so the pre-check can tell a genuine successor from an unrelated
+                    # registration; attach_refusal relaxes the parent rule only for the first.
+                    "supersedes": supersedes,
                 }
                 _plan, pending = self.linkage.attach_refusal(
                     db, candidate, project_key, replacing=outgoing)
@@ -241,20 +244,40 @@ class Registry:
             # A PAUSED assignment still owns its child. A pause is a temporary state of an
             # existing assignment, never permission to open a second one, so only an archived,
             # cancelled or superseded assignment releases the issue.
+            #
+            # Keyed on the relationship, not on the child. Excluding rows that share this
+            # child was meant to let a caller restate its own assignment, but an identical
+            # restatement derives the SAME id and returns long before this point - so the only
+            # thing the child exclusion actually admitted was the same child being registered
+            # for the same issue under a SECOND parent. That is two live assignments, two
+            # parents authorized to deliver, and a project whose owner matches neither.
             rival = db.execute(
-                "SELECT relationship_id, child_task_id, status FROM relationships"
+                "SELECT relationship_id, child_task_id, parent_task_id, status"
+                "  FROM relationships"
                 "  WHERE issue_key = ? AND status IN ('active','paused')"
-                "    AND superseded_by IS NULL AND child_task_id != ?",
-                (issue_key, child.task_id),
+                "    AND superseded_by IS NULL AND relationship_id != ?",
+                (issue_key, rid),
             ).fetchone()
             if rival is not None and rival["relationship_id"] != supersedes:
                 raise RegistrationError(
                     RefusalReason.DUPLICATE_ASSIGNMENT,
                     f"issue {issue_key!r} is already assigned to child "
                     f"{rival['child_task_id']!r} under {rival['relationship_id']!r} "
-                    f"({rival['status']}); reuse that assignment, or pass supersedes to "
-                    "replace it deliberately",
+                    f"({rival['status']}, parent {rival['parent_task_id']!r}); reuse that "
+                    "assignment, or pass supersedes to replace it deliberately",
                 )
+            if supersedes:
+                # BEFORE the successor is inserted. The lifecycle guard asks whether this
+                # relationship is still the live assignment for its issue, and once the
+                # replacement exists the answer for the predecessor is no - so archiving it
+                # afterwards would skip releasing the issue scope and the successor would
+                # collide with a binding nobody let go of.
+                db.execute(
+                    "UPDATE relationships SET superseded_by = ?, status = 'archived',"
+                    " updated_at = ? WHERE relationship_id = ?",
+                    (rid, now, supersedes),
+                )
+                self.linkage.apply_relationship_status_in(db, supersedes, "archived")
             db.execute(
                 "INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id,"
                 " parent_host_id, parent_cwd, parent_cxc_session, child_task_id, child_host_id,"
@@ -280,16 +303,6 @@ class Registry:
                     now if dispatch_turn_id else None,
                 ),
             )
-            if supersedes:
-                db.execute(
-                    "UPDATE relationships SET superseded_by = ?, status = 'archived',"
-                    " updated_at = ? WHERE relationship_id = ?",
-                    (rid, now, supersedes),
-                )
-                # The replacement's lower level is attached AFTER the old assignment releases
-                # its issue scope, so the project -> issue edge is repointed rather than
-                # fought over.
-                self.linkage.apply_relationship_status_in(db, supersedes, "archived")
             self.store.journal("relationship_registered", rid, {"issueKey": issue_key}, at=now)
             if project_key is not None:
                 fresh = db.execute(

@@ -588,6 +588,24 @@ class Linkage:
             raise refusal.error()
         return self.attachment(relationship_id)
 
+    def _owns_its_issue(self, db, relationship_id, issue_key):
+        """Is this relationship the live assignment for its issue?
+
+        Keyed on the RELATIONSHIP rather than on the child task. Comparing tasks was enough
+        while a replacement used a different child, and wrong the moment the same child was
+        registered again for the same issue after a handover: the ids matched, the archived
+        predecessor looked like the owner, and its status writes reached the successor's
+        binding and edge.
+        """
+        live = db.execute(
+            "SELECT relationship_id FROM relationships"
+            "  WHERE issue_key = ? AND status IN ('active','paused')"
+            "    AND superseded_by IS NULL"
+            "  ORDER BY created_at DESC LIMIT 1",
+            (issue_key,),
+        ).fetchone()
+        return live is None or live["relationship_id"] == relationship_id
+
     def attach_in(self, db, relationship_row, project_key, *, at=None, replacing=None):
         """The ONE path that writes the lower level. Returns a refusal or None.
 
@@ -645,13 +663,16 @@ class Linkage:
                 "project " + repr(project_key) + " has no registered parent, so an issue "
                 "cannot be attached to it yet",
                 scope_kind=PROJECT, scope_key=project_key, challenger=parent_task)
+        # Relaxed ONLY for a genuine successor: this relationship must supersede one that was
+        # itself scoped to this project. Accepting any assignment whose issue merely has
+        # project history let an unrelated registration under a foreign parent repoint the
+        # issue edge away from the project's live owner, which is the guard's whole job.
+        predecessor = relationship_row["supersedes"] if "supersedes" in \
+            relationship_row.keys() else None
         moving_within = db.execute(
-            "SELECT 1 FROM relationship_scope s"
-            "  JOIN relationships r ON r.relationship_id = s.relationship_id"
-            " WHERE r.issue_key = ? AND s.project_key = ?"
-            " LIMIT 1",
-            (issue_key, project_key),
-        ).fetchone()
+            "SELECT 1 FROM relationship_scope WHERE relationship_id = ? AND project_key = ?",
+            (predecessor, project_key),
+        ).fetchone() if predecessor else None
         if holder["task_id"] != parent_task and moving_within is None:
             # The issue has never belonged to this project, so this is a foreign attachment.
             # When it HAS, a differing parent is an assignment being moved to a new one, which
@@ -779,7 +800,8 @@ class Linkage:
         if scoped is None:
             return "unscoped"
         row = db.execute(
-            "SELECT issue_key, child_task_id FROM relationships WHERE relationship_id = ?",
+            "SELECT issue_key, child_task_id, parent_task_id FROM relationships"
+            "  WHERE relationship_id = ?",
             (relationship_id,),
         ).fetchone()
         if row is None:
@@ -801,21 +823,40 @@ class Linkage:
         # paused into archived released the issue scope while registry still reported the
         # child as responsible, so one store answered two ways about the same assignment.
         lower = status if status in LIVE else ARCHIVED
-        if lower != ACTIVE and current is not None \
-                and current["task_id"] != row["child_task_id"]:
+        if lower != ACTIVE and not self._owns_its_issue(
+                db, relationship_id, row["issue_key"]):
             # Deactivating, and this relationship no longer owns the scope. A superseded one
             # still receives status writes - archiving is how supersession records itself -
             # and acting on them would archive the binding and the edge its SUCCESSOR has
             # already taken over, disabling the replacement's whole lower level.
             return "superseded"
         if lower == ACTIVE:
-            # Reactivating must not produce a second owner. Cancelling RELEASES an issue, so
-            # another child can be bound to it directly in the meantime; resume checks
-            # relationships and never looked at who holds the scope now.
-            row = db.execute(
-                "SELECT issue_key, child_task_id FROM relationships"
-                "  WHERE relationship_id = ?", (relationship_id,)
+            # First, the PROJECT must still be in the hands this assignment names. Archiving or
+            # cancelling releases the issue and leaves nothing live for attached() to see, so
+            # the project can be handed to a new parent with no work to strand and no refusal.
+            # Coming back afterwards is the stale-owner case: the relationship and the delivery
+            # authorization derived from it still name the OLD parent, while linkage names the
+            # new one, which is precisely the split routing a handover exists to prevent.
+            holder = db.execute(
+                "SELECT task_id FROM scope_bindings"
+                "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
+                "    AND status IN ('active','paused') AND superseded_by IS NULL"
+                "  ORDER BY revision DESC LIMIT 1",
+                (PROJECT, scoped["project_key"], PARENT),
             ).fetchone()
+            if holder is None or holder["task_id"] != row["parent_task_id"]:
+                raise LinkageError(
+                    RefusalReason.FOREIGN_SCOPE,
+                    "project " + repr(scoped["project_key"]) + " is now parented by "
+                    + (repr(holder["task_id"]) if holder else "nobody")
+                    + ", not by " + repr(row["parent_task_id"]) + ", so restoring "
+                    + repr(relationship_id) + " would reattach its issue under an owner the "
+                    "project no longer has; re-register the assignment under the current "
+                    "parent instead",
+                )
+            # Reactivating must not produce a second owner either. Cancelling RELEASES an
+            # issue, so another child can be bound to it directly in the meantime; resume
+            # checks relationships and never looked at who holds the scope now.
             rival = db.execute(
                 "SELECT task_id FROM scope_bindings"
                 "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
@@ -1469,8 +1510,13 @@ class Linkage:
                 unfinished_ids.append(row["rid"])
         return unfinished_ids
 
-    def attached(self, project_key, task_id=None):
-        """Every LIVE assignment in this project, settled or not, optionally by parent.
+    def attached(self, project_key, task_id=None, *, other_than=None):
+        """Every LIVE assignment in this project, settled or not.
+
+        task_id narrows to one parent's rows. other_than does the opposite and is what a
+        handover asks: everything NOT named by the incoming owner. Asking only about the
+        outgoing one let assignments parked on a third parent slip through, and the project
+        owner and its issue edges then named different tasks.
 
         Wider than outstanding on purpose. A merged assignment is still a live relationship
         whose next generation opens under the parent named on its own row, so a handover that
@@ -1485,8 +1531,9 @@ class Linkage:
                 " WHERE s.project_key = ? AND r.status IN ('active','paused')"
                 "   AND r.superseded_by IS NULL"
                 "   AND (? IS NULL OR r.parent_task_id = ?)"
+                "   AND (? IS NULL OR r.parent_task_id != ?)"
                 " ORDER BY r.created_at",
-                (project_key, task_id, task_id),
+                (project_key, task_id, task_id, other_than, other_than),
             )
         ]
 
@@ -1580,12 +1627,14 @@ class Linkage:
                         + "; a replacement owner confirms the unfinished work it takes on",
                         scope_kind=scope_kind, scope_key=scope_key,
                         incumbent=expect_task_id, challenger=endpoint.task_id)
-                elif scope_kind == PROJECT and self.attached(scope_key, expect_task_id):
-                    # Only what still names the OUTGOING owner blocks. An assignment already
-                    # moved to the incoming parent by supersession is not stranded by this
-                    # handover, and counting it made the escape route this refusal prescribes
-                    # impossible to finish.
-                    still_here = self.attached(scope_key, expect_task_id)
+                elif scope_kind == PROJECT and self.attached(
+                        scope_key, other_than=endpoint.task_id):
+                    # Everything that does NOT already name the incoming owner blocks. Asking
+                    # only about the outgoing one let assignments parked on a third parent
+                    # through; asking about all of them made the escape route this refusal
+                    # prescribes impossible to finish. This is the rule that says what the
+                    # handover is for: afterwards every live assignment names the new parent.
+                    still_here = self.attached(scope_key, other_than=endpoint.task_id)
                     # Refuse, and say what it could not move. An assignment's identity is
                     # sha256(parentTaskId|childTaskId|issueKey) and its queued deliveries name
                     # the parent's thread, so a handover cannot carry the endpoint across: it
