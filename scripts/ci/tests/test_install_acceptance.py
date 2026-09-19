@@ -179,6 +179,10 @@ TEXT_EVIDENCE = {
     "test_no_two_places_this_module_declares_can_share_a_name":
         "whether two places share a name is a property of the text: the module object has"
         " already discarded the second by the time it could be asked.",
+    "test_no_class_body_binding_shadows_without_asking_whether_it_happened":
+        "which branch guards a binding is a property of how bound_in is written, and the module"
+        " object cannot be asked: a yield that checks certainty and one that does not are the"
+        " same generator to it. Reading the file is the only way to sweep the rule.",
     "test_no_reader_here_sees_only_the_unannotated_binding":
         "which form a reader here accepts is a property of how it is written, and the module"
         " object cannot be asked: a function that tests ast.Assign and one that tests both are"
@@ -278,6 +282,20 @@ SOURCE_UNDECIDED_CALLS = {
 # file's own text, so a new reader of the bare form fails the module rather than waiting to be
 # found, and an entry that stops being true fails too.
 ASSIGN_ONLY_ON_PURPOSE = {}
+
+# Every place the certainty of a class-body binding is decided. A name bound under a branch that
+# may not run does not shadow -- whether it ran is a question about the run -- and treating one
+# as definite loses the place that really does reach the enclosing name. That direction is a
+# MISS: the inventory then accepts a place nobody declared, which is the ground this module
+# exists to hold. So each binding yielded in bound_in has to ASK, and one that does not is
+# declared here with the reason it may. Derived from bound_in's own text and keyed by the node
+# kinds its branch tests, so a new unguarded branch fails here instead of arriving as a finding.
+BINDS_WITHOUT_ASKING_IF_IT_HAPPENED = {
+    "AsyncFunctionDef, FunctionDef":
+        "a def under a branch is still a method: the method index answers for it either way and"
+        " a call through self reaches it whether or not the branch ran. A class is indexed by"
+        " nothing of the kind, which is exactly why ClassDef is not in here beside them.",
+}
 
 # Where a value-following resolver here reads fewer forms than the pass-through vocabulary.
 # `that = self if flag else self` hands the receiver through a conditional, and a resolver
@@ -2836,10 +2854,78 @@ RESOLVES_LIKE_PYTHON = {
         (REFUSAL,
          ("def consumer():",
           "    import json as r",
-          "    return r.UNREADABLE"),
-         "consumer", False,
-         "its pair: reading every binding of the name must not make every qualifier an owner."
-         " A scope that binds the alias only to something else still names nothing here."),
+         "    return r.UNREADABLE"),
+        "consumer", False,
+        "its pair: reading every binding of the name must not make every qualifier an owner."
+        " A scope that binds the alias only to something else still names nothing here."),
+    "a nested class a branch may never bind":
+        (TEXT,
+         ("def carrier():",
+          "    return HERE.read_text()",
+          "",
+          "class Holder:",
+          "    if False:",
+          "        class carrier:",
+          "            pass",
+          "    verdict = \"needle\" in carrier()"),
+         "Holder.verdict", True,
+         "whether the branch ran is a question about the run, so the class body still reaches"
+         " the module function. The exemption beside this one belongs to a def -- the method"
+         " index answers for it either way -- and nothing indexes a nested class that way, so"
+         " treating it as a certain shadow loses a place that really does read the source."),
+    "a nested class the body certainly binds":
+        (TEXT,
+         ("def carrier():",
+          "    return HERE.read_text()",
+          "",
+          "class Holder:",
+          "    class carrier:",
+          "        pass",
+          "    verdict = \"needle\" in carrier()"),
+         "Holder.verdict", False,
+         "its pair: an unconditional nested class really does shadow, so honouring the flag"
+         " must not have stopped a class body shadowing at all."),
+    "a class body with nothing shadowing the name":
+        (TEXT,
+         ("def carrier():",
+          "    return HERE.read_text()",
+          "",
+         "class Holder:",
+         "    verdict = \"needle\" in carrier()"),
+        "Holder.verdict", True,
+        "the control beside both: with no nested class at all the body plainly reaches the"
+        " module function, which is what the conditional case has to agree with."),
+    "a nested class an except branch may never bind":
+        (TEXT,
+         ("def carrier():",
+          "    return HERE.read_text()",
+          "",
+          "class Holder:",
+          "    try:",
+          "        pass",
+          "    except Exception:",
+          "        class carrier:",
+          "            pass",
+          "    verdict = \"needle\" in carrier()"),
+         "Holder.verdict", True,
+         "the same rule under a different compound statement. Nobody reported this one; it was"
+         " found by asking which constructs decide certainty rather than by fixing the branch"
+         " that was reported, and it was failing in the same direction."),
+    "a nested class a match arm may never bind":
+        (TEXT,
+         ("def carrier():",
+          "    return HERE.read_text()",
+          "",
+          "class Holder:",
+          "    match 1:",
+          "        case 1:",
+          "            class carrier:",
+          "                pass",
+          "    verdict = \"needle\" in carrier()"),
+         "Holder.verdict", True,
+         "and the third, for the same reason. An arm that matches is a fact about the run, so"
+         " the body still reaches the module function and the place that reads it is owed a"
+         " declaration."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4727,9 +4813,16 @@ def _hands_on(tree, spelled):
             empty sequence never binds it and the name still reaches the enclosing scope.
             """
             for statement in body:
-                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                          ast.ClassDef)):
+                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     yield statement.name, statement.lineno
+                    continue
+                if isinstance(statement, ast.ClassDef):
+                    # A class is not a method, and no index answers for it the way the method
+                    # index answers for a def, so the exemption above is not its. It shadows
+                    # only when the binding is certain, which is the rule the ordinary bindings
+                    # below already follow: whether a branch ran is a question about the run.
+                    if certain:
+                        yield statement.name, statement.lineno
                     continue
                 if certain and not isinstance(statement, (ast.For, ast.AsyncFor)):
                     for named in _binds_locally(statement):
@@ -6586,6 +6679,68 @@ class SevenReadingsTests(unittest.TestCase):
                                      form + ": " + place + " cannot reach the declared thing and"
                                      " this reader named it anyway: " + json.dumps(places))
 
+    def test_no_class_body_binding_shadows_without_asking_whether_it_happened(self):
+        """The certainty rule, swept over every place that decides it rather than one branch.
+
+        A name bound under a branch that may not run does not shadow, so a body that really does
+        reach the enclosing name keeps reaching it. Getting that wrong loses the place: the
+        inventory then accepts something that concludes from source text and was never declared,
+        which is a miss rather than a narrow claim.
+
+        The sweep predicate is every binding yielded in bound_in, and the requirement is that a
+        certainty test guards it. Both are read off bound_in's own text, keyed by the node kinds
+        its branch tests, so a branch added later without asking fails here. A declared
+        exception that stops being unguarded fails too rather than sitting on the page.
+        """
+        source = HERE.read_text(encoding="utf-8")
+        deciding = [node for node in ast.walk(ast.parse(source))
+                    if isinstance(node, ast.FunctionDef) and node.name == "bound_in"]
+        self.assertEqual(len(deciding), 1,
+                         "the certainty rule is decided in bound_in, and this file no longer"
+                         " has exactly one of those to sweep")
+        above = {}
+        for parent in ast.walk(deciding[0]):
+            for child in ast.iter_child_nodes(parent):
+                above[id(child)] = parent
+        asking, yielded = {}, 0
+        for node in ast.walk(deciding[0]):
+            if not isinstance(node, ast.Yield) or node.value is None:
+                continue
+            yielded += 1
+            guarded, kinds, here = False, (), node
+            while id(here) in above:
+                parent = above[id(here)]
+                if isinstance(parent, ast.If):
+                    if (any(isinstance(inner, ast.Name) and inner.id == "certain"
+                            for inner in ast.walk(parent.test))
+                            and any(here is step or any(here is inner
+                                                        for inner in ast.walk(step))
+                                    for step in parent.body)):
+                        guarded = True
+                    named = tuple(sorted(
+                        inner.attr for inner in ast.walk(parent.test)
+                        if isinstance(inner, ast.Attribute)
+                        and isinstance(inner.value, ast.Name) and inner.value.id == "ast"))
+                    if named and not kinds:
+                        kinds = named
+                here = parent
+            if not guarded:
+                asking[", ".join(kinds) or "a binding under no branch at all"] = node.lineno
+        self.assertTrue(yielded,
+                        "no binding is yielded in bound_in at all, so this check would pass by"
+                        " sweeping nothing rather than by finding nothing")
+        undeclared = sorted(set(asking) - set(BINDS_WITHOUT_ASKING_IF_IT_HAPPENED))
+        self.assertEqual(undeclared, [],
+                         "a class-body binding is treated as definite without asking whether it"
+                         " happened, and nobody wrote down why it may: " + json.dumps(undeclared))
+        stale = sorted(set(BINDS_WITHOUT_ASKING_IF_IT_HAPPENED) - set(asking))
+        self.assertEqual(stale, [],
+                         "declared as binding without asking, but it asks now, so delete the"
+                         " entry: " + json.dumps(stale))
+        for kinds, why in sorted(BINDS_WITHOUT_ASKING_IF_IT_HAPPENED.items()):
+            with self.subTest(kinds):
+                self.assertTrue(why.strip(), kinds + " is declared without a reason")
+
     def test_each_binding_fixpoint_here_halts_on_a_name_bound_twice(self):
         """The derivations halt, measured on the input that makes them spin.
 
@@ -7493,6 +7648,7 @@ HANDED = {
     "_passed_through": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
+    "test_no_class_body_binding_shadows_without_asking_whether_it_happened": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
     "_class_spellings": NOTHING,
