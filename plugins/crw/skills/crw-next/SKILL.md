@@ -63,9 +63,9 @@ If the claimed result still has a consequential gap, choose its correction or
 missing verification and route it one level down from whoever is asking: a parent takes an issue's
 gap to its responsible child, a supervisor takes the same gap to that project's parent and never to
 its children, and a standalone issue keeps its own issue-scoped owner. Where the gap spans projects
-it goes to the parents that own the work. An ordinary cross-project gap those
-parents can settle goes to them; an unresolved disagreement, a scope change, new ownership or a
-shared resource is their common supervisor's decision even when they agree. Where the projects
+it goes to the parents that own the work, while an unresolved
+disagreement, a scope change, new ownership or a shared resource is their common supervisor's
+decision even when those parents agree. Where the projects
 answer to different supervisors, a requirement for one of them goes to that project's own
 supervisor, and only a genuinely shared decision with no common supervisor goes to the user. All of this follows
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope). Do not start a successor
