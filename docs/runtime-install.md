@@ -1627,8 +1627,12 @@ is recorded. Four of the seven need an input the command cannot supply for itsel
 # so a directory still holding an earlier run's files is two runs wearing one name: a guard
 # further down would find that run's snapshot and report a comparison this run never took.
 # mkdir without -p is the check, because it fails rather than adopting a directory already
-# there. Name the receipt under a parent that exists, and a new one for every run.
-mkdir <receipt>
+# there. It ends the procedure rather than reporting and continuing, because a shell without
+# set -e would run every step below into the directory mkdir just refused, and the mixing works
+# in both directions: an older run's snapshot read as this run's preservation, and an older
+# run's absence marker read as a side this run did not have. Name the receipt under a parent
+# that exists, and a new one for every run.
+mkdir <receipt> || exit 1
 
 # One controller for the whole block, on 3.11 or newer. Five of the steps below read a Codex
 # configuration and they do not fail alike without a reader, so naming the interpreter once is
