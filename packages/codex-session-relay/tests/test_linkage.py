@@ -1118,5 +1118,61 @@ class TheFifthRoundFoundTheseToo(LinkageTestCase):
             acknowledged=self.linkage.outstanding(PROJECT),
             evidence="a settled-looking project", actor="test")
 
+class TheSixthRoundFoundTheseToo(LinkageTestCase):
+    def test_a_supervision_with_a_blank_endpoint_is_refused(self):
+        """register_supervision planned bindings straight from its endpoints, so an explicit
+        empty task or host reached binding_plan without passing _exact."""
+        for supervisor, parent in ((self.supervisor(""), self.parent()),
+                                   (Endpoint(SUPERVISOR_TASK, ""), self.parent()),
+                                   (self.supervisor(), self.parent("")),
+                                   (self.supervisor(), Endpoint(PARENT, ""))):
+            self.assertRefused(
+                RefusalReason.UNREGISTERED_SCOPE, self.supervise,
+                supervisor=supervisor, parent=parent)
+        self.assertEqual(len(self.store.all("SELECT 1 FROM scope_bindings")), 0)
+
+    def test_a_peer_link_with_a_blank_endpoint_is_refused(self):
+        self.supervise()
+        self.supervise(project=OTHER_PROJECT, parent=self.parent(OTHER_PARENT))
+        self.assertRefused(
+            RefusalReason.UNREGISTERED_SCOPE, self.linkage.register_peer,
+            left_project=PROJECT, left_parent=Endpoint("", HOST),
+            right_project=OTHER_PROJECT, right_parent=self.parent(OTHER_PARENT))
+
+    def test_an_unregistered_scope_is_told_so_even_when_the_tasks_match(self):
+        """The same-owner refusal ran before the scope was read, so a scope nobody owns got a
+        refusal about equal task ids and no conflict record."""
+        refusal = self.assertRefused(
+            RefusalReason.UNREGISTERED_SCOPE,
+            self.linkage.handover, role=linkage.PARENT, scope_key="PROJ-NOBODY",
+            expect_task_id=PARENT, endpoint=self.parent(), acknowledged=[],
+            evidence="handing over a scope that does not exist", actor="test")
+        self.assertIn("no live owner", refusal.detail)
+
+    def test_a_same_owner_handover_is_recorded_as_a_contest_like_any_other(self):
+        self.supervise()
+        self.assertRefused(
+            RefusalReason.HANDOVER_UNCONFIRMED,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.parent(), acknowledged=[],
+            evidence="handing over to myself", actor="test")
+        self.assertTrue(self.linkage.conflicts(linkage.PROJECT, PROJECT),
+                        "the refusal left no record of the contest")
+
+    def test_a_cross_role_resume_says_role_mismatch_rather_than_already_bound(self):
+        """Different-role conflicts have their own contract reason; reusing the same-role one
+        told the caller the wrong thing about what went wrong."""
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.set_status(rid, "cancelled", actor="test")
+        self.linkage.bind_scope(
+            role=linkage.SUPERVISOR, scope_key="INIT-LATER", endpoint=Endpoint(CHILD, HOST))
+        self.assertRefused(
+            RefusalReason.SCOPE_ROLE_MISMATCH, self.registry.resume, rid,
+            expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+
 if __name__ == "__main__":
     unittest.main()

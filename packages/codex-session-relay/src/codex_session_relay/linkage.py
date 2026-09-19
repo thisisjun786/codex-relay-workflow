@@ -386,6 +386,9 @@ class Linkage:
             )
         _exact(initiative_key, "an initiative key")
         _exact(project_key, "a project key")
+        for who, endpoint in (("supervisor", supervisor), ("parent", parent)):
+            _exact(endpoint.task_id, "the " + who + "'s task id")
+            _exact(endpoint.host_id, "the " + who + "'s host id")
         lid = link_id(link_kind, INITIATIVE, initiative_key, PROJECT, project_key)
         now = self.clock.iso()
         refusal = None
@@ -824,7 +827,8 @@ class Linkage:
             ).fetchone()
             if blocked is not None:
                 raise LinkageError(
-                    RefusalReason.ROLE_ALREADY_BOUND,
+                    RefusalReason.ROLE_ALREADY_BOUND if blocked["role"] == CHILD
+                    else RefusalReason.SCOPE_ROLE_MISMATCH,
                     "task " + repr(row["child_task_id"]) + " has since become the "
                     + blocked["role"] + " of " + blocked["scope_kind"] + " "
                     + repr(blocked["scope_key"]) + ", so it cannot be restored as the child "
@@ -996,6 +1000,9 @@ class Linkage:
         """
         _exact(left_project, "a project key")
         _exact(right_project, "a project key")
+        for side, endpoint in (("left", left_parent), ("right", right_parent)):
+            _exact(endpoint.task_id, "the " + side + " parent's task id")
+            _exact(endpoint.host_id, "the " + side + " parent's host id")
         if left_project == right_project:
             raise LinkageError(
                 RefusalReason.SCOPE_CYCLE,
@@ -1498,15 +1505,6 @@ class Linkage:
         _exact(scope_key, "a scope key")
         _exact(endpoint.task_id, "the replacement owner's task id")
         _exact(endpoint.host_id, "the replacement owner's host id")
-        if endpoint.task_id == expect_task_id:
-            # Same task in and out. The binding id is derived from the task, so this
-            # superseded a binding with itself: one row pointing at its own id, archived and
-            # live at once, with the revision advanced over nothing.
-            raise LinkageError(
-                RefusalReason.HANDOVER_UNCONFIRMED,
-                "task " + repr(endpoint.task_id) + " already holds " + repr(scope_key)
-                + "; a handover replaces the owner with a different one",
-            )
         claimed = sorted(set(acknowledged or ()))
         now = self.clock.iso()
         new_id = binding_id(role, scope_kind, scope_key, endpoint.task_id)
@@ -1535,6 +1533,18 @@ class Linkage:
                     + "; re-read the scope before replacing its owner",
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=current["taskId"], challenger=endpoint.task_id)
+            elif endpoint.task_id == expect_task_id:
+                # Same task in and out. The binding id derives from the task, so this
+                # superseded a binding with itself: one row pointing at its own id, archived
+                # and live at once, with the revision advanced over nothing. Decided AFTER the
+                # scope is read, so an unregistered or differently owned scope gets its own
+                # answer rather than this one, and the contest is recorded like any other.
+                refusal = _Refusal(
+                    RefusalReason.HANDOVER_UNCONFIRMED,
+                    "task " + repr(endpoint.task_id) + " already holds " + repr(scope_key)
+                    + "; a handover replaces the owner with a different one",
+                    scope_kind=scope_kind, scope_key=scope_key,
+                    incumbent=expect_task_id, challenger=endpoint.task_id)
             else:
                 unfinished = self.outstanding(scope_key) if scope_kind == PROJECT else []
                 if claimed != sorted(set(unfinished)):
