@@ -1994,10 +1994,16 @@ def status(codex_home=None, environ=None, event=EVENT):
     # is neither: owner_of answers that as the user owner on purpose, because the plugin writes
     # a document when it takes the registration.
     if found is None or not found.usable or found.state == reading.ABSENT:
-        # Nothing read, or nothing there. An absent document is the one case owner_of answers
-        # as the user owner on purpose, and status() has no registration to explain then
-        # either, so both roads lead to the same place and neither invents an owner.
-        registration_read_here = found is not None and found.state == reading.ABSENT
+        # Nothing read, or nothing there, and neither establishes an owner. An ABSENT document
+        # used to answer "the hook file is where the registration lives", borrowing owner_of's
+        # rule about an absent KEY in a document that exists. That rule does not reach a
+        # document that does not: a plugin-owned installation whose settings file was deleted
+        # while its package remains installed looks exactly like a host where nothing was ever
+        # installed, and reading the absence as the user owner established not_registered for
+        # it -- suppressing the plugin-side settings and launcher diagnoses and pointing
+        # recovery at the wrong registration. One observation, two explanations, and no reading
+        # here separates them, so the answer carries both rather than choosing.
+        registration_read_here = False
     elif config is not None:
         registration_read_here = owner_of(config) != OWNER_PLUGIN
     elif not isinstance(found.value, dict):

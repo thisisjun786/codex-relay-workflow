@@ -2961,11 +2961,15 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         lives and nothing is registered there, a missing settings file is not a cause of
         anything -- registering the hook writes it -- and the settled reading must not become a
         second repair beside not_registered.
+
+        The fixture keeps the settings file, because that is what establishes the premise. An
+        ABSENT settings file cannot say who owns the registration, and the case below is the
+        one that pins that; deleting it here would have been asserting this claim on a host
+        that cannot support it.
         """
         with tempfile.TemporaryDirectory() as temporary:
             self._host(temporary)
             settings(temporary)
-            completion.configuration_path(Path(temporary)).unlink()
             found = completion.status(codex_home=temporary, environ={})
         cell = found["firingRecordAbsence"]
         standings = {one["cause"]: one["standing"]
@@ -2975,6 +2979,34 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          "a settings cause was invented beside the one repair this host needs")
         self.assertEqual(standings.get(firing.SETTINGS_ABSENT), firing.NOT_EVALUATED,
                          "the settled reading answered a question this host does not have")
+
+    def test_a_settings_file_that_is_not_there_names_no_owner(self):
+        """File absence establishes no owner, and this answer used to read it as one.
+
+        A plugin-owned installation whose settings file was deleted while its package remains
+        installed looks exactly like a host where nothing was ever installed. Reading that
+        absence as the user owner established not_registered for it, which suppressed the
+        plugin-side settings and launcher diagnoses and pointed recovery at the wrong
+        registration. One observation, two explanations, and no reading here separates them.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary)
+            completion.configuration_path(Path(temporary)).unlink()
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.CONFIG_ABSENT,
+                         "the fixture did not build the missing-settings host this case is"
+                         " about")
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertEqual(standings.get(firing.NOT_REGISTERED), firing.NOT_RULED_OUT,
+                         "a settings file that is not there was read as saying the hook file"
+                         " is where this host's registration lives")
+        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE,
+                         "two explanations and no reading between them is an unsettled cause,"
+                         " not a chosen one")
 
     def test_a_peer_sharing_a_journal_read_empty_does_not_reopen_the_count(self):
         """A peer sharing a journal already read and found EMPTY cannot change that reading.
