@@ -92,14 +92,25 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
                 answer["enabled"] = line.split("=", 1)[1].strip() == "true"
         # Trust is positional and recorded per hook identity. A key naming this plugin and this
         # hook document is the only evidence available from a file; nothing here can grant it.
-        answer["trusted"] = any(HOOK_DOCUMENT in key for key in answer["trustKeys"]) \
-            if answer["trustKeys"] else False
+        # The key shape is <plugin>@<marketplace>:<document>:<event>:<matcher>:<index>, and the
+        # document segment is compared as a whole. A substring test anywhere in the key would
+        # accept trust recorded for a different document whose path merely contains this one.
+        answer["trusted"] = any(
+            len(key.split(":")) == 5 and key.split(":")[1] == HOOK_DOCUMENT
+            for key in answer["trustKeys"])
 
     cache = Path(codex_home) / "plugins" / "cache"
     found = sorted(cache.glob(name + "/" + name + "/*")) if cache.is_dir() else []
     # glob is a declared omission: an unreadable cache directory yields nothing, which is reported
     # as no version rather than as a version that could not be read.
-    version = found[-1] if found else None
+    # Which cached version a session loads is the host's answer, not this reader's, so a host
+    # carrying more than one is reported rather than guessed at by sort order.
+    answer["cacheVersions"] = [str(path) for path in found]
+    version = found[0] if len(found) == 1 else None
+    if len(found) > 1:
+        answer["detail"] = ("more than one cached version is present (" 
+                            + ", ".join(p.name for p in found)
+                            + "), and which one a session loads is not readable from here")
     if version is not None:
         answer["cacheVersion"] = str(version)
         manifest = version / ".codex-plugin" / "plugin.json"
@@ -229,8 +240,12 @@ def newest_retired(codex_home):
             document = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(document, dict) and document.get("markerRoot"):
-            return document, candidate.name
+        if not isinstance(document, dict) or completion.complaints(document):
+            # A retired file that no longer reads as settings is not a source for the locations
+            # an installation depends on. Restoring one would point a re-enabled install at
+            # whatever survived in it.
+            continue
+        return document, candidate.name
     return None, None
 
 
@@ -338,20 +353,18 @@ def read_in_flight(document):
             answer["markerEntries"] = sorted(p.name for p in root.iterdir())[:50]
             answer["state"] = reading.PRESENT
     database = document.get("dbPath")
-    relay = document.get("relayExecutable")
-    if relay and database and Path(database).is_file() and Path(relay).is_file():
-        argv = [str(relay), "status"]
-        answer["how"].append("ran " + " ".join(argv))
-        try:
-            done = subprocess.run(argv, capture_output=True, text=True, timeout=60)
-            answer["snapshot"] = json.loads(done.stdout) if done.stdout.strip() else None
-            answer["state"] = reading.PRESENT
-        except (OSError, subprocess.SubprocessError, ValueError) as error:
-            answer["state"] = reading.UNREADABLE
-            answer["detail"] = type(error).__name__ + ": " + str(error)
-    elif database and not Path(str(database)).is_file():
-        answer["how"].append("did not ask the relay: " + str(database) + " does not exist, and"
-                             " asking would have created it")
+    if database:
+        answer["storePath"] = str(database)
+        answer["storeExists"] = Path(str(database)).is_file()
+    # The relay is deliberately not asked. Its status subcommand takes no store argument, so on a
+    # host whose dbPath sits outside the default state directory it would answer about a different
+    # store -- and on a host with no store there it would CREATE an empty one, which answers
+    # "nothing in flight" for the wrong reason. Its snapshot is also nonempty for an idle relay,
+    # so a truthy object is not evidence of work either. The marker root is the reading that
+    # actually carries published work, and it is a directory listing.
+    answer["how"].append("did not run the relay status command: it cannot be aimed at a store,"
+                         " an absent store would be created by asking, and an idle relay answers"
+                         " with a nonempty object")
     return answer
 
 

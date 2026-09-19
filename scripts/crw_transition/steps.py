@@ -93,8 +93,11 @@ def preflight(host, options):
         refusals.append("the plugin entry " + str(plugin.get("entryKey")) + " is disabled, so its"
                         " skills, hook and server would not load")
     if not plugin.get("cacheVersion"):
-        refusals.append("no installed plugin version was found under "
-                        + str(Path(host["codexHome"]) / "plugins" / "cache"))
+        # The reader's own reason travels with the refusal. Without it, a host carrying two cached
+        # versions is reported as a host carrying none, which sends the operator to the wrong repair.
+        refusals.append("no single installed plugin version could be named under "
+                        + str(Path(host["codexHome"]) / "plugins" / "cache")
+                        + (": " + str(plugin["detail"]) if plugin.get("detail") else ""))
     else:
         # The repository already owns a payload contract. A file census is not it: an empty hook
         # document and an empty mcp.json satisfy existence and leave no hook and no bridge.
@@ -157,6 +160,14 @@ def preflight(host, options):
                         " was not established: " + json.dumps(host["hook"]["reading"])[:300])
 
     settings = host["settings"]
+    if settings.get("retiredFrom") and host["hook"]["entries"]:
+        # The live document is gone while a registration that runs our adapter is still there.
+        # That is a host in the middle of somebody else's transition, or one whose settings were
+        # retired underneath this run, and reading the retired file as though it were live would
+        # act on a state nobody established.
+        refusals.append("the live settings are absent and " + str(settings["retiredFrom"])
+                        + " was read instead, while a registration of this adapter is still in the"
+                          " hook file. Another run may be mid-transition: nothing was changed")
     if settings["outcome"] not in (None, completion.CONFIG_ABSENT):
         refusals.append("the settings at " + settings["path"] + " could not be acted on ("
                         + str(settings["outcome"]) + ": " + str(settings["detail"]) + ")")
@@ -185,7 +196,7 @@ def preflight(host, options):
                         + str(mcp["recordOutcome"]) + ")")
 
     flight = host["inFlight"]
-    busy = bool(flight.get("markerEntries")) or bool(flight.get("snapshot"))
+    busy = bool(flight.get("markerEntries"))
     if busy and not options.get("allow_in_flight"):
         refusals.append("the relay is carrying work (" + "; ".join(flight.get("how") or [])
                         + "). Removing the hook now loses the completion record for a turn that"
@@ -233,9 +244,15 @@ def hook_standdown(host, options, *, apply=False):
             return _answer("hook standdown", REFUSED,
                            "the hook file changed after it was read, so nothing was removed")
         groups = (again.value.get("hooks") or {}).get(event) or []
-        for entry in sorted(entries, key=lambda e: (e["identity"]), reverse=True):
-            matcher = int(entry["identity"].split(":")[-2])
-            index = int(entry["identity"].split(":")[-1])
+        # Ordered by the positions as NUMBERS and removed from the back, so removing one does not
+        # shift the index of another still to be removed. Sorting the identity strings put :10:
+        # before :2: and left a copy behind on any host with ten or more hooks in one event.
+        def position(entry):
+            parts = entry["identity"].split(":")
+            return int(parts[-2]), int(parts[-1])
+
+        for entry in sorted(entries, key=position, reverse=True):
+            matcher, index = position(entry)
             if matcher < len(groups) and index < len(groups[matcher].get("hooks") or []):
                 groups[matcher]["hooks"].pop(index)
                 removed.append(entry["identity"])
@@ -493,12 +510,27 @@ def transition(host, options, *, apply=False):
 
 
 def disable(host, options, *, apply=False):
-    """Stop new calls by retiring the two records the packaged launchers read."""
+    """Stop new calls by retiring the two records the packaged launchers read.
+
+    Only the records this repository wrote FOR THE PLUGIN. Run before a transition, these paths
+    hold the user-owned manual settings and bridge record, and retiring those would stop the
+    manual installation while claiming to have disabled the plugin -- a different operation than
+    the one asked for, performed on somebody else's registration.
+    """
     results = []
+    owners = {"hook settings": host["settings"]["owner"],
+              "bridge record": host["mcp"]["recordOwner"]}
     for step, path in (("hook settings", completion.configuration_path(host["codexHome"])),
                        ("bridge record", Path(host["mcp"]["recordPath"]))):
         if not Path(path).exists():
             results.append(_answer(step, ALREADY, str(path) + " is not there"))
+            continue
+        if owners.get(step) == completion.OWNER_USER:
+            results.append(_answer(step, REFUSED,
+                                   str(path) + " names " + completion.OWNER_USER + " as the owner"
+                                   " of that registration, so it belongs to the manual install"
+                                   " rather than to the plugin. Transition first, or disable the"
+                                   " manual install with the command that created it"))
             continue
         if not apply:
             results.append(_answer(step, WOULD, "would retire " + str(path)))

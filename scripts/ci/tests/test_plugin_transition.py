@@ -479,5 +479,64 @@ class TheFloorRefuses(TransitionCase):
                          before)
 
 
+@needs_reader
+class TheFindingsFromReview(TransitionCase):
+    """One case per defect hosted review found, so none of them comes back quietly."""
+
+    def test_ten_or_more_hooks_in_one_event_leave_no_copy_behind(self):
+        """Identity is positional and sorting it as text puts :10: before :2:."""
+        host = self.ready()
+        document = host.hooks_document()
+        groups = document["hooks"]["Stop"]
+        ours = groups[0]
+        for _ in range(11):
+            groups.append({"hooks": [{"type": "command", "command": "/bin/true"}]})
+        groups.append(ours)
+        document["hooks"]["Stop"] = groups[1:]
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        code, answer = host.transition("--apply", "--accept-hook-renumbering")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:2000])
+        left = json.dumps(host.hooks_document())
+        self.assertNotIn("completion_hook.py", left)
+        self.assertEqual(left.count("/bin/true"), 11)
+
+    def test_disable_before_a_transition_refuses_the_user_owned_records(self):
+        host = self.ready()
+        before = (host.settings(), host.record())
+        code, answer = host.call("disable", "--apply")
+        self.assertEqual(code, 1)
+        self.assertEqual([r["outcome"] for r in answer["results"]], ["refused", "refused"])
+        self.assertIn("belongs to the manual install", answer["results"][0]["detail"])
+        self.assertEqual((host.settings(), host.record()), before)
+
+    def test_a_retired_document_that_no_longer_reads_as_settings_is_not_reused(self):
+        host = self.ready()
+        host.transition("--apply")
+        host.call("disable", "--apply")
+        for retired in host.home.glob("crw-completion-hook.json.superseded-*"):
+            retired.write_text('{"configVersion": 99}', encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("no install destination", answer["results"][0]["detail"])
+
+    def test_two_cached_versions_are_reported_rather_than_guessed_between(self):
+        host = self.ready()
+        other = host.home / "plugins" / "cache" / "crw" / "crw" / "0.3.0"
+        shutil.copytree(host.home / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION, other)
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("more than one cached version", answer["results"][0]["detail"])
+
+    def test_an_idle_relay_store_is_not_work_in_flight(self):
+        """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
+        host = self.ready()
+        host.database.write_text("not a real store", encoding="utf-8")
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
+        _, seen = host.call("inspect")
+        self.assertIn("did not run the relay status command", " ".join(seen["host"]["inFlight"]["how"]))
+        self.assertTrue(seen["host"]["inFlight"]["storeExists"])
+
+
 if __name__ == "__main__":
     unittest.main()
