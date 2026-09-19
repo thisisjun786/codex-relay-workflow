@@ -572,9 +572,59 @@ The candidate is then exercised, and the recorded pointer moves only after a qua
 exists for it. OPS-2.4 sequences an update as measure, install, measure again, and the second
 measurement is the one that produces the point; promoting before it would select a runtime that
 imports cleanly and fails the moment it is used. A candidate whose exercise fails stays unselected
-and the previously selected runtime remains selected. A failure at any step leaves the previous
-runtime in place, and nothing here removes, moves or recreates the store: update failure and store
-loss are different accidents and the recovery for one must not cause the other.
+and the previously selected runtime remains selected. A failure at any step **up to the
+promotion** leaves the previous runtime in place, and nothing here removes, moves or recreates
+the store: update failure and store loss are different accidents and the recovery for one must
+not cause the other. Past the promotion there is one exception, and it carries its own exit
+status.
+
+### The record is not the replacement
+
+The staging claim is written last. It says this staging finished, and until the selection is
+committed and the owned pointer names the environment there is nothing finished to say -- so by
+the time writing it can fail, the registered command already resolves into the new runtime. The
+replacement has happened and only its record has not, and those are reported as two outcomes
+rather than folded into one.
+
+| Field | Answers |
+| --- | --- |
+| `promoted` | the replacement: the selection is committed and the pointer resolves into this environment |
+| `claimSettled` | whether the claim recording it was written |
+| `claim` | the claim's own two outcomes -- `settled` for the record landing, `released` for the call finishing -- with the readback and the selection snapshot that decided them, any residual path, and what raised |
+| `recoveryRequires` | what has to be done next, under the same key a refusal reports it |
+
+So `install` has three exit statuses rather than two:
+
+| Status | The runtime | The record | What it means |
+| --- | --- | --- | --- |
+| `0` | replaced | written | the update finished |
+| `3` | replaced | not written | the host runs the new runtime; only the bookkeeping is missing |
+| `1` | not replaced | unchanged | the previous runtime is selected and reachable |
+
+**Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of
+what it means everywhere else in this command: the candidate was promoted, it is selected, the
+owned pointer names it, and a host is running out of it. A wrapper that reads every non-zero
+install status as "nothing changed" would report the old runtime as selected, or clean up the
+environment now in service. Only exit 1 releases a candidate. Tell the two apart by the status
+itself, or by `promoted`, which every promoted exit carries.
+
+Which accident happened, and what to do about it, is in `recoveryRequires` -- derived from the
+claim as it reads back and from a selection snapshot taken under the promotion lock, never from
+the exception alone:
+
+| What the result says | What happened | What to do |
+| --- | --- | --- |
+| `settled` true, `released` false | the claim landed and the call failed on its way out | nothing about the record; any lock file left behind is named, and the next claim write clears one older than `STALE_LOCK_SECONDS` |
+| the record still selects this environment | the write failed and the promotion stands | clear what stopped the write, then rerun: the next run reads an interrupted promotion and records it, rebuilding nothing. Rerunning before the write can succeed returns this same result and changes nothing |
+| the record selects elsewhere but something still reaches this environment | a promotion moved on, or died before its pointer | leave the directory alone; the next run keeps and reports it rather than repairing it |
+| the record selects elsewhere and nothing reaches it | a later promotion superseded this staging | nothing; do not rerun here to settle it, because the next run reads an abandoned staging and would remove and rebuild it |
+| the claim could not be read | the claim at that path is unreadable | make it readable or remove it first; an unreadable claim is not one this command may act on, so a rerun reports the directory and leaves it |
+| the host record is gone | the authority for what this host selected was lost | restore the record before rerunning, and do not remove the environment: the owned pointer may still reach it |
+| the selection could not be established | the snapshot could not be taken | read the host record before acting; it decides whether a rerun records, keeps or rebuilds |
+
+The snapshot is consistent, not durable. Nothing holds the promotion lock until an operator
+reads the result, so what is reported is what the record said at that moment; re-read it before
+acting if time has passed.
 
 ## Updating an installation
 

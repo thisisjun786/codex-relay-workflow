@@ -399,7 +399,7 @@ def pointer_state(pointer_path, record, data):
     return read
 
 
-def protected_environment(record, environment, destination, data):
+def protected_environment(record, environment, destination, data, pointer_path=None):
     """Whether an environment is in use, so a later run must not remove it.
 
     Two readings and they are reported as two: the record's selection, and the pointer on disk.
@@ -407,6 +407,12 @@ def protected_environment(record, environment, destination, data):
     answer, because an environment nobody could establish as free is not an environment that is
     free. That direction is the safe one: the cost of keeping a directory is a named residual
     path, and the cost of removing a live one is the accident this exists to prevent.
+
+    'pointer_path' is which link to ask about, and it defaults to the one under the destination
+    this run was invoked with. A caller that knows better says so: a promotion keeps using the
+    path the RECORD names, which survives a run invoked against a different --dest, and asking
+    about <new-dest>/current then reads a link nothing uses and calls an environment the owned
+    pointer still reaches unprotected.
     """
     selects = None
     if record is not None:
@@ -417,7 +423,9 @@ def protected_environment(record, environment, destination, data):
                           for location in selected if location)
         except (OSError, ValueError):
             selects = None
-    names = pointer.names(pointer.pointer_path(destination), environment)
+    names = pointer.names(
+        pointer.pointer_path(destination) if pointer_path is None else Path(pointer_path),
+        environment)
     protected = selects is not False or names is not False
     return protected, {
         "recordSelectsIt": selects,
@@ -3147,18 +3155,32 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
     # It is still a SNAPSHOT and the advice says so. Nothing can hold this lock until an
     # operator acts, so what is reported is what the record said at this moment, not a promise
     # about when they read it.
+    #
+    # OSError and not just Busy. Exclusive.__enter__ makes a directory, opens a file and takes
+    # a lock, and any of those can fail for reasons that have nothing to do with contention.
+    # Caught narrowly, such a failure escaped into cmd_install's generic handler and came back
+    # as 'applied: false' with exit 1 -- this PR's own defect, reintroduced by the lock added
+    # to fix a different one -- and out of _finish_promotion it became an internal error with
+    # no result at all. A snapshot that could not be taken is an unknown snapshot, however it
+    # failed to be taken.
     try:
         with hostrecord.Exclusive(record_path, timeout=SETTLE_SNAPSHOT_TIMEOUT_SECONDS):
             current = hostrecord.load(record_path, definition_version)
             if current.ok:
-                protected, protection = protected_environment(current.value, environment,
-                                                              environment.parent, data)
+                # The link the PROMOTION uses, not whichever one sits under the destination
+                # this run was invoked with. A record naming a pointer under an earlier
+                # destination is the case that makes those two different, and asking about the
+                # wrong one reports a runtime the owned pointer still reaches as unprotected.
+                protected, protection = protected_environment(
+                    current.value, environment, environment.parent, data,
+                    pointer_path=(current.value.get("pointer") or {}).get("path"))
                 selected = protection["recordSelectsIt"]
             else:
                 protected, selected = None, None
-    except hostrecord.Busy as error:
+    except OSError as error:
         current, protected, selected = None, None, None
-        snapshot_detail = "another run holds the promotion lock: " + str(error)
+        snapshot_detail = ("the promotion lock could not be taken to read a consistent"
+                           " snapshot: " + type(error).__name__ + ": " + error.__str__())
     else:
         snapshot_detail = None
 

@@ -5984,6 +5984,31 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=busy_after_moving_on))
+        if breaking == "settle the staging claim with the promotion lock unusable":
+            # The claim write fails AND the lock the snapshot needs cannot be taken for a
+            # reason that is not contention. Exclusive makes a directory, opens a file and
+            # takes a lock, and any of those can fail on their own. The promotion's own use of
+            # the lock has to succeed or there is no completed promotion to misreport, so only
+            # the second acquisition -- the snapshot's -- is broken.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+            real_exclusive = runtime_install.hostrecord.Exclusive
+            taken = []
+
+            def write_refused(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            def exclusive_then_unusable(path, **kwargs):
+                taken.append(path)
+                if len(taken) > 1:
+                    raise OSError("the lock directory is read-only")
+                return real_exclusive(path, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=write_refused))
+            patches.append(mock.patch.object(runtime_install.hostrecord, "Exclusive",
+                                             side_effect=exclusive_then_unusable))
         if breaking == "settle the staging claim while a promotion is in flight":
             # Somebody else is mid-promotion, holding the lock that serialises the two writes
             # this snapshot reads. Taken outside it, the record load and the pointer reading
@@ -6465,6 +6490,63 @@ class SettledRecordTests(unittest.TestCase):
                       "the record still did not land, which is reported as itself")
         self.assertTrue(claim.get("recoveryRequires"),
                         "with what to do instead: wait for the run that holds it")
+
+    def test_a_snapshot_that_could_not_be_taken_does_not_erase_the_promotion(self):
+        """The lock added to fix one defect must not reintroduce the one this PR is about.
+
+        Exclusive can fail for reasons that are not contention, and caught too narrowly that
+        escaped into the generic failure path -- reporting applied false and exit 1 for a
+        promotion that had already landed, which is exactly the misreport this whole change
+        exists to remove.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim with the promotion lock unusable")
+            after = host.snapshot()
+
+        self.assertNotEqual(code, 1,
+                            "a completed replacement is not a refusal, whatever failed while"
+                            " describing it: " + json.dumps(payload)[:500])
+        self.assertIs(payload.get("promoted"), True)
+        self.assertIs(payload.get("claimSettled"), False)
+        selection = (payload.get("claim") or {}).get("selection") or {}
+        self.assertIsNone(selection.get("selects"),
+                          "an unknown snapshot, however it failed to be taken")
+        self.assertTrue(selection.get("detail"), "and it says which way it failed")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the host still reaches the runtime this run promoted")
+
+    def test_the_snapshot_reads_the_pointer_the_promotion_uses(self):
+        """A run invoked against a different --dest keeps the pointer the RECORD names.
+
+        Asking about <new-dest>/current reads a link nothing uses, so an environment the owned
+        pointer still reaches is reported unprotected -- and that is the difference between
+        'leave this alone' and 'the next run would remove and rebuild it'.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            elsewhere = Path(temporary) / "elsewhere"
+            elsewhere.mkdir()
+            moved_dest = UpdateRecoveryTests()._run(
+                host, dest=str(elsewhere),
+                breaking="settle the staging claim after the selection alone moves on")[1]
+            elsewhere_advice = _advice(moved_dest, host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            same_dest = _advice(UpdateRecoveryTests()._run(
+                other,
+                breaking="settle the staging claim after the selection alone moves on")[1],
+                other)
+
+        self.assertIs((moved_dest.get("claim") or {}).get("selection", {}).get("protected"),
+                      True,
+                      "the recorded pointer still names this environment: "
+                      + json.dumps(moved_dest.get("claim"))[:500])
+        self.assertTrue(same_dest, "the contrast needs the other case to say something")
+        self.assertEqual(elsewhere_advice, same_dest,
+                         "so a differently-invoked destination gets the same answer, because"
+                         " the pointer the promotion uses is the same link")
 
     def test_a_lost_claim_lock_does_not_speak_for_the_selection(self):
         """The lock this call did not take says nothing about what the next run will do.
