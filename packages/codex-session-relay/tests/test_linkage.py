@@ -1049,5 +1049,74 @@ class TheFourthRoundFoundTheseToo(LinkageTestCase):
         self.assertIn("scope_cycle",
                       [row.get("contention") for row in answer["contention"]])
 
+class TheFifthRoundFoundTheseToo(LinkageTestCase):
+    def scoped(self):
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        return relationship["relationshipId"]
+
+    def test_a_child_that_took_another_scope_cannot_be_restored_into_this_one(self):
+        """The unique index is scoped by issue and resume only checks the same issue, so the
+        direct reactivation could put one task live in two scopes at once."""
+        rid = self.scoped()
+        self.registry.set_status(rid, "cancelled", actor="test")
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key="REL-ELSEWHERE", endpoint=Endpoint(CHILD, HOST))
+        self.assertRefused(
+            RefusalReason.ROLE_ALREADY_BOUND, self.registry.resume, rid,
+            expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+        self.assertEqual(self.registry.get(rid)["status"], "cancelled")
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+
+    def test_a_handover_to_the_current_owner_is_refused(self):
+        """The binding id derives from the task, so this superseded a binding with itself:
+        one row pointing at its own id, archived and live at once."""
+        self.supervise()
+        self.assertRefused(
+            RefusalReason.HANDOVER_UNCONFIRMED,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.parent(), acknowledged=[],
+            evidence="handing over to myself", actor="test")
+        binding = self.linkage.owner(linkage.PROJECT, PROJECT)
+        self.assertEqual(binding["revision"], 1)
+        self.assertIsNone(binding["supersededBy"])
+
+    def test_a_handover_to_a_blank_endpoint_is_refused(self):
+        self.supervise()
+        for endpoint in (Endpoint("", HOST), Endpoint(OTHER_PARENT, "")):
+            self.assertRefused(
+                RefusalReason.UNREGISTERED_SCOPE,
+                self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+                expect_task_id=PARENT, endpoint=endpoint, acknowledged=[],
+                evidence="a blank replacement", actor="test")
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], PARENT)
+
+    def test_a_foreign_quoted_scope_is_not_answered_with_another_link(self):
+        """Keeping the endpoint's other bindings let a message that named a scope its
+        recipient does not hold come back linked, against a scope nobody mentioned, with the
+        finding sitting beside a state that contradicted it."""
+        rid = self.scoped()
+        self.assertIsNotNone(rid)
+        answer = self.linkage.counterpart(PARENT, CHILD, quoted_scope="ISS-NOT-HELD")
+        self.assertIn("foreign_scope", answer["findings"])
+        self.assertEqual(answer["state"], "unlinked")
+        self.assertIsNone(answer["link"])
+
+    def test_a_merged_assignment_still_blocks_a_handover(self):
+        """Reported again after the attached() fix, so it is pinned directly: merged is an
+        ACTIVE relationship and open_generation permits a correction on it."""
+        rid = self.scoped()
+        self.store.db.execute(
+            "UPDATE relationships SET status = 'active' WHERE relationship_id = ?", (rid,))
+        self.assertIn(rid, self.linkage.attached(PROJECT))
+        self.assertRefused(
+            RefusalReason.HANDOVER_WOULD_STRAND,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.parent(OTHER_PARENT),
+            acknowledged=self.linkage.outstanding(PROJECT),
+            evidence="a settled-looking project", actor="test")
+
 if __name__ == "__main__":
     unittest.main()

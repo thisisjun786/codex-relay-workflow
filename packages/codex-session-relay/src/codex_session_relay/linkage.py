@@ -811,6 +811,25 @@ class Linkage:
                     + repr(rival["task_id"]) + ", so restoring "
                     + repr(row["child_task_id"]) + " would leave it with two owners",
                 )
+            # And the child must still be ELIGIBLE to hold it. The unique index is scoped by
+            # issue, and resume only checks for a competing relationship on the same issue, so
+            # a child that took another role or another issue while this one was archived
+            # could be reactivated into a second live scope by this direct update.
+            blocked = db.execute(
+                "SELECT role, scope_kind, scope_key FROM scope_bindings"
+                "  WHERE task_id = ? AND status IN ('active','paused')"
+                "    AND superseded_by IS NULL"
+                "    AND (role != ? OR scope_key != ?)",
+                (row["child_task_id"], CHILD, row["issue_key"]),
+            ).fetchone()
+            if blocked is not None:
+                raise LinkageError(
+                    RefusalReason.ROLE_ALREADY_BOUND,
+                    "task " + repr(row["child_task_id"]) + " has since become the "
+                    + blocked["role"] + " of " + blocked["scope_kind"] + " "
+                    + repr(blocked["scope_key"]) + ", so it cannot be restored as the child "
+                    "of issue " + repr(row["issue_key"]) + " as well",
+                )
         db.execute(
             "UPDATE scope_bindings SET status = ?, updated_at = ?"
             "  WHERE scope_kind = ? AND scope_key = ? AND role = ? AND task_id = ?",
@@ -1073,6 +1092,11 @@ class Linkage:
                     recipients = narrowed
                 else:
                     wrong_scope = "foreign_scope"
+                    # And nothing else is answered about. Keeping the endpoint's OTHER
+                    # bindings let a message that named a scope its recipient does not hold be
+                    # returned as linked, against a scope nobody mentioned, with the finding
+                    # sitting beside a state that contradicted it.
+                    recipients = []
             sender = senders[0] if senders else None
             recipient = recipients[0] if recipients else None
             edge = None
@@ -1471,6 +1495,18 @@ class Linkage:
         if not str(evidence or "").strip():
             raise LinkageError(
                 RefusalReason.HANDOVER_UNCONFIRMED, "a handover carries its evidence")
+        _exact(scope_key, "a scope key")
+        _exact(endpoint.task_id, "the replacement owner's task id")
+        _exact(endpoint.host_id, "the replacement owner's host id")
+        if endpoint.task_id == expect_task_id:
+            # Same task in and out. The binding id is derived from the task, so this
+            # superseded a binding with itself: one row pointing at its own id, archived and
+            # live at once, with the revision advanced over nothing.
+            raise LinkageError(
+                RefusalReason.HANDOVER_UNCONFIRMED,
+                "task " + repr(endpoint.task_id) + " already holds " + repr(scope_key)
+                + "; a handover replaces the owner with a different one",
+            )
         claimed = sorted(set(acknowledged or ()))
         now = self.clock.iso()
         new_id = binding_id(role, scope_kind, scope_key, endpoint.task_id)
