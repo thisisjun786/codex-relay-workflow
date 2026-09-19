@@ -392,6 +392,12 @@ leading to a record belonging to somebody else, or to none, is refused and raise
 block whose stated workflow, child or pull request the records it points at do not bear out. The
 block never supplies those values; it says where to look for them.
 
+A repeat is not a second instruction. The receiver keeps each request id beside the disposition it
+gave, and a message arriving again under an id already answered is answered with that same
+disposition rather than acted on twice. That is what makes an uncertain send safe to reconcile by
+asking rather than by sending again, and it is why a replayed handoff, correction or decision
+cannot restart work that already ran.
+
 ```text
 Request: [id the sender chose for this message]
 Reply to: [on a reply, the id it answers; omit on a first message]
