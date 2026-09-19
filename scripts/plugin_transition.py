@@ -45,13 +45,26 @@ def emit(document):
 
 
 def host_of(args):
-    # Resolved here for the same reason --dest is, and for one more. Every path in the snapshot is
+    named_home = args.codex_home or os.environ.get("CODEX_HOME")
+    if not args.codex_home and named_home and not Path(named_home).expanduser().is_absolute():
+        # A relative CODEX_HOME means something different to every process that reads it, and the
+        # launchers this transition hands the surfaces to read that same variable from their own
+        # working directory -- the installed package's, not this one. Resolving it here would
+        # write records under one home and leave the packaged bridge launcher looking under
+        # another, with the manual table already removed and the run reporting success. The flag
+        # is this command's own input and travels nowhere, so it is resolved; the environment is
+        # shared with the launchers, so it is refused.
+        raise ValueError("CODEX_HOME is " + repr(named_home) + ", which is relative, and a"
+                         " relative home resolves against each reader's own working directory."
+                         " The packaged launchers read this same variable elsewhere, so this"
+                         " command will not decide what it means. Set CODEX_HOME to an absolute"
+                         " path, or pass --codex-home for this run only")
+    # Settled for the same reason --dest is, and for one more. Every path in the snapshot is
     # derived from this one, and the settings candidate is ALSO spelled by completion, which
     # resolves what it is given: a relative home left as it was produced two spellings of one
     # file, the de-duplication is lexical, and an applied run then took the same lock twice and
     # waited itself out -- every transition on a relative home answering busy at the first step.
-    home = Path(args.codex_home or os.environ.get("CODEX_HOME")
-                or Path.home() / ".codex").expanduser().resolve()
+    home = Path(named_home or Path.home() / ".codex").expanduser().resolve()
     named = getattr(args, "event", None)
     if named and named != completion_event():
         # The package declares one event. Transitioning another would remove a registration on it
