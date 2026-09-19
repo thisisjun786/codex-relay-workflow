@@ -2543,11 +2543,64 @@ RESOLVES_LIKE_PYTHON = {
           "    stream = fopen(HERE)",
           "    return stream.read()",
           "",
+         "def consumer():",
+         "    return helper()"),
+        "consumer", True,
+        "the same rebinding with a type on it. This is the fourth table to have read one form"
+        " and not the other, which is why the question now has one answer rather than four."),
+    "a handle derived beside the functions that read it":
+        (TEXT,
+         ("stream = open(HERE)",
+          "",
+          "def helper():",
+          "    return stream.read()",
+          "",
           "def consumer():",
           "    return helper()"),
+         "helper", True,
+         "module level encloses every function, and it is written as a name of its own rather"
+         " than as a prefix of theirs. Asking whether the reading scope starts with the owning"
+         " one therefore says no to every function, and the handle beside them is read as a"
+         " different object wearing the same name."),
+    "a handle derived in a function and read in its child":
+        (TEXT,
+         ("def outer():",
+          "    stream = open(HERE)",
+          "    def inner():",
+          "        return stream.read()",
+          "    return inner"),
+         "outer.inner", True,
+         "its pair on the side that already worked: a scope really is reached by the chain"
+         " below it, so admitting module level must not have been done by admitting everything."),
+    "a parameter spelled like a handle another scope derived":
+        (TEXT,
+         ("def maker():",
+          "    stream = open(HERE)",
+          "    return stream",
+          "",
+          "def unrelated(stream):",
+          "    return stream.read()"),
+         "unrelated", False,
+         "the other pair: a derived handle belongs to the scope that derived it, and a"
+         " parameter of the same spelling in a scope beside it holds whatever its caller"
+         " passed. Treating every scope as reaching every handle would make this one a reader."),
+    "a refusal a function imports by name for itself":
+        (REFUSAL,
+         ("def consumer():",
+          "    from crw_runtime.completion import NOT_READ as answer",
+          "    return answer"),
          "consumer", True,
-         "the same rebinding with a type on it. This is the fourth table to have read one form"
-         " and not the other, which is why the question now has one answer rather than four."),
+         "the bare-name half of the local import already fixed on the qualified side. The scope"
+         " binds the name, and what binds it is the import that made it an answer, so rejecting"
+         " every local binding throws away the one that IS the refusal."),
+    "a local name spelled like an imported refusal":
+        (REFUSAL,
+         ("def consumer():",
+          "    answer = object()",
+          "    return answer"),
+         "consumer", False,
+         "its pair: a local binding that is not that import is still something wearing the"
+         " spelling, so the exemption has to be for the import rather than for the scope."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3507,6 +3560,21 @@ def _defined_in_scope(tree, places):
         for named in defined_here(node.body):
             bound.setdefault(where, set()).add(named)
     return bound
+
+
+def _visible_from(scope, made):
+    """Whether a use in this scope sees a handle derived in one of those scopes.
+
+    Module level encloses every function, and it is written as a name of its own rather than as
+    a prefix of theirs, so the chain test alone cannot see it: a handle derived beside the
+    functions looked local to none of them, and every reader of it was dropped as a different
+    object wearing the same name.
+
+    Asked in one place because two tables asked it separately and would drift apart, which is
+    how most of the defects in this file have arrived.
+    """
+    return any(owner == MODULE_LEVEL or scope == owner or scope.startswith(owner + ".")
+               for owner in made)
 
 
 def _assigned(node):
@@ -5082,7 +5150,8 @@ def source_spellings(tree):
 
 
 def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), built=(),
-                     imported_answers=(), known_keys=(), qualifies=None, places=None):
+                     imported_answers=(), known_keys=(), qualifies=None, places=None,
+                     answers_at=None):
     """The matcher: which node is a refusal, spelled any of the derived ways."""
     answers = spellings["answer"]
     attributes = spellings["module attribute"] | spellings["collection"]
@@ -5090,6 +5159,7 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
     owners = spellings.get("owner", frozenset())
     qualifies = qualifies or {}
     places = places or {}
+    answers_at = answers_at or {}
 
     def spelled(node, klass):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -5139,7 +5209,13 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
         if isinstance(node, ast.Name) and node.id in names:
             # Unless the scope binds that name itself, in which case the global of that
             # spelling is not what this reads.
-            return None if id(node) in shadowed else node.id
+            # Unless what binds it is the import that made it an answer: a function writing
+            # from completion import NOT_READ as answer binds answer locally, and that local
+            # binding IS the refusal rather than something wearing its name.
+            if id(node) in shadowed and not _bound_around(
+                    answers_at, places.get(id(node), (MODULE_LEVEL, None))[0], node.id):
+                return None
+            return node.id
         return None
 
     return spelled
@@ -5237,7 +5313,7 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
 
     def seen_in(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
-        return any(scope == owner or scope.startswith(owner + ".") for owner in made)
+        return _visible_from(scope, made)
 
     while growing:
         growing = False
@@ -5476,7 +5552,7 @@ def refusals_reached(source):
     # module's inventory is not one here, and only modules this process has already imported
     # are consulted -- one named in the source under analysis is not something to import in
     # order to answer a question about the text.
-    imported_answers = set()
+    imported_answers, answers_at = set(), {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom) or not node.module:
             continue
@@ -5486,6 +5562,7 @@ def refusals_reached(source):
         owner = vars(sys.modules[__name__]).get(node.module) or sys.modules.get(node.module)
         if not isinstance(owner, types.ModuleType):
             continue
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
         for alias in node.names:
             if alias.name == "*":
                 # from X import * imports every name the module exports, so the answers among
@@ -5498,9 +5575,11 @@ def refusals_reached(source):
                 for name in exported:
                     if name in answers_here and getattr(owner, name, None) in REFUSAL_ANSWERS:
                         imported_answers.add(name)
+                        answers_at.setdefault(where, set()).add(name)
                 continue
             if alias.name in answers_here and getattr(owner, alias.name, None) in REFUSAL_ANSWERS:
                 imported_answers.add(alias.asname or alias.name)
+                answers_at.setdefault(where, set()).add(alias.asname or alias.name)
     # Which module each qualifier in THIS source names, so an owner is decided by the module a
     # spelling reaches rather than by the spelling itself.
     qualifies = {}
@@ -5520,12 +5599,13 @@ def refusals_reached(source):
     while growing:
         wider = _held_by_class(
             tree, _refusal_spelled(spellings, held, classes, as_class, shadowed, built,
-                                   imported_answers, known_keys, qualifies, places), held)
+                                   imported_answers, known_keys, qualifies, places,
+                                   answers_at), held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _refusal_spelled(spellings, held, classes, as_class, shadowed,
                                                 built, imported_answers, known_keys,
-                                                qualifies, places)),
+                                                qualifies, places, answers_at)),
             spellings)
 
 
@@ -5551,7 +5631,7 @@ def source_text_reached(source):
 
     def inside(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
-        return any(scope == owner or scope.startswith(owner + ".") for owner in made)
+        return _visible_from(scope, made)
 
     # A derived handle read in a scope that did not derive it is a different object wearing the
     # same name, so it is treated as a shadow rather than as this module's source.
@@ -6917,6 +6997,7 @@ HANDED = {
     "_defined_in_scope": NOTHING,
     "_assigned": NOTHING,
     "_names_module": NOTHING,
+    "_visible_from": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
     "_class_spellings": NOTHING,
