@@ -1499,12 +1499,21 @@ def _held_by_class(tree, spelled, over=None):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         function, klass = places.get(id(node), (MODULE_LEVEL, None))
-        if node.value is None or klass is None or not _reachable(
+        through_class = any(
+            isinstance(target, ast.Attribute) and _dotted(target.value) not in (None, "self",
+                                                                                "cls")
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))
+        if node.value is None or (klass is None and not through_class) or not _reachable(
                 node.value, spelled, klass, bound.get(function, set())):
             continue
         for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-            if isinstance(target, ast.Attribute) and _dotted(target.value) in ("self", "cls"):
-                held.setdefault(klass, set()).add(target.attr)
+            if isinstance(target, ast.Attribute):
+                through = _dotted(target.value)
+                # Example.unread = ... names the class as statically as self.unread does.
+                owner = klass if through in ("self", "cls") else (
+                    (through or "").rpartition(".")[2] or None)
+                if owner is not None:
+                    held.setdefault(owner, set()).add(target.attr)
             elif isinstance(target, ast.Name) and function == MODULE_LEVEL:
                 held.setdefault(klass, set()).add(target.id)
     # An attribute declared on a base is held by everything under it, the way a method is.
@@ -1692,7 +1701,15 @@ def _hands_on(tree, spelled):
                 if isinstance(expression, ast.Attribute):
                     through = _dotted(expression.value)
                     _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-                    reached = inherited(klass if through in ("self", "cls") else through,
+                    if (through is None and isinstance(expression.value, ast.Call)
+                            and _dotted(expression.value.func) == "super"):
+                        for base in parents.get(klass, ()):
+                            reached = inherited(base, expression.attr)
+                            if reached:
+                                return {reached}
+                        return set()
+                    reached = inherited(klass if through in ("self", "cls")
+                                        else (through or "").rpartition(".")[2] or None,
                                         expression.attr)
                     return {reached} if reached else set()
                 return set()
@@ -1701,16 +1718,12 @@ def _hands_on(tree, spelled):
                 targets = names(node.value)
             elif isinstance(node.value, ast.Name):
                 targets = outwards(function, node.value.id, aliases)
-            elif isinstance(node.value, ast.Attribute):
+            elif isinstance(node.value, (ast.Attribute, ast.Lambda)):
                 # A bound method put behind a name reaches exactly what calling it directly
-                # would, and alias = self.carrier is as ordinary as alias = carrier. Resolved
-                # against this class, so a same-named method on another class is not dragged in,
-                # and alias = Example.carrier resolves through Example the same way.
-                through = _dotted(node.value.value)
-                _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-                reached = inherited(klass if through in ("self", "cls") else through,
-                                    node.value.attr)
-                targets = {reached} if reached else set()
+                # would, and alias = self.carrier is as ordinary as alias = carrier. Every
+                # receiver the call path resolves -- self, cls, a class named here, super() --
+                # is resolved the same way on this side of the assignment.
+                targets = names(node.value)
             elif isinstance(node.value, ast.Lambda):
                 # A lambda given a name is a function given a name.
                 targets = {places.get(id(node.value), (MODULE_LEVEL, None))[0]}
@@ -1910,15 +1923,21 @@ def source_spellings(tree):
     # An import written inside a function never reaches the module namespace, so the name it
     # binds is read out of the import itself and resolved to what it actually imports.
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or not node.module:
-            continue
-        owner = sys.modules.get(node.module)
-        if owner is None:
-            continue
-        for alias in node.names:
-            value = getattr(owner, alias.name, None)
-            if value is not None:
-                namespace.setdefault(alias.asname or alias.name, value)
+        if isinstance(node, ast.ImportFrom) and node.module:
+            owner = sys.modules.get(node.module)
+            if owner is None:
+                continue
+            for alias in node.names:
+                value = getattr(owner, alias.name, None)
+                if value is not None:
+                    # Assigned rather than defaulted: where a local import takes a name the
+                    # module also uses, the local import is what that name means there.
+                    namespace[alias.asname or alias.name] = value
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                owner = sys.modules.get(alias.name)
+                if owner is not None:
+                    namespace[alias.asname or alias.name.split(".")[0]] = owner
 
     def is_source_file(value):
         return isinstance(value, Path) and value.suffix == ".py" and value.exists()
