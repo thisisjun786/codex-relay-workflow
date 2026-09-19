@@ -1042,6 +1042,27 @@ A name that is not a bare key is written quoted, because a name containing a dot
 a sub-table of another server: the registration the command believes it made would not be the one in
 the file, and the next run would append a second.
 
+### Who registers the server
+
+The CRW plugin package declares this server too, so a host can end up with two of them: the
+configuration entry this command writes, and the declaration an installed package carries. Both
+start a bridge.
+
+`--owner` names which one this host uses. `user` is the default and is the behavior above.
+`plugin` writes no configuration entry at all; it writes `crw-bridge-mcp.json` beside the
+completion hook's settings, which is the one fact the package cannot carry: the pointer that
+names the installed runtime. The packaged launcher reads that record, and the declaration is
+what registers the server.
+
+Either owner can be installed first, so the refusal runs both ways. The user path is refused by
+a record naming the plugin; the plugin path is refused by an entry already in the configuration.
+Both report the other side with its evidence and write nothing, and a record or a configuration
+that could not be read refuses rather than defaulting, because installing on an unanswered
+question is how the second bridge arrives.
+
+Writing the record is not registering a server. On a host with no plugin installed the record
+is inert, and the command says so rather than reporting an installation.
+
 The property that fixes is a round trip, not three cases: **what the writer emits, the reader reads
 back unchanged, and a rerun then answers `LINKED`** — including values carrying backslashes, quotes,
 control characters and the three-quote sequence.
@@ -1267,6 +1288,28 @@ written, so an install cannot report success and leave every later Stop reading 
 malformed. The adapter's budget is checked against the registered timeout at the same point,
 because that is the one value whose meaning needs both files: a budget the host's timeout does
 not exceed lets the host kill the adapter before it records why it did not answer.
+
+### Who registers the hook
+
+The plugin package declares this hook as well, and a host holding both registrations runs both
+on every Stop: each asks the guard, each journals, and the turn's one hold goes to whichever
+wins the reservation. `--owner` decides which registration exists.
+
+`user` is the default and appends to the hook file as before. Its settings document is
+byte-identical to what installed hosts already hold -- the owner is written only when it is not
+the default -- so an ordinary reinstall is still unchanged rather than refused as settings that
+say something else.
+
+`plugin` writes the settings and registers nothing. It also records the interpreter and the
+adapter entry point, which the user path carries in the command line it writes into the hook
+file and a packaged command has no way to resolve for itself. The refusal runs both ways: the
+user path is refused by settings naming the plugin, the plugin path by a registration already in
+the hook file, and an unreadable hook file refuses both.
+
+The packaged launcher repeats the check at run time, because installing the plugin is not a
+command this repository runs and cannot be refused from here. It reads the owner out of the
+settings and stands down unless the plugin owns the registration, so a host that acquires both
+still answers once.
 
 The event is checked the same way and for the same reason. This adapter implements the `Stop`
 contract and has a decision for no other event: elsewhere the payload means something else and

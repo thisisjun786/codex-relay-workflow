@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from crw_runtime import (check, codexconfig, completion, definition, hooks, hostrecord,
-                         ownership, pointer, reading, scope, staging, swapgate)
+from crw_runtime import (bridgerecord, check, codexconfig, completion, definition, hooks,
+                         hostrecord, ownership, pointer, reading, scope, staging, swapgate)
 from crw_runtime.text import text_prefix
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2136,6 +2136,7 @@ def cmd_hook(args):
     # about the adapters this repository happens to own.
     adapter = getattr(args, "adapter", None)
     if adapter == COMPLETION:
+        owner = getattr(args, "owner", completion.OWNER_USER)
         # EVERY precondition is checked before ANY write, and that ordering is the whole point
         # of this block rather than an accident of how it grew. Five rounds of review each found
         # one more condition being evaluated after a write it should have preceded, and the last
@@ -2147,6 +2148,7 @@ def cmd_hook(args):
         event = args.event or completion.EVENT
         refused = (completion.registration_complaints(args.event)
                    + completion.budget_complaints(args.guard_timeout, args.timeout))
+        refused += completion.override_complaints(owner)
         interpreter = wanted = None
         if not refused:
             try:
@@ -2161,6 +2163,9 @@ def cmd_hook(args):
                     timeout=args.guard_timeout, journal_root=args.journal_root,
                     codex_home=codex_home, issue=args.issue,
                     isolation=getattr(args, "isolation_asserted_by", None),
+                    owner=owner,
+                    adapter_interpreter=interpreter,
+                    adapter_entry_point=ROOT / "scripts" / completion.ENTRY_POINT_NAME,
                 )
             except ValueError as error:
                 refused = [str(error)]
@@ -2180,8 +2185,23 @@ def cmd_hook(args):
                   "note": "the hook file could not be read, so nothing was written: whether"
                           " this adapter is already registered could not be established."})
             return EXIT_REFUSED
+        # Ownership before duplication, because they answer different questions and the first
+        # one can make the second meaningless. Duplication asks whether appending would leave
+        # two registrations in THIS file; ownership asks whether the other owner already holds
+        # the event somewhere this file cannot see. A plugin package declares its Stop hook in
+        # its own manifest, so the hook file stays empty and every check that reads only the
+        # hook file answers "nothing here" while two hooks run on every Stop.
+        registered = completion.adapter_entries(already.value, event)
+        conflict = completion.ownership_complaints(configuration, owner, registered=registered)
+        if conflict:
+            emit({"command": "hook", "adapter": adapter, "owner": owner, "settings": None,
+                  "hookFile": str(path), "result": None, "error": "; ".join(conflict),
+                  "registrations": [entry["identity"] for entry in registered],
+                  "note": "nothing was written. One owner registers this event; the other is"
+                          " reported with its evidence rather than joined."})
+            return EXIT_REFUSED
         duplicate = completion.duplicate_complaints(already.value, event, command, args.timeout)
-        if duplicate:
+        if duplicate and owner == completion.OWNER_USER:
             emit({"command": "hook", "adapter": adapter, "settings": None,
                   "hookFile": str(path), "result": None, "error": "; ".join(duplicate),
                   "note": "nothing was written. Writing the settings first would have handed"
@@ -2203,9 +2223,32 @@ def cmd_hook(args):
                            " registered against settings it cannot act on is installed and"
                            " inert, which is the one outcome worth refusing outright.")})
             return EXIT_REFUSED
+        if owner == completion.OWNER_PLUGIN:
+            # The registration is the plugin package's to declare, so this command writes the
+            # settings that registration will read and stops. Appending here as well is the
+            # duplicate this owner exists to prevent.
+            #
+            # Reported as what it is: settings written, nothing registered. A caller reading
+            # only the exit status would otherwise record an installed hook, and on this host
+            # there is none until the plugin is installed.
+            emit({"command": "hook", "adapter": adapter, "owner": owner, "event": event,
+                  "settings": settings, "hookFile": str(path), "result": None,
+                  "registrations": [],
+                  "note": ("Settings written; no registration was made and the hook file was"
+                           " not touched. The " + completion.OWNER_PLUGIN + " owner registers"
+                           " this event through the plugin package's own manifest, so install"
+                           " that package to register it. Written, registered and observed to"
+                           " have fired stay three separate claims.")})
+            return EXIT_OK
     else:
         command = args.hook_command
         event = args.event or SESSION_START
+        if getattr(args, "owner", completion.OWNER_USER) != completion.OWNER_USER:
+            emit({"command": "hook", "adapter": None, "hookFile": str(path), "result": None,
+                  "error": "--owner names who registers an adapter this repository owns; an"
+                           " explicit --hook-command is registered by whoever ran this command",
+                  "note": "nothing was written"})
+            return EXIT_USAGE
     hook = {"type": "command", "command": command, "timeout": args.timeout}
     try:
         result = hooks.install(path, event, hook, issue=args.issue, apply=args.apply)
@@ -3907,7 +3950,164 @@ def cmd_measure(args):
 
 # ------------------------------------------------------------------------- register-mcp
 
+def _starts_this_bridge(command, executable):
+    """Whether a registration starts the bridge, whatever table name it was given.
+
+    --name is the operator's to choose, so a registration made before the ownership record
+    existed can sit under any name at all and carries no owner anywhere. Its table name
+    therefore answers nothing, and the command it starts answers everything: the exact path
+    this run was handed, or any path whose final component is the bridge's own console script.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return False
+    if executable and command == str(executable):
+        return True
+    return Path(command).name == BRIDGE
+
+
+def _other_bridge_tables(configuration, name, wanted):
+    """Tables that start this bridge under some name other than the one being registered.
+
+    None means the configuration could not be read, which is not an empty answer: it is the
+    question going unanswered, and both owners refuse on it rather than defaulting.
+
+    name is the table this run is registering, or None when it registers none. It is excluded
+    because a legacy registration acquiring its ownership record is the supported migration:
+    the entry is already there and this run adds no second one. Every other bridge table would
+    be joined rather than replaced.
+    """
+    try:
+        view = codexconfig.scan(configuration)
+    except reading.Refused:
+        return None
+    if not view.readable:
+        return None
+    return sorted(table for table, entry in view.servers.items()
+                  if table != name and _starts_this_bridge(entry.get("command"),
+                                                           (wanted or {}).get("bridgeExecutable")))
+
+
+def _mcp_ownership(record_path, owner, configuration, name, wanted):
+    """Why this owner may not register the bridge, given what this host already holds.
+
+    Two registrations of one server is the failure this prevents, and it is prevented in both
+    directions because either can be installed first. The configuration entry is refused by a
+    record naming the plugin; the record is refused by an entry already in the configuration.
+
+    Each artifact is read as itself. A record or a configuration that could not be read refuses
+    rather than defaulting, because installing on an unanswered question is how a second bridge
+    arrives.
+
+    wanted is the record this run would write. It is decided here, before the configuration is
+    touched, because deciding it afterwards is how the registration lands and the record does
+    not: the file then holds a second [mcp_servers] table while the record still names the
+    first, and the host starts two bridges out of a run that reported a refusal.
+    """
+    if owner not in bridgerecord.OWNERS:
+        return "owner must be one of " + ", ".join(bridgerecord.OWNERS) + ", found " + repr(owner)
+    if owner == bridgerecord.OWNER_PLUGIN and name != MCP_NAME:
+        # The package declares one server name. Checking a different one would inspect an entry
+        # that is not the server that will start, and record a name the launcher never reads.
+        return ("the " + bridgerecord.OWNER_PLUGIN + " owner registers the server the package"
+                " declares, which is " + repr(MCP_NAME) + ", not " + repr(name)
+                + "; --name belongs to a " + bridgerecord.OWNER_USER + "-owned registration")
+    found, outcome, detail = bridgerecord.read(record_path)
+    if found is None and outcome != bridgerecord.ABSENT:
+        # Every way of not reading it, not only the malformed one. read() reports an undecodable
+        # file, a dangling link, a directory and a permission failure as their own states, and
+        # treating those like absence lets the other owner install on an unanswered question.
+        return ("the record at " + str(record_path) + " could not be acted on (" + str(detail)
+                + "), so who owns this server was not established")
+    if owner == bridgerecord.OWNER_USER:
+        if found is not None and bridgerecord.owner_of(found) == bridgerecord.OWNER_PLUGIN:
+            return ("the record at " + str(record_path) + " names the "
+                    + bridgerecord.OWNER_PLUGIN + " as the owner of this server, so the plugin"
+                    " package already declares it; a configuration entry beside it would run a"
+                    " second bridge. Register with --owner " + bridgerecord.OWNER_PLUGIN
+                    + ", or remove that record first")
+        if found is not None and not bridgerecord.same_registration(found, wanted):
+            # Compared against the whole document, the same comparison the write makes, so this
+            # check and that write cannot disagree about what counts as the same record. A
+            # differing serverName is the case that hurts most -- the registration would append
+            # a table under one name while the record kept naming another -- but a differing
+            # command or argument list leaves the same split between the two artifacts.
+            differing = sorted(field for field in bridgerecord.IDENTITY
+                               if found.get(field) != wanted.get(field))
+            return ("the record at " + str(record_path) + " is already installed and says"
+                    " something else (" + ", ".join(differing) + "); this command does not"
+                    " overwrite it. Registering now would append a second table to the Codex"
+                    " configuration while the record went on naming the first, and the host"
+                    " would start two bridges. Repair or remove that record first")
+        # A host that registered before the record existed has the configuration as its only
+        # evidence, and this path is the migration route: the requested table may already be
+        # there and acquire its record, but a bridge sitting under any OTHER name would be
+        # joined by a second table rather than replaced by one.
+        legacy = _other_bridge_tables(configuration, name, wanted)
+        if legacy is None:
+            return ("the Codex configuration could not be read, so whether this bridge is"
+                    " already registered under another name was not established")
+        if legacy:
+            return ("the Codex configuration already starts this bridge as "
+                    + ", ".join(repr(table) for table in legacy) + ", under a name this run is"
+                    " not registering; adding " + repr(name) + " beside it would leave two"
+                    " tables starting the same bridge. Register under that name to give it an"
+                    " ownership record, or remove the entry first")
+        return None
+    try:
+        with reading.region(record_path, "the Codex configuration"):
+            view = codexconfig.scan(configuration)
+    except reading.Refused as stop:
+        return ("the Codex configuration could not be scanned (" + str(stop.reading.detail)
+                + "), so whether this server is already registered was not established")
+    if not view.readable:
+        return ("the Codex configuration could not be read, so whether this server is already"
+                " registered was not established")
+    aliased = _other_bridge_tables(configuration, None, wanted)
+    if aliased is None:
+        return ("the Codex configuration could not be read, so whether this server is already"
+                " registered was not established")
+    if aliased:
+        # Found by what it starts rather than by what it is called. A host that registered
+        # this bridge before the ownership record existed has the configuration as its only
+        # evidence, and checking one name would look straight past a registration sitting
+        # under any other.
+        return ("the Codex configuration already starts this bridge as "
+                + ", ".join(repr(table) for table in aliased) + ", which is a "
+                + bridgerecord.OWNER_USER + "-owned registration carrying no ownership record;"
+                " a plugin declaration beside it would run a second bridge. It is recognised by"
+                " the command it starts, because --name is free to choose the table it sits"
+                " under. Remove that entry, or migrate it with --owner " + bridgerecord.OWNER_USER
+                + " first")
+    if name in view.servers:
+        return ("the Codex configuration already registers " + repr(name) + ", which is the "
+                + bridgerecord.OWNER_USER + "-owned registration; a plugin declaration beside"
+                " it would run a second bridge. Remove that entry first")
+    return None
+
+
 def cmd_register_mcp(args):
+    """Decide the owner and register, with both halves under one lock.
+
+    The two owners write different files, so their own write locks do not serialize the
+    decision they share: without this, two concurrent runs both read a host with neither
+    artifact present and both write, and the host then starts two bridges. The decision and
+    the write it authorizes happen inside this one lock, and the configuration is read again
+    inside it so the decision is made about the state that will be written.
+    """
+    codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    lock = bridgerecord.ownership_lock_path(codex_home)
+    try:
+        with hostrecord.Locked(lock):
+            return _register_mcp_owned(args, codex_home)
+    except hostrecord.Busy as error:
+        emit({"command": "register-mcp", "owner": getattr(args, "owner", None),
+              "outcome": BUSY, "detail": str(error), "applied": False, "wrote": False,
+              "otherTablesPreserved": True,
+              "note": "nothing was written: another run holds the ownership lock"})
+        return EXIT_REFUSED
+
+
+def _register_mcp_owned(args, codex_home):
     """Register the bridge through the supported Codex configuration path.
 
     Append-only and idempotent: an identical registration writes nothing, an absent one is
@@ -3919,13 +4119,59 @@ def cmd_register_mcp(args):
     reporting are not. That line matters: a ValueError from a render is a defect in this
     command and must keep raising, while a configuration that cannot be decoded is a refusal.
     """
-    codex_home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     path, before = read_config(codex_home)
     if not before.usable:
         return refused("register-mcp", before, path=str(path), applied=False, wrote=False,
                        otherTablesPreserved=True,
                        note="nothing was written: the file was not read")
     before_text = before.value
+    owner = getattr(args, "owner", bridgerecord.OWNER_USER)
+    record_path = bridgerecord.record_path(codex_home)
+    # Built before anything is written, for both owners, because the ownership decision needs
+    # it and because a record that cannot be built is a reason to register nothing rather than
+    # a result to report after the registration has already landed.
+    try:
+        wanted = bridgerecord.document(command=args.bridge_command,
+                                       arguments=args.bridge_arg or [], name=args.name,
+                                       issue=getattr(args, "issue", None), owner=owner)
+    except ValueError as error:
+        emit({"command": "register-mcp", "owner": owner, "path": str(path),
+              "record": str(record_path), "outcome": codexconfig.CONFLICT,
+              "detail": str(error), "applied": False, "wrote": False,
+              "otherTablesPreserved": True,
+              "note": "nothing was written: this run could not say what record would name the"
+                      " owner of the registration it was about to make"})
+        return EXIT_USAGE
+    conflict = _mcp_ownership(record_path, owner, before_text, args.name, wanted)
+    if conflict:
+        emit({"command": "register-mcp", "owner": owner, "path": str(path),
+              "record": str(record_path), "outcome": codexconfig.CONFLICT,
+              "detail": conflict,
+              "applied": False, "wrote": False, "otherTablesPreserved": True,
+              "note": "nothing was written. One owner registers this server; the other is"
+                      " reported with its evidence rather than joined."})
+        return EXIT_REFUSED
+    if owner == bridgerecord.OWNER_PLUGIN:
+        # The declaration is the package's, so this command writes the one fact the package
+        # cannot carry and leaves the configuration alone. Reported as that: a record written
+        # and no registration made, because on this host there is none until the plugin is
+        # installed and its hooks and servers are trusted.
+        try:
+            written = bridgerecord.write(record_path, wanted, apply=args.apply)
+        except hostrecord.Busy as error:
+            emit({"command": "register-mcp", "owner": owner, "record": str(record_path),
+                  "outcome": BUSY, "detail": str(error), "applied": False, "wrote": False,
+                  "otherTablesPreserved": True})
+            return EXIT_REFUSED
+        emit({"command": "register-mcp", "owner": owner, "path": str(path),
+              "record": str(record_path), "outcome": written["outcome"],
+              "detail": written.get("detail"), "applied": written["applied"],
+              "wrote": written["wrote"], "otherTablesPreserved": True,
+              "preservedHow": "the Codex configuration was read and not written",
+              "note": "The record was written and no MCP server was registered. The plugin"
+                      " package declares the server, so install that package to register it."
+                      " Written, registered and a tool actually called stay three claims."})
+        return EXIT_OK if written["outcome"] in bridgerecord.SETTLED else EXIT_REFUSED
     try:
         with reading.region(path, "the Codex configuration"):
             new_text, outcome, detail = codexconfig.register(
@@ -4000,8 +4246,27 @@ def cmd_register_mcp(args):
             unreadable = view.unreadable or None
     except reading.Refused as stop:
         servers, unreadable = None, [stop.reading.detail]
+    # The user owner records itself too. Without this, a host that registered the bridge here
+    # and later installs the plugin gives the packaged launcher no record to read: it would
+    # report an absent record on every session and tell the operator to write a plugin-owned
+    # one, which is the opposite of what that host should do. With it, the launcher reads the
+    # owner and stands down for the registration this command just made.
+    #
+    # Failing to write it never fails the registration, which has already landed; it is
+    # reported as its own result.
+    record = None
+    if owner == bridgerecord.OWNER_USER and outcome not in REGISTER_REFUSALS:
+        try:
+            # The same document the ownership check settled on, so the check and the write
+            # cannot describe two different records.
+            record = bridgerecord.write(record_path, wanted, apply=args.apply)
+        except hostrecord.Busy as error:
+            record = {"record": str(record_path), "outcome": bridgerecord.MALFORMED,
+                      "applied": False, "wrote": False, "detail": str(error)}
     emit({
         "command": "register-mcp",
+        "owner": owner,
+        "record": record,
         "path": str(path),
         "outcome": outcome,
         "detail": detail,
@@ -4021,6 +4286,14 @@ def cmd_register_mcp(args):
     # would exit 0, and a caller reading only the exit status would record a registration as
     # verified that nobody could read back.
     if outcome in REGISTER_REFUSALS:
+        return EXIT_REFUSED
+    if record is not None and record["outcome"] not in bridgerecord.SETTLED:
+        # The registration landed and the record that names its owner did not. Reported as a
+        # refusal rather than a success, because a host left in that state answers "nobody owns
+        # this" to the launcher: installing the package would then start a second bridge beside
+        # the registration this run just made. Nothing is undone here, since the registration is
+        # already in the file; the emitted result carries both halves so the record can be
+        # repaired on its own.
         return EXIT_REFUSED
     return EXIT_OK
 
@@ -4104,6 +4377,14 @@ def build_parser():
     register.add_argument("--name", default=MCP_NAME)
     register.add_argument("--bridge-command", required=True)
     register.add_argument("--bridge-arg", action="append")
+    register.add_argument("--owner", choices=bridgerecord.OWNERS,
+                          default=bridgerecord.OWNER_USER,
+                          help="who registers this server. user writes the Codex configuration"
+                               " entry, which is what this command has always done. plugin"
+                               " writes only the record the packaged launcher reads, because"
+                               " the CRW plugin declares the server itself; both together would"
+                               " run a second bridge")
+    register.add_argument("--issue", default="CRW-114")
     register.add_argument("--apply", action="store_true")
     register.set_defaults(handler=cmd_register_mcp)
 
@@ -4127,6 +4408,12 @@ def build_parser():
                       help="observe classifies and records and never holds, which is the"
                            " default because holding depends on per-session write isolation"
                            " the caller has to have granted")
+    hook.add_argument("--owner", choices=completion.OWNERS, default=completion.OWNER_USER,
+                      help="who registers this adapter. user appends to the hook file, which is"
+                           " what this command has always done. plugin writes the settings and"
+                           " registers nothing, because the CRW plugin package declares the"
+                           " registration itself; installing both would run two copies on every"
+                           " " + completion.EVENT)
     hook.add_argument("--isolation-asserted-by",
                       help="who established that a held child cannot write the facts the"
                            " decision reads; required by --mode hold and recorded in the"
