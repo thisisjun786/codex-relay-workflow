@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -2198,9 +2199,9 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             calls = []
             real_cell = completion._journal_cell
 
-            def counting(config):
+            def counting(config, *passed, **keywords):
                 calls.append(str((config or {}).get("journalRoot")))
-                return real_cell(config)
+                return real_cell(config, *passed, **keywords)
 
             with mock.patch.object(completion, "_journal_cell", side_effect=counting):
                 found = completion.status(codex_home=temporary, environ={})
@@ -2264,9 +2265,9 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             roots = []
             real = completion._journal_cell
 
-            def counting(config):
+            def counting(config, *passed, **keywords):
                 roots.append(str((config or {}).get("journalRoot")))
-                return real(config)
+                return real(config, *passed, **keywords)
 
             with mock.patch.object(completion, "_journal_cell", side_effect=counting):
                 completion.status(codex_home=temporary, environ={})
@@ -2324,9 +2325,9 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             # that has no such helper fails on the behaviour instead of on a missing name.
             same = lambda value: os.path.normpath(os.path.expanduser(str(value)))
 
-            def counting_journal(config):
+            def counting_journal(config, *passed, **keywords):
                 journals.append(same((config or {}).get("journalRoot") or ""))
-                return real_journal(config)
+                return real_journal(config, *passed, **keywords)
 
             def counting_presence(target, what, **kwargs):
                 if what in ("the adapter script", "the registered interpreter"):
@@ -2532,9 +2533,9 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             listed = []
             real = completion._journal_cell
 
-            def counting(config):
+            def counting(config, *passed, **keywords):
                 listed.append(str(Path(str((config or {}).get("journalRoot") or ""))))
-                return real(config)
+                return real(config, *passed, **keywords)
 
             with mock.patch.object(completion, "_journal_cell", side_effect=counting):
                 completion.status(codex_home=temporary, environ={})
@@ -2676,9 +2677,9 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                             "the fixture did not build one directory under two spellings")
             real, listed = completion._journal_cell, []
 
-            def listing(config):
+            def listing(config, *passed, **keywords):
                 listed.append(config.get("journalRoot"))
-                return real(config)
+                return real(config, *passed, **keywords)
 
             with mock.patch.object(completion, "_journal_cell", side_effect=listing):
                 found = completion.status(codex_home=temporary, environ={})
@@ -2740,7 +2741,7 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
 
             real, taken = completion._journal_cell, []
 
-            def listing(config):
+            def listing(config, *passed, **keywords):
                 cell = real(config)
                 taken.append(config.get("journalRoot"))
                 if len(taken) == 1:
@@ -2784,13 +2785,13 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
 
             real, calls = completion._journal_cell, []
 
-            def listing(config):
+            def listing(config, *passed, **keywords):
                 calls.append(config.get("journalRoot"))
                 if len(calls) == 1:
                     # After the identity was taken, before the directory is listed.
                     alias.unlink()
                     alias.symlink_to(listed)
-                return real(config)
+                return real(config, *passed, **keywords)
 
             with mock.patch.object(completion, "_journal_cell", side_effect=listing):
                 found = completion.status(codex_home=temporary, environ={})
@@ -2852,17 +2853,17 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
 
             real, calls = completion._journal_cell, []
 
-            def listing(config):
+            def listing(config, *passed, **keywords):
                 calls.append(config.get("journalRoot"))
                 if len(calls) == 1:
                     alias.unlink()
                     alias.symlink_to(away)
                     try:
-                        return real(config)
+                        return real(config, *passed, **keywords)
                     finally:
                         alias.unlink()
                         alias.symlink_to(there)
-                return real(config)
+                return real(config, *passed, **keywords)
 
             with mock.patch.object(completion, "_journal_cell", side_effect=listing):
                 found = completion.status(codex_home=temporary, environ={})
@@ -3666,6 +3667,53 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
         self.assertIsNotNone(holder,
                              "a record that failed to parse held nothing, so its identity was"
                              " not usable as a key")
+
+    def test_a_journal_identity_is_held_while_it_is_an_alias_key(self):
+        """The same rule at the journal site, which had it for the reading and not for the key.
+
+        _journal_cell takes its identity from the descriptor it listed -- which is right -- and
+        then closed it. Published as an alias key afterwards, that identity is recyclable: a
+        journal directory deleted after it was listed hands its (device, inode) to whatever is
+        created next, and a later registration's journal reaching that pair was handed this
+        one's snapshot, count and all.
+        """
+        real = completion._journal_cell
+        listed = []
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            first = temporary / "journal-one"
+            second = temporary / "journal-two"
+            first.mkdir()
+            (first / "2026-01-01").mkdir()
+            (first / "2026-01-01" / "0001-a.json").write_text("{}", encoding="utf-8")
+            settings_one = temporary / "one.json"
+            settings_two = temporary / "two.json"
+            settings_one.write_text(json.dumps(self._document(first)), encoding="utf-8")
+            settings_two.write_text(json.dumps(self._document(second)), encoding="utf-8")
+            vacated = {}
+
+            def deleting_the_first_after_listing_it(config, *passed, **keywords):
+                answer = real(config, *passed, **keywords)
+                if not listed:
+                    listed.append(True)
+                    was = first.stat().st_ino
+                    shutil.rmtree(first)
+                    second.mkdir()
+                    vacated["inherited"] = second.stat().st_ino == was
+                return answer
+
+            with mock.patch.object(completion, "_journal_cell",
+                                   side_effect=deleting_the_first_after_listing_it):
+                found = completion.journals_named([
+                    {"registration": "one", "settings": str(settings_one), "startable": True},
+                    {"registration": "two", "settings": str(settings_two), "startable": True}])
+
+        self.assertEqual(found[1]["journalRoot"], str(second),
+                         "a registration's own journal was given a snapshot taken from a"
+                         " deleted directory whose inode it inherited"
+                         + ("" if vacated.get("inherited") else " (note: the inode was NOT"
+                                                                " reused on this run, so the"
+                                                                " collision was never built)"))
 
 
 class AnAnswerableCauseIsNotWithheld(unittest.TestCase):

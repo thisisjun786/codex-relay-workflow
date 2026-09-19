@@ -1549,8 +1549,16 @@ def _recorded_program_cell(named, label):
     return probe
 
 
-def _journal_cell(config):
-    """What this hook recorded about its own invocations."""
+def _journal_cell(config, held=None):
+    """What this hook recorded about its own invocations.
+
+    'held' is a list a caller passes when it will use the reported journalIdentity as a KEY.
+    The descriptor this listing was read through is appended to it and stays open, because an
+    identity stops being a key the moment its object can be recycled: a journal directory
+    deleted after it was listed hands its (device, inode) to whatever is created next, and a
+    later registration's journal reaching that pair would be given this one's snapshot. The
+    caller closes what it collects.
+    """
     root = (config or {}).get("journalRoot")
     policy = (config or {}).get("journalPolicy") or EVERY_INVOCATION
     if not root:
@@ -1633,7 +1641,10 @@ def _journal_cell(config):
                      journalRoot=str(directory), journalPolicy=policy, days=days,
                      journalIdentity=identity)
     finally:
-        os.close(handle)
+        if held is None:
+            os.close(handle)
+        else:
+            held.append(handle)
 
 
 def journals_named(registrations, already_read=None):
@@ -1893,7 +1904,7 @@ def _read_named(registrations, already_read, read_by, held, found, scanned, alia
             cell = dict(scanned[root], journalPolicy=config.get("journalPolicy")
                         or EVERY_INVOCATION)
         else:
-            cell = _journal_cell(config)
+            cell = _journal_cell(config, held=held)
             scanned[root] = cell
             # Published under the identity the READING reports, which it took from the
             # descriptor it listed. Bracketing the listing with two path lookups was not
