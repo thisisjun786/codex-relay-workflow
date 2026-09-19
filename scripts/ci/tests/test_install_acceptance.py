@@ -1748,6 +1748,77 @@ RESOLVES_LIKE_PYTHON = {
          " are asked -- a module named in the source under analysis is not something to import"
          " in order to answer a question about the text. One that cannot be read answers no,"
          " which keeps the receiver and errs towards reporting."),
+    "a class-body binding written under an if":
+        (REFUSAL,
+         ("def outer():",
+          "    class Holder:",
+          "        if True:",
+          "            CHANGED = \"fine\"",
+          "    def consumer():",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", True,
+         "a statement under an if in a class body is still the class's. Marking only the body's"
+         " immediate statements left the nested one looking like a local of the function."),
+    "a class alias the scope around the call bound":
+        (REFUSAL,
+         ("class Holder:",
+          "    @staticmethod",
+          "    def carrier():",
+          "        return reading.UNREADABLE",
+          "",
+          "def outer():",
+          "    Alias = Holder",
+          "    def consumer():",
+          "        return Alias.carrier()",
+          "    return consumer"),
+         "outer.consumer", True,
+         "a name the enclosing scope binds to a class IS that class, which the shadow rule must"
+         " not undo -- an alias is a local binding too, and the two rules pull opposite ways on"
+         " the same name."),
+    "a parameter of an enclosing scope spelled like a class":
+        (REFUSAL,
+         ("class Holder:",
+          "    @staticmethod",
+          "    def carrier():",
+          "        return reading.UNREADABLE",
+          "",
+          "def outer(Holder):",
+          "    def consumer():",
+          "        return Holder.carrier()",
+          "    return consumer"),
+         "outer.consumer", False,
+         "its pair: the closure reads the parameter the function around it was given, so the"
+         " qualifier is not the class however alike they are spelled."),
+    "a descriptor constructor another object owns":
+        (REFUSAL,
+         ("class Decorators:",
+          "    @staticmethod",
+          "    def property(fn):",
+          "        return fn",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    alias = Decorators.property(carrier)",
+          "    def consumer(self):",
+          "        return self.alias"),
+         "consumer", False,
+         "property(carrier) and @property are one question, so the constructor is resolved"
+         " through its owner the way the decorator already was. Reading somebody's identity"
+         " function as the descriptor makes an attribute read look like a call."),
+    "a handle opened by a parameter spelled like the opener":
+        (TEXT,
+         ("def helper(open):",
+          "    stream = open(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "the name propagation recognised an opener by spelling while the matcher beside it"
+         " resolved one lexically. Both ask the same question now, so a parameter called open"
+         " does not make its caller read this module's source."),
     "a class body binding inside a function":
         (REFUSAL,
          ("def outer():",
@@ -2686,6 +2757,20 @@ def _class_aliases(tree):
     return named
 
 
+def _bound_around(taken, scope, name):
+    """Whether this scope or one enclosing it binds that name.
+
+    A closure reads the parameter the function around it was given, so a qualifier spelled like
+    a class is not that class there either.
+    """
+    reach = []
+    for part in ([] if scope == MODULE_LEVEL else scope.split(".")):
+        reach.append(part)
+        if name in taken.get(".".join(reach), ()):
+            return True
+    return False
+
+
 def _base_named(alias_by_scope, spelled_as, scope):
     """The class a base name reaches, resolved in the scope the class is written in.
 
@@ -2764,8 +2849,20 @@ def _shadowing_names(tree):
     # A class body is not the function around it. _places labels its statements with the
     # enclosing scope, but a name bound there creates no local in that function, so reading it
     # as a shadow drops the module constant a nested function really does see.
-    in_a_class_body = {id(statement) for node in ast.walk(tree)
-                       if isinstance(node, ast.ClassDef) for statement in node.body}
+    def owned_by_the_body(body):
+        """Every node a class body owns, down through its ifs and loops but not into a def.
+
+        A statement written under an if in a class body is still the class's, and a def opens a
+        scope of its own whose locals really are that scope's.
+        """
+        for statement in body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            for inner in ast.walk(statement):
+                yield id(inner)
+
+    in_a_class_body = {owned for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+                       for owned in owned_by_the_body(node.body)}
     for node in ast.walk(tree):
         where, _klass = places.get(id(node), (MODULE_LEVEL, None))
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -3068,44 +3165,44 @@ def _hands_on(tree, spelled):
             return False
         return means(value, seed, line, within, followed + 1)
 
+    def the_objects(seed):
+        """What these names denote, asked of the interpreter rather than listed.
+
+        Only modules this process has ALREADY imported are consulted. A module named in the
+        source under analysis is not something to import in order to answer a question about
+        the text, and one that cannot be read answers no rather than yes -- which keeps the
+        receiver, and errs towards reporting.
+        """
+        found = set()
+        for holder in (sys.modules.get("builtins"), sys.modules.get("functools")):
+            for name in seed:
+                thing = getattr(holder, name, None) if holder is not None else None
+                if thing is not None:
+                    found.add(thing)
+        return found
+
+    def resolves_to(mark, seed, within):
+        """Whether this decorator or constructor name reaches one of these builtins.
+
+        The same question for @property and for property(carrier): a qualified name belongs to
+        whatever owns it, and reducing it to its last part reads somebody's identity function
+        as the descriptor it is spelled like.
+        """
+        spelled_as = _dotted(mark) or ""
+        owner, _, last = spelled_as.rpartition(".")
+        held_by = owner.rpartition(".")[2]
+        if owner and held_by in imported:
+            module = sys.modules.get(imported_from.get(held_by, ""))
+            return module is not None and getattr(module, last, None) in the_objects(seed)
+        if owner and (held_by in parents
+                      or any(bound == held_by for _line, bound, _value in module_bindings)):
+            return False
+        return means(last, seed, getattr(mark, "lineno", 0), within)
+
     def decorated_by(node, seed, within=None):
         """Whether any decorator on this definition reaches one of these builtins."""
-        def the_objects():
-            """What these names denote, asked of the interpreter rather than listed.
-
-            Only modules this process has ALREADY imported are consulted. A module named in the
-            source under analysis is not something to import in order to answer a question
-            about the text, and one that cannot be read answers no rather than yes -- which
-            keeps the receiver, and errs towards reporting.
-            """
-            found = set()
-            for holder in (sys.modules.get("builtins"), sys.modules.get("functools")):
-                for name in seed:
-                    thing = getattr(holder, name, None) if holder is not None else None
-                    if thing is not None:
-                        found.add(thing)
-            return found
-
-        def reaches(mark):
-            spelled_as = _dotted(mark) or ""
-            owner, _, last = spelled_as.rpartition(".")
-            # A qualified decorator belongs to whatever owns it. Decorators.staticmethod is
-            # that class's, and reducing every dotted name to its last part reads it as the
-            # builtin, which removes a receiver the method really has. An IMPORTED owner is
-            # different: functools.cached_property is the descriptor it is spelled like, and
-            # rejecting it loses every reader of the getter.
-            held_by = owner.rpartition(".")[2]
-            if owner and held_by in imported:
-                # An imported owner is asked what it exports: functools.cached_property is the
-                # descriptor, deco.staticmethod from an unknown module is not.
-                module = sys.modules.get(imported_from.get(held_by, ""))
-                return module is not None and getattr(module, last, None) in the_objects()
-            if owner and (
-                    held_by in parents
-                    or any(bound == held_by for _line, bound, _value in module_bindings)):
-                return False
-            return means(last, seed, mark.lineno, within)
-        return any(reaches(mark) for mark in getattr(node, "decorator_list", []))
+        return any(resolves_to(mark, seed, within)
+                   for mark in getattr(node, "decorator_list", []))
 
     def names_class(name, at, followed=0):
         """The class this name reaches at that line: its own name, or one bound to it.
@@ -3155,8 +3252,8 @@ def _hands_on(tree, spelled):
         for statement in node.body:
             if not isinstance(statement, ast.Assign) or not isinstance(statement.value, ast.Call):
                 continue
-            if not means((_dotted(statement.value.func) or "").rpartition(".")[2],
-                         ("property", "cached_property"), statement.lineno, node.name):
+            if not resolves_to(statement.value.func, ("property", "cached_property"),
+                               node.name):
                 continue
             for given in list(statement.value.args)[:1]:
                 reached = methods.get((node.name,
@@ -3585,10 +3682,17 @@ def _hands_on(tree, spelled):
             # and Example.name names one of Example's just as statically.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
             named_class = (through or "").rpartition(".")[2] or None
-            if (isinstance(node.func.value, ast.Name)
-                    and node.func.value.id in taken_names.get(function, set())):
+            aliased = (_base_named(alias_of, named_class, function)
+                       if named_class else None)
+            if aliased is not None and aliased != named_class and aliased in parents:
+                # A name the scope binds to a class IS that class, which the shadow rule below
+                # must not undo: an alias is a local binding too.
+                named_class = aliased
+            elif (isinstance(node.func.value, ast.Name)
+                    and _bound_around(taken_names, function, node.func.value.id)):
                 # A parameter or a local of that name is not the class of that name: which
-                # object it holds is a fact about the caller.
+                # object it holds is a fact about the caller, and a closure reads the one the
+                # scope around it bound.
                 named_class = None
             elif named_class is not None:
                 named_class = names_class(named_class, node.lineno) or named_class
@@ -3952,7 +4056,7 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
     return spelled
 
 
-def _handle_names(tree, handles):
+def _handle_names(tree, handles, shadowed=(), opens_a_file=True):
     """Every name that reaches a source file, the module's own and the local ones bound to them.
 
     path = HERE is an ordinary line, and a read taken on path reaches the same file.
@@ -3974,6 +4078,11 @@ def _handle_names(tree, handles):
                 return any(reaches(value) for value in expression.values)
             if (isinstance(expression, ast.Call)
                     and (_dotted(expression.func) or "").rpartition(".")[2] == "open"):
+                if not opens_a_file or (isinstance(expression.func, ast.Name)
+                                        and id(expression.func) in shadowed):
+                    # A scope that binds open itself, or a module that defines one, has
+                    # shadowed the builtin: what that call answers with is not this file.
+                    return False
                 opener = expression.func
                 return any(reaches(given) for given in list(expression.args)
                            + [given.value for given in expression.keywords]
@@ -4186,7 +4295,17 @@ def source_text_reached(source):
     tree = ast.parse(source)
     handles, hands_source, undecided, called = source_spellings(tree)
     declared = frozenset(handles)
-    handles, where_from = _handle_names(tree, handles)
+    shadowed = _shadowing_names(tree)
+    # Whether open is the builtin here. A module that defines its own open has shadowed it, and
+    # what that one answers with is a question about the run rather than a file's text.
+    opens_a_file = not any(
+        (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+         and statement.name == "open")
+        or (isinstance(statement, ast.Assign)
+            and any(inner.id == "open" for target in statement.targets
+                    for inner in ast.walk(target) if isinstance(inner, ast.Name)))
+        for statement in getattr(tree, "body", ()))
+    handles, where_from = _handle_names(tree, handles, shadowed, opens_a_file)
     _classes, as_class, built = _instance_classes(tree)
     places = _places(tree)
 
@@ -4201,16 +4320,6 @@ def source_text_reached(source):
               and node.id not in declared
               and not inside(places.get(id(node), (MODULE_LEVEL, None))[0],
                              where_from[node.id])}
-    shadowed = _shadowing_names(tree)
-    # Whether open is the builtin here. A module that defines its own open has shadowed it, and
-    # what that one answers with is a question about the run rather than a file's text.
-    opens_a_file = not any(
-        (isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-         and statement.name == "open")
-        or (isinstance(statement, ast.Assign)
-            and any(inner.id == "open" for target in statement.targets
-                    for inner in ast.walk(target) if isinstance(inner, ast.Name)))
-        for statement in getattr(tree, "body", ()))
     held, growing = {}, True
     while growing:
         wider = _held_by_class(
@@ -5531,6 +5640,7 @@ HANDED = {
     "_linearised": NOTHING,
     "_class_aliases": NOTHING,
     "_base_named": NOTHING,
+    "_bound_around": NOTHING,
     "_instance_classes": NOTHING,
     "_shadowing_names": NOTHING,
     "places_reached": NOTHING,
