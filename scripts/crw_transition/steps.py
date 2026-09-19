@@ -1615,6 +1615,31 @@ def _recreated_settings(results):
     return found
 
 
+def _hook_already_gone(results):
+    """What to add to a refusal raised after the completion registration was already removed.
+
+    A refusal usually means the host is as it was. After a settled standdown it does not: the
+    manual registration is gone and the plugin's declared hook is the only one left, so a plugin
+    that can no longer serve leaves the host with no completion hook firing at all. Nothing here
+    can prevent that -- the plugin entry lives in a configuration no writer of it locks, and this
+    command holds no lock the operator's own disable would wait on -- so the run says what the
+    host is instead of letting it be inferred from a step list that reads like a clean refusal.
+
+    Putting the registration back is not the answer and is deliberately not done. The settings at
+    the fixed path name the plugin by then, and a user-owned registration reading a plugin-owned
+    document is refused by the adapter on ownership: a hook that fires, records nothing and looks
+    installed, which is worse than an absence this run names.
+    """
+    settled = [item for item in results
+               if item["step"] == "hook standdown" and item["outcome"] == SETTLED]
+    if not settled:
+        return ""
+    return (". The completion registration this run removed is already gone, so until the plugin"
+            " can serve again no completion hook fires at all. Re-enable the plugin and rerun,"
+            " which decides from the host as it then stands, or register the manual hook again"
+            " with runtime_install.py hook --owner user")
+
+
 def _rollback_if_unfinished(results):
     """Undo the retire when the standdown it was made for did not happen.
 
@@ -1707,7 +1732,9 @@ def transition(host, options, *, apply=False):
             if apply and name in DESTRUCTIVE:
                 changed = plugin_refusals(host)
                 if changed:
-                    results.append(_answer(name, REFUSED, "; ".join(changed)))
+                    results.append(_answer(name, REFUSED, "; ".join(changed)
+                                           + _hook_already_gone(results),
+                                           completionHookAbsent=_hook_already_gone(results) != ""))
                     results += [_answer(other, NOT_REACHED,
                                         "the plugin stopped being able to serve what this removes")
                                 for other, _step in ORDER[[n for n, _s in ORDER].index(name) + 1:]]

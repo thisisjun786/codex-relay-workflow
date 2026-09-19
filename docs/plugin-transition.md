@@ -102,6 +102,18 @@ repair belongs to `hostrecord` and to every command that takes that lock, and `h
 carries the corrected mechanism it would use: `Exclusive`, which holds an advisory lock on a file
 that is never unlinked and expires only when its holder dies.
 
+A second limitation of the same kind, reported rather than prevented. The plugin entry lives in
+`config.toml` and nothing that writes it takes a lock this command could wait on, so an operator
+disabling the plugin, or a cache replaced underneath it, can land between the readiness check in
+front of a destructive step and the write that follows. Asking again before every destructive step
+narrows that window and cannot close it. When it lands after the completion registration has
+already been removed, the refusal says what the host now is: the manual registration is gone, the
+plugin's declared hook is all that remains and cannot load while the plugin is disabled, and no
+completion hook fires until the plugin is enabled again and the run repeated. The registration is
+not put back, because by then the settings at the fixed path name the plugin, and a user-owned
+registration reading a plugin-owned document is refused by the adapter on ownership -- a hook that
+fires, records nothing and looks installed, which is worse than an absence the run names.
+
 Three windows follow, and all three are printed by the run:
 
 - between 1 and 2 the old registration runs with no settings to read and releases without recording;

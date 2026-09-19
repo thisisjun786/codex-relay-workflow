@@ -2992,6 +2992,44 @@ class TheFindingsFromReview(TransitionCase):
         # The write really did land, which is why this is reported rather than retried silently.
         self.assertNotIn("[mcp_servers." + inventory.SERVER_NAME + "]", host.config())
 
+    @needs_reader
+    def test_a_plugin_disabled_after_the_standdown_says_no_hook_fires(self):
+        """A refusal after the registration is gone is not a refusal that changed nothing."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        genuine = steps.hook_standdown
+
+        def disabling(host_view, options, *, apply=False):
+            """The operator's own disable landing after the readiness check, before the write."""
+            (host.home / "config.toml").write_text(
+                host.config().replace("enabled = true", "enabled = false", 1), encoding="utf-8")
+            return genuine(host_view, options, apply=apply)
+
+        steps.ORDER = tuple((name, disabling if name == "hook standdown" else step)
+                            for name, step in steps.ORDER)
+        self.addCleanup(setattr, steps, "ORDER",
+                        tuple((name, genuine if name == "hook standdown" else step)
+                              for name, step in steps.ORDER))
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["hook standdown"], "settled", json.dumps(results)[:900])
+        refused = [item for item in results if item["outcome"] == "refused"]
+        self.assertEqual([item["step"] for item in refused], ["mcp record retire"],
+                         json.dumps(results)[:900])
+        # The plugin is why it refused, and the sentence after it is what the host now is.
+        self.assertIn("is disabled", refused[0]["detail"])
+        self.assertIn("no completion hook fires at all", refused[0]["detail"])
+        self.assertIn("Re-enable the plugin and rerun", refused[0]["detail"])
+        self.assertTrue(refused[0]["completionHookAbsent"])
+        # And the host really is in that state: the manual registration is gone and the settings
+        # that are there name the plugin whose hook cannot load.
+        self.assertEqual(host.hooks_document()["hooks"]["Stop"][0]["hooks"], [])
+        self.assertEqual(host.settings()["owner"], "plugin")
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
