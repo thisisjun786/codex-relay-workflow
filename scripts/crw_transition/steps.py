@@ -407,15 +407,21 @@ def _declared(root, repo_root):
                     except ValueError:
                         words = []
                     shape = _shape(words)
-                    if shape:
-                        # The matcher and the timeout travel with the command. A declaration
-                        # carrying the right launcher under a restrictive matcher fires on some
-                        # turns and not others, and one carrying a second of timeout is killed
-                        # before the adapter's own budget can answer -- both are replacements
-                        # that do not replace, and both pass a comparison of command strings.
-                        events.setdefault(event, []).append(
-                            shape + " matcher=" + repr((group or {}).get("matcher"))
-                            + " timeout=" + repr((hook or {}).get("timeout")))
+                    # The matcher and the timeout travel with the command. A declaration carrying
+                    # the right launcher under a restrictive matcher fires on some turns and not
+                    # others, and one carrying a second of timeout is killed before the adapter's
+                    # own budget can answer -- both are replacements that do not replace, and
+                    # both pass a comparison of command strings.
+                    #
+                    # A command whose shape cannot be read is COUNTED rather than dropped. Skipped
+                    # ones were invisible to the comparison while still being declarations Codex
+                    # runs: env python3 <launcher> starts the same launcher a second time, and a
+                    # comparison that cannot see it reports the surface as matching.
+                    events.setdefault(event, []).append(
+                        (shape + " matcher=" + repr((group or {}).get("matcher"))
+                         + " timeout=" + repr((hook or {}).get("timeout"))) if shape else
+                        ("a command this cannot read: "
+                         + repr(str((hook or {}).get("command") or ""))))
     named = manifest.get("mcpServers")
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)
@@ -429,8 +435,7 @@ def _declared(root, repo_root):
             words = [str((entry or {}).get("command") or "")]
             words += [str(word) for word in ((entry or {}).get("args") or [])]
             shape = _shape(words)
-            if shape:
-                servers[name] = shape
+            servers[name] = shape or ("a command this cannot read: " + repr(" ".join(words)))
     return events, servers, unread
 
 

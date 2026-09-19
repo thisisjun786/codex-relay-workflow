@@ -2773,6 +2773,22 @@ class TheFindingsFromReview(TransitionCase):
                 self.assertIn(field + "=", answer["results"][0]["detail"])
                 self.assertEqual(host.hooks_document(), before)
 
+    def test_a_cached_hook_this_cannot_read_is_a_mismatch_not_an_absence(self):
+        """env python3 <launcher> starts it a second time; being unreadable does not make it gone."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = dict(document["hooks"]["Stop"][0]["hooks"][0])
+        entry["command"] = "env " + entry["command"]
+        document["hooks"]["Stop"][0]["hooks"].append(entry)
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("a command this cannot read", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
