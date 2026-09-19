@@ -3388,6 +3388,49 @@ class TheFindingsFromReview(TransitionCase):
         self.assertFalse([item for item in found["crwOwned"] if "crw-zzz" in item["path"]])
 
     @needs_reader
+    def test_a_future_dated_settings_archive_does_not_outrank_the_one_just_made(self):
+        """Every recovery here reads the greatest name, so every retire has to reach it."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        # disable retires what the plugin owns, so the host is transitioned first.
+        code, _ = host.transition("--apply")
+        self.assertEqual(code, 0)
+        live = host.settings()
+        self.assertEqual(live["owner"], "plugin")
+        # An archive from a copied installation, dated years ahead of this host's clock.
+        ahead = {**live, "owner": "user", "markerRoot": str(host.marker / "from-another-host")}
+        (host.home / "crw-completion-hook.json.superseded-20300101T000000Z").write_text(
+            json.dumps(ahead), encoding="utf-8")
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        results = steps.disable(snapshot, {}, apply=True)
+        self.assertEqual({item["step"]: item["outcome"] for item in results}["hook settings"],
+                         "settled", json.dumps(results)[:600])
+        found, _origin = inventory.newest_retired(host.home)
+        self.assertEqual(found["owner"], "plugin", json.dumps(found)[:400])
+        self.assertNotEqual(found.get("markerRoot"), ahead["markerRoot"])
+
+    @needs_reader
+    def test_a_manifest_that_is_not_an_object_is_reported_not_raised(self):
+        """Valid JSON is not a manifest, and this reader exists to report on the payload."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        manifest = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / ".codex-plugin" / "plugin.json")
+        manifest.write_text('["not", "an", "object"]', encoding="utf-8")
+        answer = inventory.read_plugin(host.home)
+        self.assertFalse(answer["payload"]["manifest"])
+        self.assertIn("not an object", answer["detail"])
+        code, seen = host.call("inspect")
+        self.assertEqual(code, 0, json.dumps(seen)[:600])
+        self.assertNotEqual(seen.get("outcome"), "internal_error", json.dumps(seen)[:400])
+
+    @needs_reader
     def test_a_cache_whose_skills_cannot_be_listed_is_a_reading_not_a_crash(self):
         """The version cache is replaced wholesale, so it can go away between two calls."""
         import sys as _sys

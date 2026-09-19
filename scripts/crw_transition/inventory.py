@@ -255,6 +255,12 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
         if manifest.is_file():
             try:
                 document = json.loads(manifest.read_text(encoding="utf-8"))
+                if not isinstance(document, dict):
+                    # Valid JSON and not an object: a list or a string answers .get with an
+                    # AttributeError, and every command ended in an internal error over a cached
+                    # manifest this reader is supposed to report on.
+                    raise ValueError("the cached manifest is not an object, it is a "
+                                     + type(document).__name__)
                 declared = document.get("skills")
             except (OSError, ValueError) as error:
                 answer["payload"]["manifest"] = False
