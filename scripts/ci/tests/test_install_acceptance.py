@@ -252,6 +252,7 @@ SOURCE_UNDECIDED_CALLS = {
     "frozenset": (THE_FLOOR, "the same, and the pair of them is why this record is a union"),
     "zip": (THE_FLOOR, "a builtin type the floor cannot read either"),
     "next": (EVERY_INTERPRETER, "a builtin whose signature is not introspectable"),
+    "range": (EVERY_INTERPRETER, "a builtin type; calling it counts the scopes between two"),
 }
 
 # What this derivation still cannot see, as data rather than as a sentence. Each form is planted
@@ -2364,12 +2365,92 @@ RESOLVES_LIKE_PYTHON = {
         (REFUSAL,
          ("from json import *",
           "",
-          "def consumer():",
-          "    return UNREADABLE"),
+         "def consumer():",
+         "    return UNREADABLE"),
+        "consumer", False,
+        "its pair: the owner is still asked what it exports. Expanding a star into every bare"
+        " name in sight would make the spelling alone enough, which is what asking the owner"
+        " exists to prevent."),
+    "a refusal module a function imports for itself":
+        (REFUSAL,
+         ("def consumer():",
+          "    import crw_runtime.reading as r",
+          "    return r.UNREADABLE"),
+         "consumer", True,
+         "the scope binds the qualifier, and what binds it is an import of the module that owns"
+         " the answer. Rejecting every local binding of a qualifier throws this one away with"
+         " the impostors, and the declaration it owes disappears."),
+    "a qualifier a function binds to something of its own":
+        (REFUSAL,
+         ("def consumer():",
+          "    reading = object()",
+          "    return reading.UNREADABLE"),
          "consumer", False,
-         "its pair: the owner is still asked what it exports. Expanding a star into every bare"
-         " name in sight would make the spelling alone enough, which is what asking the owner"
-         " exists to prevent."),
+         "its pair: a local binding that is NOT an import of the owner is still an impostor"
+         " wearing the spelling, so admitting the import above must not have admitted"
+         " everything a scope binds."),
+    "a nested class answering for a spelling the module imports":
+        (REFUSAL,
+         ("from innocent import Holder",
+          "",
+          "class Outer:",
+          "    class Holder:",
+          "        def carrier(self):",
+          "            return reading.UNREADABLE",
+          "",
+          "def consumer():",
+          "    holder = Holder()",
+          "    return holder.carrier()"),
+         "consumer", False,
+         "a bare Holder at module level is whatever the module binds, and here that is the"
+         " import. Registering a nested class under the scope its OWNER is written in puts it"
+         " into the module's namespace, where it answers for a name it does not have."),
+    "an opener a function binds for itself":
+        (TEXT,
+         ("def helper():",
+          "    fopen = open",
+          "    stream = fopen(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the rebinding written inside the function rather than beside it. Following only the"
+         " module's own statements leaves the local alias unrecognised, and the scope that"
+         " wrote it is then read as having shadowed the opener it just took."),
+    "a receiver alias a parameter in between takes back":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def outer(self):",
+          "        that = self",
+          "        def middle(that):",
+          "            def consumer():",
+          "                return that.carrier()",
+          "            return consumer",
+          "        return middle"),
+         "outer.middle.consumer", False,
+         "the alias is made in outer and read in its grandchild, and the function between binds"
+         " the name as a parameter. Checking only the reading scope carries the receiver past a"
+         " scope that took the name, and what the grandchild closes over is its caller's"
+         " object."),
+    "a receiver alias nothing in between takes":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def outer(self):",
+          "        that = self",
+          "        def middle():",
+          "            def consumer():",
+          "                return that.carrier()",
+          "            return consumer",
+          "        return middle"),
+         "outer.middle.consumer", True,
+         "its pair: with no parameter taking the name, the grandchild really does read the"
+         " alias the method made, so stopping at intervening scopes must not have stopped"
+         " inheritance itself."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3386,13 +3467,30 @@ def _base_key(by_spelling, known_keys, alias_of, spelled_as, scope, terminal=Tru
 
 
 def _class_spellings(tree, places):
-    """How a class spelling reaches its table key, per scope it is written in."""
-    by_spelling = {}
+    """How a class spelling reaches its table key, per scope it is written in.
+
+    A class written in another class body is reachable by its bare name from inside that body,
+    not from the module around it. _places labels it with the scope the OWNER is written in, so
+    registering it there puts a nested Holder into the module's namespace, and a module that
+    imports an unrelated Holder then has the import answered by the class beside it.
+
+    So a nested class is registered under its owner's key, which is the scope a base list
+    inside that body is already resolved in. Its qualified spelling stays reachable on its own,
+    because Outer.Holder is a key in the table rather than a lookup.
+    """
+    by_spelling, owner_of = {}, {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in node.body:
+            if isinstance(statement, ast.ClassDef):
+                owner_of[id(statement)] = places.get(id(node), (MODULE_LEVEL, None))[1]
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         where, key = places.get(id(node), (MODULE_LEVEL, None))
-        by_spelling.setdefault(where, {}).setdefault(node.name, key)
+        owner = owner_of.get(id(node))
+        by_spelling.setdefault(owner or where, {}).setdefault(node.name, key)
     return by_spelling
 
 
@@ -4148,12 +4246,17 @@ def _hands_on(tree, spelled):
                             reach.append(part)
                             here = ".".join(reach)
                             for alias in receiver_alias.get(here, {}).get(name, set()):
-                                # An alias the READING scope binds itself is that scope's own
-                                # name: a nested parameter called that is the inner function's,
-                                # not the receiver the method around it named. The scope that
-                                # made the alias still keeps it, or nothing would ever inherit.
-                                if here != function and alias in taken_names.get(function,
-                                                                                 set()):
+                                # An alias bound by ANY scope between the one that made it and
+                                # the one reading it is that scope's own name: a parameter
+                                # called that is the inner function's, not the receiver the
+                                # method around it named, and a grandchild then closes over its
+                                # caller's object. The scope that made the alias still keeps
+                                # it, or nothing would ever inherit.
+                                between = ([] if function == MODULE_LEVEL
+                                           else function.split("."))
+                                if any(alias in taken_names.get(".".join(between[:depth]),
+                                                                set())
+                                       for depth in range(len(reach) + 1, len(between) + 1)):
                                     continue
                                 gained.add(alias)
                         gained -= found
@@ -4169,8 +4272,16 @@ def _hands_on(tree, spelled):
             while below:
                 outer = receivers.get(".".join(below))
                 if outer:
-                    if (outer in taken_names.get(scope, set())
-                            or outer in says_global.get(scope, set())):
+                    # Every scope between the one that MADE the alias and the one reading it,
+                    # not just the innermost. A parameter anywhere along that line takes the
+                    # name, and what the grandchild closes over is then its caller's object
+                    # rather than the receiver the method named.
+                    between = [] if scope == MODULE_LEVEL else scope.split(".")
+                    stopped = any(
+                        outer in taken_names.get(".".join(between[:depth]), set())
+                        or outer in says_global.get(".".join(between[:depth]), set())
+                        for depth in range(len(below) + 1, len(between) + 1))
+                    if stopped:
                         return set()
                     break
                 below.pop()
@@ -4858,9 +4969,13 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
             if through in known_keys:
                 reader = through
             if (through not in ("self", "cls") and isinstance(node.value, ast.Name)
-                    and id(node.value) in shadowed and id(node.value) not in built):
+                    and id(node.value) in shadowed and id(node.value) not in built
+                    and qualifies.get(through) not in owners):
                 # The scope binds that qualifier itself, so neither an imported module nor an
                 # instance bound at module level under the same spelling is what this reads.
+                # Unless what binds it is an import of the module that owns the answer: a
+                # function importing crw_runtime.reading as r binds r locally, and r IS that
+                # module rather than something wearing its name.
                 return None
             # A name holding an instance answers to its class: what innocent.NOT_READ reads is
             # what Innocent binds, and what holder.unread reads is what Holder binds.
@@ -4892,7 +5007,7 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
     return spelled
 
 
-def _opener_spellings(tree):
+def _opener_spellings(tree, places):
     """Every spelling this source can call the builtin opener by, derived from its own imports.
 
     open is a name like any other, and a name can be rebound. `from builtins import open as
@@ -4934,21 +5049,29 @@ def _opener_spellings(tree):
                 if alias.name in holders:
                     dotted.add((alias.asname or alias.name) + "." + named)
     # fopen = open is the same rebinding written as an assignment, and b = fopen is one more
-    # step of it, so the module's own statements are followed until they stop adding names.
-    growing = True
+    # step of it, so the statements are followed until they stop adding names. A function may
+    # write one too, and the scope it wrote it in is kept: the name is then bound there rather
+    # than being read as some other scope's, which is what a shadow means everywhere else here.
+    rebound, growing = {}, True
     while growing:
         growing = False
-        for statement in getattr(tree, "body", ()):
-            if not isinstance(statement, ast.Assign):
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
                 continue
-            spelling = _dotted(statement.value)
+            spelling = _dotted(node.value)
             if spelling is None or (spelling not in bare and spelling not in dotted):
                 continue
-            for target in statement.targets:
-                if isinstance(target, ast.Name) and target.id not in bare:
+            where = places.get(id(node), (MODULE_LEVEL, None))[0]
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                if target.id not in bare:
                     bare.add(target.id)
                     growing = True
-    return frozenset(bare), frozenset(dotted)
+                if target.id not in rebound.get(where, ()):
+                    rebound.setdefault(where, set()).add(target.id)
+                    growing = True
+    return frozenset(bare), frozenset(dotted), rebound
 
 
 def _opener_call(func, bare, dotted):
@@ -4970,7 +5093,7 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
     """
     places, known, where_from, growing = _places(tree), set(handles), {}, True
     declared = frozenset(handles)
-    bare, dotted = openers or _opener_spellings(tree)
+    bare, dotted, rebound = openers or _opener_spellings(tree, places)
 
     def seen_in(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
@@ -4992,7 +5115,10 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
                 if isinstance(opener, ast.Name):
                     # A scope that binds open itself, or a module that defines one, has
                     # shadowed the builtin: what that call answers with is not this file.
-                    if not opens_a_file or id(opener) in shadowed:
+                    # Unless the binding IS the opener: fopen = open written in a function
+                    # binds the name there, and what it holds is still this file's opener.
+                    if not opens_a_file or (id(opener) in shadowed
+                                            and not _bound_around(rebound, scope, opener.id)):
                         return False
                 elif (_dotted(opener) or "") in dotted:
                     # io.open is the builtin under its module's name rather than an object's
@@ -5036,9 +5162,10 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
 
 
 def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), declared=(),
-                    astray=(), built=(), opens_a_file=True, openers=None):
+                    astray=(), built=(), opens_a_file=True, openers=None, places=None):
     """The matcher: which node reaches the text of a source file, spelled any of the derived ways."""
-    bare, dotted = openers or (frozenset({builtins.open.__name__}), frozenset())
+    bare, dotted, rebound = openers or (frozenset({builtins.open.__name__}), frozenset(), {})
+    places = places or {}
 
     def spelled(node, klass):
         if isinstance(node, ast.Name):
@@ -5106,7 +5233,11 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                 # its argument, and it is the same read either way.
                 opener, receiver = node.func.value.func, []
                 if isinstance(opener, ast.Name):
-                    if id(opener) in shadowed:
+                    if (id(opener) in shadowed
+                            and not _bound_around(rebound,
+                                                  places.get(id(opener),
+                                                             (MODULE_LEVEL, None))[0],
+                                                  opener.id)):
                         # The scope binds the opener itself, so what it answers with is
                         # the caller's file rather than this module's.
                         return None
@@ -5271,10 +5402,10 @@ def source_text_reached(source):
             and any(inner.id == "open" for target in statement.targets
                     for inner in ast.walk(target) if isinstance(inner, ast.Name)))
         for statement in getattr(tree, "body", ()))
-    openers = _opener_spellings(tree)
-    handles, where_from = _handle_names(tree, handles, shadowed, opens_a_file, openers)
     _classes, as_class, built = _instance_classes(tree)
     places = _places(tree)
+    openers = _opener_spellings(tree, places)
+    handles, where_from = _handle_names(tree, handles, shadowed, opens_a_file, openers)
 
     def inside(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
@@ -5291,13 +5422,13 @@ def source_text_reached(source):
     while growing:
         wider = _held_by_class(
             tree, _source_spelled(handles, hands_source, held, as_class, shadowed, declared,
-                                  astray, built, opens_a_file, openers),
+                                  astray, built, opens_a_file, openers, places),
             held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _source_spelled(handles, hands_source, held, as_class,
                                                shadowed, declared, astray, built,
-                                               opens_a_file, openers)),
+                                               opens_a_file, openers, places)),
             {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
 
 
