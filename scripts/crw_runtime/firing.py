@@ -241,6 +241,16 @@ def _named(entries):
     return ", ".join(str(entry.get("journalRoot") or entry.get("settings")) for entry in entries)
 
 
+def _distinct_journals(entries):
+    """How many DIFFERENT journals these entries name.
+
+    Registrations are not journals. Two of them can name separate settings files that
+    configure one journalRoot, and questions about two journals disagreeing are
+    meaningless for a single directory.
+    """
+    return {str(entry.get("journalRoot") or entry.get("settings")) for entry in entries}
+
+
 def _records_found(observed):
     unjudged = _unjudged_peer(observed)
     if unjudged:
@@ -277,9 +287,14 @@ def _recorded_on_another_path(observed):
     if holding and unread:
         return NOT_RULED_OUT, ("records were found under " + _named(holding) + " and another"
                                " named journal could not be listed")
-    if len(unread) > 1:
+    if len(_distinct_journals(unread)) > 1:
         # One unread journal may hold records while another is empty, which is this
         # cause. Neither was read, so neither side is settled and the candidate stands.
+        #
+        # Counted over DISTINCT journals rather than registrations: two registrations
+        # can name settings files that configure one journalRoot, and one journal cannot
+        # disagree with itself. Counting entries reported possible divergence for a host
+        # that has a single directory nobody could list.
         return NOT_RULED_OUT, ("none of " + _named(unread) + " could be listed, so whether"
                                " they disagree about holding records was not settled")
     if empty and unread:

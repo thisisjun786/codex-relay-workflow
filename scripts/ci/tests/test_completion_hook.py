@@ -2541,6 +2541,26 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         self.assertEqual(len(listed), len(set(listed)),
                          "one journal directory, two spellings, two listings: " + repr(listed))
 
+    def test_two_registrations_sharing_one_unread_journal_cannot_disagree(self):
+        """Registrations are not journals. Two of them can name separate settings files that
+        configure one journalRoot, and one directory cannot disagree with itself, so counting
+        entries reported possible divergence for a host that has a single unlistable journal."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            blocked = Path(temporary) / "not-a-journal"
+            blocked.write_text("", encoding="utf-8")
+            amend_settings(temporary, journalRoot=str(blocked))
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["journalRoot"] = str(blocked)
+            second.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
+                         [one["cause"] for one in cell.get("candidates") or []],
+                         "one journal was counted as two and reported as possibly disagreeing"
+                         " with itself")
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition
