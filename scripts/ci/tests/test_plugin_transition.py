@@ -3105,6 +3105,22 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(host.record()["args"], ["--from-the-old-install"])
         self.assertTrue(removed["preserved"], json.dumps(removed)[:600])
 
+    def test_a_single_quoted_launcher_path_is_not_the_one_this_package_declares(self):
+        """Single quotes stop the expansion, so the literal directory is what the shell passes."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        self.assertIn('"', entry["command"])
+        entry["command"] = entry["command"].replace('"', "'")
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("as written", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

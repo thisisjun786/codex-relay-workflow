@@ -431,8 +431,9 @@ def _declared(root, repo_root):
         for event, groups in ((document or {}).get("hooks") or {}).items():
             for group in groups or []:
                 for hook in (group or {}).get("hooks") or []:
+                    written = str((hook or {}).get("command") or "")
                     try:
-                        words = shlex.split(str((hook or {}).get("command") or ""))
+                        words = shlex.split(written)
                     except ValueError:
                         words = []
                     shape = _shape(words)
@@ -446,11 +447,18 @@ def _declared(root, repo_root):
                     # ones were invisible to the comparison while still being declarations Codex
                     # runs: env python3 <launcher> starts the same launcher a second time, and a
                     # comparison that cannot see it reports the surface as matching.
+                    #
+                    # The command as written travels with the shape, because the shape is parsed
+                    # and the shell is not. shlex.split drops the quoting, and single quotes stop
+                    # the expansion that makes ${PLUGIN_ROOT} a path: python3 '${PLUGIN_ROOT}/...'
+                    # tokenises exactly like the declaration this package ships and starts
+                    # nothing, because the literal directory does not exist.
                     events.setdefault(event, []).append(
-                        (shape + " matcher=" + repr((group or {}).get("matcher"))
+                        (shape + " as written " + repr(written.strip())
+                         + " matcher=" + repr((group or {}).get("matcher"))
                          + " timeout=" + repr((hook or {}).get("timeout"))) if shape else
                         ("a command this cannot read: "
-                         + repr(str((hook or {}).get("command") or ""))))
+                         + repr(written)))
     named = manifest.get("mcpServers")
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)
