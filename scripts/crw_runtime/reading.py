@@ -322,7 +322,7 @@ def _held(opened):
         return None
 
 
-def read_json(path, what, *, absent=None, shape=None, hold=False):
+def read_json(path, what, *, absent=None, shape=None, hold=False, descriptor=None):
     """Read one JSON record, returning a Reading rather than a sentinel.
 
     'absent' is the value an established absence carries, so a caller can start from an empty
@@ -332,6 +332,10 @@ def read_json(path, what, *, absent=None, shape=None, hold=False):
     'hold' keeps a descriptor open on the object that was read, for a caller that will use the
     reading's identity as a cache key. It must be released, and only a caller that asked for it
     has anything to release.
+
+    'descriptor' is an object the CALLER already holds open, read instead of the path. A caller
+    that pinned a set of spellings and then compares them has to read through those same pins,
+    or the comparison is about one object and the bytes about another.
     """
     settled = observe(path, what)
     if settled is not None:
@@ -352,7 +356,12 @@ def read_json(path, what, *, absent=None, shape=None, hold=False):
             # and the difference is not cosmetic: text mode translates universal newlines, so
             # a record containing CR or CRLF reaches json at a different offset without it, and
             # the line and column a malformed one reports are part of what an operator reads.
-            with open(str(path), "r", encoding="utf-8") as opened:
+            if descriptor is None:
+                stream = open(str(path), "r", encoding="utf-8")
+            else:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                stream = os.fdopen(os.dup(descriptor), "r", encoding="utf-8")
+            with stream as opened:
                 identity = descriptor_identity(opened)
                 # Taken BEFORE the parse, because a record that fails to parse is still a
                 # record that was read from an object, and a caller keying on identity needs

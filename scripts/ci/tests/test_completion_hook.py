@@ -3715,6 +3715,57 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
                                                                 " reused on this run, so the"
                                                                 " collision was never built)"))
 
+    def test_a_rewrite_between_the_two_reads_does_not_split_one_file(self):
+        """The rewrite lands BETWEEN the reads, which is the thing that broke.
+
+        Aliases were discovered one spelling at a time: the first spelling was read, and only
+        then was the second one statted. An atomic rewrite in that gap left the held OLD inode
+        in the cache while the alias now resolved to the replacement, so the lookup missed and
+        two registrations naming what is by then one file received two different journalRoots
+        -- which recorded_on_another_path reads as two sources disagreeing.
+
+        Every spelling is pinned before any of them is read now, and each reading is taken
+        through the descriptor that pinned it, so a rewrite landing in the gap cannot move
+        either registration onto a different object.
+        """
+        reads = []
+        real = completion.read_configuration
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            first, second = temporary / "journal-one", temporary / "journal-two"
+            first.mkdir()
+            second.mkdir()
+            named = temporary / "settings.json"
+            named.write_text(json.dumps(self._document(first)), encoding="utf-8")
+            alias = temporary / "an-alias-of-the-settings.json"
+            alias.symlink_to(named)
+
+            def rewritten_between_the_two_reads(path, *passed, **keywords):
+                answer = real(path, *passed, **keywords)
+                if len(reads) == 0:
+                    reads.append(str(path))
+                    # Atomic replacement: a NEW inode arrives at the same pathname, in the gap
+                    # between the first reading and the next spelling's lookup.
+                    replacement = temporary / "settings.replacement"
+                    replacement.write_text(json.dumps(self._document(second)),
+                                           encoding="utf-8")
+                    os.replace(replacement, named)
+                else:
+                    reads.append(str(path))
+                return answer
+
+            with mock.patch.object(completion, "read_configuration",
+                                   side_effect=rewritten_between_the_two_reads):
+                found = completion.journals_named([
+                    {"registration": "by-its-own-name", "settings": str(named),
+                     "startable": True},
+                    {"registration": "by-an-alias", "settings": str(alias),
+                     "startable": True}])
+
+        self.assertEqual(len({entry["journalRoot"] for entry in found}), 1,
+                         "a rewrite landing between the two reads split one settings file into"
+                         " two journals, which reads as two sources disagreeing")
+
 
 class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
     """Review of PR #52 head 000b83f. Two more answers this branch owns were being withheld
@@ -3812,6 +3863,69 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          firing.ESTABLISHED,
                          "a recorded entry point that is gone went unprobed because the"
                          " interpreter beside it was not an absolute path")
+
+    def test_a_tilde_launcher_path_is_not_a_path_the_launcher_resolves(self):
+        """Judged on the expanded spelling, read on the literal one.
+
+        The packaged launcher checks os.path.isabs on the string as WRITTEN and declines
+        silently otherwise -- plugins/crw/wiring/crw_stop_hook.py -- and complaints() rejects
+        the same spelling for the same reason. Accepting it here because its expanded form is
+        absolute answered 'startable' from a file that launcher never reaches, which is an
+        undistinguished state presented as a settled one.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            # HOME is pointed at the fixture, so the file the expanded spelling reaches is
+            # inside this temporary host and nothing outside it is touched.
+            named = "an-entry-point-the-launcher-will-not-resolve.py"
+            (host / named).write_text("", encoding="utf-8")
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable,
+                     adapterEntryPoint="~/" + named,
+                     mode="not-a-mode-this-reader-knows")
+            with mock.patch.dict(os.environ, {"HOME": str(host)}):
+                cell = why_no_record(temporary)
+        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                         firing.NOT_RULED_OUT,
+                         "a spelling this command never resolved was answered as a settled"
+                         " startability: accepted because its EXPANDED form is absolute and"
+                         " then read as the literal string, it establishes a repair for a"
+                         " path the packaged launcher would have declined outright")
+
+    def test_an_unread_settings_document_names_no_owner_to_the_operator(self):
+        """Four states reach one predicate, and the sentence spoke for only one of them.
+
+        status() passes registrationReadHere=False for settings that are missing, unreadable,
+        not an object, or that name an owner this reader does not know. The branch then told
+        the operator that the settings record an owner whose registration lives in a package
+        manifest -- a definite claim about a document nothing read, beside a registrationOwner
+        cell saying not_read in the same payload.
+        """
+        settled = firing.decide({"registrationReadable": True, "adapterRegistrations": 0,
+                                 "registrationReadHere": False, "registrationElsewhere": False,
+                                 "namedJournals": [], "namedSettings": []})
+        detail = {one["cause"]: one["detail"]
+                  for group in ("candidates", "ruledOut", "notEvaluated")
+                  for one in (settled.get(group) or [])}.get(firing.NOT_REGISTERED, "")
+        self.assertNotIn("package manifest", detail,
+                         "a document nothing could read was narrated as recording an owner"
+                         " whose registration lives in a package manifest")
+
+    def test_no_absence_rule_claims_an_owner_nothing_established(self):
+        """SUPPORT, not evidence: the sweep for the class, derived from CAUSE_RULES.
+
+        The rule set is taken from the source rather than listed here, so a cause added later
+        is swept too. On a host where nothing about ownership was established, no rule may
+        narrate the package manifest -- which is the one definite ownership claim these
+        answers make.
+        """
+        nothing_established = {"registrationReadable": True, "adapterRegistrations": 0,
+                               "registrationReadHere": False, "registrationElsewhere": False,
+                               "namedJournals": [], "namedSettings": [], "startProbes": []}
+        for cause, (_keys, rule) in firing.CAUSE_RULES.items():
+            with self.subTest(cause=cause):
+                _standing, detail = rule(nothing_established)
+                self.assertNotIn("package manifest", detail or "")
 
     def test_a_user_owned_host_with_nothing_named_still_evaluates_nothing(self):
         """SUPPORT, not evidence. The direction the requirement change must not break: where no

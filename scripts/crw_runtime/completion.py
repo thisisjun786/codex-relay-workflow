@@ -498,7 +498,7 @@ def complaints(document):
     return found
 
 
-def read_configuration(path, hold=False):
+def read_configuration(path, hold=False, descriptor=None):
     """Read the settings as a reading, so absent, unreadable and unreachable stay three answers.
 
     The shape is checked outside the reading region on purpose. Handing the shape check to
@@ -508,7 +508,8 @@ def read_configuration(path, hold=False):
     'hold' is passed through for a caller that will use the reading's identity as a cache key,
     and that caller releases it.
     """
-    found = reading.read_json(path, "the completion hook configuration", hold=hold)
+    found = reading.read_json(path, "the completion hook configuration", hold=hold,
+                              descriptor=descriptor)
     if not found.usable:
         return None, CONFIG_OUTCOMES[found.state], found.detail, found
     if found.state == reading.ABSENT:
@@ -1731,8 +1732,14 @@ def _stated_path_cell(named, what, read):
     Only an absolute spelling, because a relative one is resolved by the host against something
     this command is not running under, and reading the path THIS process would resolve would
     report an unrelated file as the registration's own.
+
+    Absolute LITERALLY, and not after expansion. The recorded launcher is handed to the
+    interpreter as it is written -- unlike the settings path, which this adapter expands before
+    it opens it -- so a tilde spelling is one the packaged launcher never resolves. Judging it
+    on its expanded form while reading the literal one answered "startable" from a file the
+    launcher would never reach.
     """
-    if not isinstance(named, str) or not os.path.isabs(os.path.expanduser(named)):
+    if not isinstance(named, str) or not os.path.isabs(named):
         return NOT_READ
     found = read(named, what)
     return NOT_READ if found is None else found["value"]
@@ -1854,19 +1861,52 @@ def _keep(taken, read_by, held=None):
 
 
 def _read_named(registrations, already_read, read_by, held, found, scanned, aliases):
+    # Every spelling this call will read, opened and HELD before any of them is read.
+    # Discovering aliases one spelling at a time left a window: an atomic rewrite landing
+    # between the first snapshot and the next spelling's lookup made two registrations that now
+    # name one file receive two different journalRoots, which recorded_on_another_path reads as
+    # two sources disagreeing. Pinned together they are compared as they were at one moment,
+    # and each reading is taken THROUGH the descriptor that pinned it, so no reading can come
+    # from an object the comparison was not about.
+    pinned = {}
+    for registration in registrations:
+        if not registration.get("settings"):
+            continue
+        spelling = str(_settled(registration["settings"]))
+        if spelling in pinned:
+            continue
+        try:
+            descriptor = os.open(spelling, os.O_RDONLY | os.O_NONBLOCK)
+        except (OSError, ValueError):
+            continue
+        mine = reading.descriptor_identity(descriptor)
+        if mine is None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            continue
+        held.append(descriptor)
+        pinned[spelling] = (descriptor, mine)
     for registration in registrations:
         if not registration.get("settings"):
             # A relative spelling or no settings at all. There is no file here to open, and
             # record_path_unidentified is the cause that owns that state.
             continue
         path = _settled(registration["settings"])
+        bound = pinned.get(str(path))
         taken = (already_read or {}).get(str(path))
         if taken is None:
-            mine = reading.path_identity(path)
+            mine = bound[1] if bound is not None else reading.path_identity(path)
             taken = read_by.get(mine) if mine is not None else None
         if taken is None:
-            taken = read_configuration(path, hold=True)
-            _keep(taken, read_by, held)
+            if bound is not None:
+                # The pin is the hold, so nothing further has to be kept open for it.
+                taken = read_configuration(path, descriptor=bound[0])
+                read_by[bound[1]] = taken
+            else:
+                taken = read_configuration(path, hold=True)
+                _keep(taken, read_by, held)
         config, refused, detail, read_back = taken
         entry = {"registration": registration.get("registration"),
                  "startable": registration.get("startable"),

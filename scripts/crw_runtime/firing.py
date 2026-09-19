@@ -125,10 +125,23 @@ def _not_registered(observed):
         # registration lives in a package manifest this command does not read. Establishing an
         # absence from the one file it is deliberately not in reported a repair that would put
         # a second owner on one event, which the ownership rules exist to refuse.
-        return NOT_RULED_OUT, ("these settings record an owner whose registration lives in a"
-                               " package manifest rather than in this hook file, and this"
-                               " command does not read that manifest, so an empty hook file"
-                               " establishes nothing about whether this adapter is registered")
+        #
+        # Two roads reach here and they do not say the same thing. Where the plugin owner was
+        # POSITIVELY read, the manifest is the explanation. Where nothing could be read at all
+        # -- settings that are absent, unreadable, not an object, or naming an owner this
+        # reader does not know -- no owner and no registration location was established, and
+        # saying the settings record a manifest owner told the operator something this command
+        # never read, beside a registrationOwner cell saying not_read in the same payload.
+        if observed.get("registrationElsewhere"):
+            return NOT_RULED_OUT, ("these settings record an owner whose registration lives in"
+                                   " a package manifest rather than in this hook file, and"
+                                   " this command does not read that manifest, so an empty"
+                                   " hook file establishes nothing about whether this adapter"
+                                   " is registered")
+        return NOT_RULED_OUT, ("nothing established who owns this registration or where it"
+                               " lives, so the hook file is not established as the place it"
+                               " would be and an empty one establishes nothing about whether"
+                               " this adapter is registered")
     kept = observed.get("unregisteredRecords") or 0
     if kept:
         return ESTABLISHED, ("the hook file was read and registers this adapter for nothing, so"
