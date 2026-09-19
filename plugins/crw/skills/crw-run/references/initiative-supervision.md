@@ -72,9 +72,10 @@ reference is recorded as a reference so nobody later reads it as an instruction.
 role carries no project's issues and no issue's implementation: it holds no checkout and it merges
 nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). That describes
 the role rather than converting whatever task the designation arrives in, so read this task's own
-current binding before binding anything. A task already bound to a scope does not become the
-supervisor by being handed a designation, and that holds for any binding rather than a project's
-alone: a parent would leave its project without one and its children without an owner, and an
+current binding before binding anything. A task that already supervises this same initiative is the
+one that continues, and that is reuse rather than a new binding. A task bound to a different scope
+does not become the supervisor by being handed a designation, and that holds for any such binding
+rather than a project's alone: a parent would leave its project without one and its children without an owner, and an
 issue-bound task would abandon or blur the implementation it owns. Each task is bound to one Linear
 level, so what decides this is whether the task is free, not which level happens to hold it. The supervision belongs in a task of its own, or in the existing supervisor
 where there is one, and the designation is routed there: to an existing supervisor by the delivery
@@ -331,8 +332,11 @@ Action: nothing here prevents that overlap, so the work is to bound and end it. 
 recorded binding stands, because a supervisor recording itself preserves the entry already there.
 Each supervisor reads the initiative record again before its next handoff and at each returned
 result, so the second is found within a step or two. The later one then sends no further handoffs,
-withdraws the ones it made and names the owner; each parent re-reads the initiative record itself,
-takes the recorded owner and keeps its children, results and pull requests unchanged.
+withdraws the ones it made and names the owner. Each parent re-reads the initiative record itself
+and applies the transfer rule above rather than adopting the winner outright: it takes the recorded
+owner and carries on untouched where that owner's approved set contains its project, and where the
+set excludes it or narrows its limits it records no supervisor, preserves the work done, stops what
+now falls outside and raises both.
 Preserved: one owner per initiative once it is found, the work already started by either side, and
 an honest account of the window, which closes properly only when a store records the relationship
 and refuses the second.
