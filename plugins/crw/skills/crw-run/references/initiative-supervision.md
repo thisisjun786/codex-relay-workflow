@@ -44,7 +44,8 @@ answers: a paused, cancelled or archived task is a third, and resuming one is a 
 makes rather than something a handoff may do
 ([OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents)). Its brief waits and
 is reported as waiting, with what would release it, because the ordinary message path would start
-a turn in work somebody deliberately stopped.
+a turn in work somebody deliberately stopped. The supervision record keeps that brief as pending
+against its project, so a parent its owner resumes later has something to find rather than nothing.
 
 ## What the binding fixes
 
@@ -171,7 +172,9 @@ read; neither is what settles it, which is also why forging either achieves noth
 A withdrawal also cannot always be delivered, since a parent that is paused, cancelled or archived
 does not receive one, so the transfer cannot rest on the message arriving. A parent validates its
 recorded supervisor against the initiative record when it resumes, before it continues or
-integrates anything, and applies the same rule there. The losing supervisor keeps the undelivered
+integrates anything, and applies the same rule there. It reads that record whether or not its own
+names a supervisor, because a project whose first handoff was held while it was paused has none
+recorded and would otherwise resume on a scope that has since been superseded. The losing supervisor keeps the undelivered
 transfer on its own record as owed, so whoever resumes that parent can find it rather than
 inferring it. That does not prevent an overlap; it bounds one to the work already started, which can be
 reconciled, instead of letting an initiative run to completion under two owners. A busy parent, an unreachable record or an
