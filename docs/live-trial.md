@@ -205,7 +205,11 @@ synthetic. This document carries placeholders for the same reason.
 
 The first is run once, immediately before the dispatch that opens the window. The second is run
 after the window has closed, which is what it needs in order to grade anything. Both print one JSON object on standard
-output and write nothing. Exit 0 means no judgment in the document said false, 1 means one did, and
+output and create no file of their own. That is a claim about the checker rather than about the
+commands it runs: every relay command opens the store on construction and `doctor` writes a
+temporary file to measure whether the state directory is writable, so a mistyped state
+directory is where a probe leaves a new empty store behind instead of failing. The store
+readings are what catch that. Exit 0 means no judgment in the document said false, 1 means one did, and
 2 means it refused before it could assemble a result and printed the refusal instead.
 
 The start record is one JSON object under the trial root, with absolute paths throughout:

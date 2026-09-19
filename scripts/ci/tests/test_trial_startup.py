@@ -255,12 +255,14 @@ class World:
     def _settings(self):
         return {"model": "a-model", "reasoningEffort": "xhigh", "sandbox": "dangerFullAccess",
                 "approvalPolicy": "never", "cwd": str(self.root / "workspace"),
-                "runtimeWorkspaceRoots": []}
+                "runtimeWorkspaceRoots": [], "environments": []}
 
     def _write_captures(self):
         settings = self._settings()
-        echo = {k: settings[k] for k in ("model", "reasoningEffort", "sandbox", "approvalPolicy")}
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
+            # A creation receipt echoes the settings the host recorded, workspace access and all,
+            # which is what makes creation and delivery comparable to each other.
+            echo = dict(settings, cwd=self.payloads["taskCwd"][task])
             self.captures["receipt-" + task + ".json"] = {
                 "taskId": task, "settings": {"requested": echo, "actual": echo, "findings": []}}
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
@@ -2916,6 +2918,84 @@ class TwentyNinthHostedRound(TrialCase):
                                       (drop_ownership, "processPersistence", "service"),
                                       (drop_status, "assignmentState", "relationship"),
                                       (drop_source, "assignmentState", "criteria")):
+            with self.subTest(cell=name):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                change(world)
+                world.start_supervisor()
+                world.flush()
+                cell = cells_of(world.preflight(), reading)[name]
+                self.assertEqual(cell["value"], UNKNOWN,
+                                 name + " read an absent field as a disagreement")
+                self.assertFalse(cell["met"])
+
+
+class ThirtiethHostedRound(TrialCase):
+    """The access a delivery runs with, and two more absences graded as disagreements.
+
+    A record declares a model, an effort, a sandbox and an approval policy. The relay's settings
+    contract carries three more — cwd, runtimeWorkspaceRoots and environments — and a store
+    record can be usable, complete and agree on all four declared ones while those three say the
+    trial will run somewhere else.
+    """
+
+    def test_wider_roots_than_creation_recorded_refuse_the_start(self):
+        self.world.start_supervisor()
+        settings = self.world.payloads["settings-show"]["payload"]["settings"]
+        settings["runtimeWorkspaceRoots"] = [str(self.world.root)]
+        self.world.flush()
+        document = self.world.preflight()
+        # Readiness first: it is the defect itself, and it is answerable whether or not a reading
+        # of its own exists to name it.
+        self.assertFalse(document["readyToStart"],
+                         "the trial would have started with access the receipt never recorded")
+        cell = cells_of(document, "capability")["deliveryAccess:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("runtimeWorkspaceRoots", cell["evidence"])
+
+    def test_another_environment_than_creation_recorded_refuses_the_start(self):
+        self.world.start_supervisor()
+        self.world.payloads["settings-show"]["payload"]["settings"]["environments"] = [
+            {"environmentId": "somewhere-else", "cwd": str(self.world.root),
+             "runtimeWorkspaceRoots": [str(self.world.root)]}]
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "another environment than creation recorded was approved")
+        cell = cells_of(document, "capability")["deliveryAccess:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("environments", cell["evidence"])
+
+    def test_access_neither_payload_carries_is_unknown(self):
+        for drop in ("runtimeWorkspaceRoots", "environments"):
+            with self.subTest(field=drop):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                world.payloads["settings-show"]["payload"]["settings"].pop(drop)
+                world.start_supervisor()
+                world.flush()
+                cell = cells_of(world.preflight(),
+                                "capability")["deliveryAccess:" + World.PARENT_A]
+                self.assertEqual(cell["value"], UNKNOWN)
+                self.assertFalse(cell["met"])
+
+    def test_the_access_compared_is_the_contract_the_relay_states(self):
+        # Support, and the reason these three keys: the relay's settings contract names them
+        # beside the four a record declares, so the checker is not choosing a set of its own.
+        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
+                  / "settings.py").read_text(encoding="utf-8")
+        for key in startup.DELIVERY_ACCESS:
+            self.assertIn('"' + key + '"', source)
+
+    def test_more_absences_are_unknown_rather_than_disagreements(self):
+        def drop_child(world):
+            world.payloads["assignment-find"]["payload"]["assignments"][0].pop("childTaskId")
+
+        def drop_device(world):
+            world.captures["doctor-" + World.PARENT_A + ".json"]["store"].pop("device")
+
+        for change, reading, name in ((drop_child, "assignmentState", "relationshipStillCurrent"),
+                                      (drop_device, "storeIdentity", "peer:" + World.PARENT_A)):
             with self.subTest(cell=name):
                 world = World(self.base)
                 self.addCleanup(world.stop)

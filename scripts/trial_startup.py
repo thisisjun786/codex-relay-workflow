@@ -84,6 +84,11 @@ SERVICE_VERBS = ("status",)
 # minimum is here because a permission that went uncompared passed behind a usable true once.
 REQUIRED_EXPECT = ("model", "reasoningEffort", "sandbox", "approvalPolicy")
 
+# The rest of the relay's settings contract: the access a delivery actually runs with, beside the
+# four a record declares. packages/codex-session-relay settings.py names all seven, and a store
+# record can be usable and complete while these three disagree with what creation recorded.
+DELIVERY_ACCESS = ("cwd", "runtimeWorkspaceRoots", "environments")
+
 # Every fact a later predicate compares a payload against. Declared here and required at ingress,
 # because a comparison between two absent values is an agreement nobody established.
 REQUIRED_FIELDS = (
@@ -1078,6 +1083,7 @@ def reading_capability(record, relay):
             task = participant.get("taskId")
             expect = participant.get("expect") or {}
             found, why = capture(record, "creationReceipt", task)
+            actual = MISSING
             if found is None:
                 cells.append(cell("receiptEcho:" + str(task), UNKNOWN, evidence=why,
                                   provenance=CAPTURED))
@@ -1145,6 +1151,28 @@ def reading_capability(record, relay):
                                           + str(shown(usable)) + ", missing "
                                           + json.dumps(shown(field(payload, "missing")))
                                           + ", disagreeing " + json.dumps(differs))))
+
+            # What the trial will actually run with, against what creation recorded. The four
+            # declared settings say nothing about workspace access, so a record that is usable,
+            # complete and agrees on all four can still hand delivery wider roots or another
+            # environment than the receipt shows, and the trial starts with access nobody read.
+            # Compared payload against payload rather than against a fifth declaration, because
+            # neither side of it is the operator's to invent.
+            unread = [key for key in DELIVERY_ACCESS
+                      if field(actual, key) is MISSING or field(settings, key) is MISSING]
+            apart = [key for key in DELIVERY_ACCESS
+                     if not same_value(field(actual, key), field(settings, key))]
+            cells.append(graded("deliveryAccess:" + str(task),
+                                MISSING if unread else field(settings, "cwd"), not apart,
+                                probe=probe, provenance=EXECUTED,
+                                unreadable=("creation and delivery cannot be compared on "
+                                            + ", ".join(unread) + ": one of the two payloads does"
+                                            " not carry it"),
+                                evidence=("the store's settings and the creation receipt agree on "
+                                          + ", ".join(DELIVERY_ACCESS) if not apart else
+                                          "the store's settings disagree with the creation receipt"
+                                          " at " + ", ".join(apart) + ", so this trial would run"
+                                          " with access the receipt never recorded")))
     return cells
 
 
@@ -1243,7 +1271,12 @@ def reading_store(record, relay):
         agrees = (same(field(peer, "store", "storeId"), store.get("storeId"))
                   and same(field(peer, "store", "device"), store.get("device"))
                   and same(field(peer, "store", "inode"), store.get("inode")))
-        answered = MISSING if (peer_same is MISSING or asked is MISSING) else peer_same
+        # Every field the verdict reads, not only the verdict: a doctor payload naming a store
+        # and no device never said which inode it was, and a disagreement would say it did.
+        answered = MISSING if (peer_same is MISSING or asked is MISSING
+                               or field(peer, "store", "storeId") is MISSING
+                               or field(peer, "store", "device") is MISSING
+                               or field(peer, "store", "inode") is MISSING) else peer_same
         # doctor does not name the participant that ran it, so two peers legitimately produce
         # identical payloads and this is reported rather than graded. What it costs is stated in
         # the stand-ins: the attribution of a capture to a participant is the operator's.
@@ -1513,7 +1546,9 @@ def assignment_now(record, relay):
              and same(field(entry, "parentTaskId"), assignment.get("parentTaskId"))
              and same(generation, assignment.get("executionGeneration")))
     answered = MISSING if (responsible is MISSING or entry is MISSING
-                           or status is MISSING or generation is MISSING) else responsible
+                           or status is MISSING or generation is MISSING
+                           or field(entry, "childTaskId") is MISSING
+                           or field(entry, "parentTaskId") is MISSING) else responsible
     cell_now = graded("relationshipStillCurrent", answered, still, probe=probe,
                       provenance=EXECUTED,
                       unreadable="the store did not answer which relationship owns this issue at"
