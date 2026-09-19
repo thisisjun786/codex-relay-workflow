@@ -159,13 +159,12 @@ def _adapter_cannot_run(observed):
     """
     probes = list(observed.get("startProbes") or [])
     if not probes:
-        # A record outranks a probe that was never taken. No registration in the hook file
-        # means nothing here to probe, but a record this hook wrote is proof the host DID
-        # start it -- which is exactly what this cause asks and what no probe could answer.
-        if observed.get("unregisteredRecords") or 0:
-            return RULED_OUT, ("no registered command was probed here, and a record this hook"
-                               " wrote is under the journal this command settled on, so the"
-                               " host started this adapter at least once")
+        # A record must NOT answer here, and ruling this cause out from one was wrong: a
+        # journal entry says the host started the adapter ONCE, and this cause asks whether it
+        # can start NOW. A plugin-owned installation whose recorded entry point or interpreter
+        # has since been deleted kept an old record, and the answer reported records_found
+        # while the launcher repair sat unnamed in the payload beside it. The startability of
+        # a launcher these settings record is read as a probe of its own instead.
         return NOT_RULED_OUT, "no probe of a registered command was made"
     blocked = [probe for probe in probes if _halves(probe) & set(CANNOT_START)]
     unjudged = [probe for probe in probes
@@ -511,7 +510,7 @@ CAUSE_RULES = {
                       "unregisteredRecords"), _not_registered),
     RECORD_PATH_UNIDENTIFIED: (("relativeSettings", "silentRegistrations"),
                                _record_path_unidentified),
-    ADAPTER_CANNOT_RUN: (("startProbes", "unregisteredRecords"), _adapter_cannot_run),
+    ADAPTER_CANNOT_RUN: (("startProbes",), _adapter_cannot_run),
     SETTINGS_ABSENT: (("namedJournals", "settledSettings", "registrationElsewhere"),
                       _settings_absent),
     SETTINGS_UNUSABLE: (("namedJournals", "settledSettings", "registrationElsewhere"),

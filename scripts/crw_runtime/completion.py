@@ -2012,6 +2012,11 @@ def status(codex_home=None, environ=None, event=EVENT):
         # this host's registration lives.
         registration_read_here = (True if stated is None
                                   else (stated in OWNERS and stated != OWNER_PLUGIN))
+    # Hoisted, because two observations below read it: whether the settings causes may answer
+    # from the settled reading, and whether the launcher those settings record is the probe.
+    registration_elsewhere = (found is not None and found.usable
+                              and isinstance(found.value, dict)
+                              and found.value.get("owner") == OWNER_PLUGIN)
     absence = firing.decide({
         "registrationReadable": ours is not None,
         "adapterRegistrations": len(ours or []),
@@ -2020,9 +2025,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # does not read. Narrower than the negation above on purpose: that one is also false
         # when nobody could read who owns the registration, and the settings causes may only
         # answer from the settled reading where the owner was actually read as the plugin's.
-        "registrationElsewhere": (found is not None and found.usable
-                                  and isinstance(found.value, dict)
-                                  and found.value.get("owner") == OWNER_PLUGIN),
+        "registrationElsewhere": registration_elsewhere,
         # The settings this command SETTLED on, described the way a registration's own entry is
         # so the rules read one shape. Built from the reading already taken above rather than
         # from a second one, so this and the configuration cell cannot disagree. A plugin-owned
@@ -2036,7 +2039,16 @@ def status(codex_home=None, environ=None, event=EVENT):
         "relativeSettings": bool(relative),
         "silentRegistrations": silent,
         "namedJournals": named_journals,
-        "startProbes": start_probes,
+        # A plugin-owned host registers nothing in the hook file, so start_probes is empty and
+        # the startability question had no PRESENT reading to answer from. The launcher those
+        # settings record is the one that has to start, and both of its halves are already read
+        # for the cells beside this. Carried here, an entry point or interpreter deleted since
+        # the last invocation is named as the repair, instead of an old journal record standing
+        # in for a reading of what is there now.
+        "startProbes": (start_probes if start_probes or not registration_elsewhere else
+                        [{"registration": "the launcher these settings record",
+                          "adapter": adapter["value"],
+                          "interpreter": adapter_interpreter["value"]}]),
         "unregisteredRecords": unregistered_records,
     })
 

@@ -3061,6 +3061,37 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         self.assertEqual(standings.get(firing.ADAPTER_CANNOT_RUN), firing.RULED_OUT,
                          "a record outranks a probe that was never taken")
 
+    def test_an_old_record_does_not_answer_whether_the_launcher_starts_now(self):
+        """A journal entry says the host started the adapter ONCE. Whether it can start NOW is
+        a different question, and ruling that one out from an old record hid a live repair: a
+        plugin-owned installation whose recorded entry point was deleted after it last recorded
+        reported records_found while the payload's own adapterEntryPoint cell read ABSENT.
+        The launcher those settings record is probed instead.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            adapter = Path(temporary) / "the-recorded-adapter-entry-point.py"
+            adapter.write_text("", encoding="utf-8")
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable, adapterEntryPoint=str(adapter))
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            intact = completion.status(codex_home=temporary,
+                                       environ={})["firingRecordAbsence"].get("value")
+            # Deleted AFTER the invocation it recorded, which is the whole point.
+            adapter.unlink()
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(intact, firing.RECORDS_FOUND,
+                         "the fixture did not reach records_found while the launcher was"
+                         " there, so it is not showing what deleting it changes")
+        self.assertEqual(found["firingJournal"]["value"], "1",
+                         "the record this case is about is gone from the fixture")
+        self.assertEqual(found["adapterEntryPoint"]["value"], reading.ABSENT,
+                         "the fixture did not delete the recorded launcher")
+        cell = found["firingRecordAbsence"]
+        self.assertEqual(cell.get("value"), firing.ADAPTER_CANNOT_RUN,
+                         "an old record answered a question about what is there now, and the"
+                         " launcher repair went unnamed beside a cell that reads ABSENT")
+
     def test_an_open_that_yielded_no_descriptor_publishes_no_identity(self):
         """An open that failed established nothing about WHICH directory refused it. Taking the
         identity from the spelling afterwards answered about whatever it named by then, so a
