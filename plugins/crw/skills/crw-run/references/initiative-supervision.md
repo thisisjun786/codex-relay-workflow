@@ -132,7 +132,18 @@ second place a split is caught rather than the supervisor being the only one. A 
 holding an accepted handoff for this project from a different supervisor treats a second one as a
 conflict to raise, not as a newer instruction to follow, and neither supervisor settles that by
 sending again. Caught there, a duplicate surfaces at the point where it would do damage instead of
-being inferred later from divergent work. A busy parent, an unreachable record or an
+being inferred later from divergent work.
+
+Two supervisors handing off to two different projects is the case that check does not see, since
+neither parent receives a second handoff. Two things make it findable instead. A supervisor
+recording itself preserves any entry already there rather than replacing it, so the earliest
+binding stays readable and is what stands, rather than ownership being decided by whoever wrote
+last. And the initiative record is read again before each handoff and at each returned result, not
+only before the first, so a second supervisor is found within a step or two rather than at the end.
+On finding one, the later binding stops there: it sends nothing further, tells the parents it
+already handed projects to that its handoff is withdrawn and names the owner, and hands its record
+over. That does not prevent an overlap; it bounds one to the work already started, which can be
+reconciled, instead of letting an initiative run to completion under two owners. A busy parent, an unreachable record or an
 uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
 
 ## Hand a project to its parent

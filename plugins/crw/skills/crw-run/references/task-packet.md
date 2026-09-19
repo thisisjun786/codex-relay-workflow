@@ -283,7 +283,10 @@ Workflow: [the parent's effective workflow, restated because no transport carrie
 ```
 
 A handoff that was sent is not a parent bound, and a handoff that was accepted is not a project
-delivered. The parent's own binding record and its first returned result are those two facts.
+delivered. The parent's own binding record establishes the first. Nothing here establishes the
+second: a returned result can be blocked, or carry unresolved problems rather than satisfied
+criteria, so delivery is the outcome verified against the completion boundary and never whichever
+result happens to arrive first.
 
 Check who sent it before acting on it. This is the one kind here that carries authority and it
 travels on a channel peers use too, where the kind, the sender and the supervisor identity are all
