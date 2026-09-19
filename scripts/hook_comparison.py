@@ -1113,6 +1113,14 @@ TRACER = "strace"
 # as a reading that was not taken rather than as the shorter path it looks like.
 TRACE_STRING_LIMIT = 4096
 
+# Whether a call acts ON the name it is given or reaches THROUGH it. A symlink, a mkdir, an
+# unlink and a rename all operate on the entry and never follow its last component; an open
+# and a truncate follow it and land on whatever it points at. Containment has to ask about
+# the one the call actually touched, and answering both at once was measured rejecting a
+# contained run for creating a link inside the root that pointed out of it.
+ENTRY = "the entry it names"
+THROUGH = "whatever the entry leads to"
+
 WRITES = "writes"
 OPENS = "opens"
 STARTS = "starts"
@@ -1132,36 +1140,42 @@ MOVES = "moves"
 # Ownership, timestamps and extended attributes are deliberately absent. A metadata story told
 # halfway is worse than one not told, so they are declared below as not covered instead.
 TRACED_CALLS = {
-    "execve": (STARTS, ((0, None),)),
-    "execveat": (STARTS, ((1, 0),)),
-    "open": (OPENS, ((0, None),)),
-    "openat": (OPENS, ((1, 0),)),
-    "openat2": (OPENS, ((1, 0),)),
-    "creat": (WRITES, ((0, None),)),
-    "truncate": (WRITES, ((0, None),)),
-    "ftruncate": (WRITES, ((0, None),)),
-    "mkdir": (WRITES, ((0, None),)),
-    "mkdirat": (WRITES, ((1, 0),)),
-    "rmdir": (WRITES, ((0, None),)),
-    "unlink": (WRITES, ((0, None),)),
-    "unlinkat": (WRITES, ((1, 0),)),
-    "rename": (WRITES, ((0, None), (1, None))),
-    "renameat": (WRITES, ((1, 0), (3, 2))),
-    "renameat2": (WRITES, ((1, 0), (3, 2))),
+    "execve": (STARTS, ((0, None),), THROUGH),
+    "execveat": (STARTS, ((1, 0),), THROUGH),
+    # An open follows the last component unless it is told not to, and the ways of telling
+    # it not to - O_NOFOLLOW, and O_CREAT with O_EXCL over an existing link - both make the
+    # call FAIL on a symlink, and a failed call never reaches this table. So every open
+    # here reached what its path pointed at.
+    "open": (OPENS, ((0, None),), THROUGH),
+    "openat": (OPENS, ((1, 0),), THROUGH),
+    "openat2": (OPENS, ((1, 0),), THROUGH),
+    "creat": (WRITES, ((0, None),), THROUGH),
+    "truncate": (WRITES, ((0, None),), THROUGH),
+    # A descriptor the kernel already resolved, which the tracer hands over resolved.
+    "ftruncate": (WRITES, ((0, None),), THROUGH),
+    # Everything below works on the NAME. None of them follows its last component: mkdir
+    # and mknod fail if the name is taken, rmdir refuses a symlink, unlink and rename act
+    # on the link itself, and a symlink writes the link and never its target - which need
+    # not exist at all.
+    "mkdir": (WRITES, ((0, None),), ENTRY),
+    "mkdirat": (WRITES, ((1, 0),), ENTRY),
+    "rmdir": (WRITES, ((0, None),), ENTRY),
+    "unlink": (WRITES, ((0, None),), ENTRY),
+    "unlinkat": (WRITES, ((1, 0),), ENTRY),
+    "rename": (WRITES, ((0, None), (1, None)), ENTRY),
+    "renameat": (WRITES, ((1, 0), (3, 2)), ENTRY),
+    "renameat2": (WRITES, ((1, 0), (3, 2)), ENTRY),
     # The link, and not what it is linked FROM. A rename removes its source, so both of its
     # paths change; a hard link only adds a second name for an inode that is otherwise left
-    # exactly as it was. Reporting the source would fail a run for linking an outside file to
-    # a place inside the root, which is the same overstatement as reading a symlink target as
-    # written. The inode link count does change, and that is metadata, which nothing here
-    # watches and which is declared below.
-    "link": (WRITES, ((1, None),)),
-    "linkat": (WRITES, ((3, 2),)),
-    "symlink": (WRITES, ((1, None),)),
-    "symlinkat": (WRITES, ((2, 1),)),
-    "mknod": (WRITES, ((0, None),)),
-    "mknodat": (WRITES, ((1, 0),)),
-    "chdir": (MOVES, ((0, None),)),
-    "fchdir": (MOVES, ((0, None),)),
+    # exactly as it was.
+    "link": (WRITES, ((1, None),), ENTRY),
+    "linkat": (WRITES, ((3, 2),), ENTRY),
+    "symlink": (WRITES, ((1, None),), ENTRY),
+    "symlinkat": (WRITES, ((2, 1),), ENTRY),
+    "mknod": (WRITES, ((0, None),), ENTRY),
+    "mknodat": (WRITES, ((1, 0),), ENTRY),
+    "chdir": (MOVES, ((0, None),), ENTRY),
+    "fchdir": (MOVES, ((0, None),), ENTRY),
 }
 
 # Which argument carries an open's flags, so that an open for reading is not counted as a write.
@@ -1502,7 +1516,7 @@ def parse_trace(text, cwd):
                                          "why": "the call carries no result"})
             continue
         arguments = _arguments_of(body[opened + 1:closed])
-        kind, positions = TRACED_CALLS[name]
+        kind, positions, reaches = TRACED_CALLS[name]
         if answer["rootPid"] is None:
             answer["rootPid"] = pid
         if result.startswith("?"):
@@ -1553,6 +1567,7 @@ def parse_trace(text, cwd):
             answer["writes"].append({
                 "line": number, "pid": pid, "call": name,
                 "path": _resolved_descriptor(result) or path,
+                "reaches": reaches,
                 "changedTheFile": _what_an_open_did(arguments[flags])})
             continue
         answer["writeCalls"] += 1
@@ -1564,7 +1579,7 @@ def parse_trace(text, cwd):
             # A call in this table changes every path position the table declares for it, which
             # is why the link source is no longer one of them.
             answer["writes"].append({"line": number, "pid": pid, "call": name, "path": path,
-                                     "changedTheFile": CHANGED})
+                                     "reaches": reaches, "changedTheFile": CHANGED})
     for pid, name in sorted(unfinished):
         answer["unreadable"].append({"line": None, "text": name,
                                      "why": "a call interrupted in process " + str(pid) + " and"
@@ -1832,7 +1847,7 @@ def witness_payload(arm, fired):
                   if one["pid"] == seen["rootPid"] or one["path"] != str(arm.launcher)]
     outside, unresolved, strayed = [], [], []
     for one in seen["writes"]:
-        answered = owned(one["path"], arm.run_root)
+        answered = owned(one["path"], arm.run_root, one["reaches"])
         if not_read(answered):
             unresolved.append(answered.why)
         elif answered is False:
@@ -2326,23 +2341,26 @@ def own_directory(where):
     return Path(tempfile.mkdtemp(prefix="hook-comparison-", dir=str(where))).resolve()
 
 
-def owned(path, root):
-    """Whether this path is inside this run's own directory: inside, outside, or unreadable.
+def owned(path, root, reaches=ENTRY):
+    """Whether the thing this call wrote is inside the run's own directory: in, out, or unread.
 
-    Asked of BOTH the entry and the place it leads, and outside if either one is. A path names
-    two things here and they can disagree: creating a symlink makes an ENTRY where the path is
-    spelled and says nothing about where it points, while writing through one puts the bytes
-    where it points and not where it is spelled.
+    Decided by the path the CALL ACTUALLY WROTE TO, which is not the same path for every call.
+    A symlink, a mkdir, an unlink and a rename write the entry they name and never follow its
+    last component - a symlink does not touch its target, which need not even exist. An open and
+    a truncate go through that last component and land on whatever it points at.
 
-    Resolving only the target was measured letting a firing plant a symlink outside the root
-    whose target was inside and be reported clean - an entry made somewhere the run never named,
-    which is the escape this witness exists to close. Judging only the entry would let a write
-    through a symlink land outside unseen, which is the same escape facing the other way. Both
-    are asked because either alone answers about something other than what happened.
+    Both halves of this were measured, in opposite directions. Resolving always reported an
+    outside write for a link created INSIDE the root that pointed out, which fails a contained
+    firing for a write that stayed in. Not resolving at all reported a clean run for a link
+    created OUTSIDE the root that pointed in, which is an entry made where the run never named.
+    Asking both at once answers both cases the same way, so it cannot tell them apart either.
+    The call says which one it wrote, and the table says which the call is.
 
-    Every containment answer in this file comes through here, so the rule holds for every call
-    in the traced table and for every place the run creates rather than for the one that was
-    reported: a symlink, a hard link, a rename, a mknod and an open are all judged the same way.
+    The PARENT is resolved in both modes, and that is load-bearing rather than tidy: a write
+    into a directory reached through a symlink lands where that symlink points, so a run could
+    otherwise put a file outside the root through a linked directory and read as contained.
+    Only the last component is treated differently, because only it is the thing some calls
+    create rather than go through.
 
     Three answers rather than two, because a path that could not be resolved is not a path
     outside the root: reporting it as outside names the wrong repair and claims to know where it
@@ -2350,21 +2368,17 @@ def owned(path, root):
     """
     try:
         spelled = Path(path)
-        # The parent IS resolved, so a write into a directory reached through a symlink is
-        # judged where it actually lands. Only the last component is left unfollowed, because
-        # that is the one the call creates rather than goes through.
-        wanted = (Path(root).resolve(), spelled.resolve(),
-                  spelled.parent.resolve() / spelled.name)
+        here = Path(root).resolve()
+        wrote = (spelled.resolve() if reaches == THROUGH
+                 else spelled.parent.resolve() / spelled.name)
     except OSError as error:
         return Unreadable("this path could not be resolved, so where it leads is not"
                           " established: " + type(error).__name__ + ": " + str(error),
                           state=reading.ACCESS_ERROR)
-    here, target, entry = wanted
-    for found in (target, entry):
-        try:
-            found.relative_to(here)
-        except (ValueError, OSError):
-            return False
+    try:
+        wrote.relative_to(here)
+    except (ValueError, OSError):
+        return False
     return True
 
 

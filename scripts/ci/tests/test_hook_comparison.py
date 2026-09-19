@@ -1223,6 +1223,46 @@ class ProcessWitnessTests(unittest.TestCase):
                       "an entry made outside the root was reported clean because its target"
                       " resolved back inside")
 
+    @unittest.skipUnless(HAVE_RELAY and CAN_WITNESS, "the demonstration starts a real process"
+                                                     " under a real tracer")
+    def test_a_link_created_inside_the_root_is_not_a_write_outside_it(self):
+        """The other direction, end to end: a contained firing must not be failed for this.
+
+        Creating a link inside the root that points out of it writes the entry, which is inside.
+        A containment rule that resolved the path would call this an outside write and fail a
+        firing that wrote nowhere it should not have.
+        """
+        self.assertTrue(hasattr(harness, "ENTRY"),
+                        "containment does not distinguish the entry a call writes from what that"
+                        " entry leads to, so a link created inside the root reads as a write out")
+        arm, built = self.witness_arm()
+        outside = Path(tempfile.mkdtemp(prefix="hook-comparison-elsewhere-"))
+        self.addCleanup(shutil.rmtree, str(outside), True)
+        outside = outside.resolve()
+        planted = arm.run_root / "link-created-inside-pointing-out"
+        (outside / "sitecustomize.py").write_text(
+            "import os\n"
+            "try:\n"
+            "    os.symlink(" + repr(str(outside / "somewhere-out-there")) + ", "
+            + repr(str(planted)) + ")\n"
+            "except FileExistsError:\n"
+            "    pass\n", encoding="utf-8")
+        kept = arm.environment
+        arm.environment = dict(kept, PYTHONPATH=str(outside))
+        try:
+            contained = self.fired_row(arm, built)
+        finally:
+            arm.environment = kept
+        self.assertTrue(planted.is_symlink(),
+                        "no link was created inside the root, so this case watches nothing")
+        self.assertFalse(str(Path(str(planted)).resolve()).startswith(str(arm.run_root)),
+                         "the link does not point out of the root, so it would read as contained"
+                         " either way and proves nothing")
+        self.assertEqual(contained["cells"]["writesOutsideRoot"]["value"], [],
+                         "a firing was reported writing outside the root for a link it created"
+                         " INSIDE it, which fails a contained run: "
+                         + json.dumps(contained["cells"]["writesOutsideRoot"]["value"]))
+
     def test_a_host_that_cannot_witness_says_so_and_never_says_nothing_was_written(self):
         """The third property: an unwitnessable boundary is a reading nobody took.
 
@@ -1336,6 +1376,27 @@ WHAT_AN_OPEN_DID = ("changed", "may_have_changed", "only_able_to_change")
 # predicate, so it is asked of every call rather than of the two that were reported. execve and
 # chdir change nothing; a rename changes two paths because its source stops existing; a hard link
 # changes one, because the file it is linked from is left exactly as it was.
+# Whether each traced call writes the NAME it is given or reaches THROUGH it to whatever the name
+# leads to, written here rather than imported. Containment is decided by the path the call wrote,
+# and these are not the same path: a symlink, a mkdir, an unlink and a rename act on the entry and
+# never follow its last component, while an open and a truncate land on what it points at. Getting
+# this wrong in either direction was measured doing real damage - resolving always fails a firing
+# for a link it created inside the root, and never resolving passes one that planted an entry
+# outside it.
+ENTRY, THROUGH = "the entry it names", "whatever the entry leads to"
+HOW_EACH_CALL_REACHES_ITS_PATH = {
+    "execve": THROUGH, "execveat": THROUGH,
+    "open": THROUGH, "openat": THROUGH, "openat2": THROUGH, "creat": THROUGH,
+    "truncate": THROUGH, "ftruncate": THROUGH,
+    "mkdir": ENTRY, "mkdirat": ENTRY, "rmdir": ENTRY,
+    "unlink": ENTRY, "unlinkat": ENTRY,
+    "rename": ENTRY, "renameat": ENTRY, "renameat2": ENTRY,
+    "link": ENTRY, "linkat": ENTRY,
+    "symlink": ENTRY, "symlinkat": ENTRY,
+    "mknod": ENTRY, "mknodat": ENTRY,
+    "chdir": ENTRY, "fchdir": ENTRY,
+}
+
 CHANGES_PER_CALL = {
     "execve": 0, "execveat": 0, "chdir": 0, "fchdir": 0,
     "open": 1, "openat": 1, "openat2": 1, "creat": 1,
@@ -1436,8 +1497,11 @@ class TheTraceParserCases(unittest.TestCase):
         A call added to the harness without an entry below fails until somebody says what it
         changes.
         """
+        self.assertTrue(all(len(one) == 3 for one in harness.TRACED_CALLS.values()),
+                        "a traced call does not say whether it writes the name it is"
+                        " given or goes through it")
         declared = {}
-        for name, (kind, positions) in harness.TRACED_CALLS.items():
+        for name, (kind, positions, _reaches) in harness.TRACED_CALLS.items():
             declared[name] = 0 if kind in ("starts", "moves") else len(positions)
         self.assertEqual(declared, CHANGES_PER_CALL,
                          "the paths the harness records as written and the paths these calls"
@@ -2649,31 +2713,99 @@ class TheSweepDrivesTheRefusalRatherThanWatchingForItTests(unittest.TestCase):
                                     {"sourceDigests": {"relay": "a" * 64}})
         self.assertTrue(healthy["met"], "an unchanged source has to still be able to pass")
 
-    def test_an_entry_outside_the_root_is_outside_however_its_target_resolves(self):
-        """The escape this closes, both ways round, and the ordinary case beside them.
+    def test_containment_is_decided_by_the_path_the_call_actually_wrote(self):
+        """Both directions, which is what stops one of them reopening the other.
 
-        A path names two things and they can disagree. A symlink planted outside the root whose
-        target is inside was reported clean while an entry had been made somewhere the run never
-        named; judging only the entry would miss a write through a link that lands outside.
+        A symlink created INSIDE the root pointing out wrote inside: the entry is the write and
+        the target is not touched. A symlink created OUTSIDE the root pointing in wrote outside,",
+        for the same reason read the other way. A rule that resolves always gets the first wrong;
+        a rule that never resolves gets the second wrong; a rule that asks both answers them the
+        same way and so tells neither apart.
         """
-        inside = self.root / "inside"
+        self.assertTrue(hasattr(harness, "ENTRY") and hasattr(harness, "THROUGH"),
+                        "containment does not distinguish the entry a call writes from"
+                        " what that entry leads to, so it cannot judge the path the call"
+                        " actually wrote")
         elsewhere = Path(tempfile.mkdtemp(prefix="hook-comparison-elsewhere-"))
         self.addCleanup(shutil.rmtree, str(elsewhere), True)
         elsewhere = elsewhere.resolve()
 
-        planted = elsewhere / "entry-outside-pointing-in"
-        os.symlink(str(inside), str(planted))
-        self.assertFalse(harness.owned(str(planted), self.root),
+        inside_entry = self.root / "link-created-inside-pointing-out"
+        os.symlink(str(elsewhere / "somewhere-out-there"), str(inside_entry))
+        self.assertTrue(harness.owned(str(inside_entry), self.root, harness.ENTRY),
+                        "a link created inside the root was reported as a write outside it,"
+                        " which fails a contained firing for a write that stayed in")
+
+        outside_entry = elsewhere / "link-created-outside-pointing-in"
+        os.symlink(str(self.root), str(outside_entry))
+        self.assertFalse(harness.owned(str(outside_entry), self.root, harness.ENTRY),
                          "an entry made outside the root was reported inside it because its"
                          " target resolved inward")
 
-        bridge = self.root / "entry-inside-pointing-out"
+    def test_a_call_that_goes_through_a_link_is_judged_where_the_bytes_land(self):
+        """The other mode, and the one case where the two modes genuinely disagree."""
+        self.assertTrue(hasattr(harness, "ENTRY") and hasattr(harness, "THROUGH"),
+                        "containment does not distinguish the entry a call writes from"
+                        " what that entry leads to, so it cannot judge the path the call"
+                        " actually wrote")
+        elsewhere = Path(tempfile.mkdtemp(prefix="hook-comparison-elsewhere-"))
+        self.addCleanup(shutil.rmtree, str(elsewhere), True)
+        elsewhere = elsewhere.resolve()
+        bridge = self.root / "opened-through-this"
         os.symlink(str(elsewhere / "landed-out-there"), str(bridge))
-        self.assertFalse(harness.owned(str(bridge), self.root),
-                         "a write through a link that lands outside the root was reported inside")
+        self.assertFalse(harness.owned(str(bridge), self.root, harness.THROUGH),
+                         "an open through a link that lands outside the root read as contained")
+        self.assertTrue(harness.owned(str(bridge), self.root, harness.ENTRY),
+                        "the same path read as a created entry is inside, which is why the call"
+                        " has to say which of the two it did")
 
-        self.assertTrue(harness.owned(str(inside), self.root),
-                        "an ordinary path inside the root stopped reading as inside")
+    def test_the_two_modes_agree_wherever_a_call_creates_the_entry_it_opens(self):
+        """Support. Whether ENTRY and THROUGH can disagree for a call that CREATES something.
+
+        The only candidate is the open family with O_CREAT, which creates the entry when nothing
+        is there and follows it when a link is. Measured: where it creates, resolve() of a
+        nonexistent last component returns the path itself, so the two modes answer the same and
+        the call can be declared THROUGH without ambiguity.
+        """
+        self.assertTrue(hasattr(harness, "ENTRY") and hasattr(harness, "THROUGH"),
+                        "containment does not distinguish the entry a call writes from"
+                        " what that entry leads to, so it cannot judge the path the call"
+                        " actually wrote")
+        fresh = self.root / "nothing-is-here-yet"
+        self.assertFalse(fresh.exists())
+        self.assertEqual(harness.owned(str(fresh), self.root, harness.ENTRY),
+                         harness.owned(str(fresh), self.root, harness.THROUGH),
+                         "the two modes disagree about a path the call would create, so declaring"
+                         " a call one or the other is not enough to decide it")
+
+    def test_resolving_the_parent_is_what_catches_a_linked_directory(self):
+        """Support. Why "do not resolve" would be its own bug rather than the safe choice."""
+        self.assertTrue(hasattr(harness, "ENTRY") and hasattr(harness, "THROUGH"),
+                        "containment does not distinguish the entry a call writes from"
+                        " what that entry leads to, so it cannot judge the path the call"
+                        " actually wrote")
+        elsewhere = Path(tempfile.mkdtemp(prefix="hook-comparison-elsewhere-"))
+        self.addCleanup(shutil.rmtree, str(elsewhere), True)
+        elsewhere = elsewhere.resolve()
+        linked_directory = self.root / "directory-reached-through-a-link"
+        os.symlink(str(elsewhere), str(linked_directory))
+        landed = linked_directory / "file-under-a-linked-directory"
+        self.assertTrue(str(landed).startswith(str(self.root)),
+                        "the path is spelled inside the root, which is the whole difficulty")
+        self.assertFalse(harness.owned(str(landed), self.root, harness.ENTRY),
+                         "a write into a directory reached through a link out of the root read as"
+                         " contained, so resolving the parent is load-bearing rather than tidy")
+
+    def test_every_traced_call_says_whether_it_writes_the_entry_or_goes_through_it(self):
+        """SUPPORT, and the one decision, so it cannot become a branch at one call site."""
+        self.assertTrue(all(len(one) == 3 for one in harness.TRACED_CALLS.values()),
+                        "a traced call does not say whether it writes the name it is"
+                        " given or goes through it")
+        declared = dict((name, reaches) for name, (_k, _p, reaches) in harness.TRACED_CALLS.items())
+        self.assertEqual(declared, HOW_EACH_CALL_REACHES_ITS_PATH,
+                         "a traced call does not say whether it writes the name it is given or"
+                         " goes through it, so containment cannot know which path to judge")
+
 
     def test_every_containment_answer_in_the_harness_comes_through_that_one_function(self):
         """SUPPORT, and the sweep predicate, derived from source rather than asserted.
