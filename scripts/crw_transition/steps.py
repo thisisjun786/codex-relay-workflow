@@ -77,7 +77,7 @@ def retire(path, into=None, stem=None):
     prefix = (str(Path(into) / stem) if into and stem else str(path)) + ".superseded-"
     holder, name = Path(prefix).parent, Path(prefix).name
     try:
-        reached = [inventory.archive_order(found, name)[0]
+        reached = [inventory.archive_order(found, name)
                    for found in holder.glob(name + "*") if found.is_file()]
     except OSError as error:
         # Not an empty set. Treating an unlistable directory as one holding no archives chooses a
@@ -88,9 +88,14 @@ def retire(path, into=None, stem=None):
         raise OSError(error.errno or errno.EIO,
                       "the archives beside " + str(holder) + " could not be listed, so a name"
                       " that sorts after them could not be chosen (" + str(error) + ")") from error
-    moment = max([stamp()] + [item for item in reached if item])
+    moment = max([stamp()] + [item[0] for item in reached if item[0]])
+    # The whole key, not the stamp alone. An archive left as <stamp>-001 while its unsuffixed
+    # counterpart was restored leaves the bare name free, and taking it would sort BEFORE the
+    # file still sitting there -- the recovery would then read that stale one as the newest.
+    taken = max([item[1] for item in reached if item[0] == moment] + [-1])
     base = prefix + moment
-    target, suffix = base, 0
+    suffix = taken + 1 if taken >= 0 else 0
+    target = base if suffix == 0 else base + "-%03d" % suffix
     while True:
         try:
             handle = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -2019,6 +2024,13 @@ def disable(host, options, *, apply=False):
         results.append(answer)
     except hostrecord.Busy as error:
         results.append(_answer("hook settings", BUSY, str(error)))
+    except OSError as error:
+        # Every surface answers for itself. Letting this escape lost the results list with it, so
+        # the receipt could not say which surface is stopped and which is still live.
+        results.append(_answer("hook settings", REFUSED,
+                               "the settings could not be retired (" + type(error).__name__
+                               + ": " + str(error) + "), so new adapter invocations are not"
+                               " stopped"))
 
     if not apply:
         record = Path(host["mcp"]["recordPath"])
@@ -2037,6 +2049,12 @@ def disable(host, options, *, apply=False):
             results.append(answer)
     except hostrecord.Busy as error:
         results.append(_answer("bridge record", BUSY, str(error)))
+    except OSError as error:
+        # The same reason as the settings above: the hook may already be stopped, and a receipt
+        # that lost its results cannot say that the bridge is still live.
+        results.append(_answer("bridge record", REFUSED,
+                               "the record could not be retired (" + type(error).__name__ + ": "
+                               + str(error) + "), so new bridge starts are not stopped"))
     return results
 
 
