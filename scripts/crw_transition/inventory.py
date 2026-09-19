@@ -84,16 +84,23 @@ def settle(path):
         return str(path)
 
 
-def runs_the_bridge(command):
+def runs_the_bridge(command, known=()):
     """Whether a registered command starts the task bridge, whatever the table is called.
 
     The console script's name is the fact that travels: a registration made by this repository
     runs <destination>/current/bin/codex-thread-bridge, and an operator who renamed the SERVER did
     not rename that.
+
+    The name is not the only fact, though. register-mcp takes --bridge-command, so a supported
+    install can register an executable called anything at all -- and then a second table naming
+    that same executable is the same bridge under another server name, which the basename test
+    cannot see. Every command this host already says is its bridge is compared too, settled to
+    one spelling first, which is the comparison runtime_install.py makes against the record.
     """
     if not command:
         return False
-    return Path(settle(command)).name == BRIDGE_SCRIPT
+    here = settle(command)
+    return Path(here).name == BRIDGE_SCRIPT or here in {settle(one) for one in known if one}
 
 def config_path(codex_home):
     return Path(codex_home) / "config.toml"
@@ -575,6 +582,9 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
               "registration": None, "record": None, "recordOutcome": None,
               "recordOwner": None, "recordPath": str(bridgerecord.record_path(codex_home)),
               "detail": None}
+    # None rather than empty: a configuration nobody could read has no server list, and an empty
+    # one would report "no alias here" about a file this never saw.
+    servers = None
     text = read_config_text(codex_home)
     if not text.usable:
         answer["table"] = text.state
@@ -588,11 +598,8 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
             # register-mcp takes --name, so a manual install may have registered this same bridge
             # under another server name. Looking only for the declared name would leave that table
             # in place beside the plugin's declaration, and the host would start two bridges.
-            answer["aliases"] = [
-                {"name": other, "command": entry.get("command"), "args": entry.get("args")}
-                for other, entry in sorted(view.servers.items())
-                if other != name and runs_the_bridge(entry.get("command"))]
             present, registration = codexconfig.registration_of(view, name)
+            servers = sorted(view.servers.items())
             if present:
                 answer["table"] = reading.PRESENT
                 answer["registration"] = registration
@@ -621,6 +628,17 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
     answer["record"] = document
     answer["recordOutcome"] = outcome
     answer["recordOwner"] = bridgerecord.owner_of(document)
+    if servers is not None:
+        # Decided after the record is read, because the record's own bridgeExecutable is one of
+        # the commands that makes another table this same bridge. Looking only for the declared
+        # name, or only for the standard basename, left that table in place beside the plugin's
+        # declaration and the host started two bridges out of a run that reported success.
+        known = [(answer.get("record") or {}).get("bridgeExecutable"),
+                 (answer.get("registration") or {}).get("command")]
+        answer["aliases"] = [
+            {"name": other, "command": entry.get("command"), "args": entry.get("args")}
+            for other, entry in servers
+            if other != name and runs_the_bridge(entry.get("command"), known=known)]
     if detail and not answer["detail"]:
         answer["detail"] = detail
     return answer

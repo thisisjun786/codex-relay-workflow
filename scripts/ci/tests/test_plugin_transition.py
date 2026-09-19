@@ -3306,6 +3306,36 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(code, 0, json.dumps(seen)[:700])
         self.assertNotEqual(seen.get("outcome"), "internal_error", json.dumps(seen)[:400])
 
+    @needs_reader
+    def test_an_alias_starting_a_custom_bridge_executable_is_found(self):
+        """register-mcp takes --bridge-command, so the standard basename is not the only name."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.host
+        custom = host.version / "bin" / "a-bridge-of-its-own"
+        custom.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        custom.chmod(0o755)
+        host.link_skills()
+        host.register_hook()
+        # A supported install of a bridge whose executable is named something else entirely.
+        registered = run([RUNTIME, "register-mcp", "--owner", "user", "--codex-home", host.home,
+                          "--bridge-command", custom, "--apply"])
+        self.assertEqual(registered.returncode, 0, registered.stdout[-600:])
+        # And a second server name starting that same executable, which is the same bridge.
+        host.append_config('[mcp_servers.my-bridge]\ncommand = "' + str(custom) + '"\n')
+        host.install_plugin()
+        found = inventory.read_mcp(host.home)
+        self.assertEqual([item["name"] for item in found["aliases"]], ["my-bridge"],
+                         json.dumps(found.get("aliases"))[:500])
+        # And the command refuses rather than leaving that table beside the plugin's declaration.
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("my-bridge", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
