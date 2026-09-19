@@ -3257,6 +3257,34 @@ class TheFindingsFromReview(TransitionCase):
         self.assertTrue(seen.get("results"), json.dumps(seen)[:700])
         self.assertEqual(host.hooks_document(), before)
 
+    @needs_reader
+    def test_a_skills_directory_that_cannot_be_listed_is_an_unreadable_inventory(self):
+        """skill_unlink re-reads this at the end, after the hook and the bridge have moved."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        links = Path(host.home) / "skills"
+        links.chmod(0o000)
+        self.addCleanup(links.chmod, 0o755)
+        if os.access(str(links), os.R_OK):
+            self.skipTest("this user can list a directory with no permissions")
+        answer = inventory.read_skill_links(host.home, ROOT)
+        self.assertIn("could not be listed", answer["unreadable"] or "")
+        self.assertEqual(answer["crwOwned"], [])
+        # And the run answers with its step list rather than a top-level failure, which is what
+        # makes the half-transitioned host visible: every earlier step recorded, the unlink
+        # refused, and the reason named.
+        code, seen = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(seen)[:700])
+        outcomes = {item["step"]: item["outcome"] for item in seen["results"]}
+        self.assertEqual(outcomes["skill unlink"], "refused", json.dumps(seen["results"])[:900])
+        self.assertEqual(outcomes["hook standdown"], "settled")
+        unlink = [item for item in seen["results"] if item["step"] == "skill unlink"][0]
+        self.assertIn("could not be listed", unlink["detail"])
+        self.assertIn("nothing was removed", unlink["detail"])
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

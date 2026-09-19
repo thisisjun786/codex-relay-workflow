@@ -301,7 +301,19 @@ def read_skill_links(codex_home, repo_root):
     # Ownership is decided per path, from the link itself, not from the installer's verdict: a
     # CONFLICT can be somebody else's directory, and those are never touched.
     if destination.is_dir():
-        for entry in sorted(destination.iterdir()):
+        try:
+            found = sorted(destination.iterdir())
+        except OSError as error:
+            # The link directory can go away or stop being listable between these two calls --
+            # a manual install cleaning up beside this run is the ordinary way. This reader is
+            # also the one skill_unlink re-reads at the END, after the hook and the bridge have
+            # already moved, and raising there threw away every step result and the sentence
+            # that says the host is half transitioned. Unreadable is an answer the refusal path
+            # already knows how to report; an exception is not.
+            answer["unreadable"] = (str(destination) + " could not be listed ("
+                                    + type(error).__name__ + ": " + str(error) + ")")
+            found = []
+        for entry in found:
             if not entry.name.startswith(SKILL_PREFIX):
                 continue
             owner = checkout_of(entry) if entry.is_symlink() else None
