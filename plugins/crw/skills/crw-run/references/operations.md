@@ -725,6 +725,30 @@ An issue that already has an active or paused assignment cannot acquire a second
 which is what stops two parents from claiming one issue. That guarantee covers the record rather
 than the host, so a lookup by issue happens before anything is created.
 
+### OPS-7.4 Three levels and their routing identity
+
+Decided, from the project record of 2026-09-19: execution runs at three levels bound to three
+Linear levels, a supervisor to an initiative, a parent to a project and a child to an issue. What
+each role owns is the shared
+[Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope);
+what this clause owns is identity and routing, because a level that cannot be identified cannot be
+isolated either.
+
+A supervisor relationship binds the stable initiative identity, the project identities under it,
+and the real task and host identifiers of the supervisor and of each parent. A message between two
+parents binds its own request id, both parents' task identifiers, both Linear scopes and the base
+revision it is about. Neither routes on anything else, for the reason OPS-7.2 gives, and neither is
+an assignment: a supervisor reads a parent's assignments and never adopts one, and a peer message
+carries no receipt, acknowledgement or verdict and never enters another parent's registered
+relationship under OPS-7.3. Only the owning parent instructs its own children, so a correction that
+has to reach a child is routed to that child's parent rather than delivered around it.
+
+Unmeasured: the bundled relay holds no supervisor relationship and no parent-to-parent message. Its
+registration binds one parent to one child per issue, so a three-level registration and any peer
+delivery are proposed implementation owned by their own issues, and nothing here reports them as
+installed behaviour. An instruction a reader follows is not a store that enforces it, and this
+clause is not evidence that any runtime carries these levels today.
+
 ## OPS-8 Parent return, fairness and isolation
 
 ### OPS-8.1 Parent continuation and waiting
@@ -966,6 +990,11 @@ carry it.
 
 The child does not merge. It delivers and it answers review; the merge decision belongs to the
 parent that holds the criteria.
+
+Where a supervisor coordinates several projects into one shared target, it decides the ORDER in
+which they go, and that is all it decides: each landing is still performed and verified by the
+parent that owns that project's criteria, and an agreed order carries no release or deployment
+authority any more than a merge does.
 
 ### OPS-9.4 A new head invalidates the review it outran
 
