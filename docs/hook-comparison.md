@@ -300,8 +300,12 @@ seven, and it opens behind CRW-90.
 The three that need a host need a trial run against one, and preparing that trial is where the
 recorded failures have actually been. What is confirmed before such a trial starts, the order its
 parts are built in, and how its interventions are counted are in
-[preparing and starting a live trial](live-trial.md). That procedure prepares a run on a host; it
-measures nothing itself, and nothing in it changes what this harness reports.
+[preparing and starting a live trial](live-trial.md). That procedure does measure things: its
+preflight reads process persistence, store identity and access, parent lifecycle, capability,
+repository boundaries and assignment state before a dispatch, and its ledger grades the
+interventions a finished trial recorded. What it does not measure is any of this comparison's own
+results. A completion, a delivery, a verdict and a correction round trip are outcomes of the trial
+it prepares, not readings it takes, so nothing in it fills a cell or changes a row here.
 
 No adoption or hold decision is written anywhere in this harness or this document, because the
 results that would support one are the three that were not performed.
