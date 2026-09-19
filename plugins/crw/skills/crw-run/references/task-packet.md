@@ -237,13 +237,52 @@ Relay, if used: [exact issue identity, scope reference, real coordinator/child I
 Stop after this issue; do not start another issue or create an empty PR.
 ```
 
+## Project handoff
+
+Use this when a supervisor hands one of its approved projects to that project's parent. It is the
+brief for one project and it stops there: it carries no issue plan, no child assignment and no
+review of anything below that parent. The supervisor's own procedure is
+[Initiative supervision](initiative-supervision.md).
+
+Two carriers, chosen by whether the parent exists. A project with no parent yet receives this as
+the first prompt of the new task, prefixed with its project designation so that task runs its own
+[Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding). An
+existing parent receives it inside a [Coordination message](#coordination-message) of kind project
+handoff, carrying the [restoration block](#restoration-block) when its turn is already running.
+Write it in English, like every instruction that travels between tasks.
+
+Keep it short and point at what the existing records already hold.
+
+```text
+Initiative / Supervisor: [stable initiative ID, and this supervisor's task id]
+Project: [stable project ID and URL, and the parent task id where one already exists]
+Criteria: [the project record revision read, and this project's contribution to the initiative's
+  finish condition. Issue-level criteria stay in the issues]
+Prerequisites: [cross-project prerequisites by relation, each with where its verification will
+  appear; and the peer parents this project shares a surface with, to settle with directly]
+Authority: [the designation and its date, the limits in force, child-creation authority, and the
+  delivery scope: this parent merges its own project's pull requests, while release and
+  deployment stay the user's]
+Current state: [locators only: the project's coordination record, its live children, its open
+  pull requests, and any outcome already verified]
+Report back: [a result or blocked coordination message carrying the outcome, the evidence per
+  criterion, the unresolved problems and the decisions needed. Detailed logs stay where they are]
+Workflow: [the parent's effective workflow, restated because no transport carries it]
+```
+
+A handoff that was sent is not a parent bound, and a handoff that was accepted is not a project
+delivered. The parent's own binding record and its first returned result are those two facts.
+
 ## Coordination message
 
 Use this between parents coordinating directly, between two supervisors coordinating across their
-initiatives, for a parent's escalation to its supervisor, and for a supervisor's decision returning
-to them. It carries coordination between owners; it is never a route into anyone else's children.
+initiatives, for a parent's escalation to its supervisor, for a supervisor's decision returning to
+them, and for a supervisor handing one of its approved projects to that project's own parent. It
+carries coordination between owners; it is never a route into anyone else's children.
 It is not a delivery channel: it carries no receipt, no acknowledgement and no verdict, and it
-never instructs another parent's child. The path and the rules it follows are
+never instructs another parent's child. The handoff is the one kind here that assigns anything, and
+even it assigns only a project to the parent that owns it; that parent binding the project and
+returning its result are separate facts the message does not establish. The path and the rules it follows are
 [Direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents).
 
 Keep it short. Name what identifies this message, and reference what the existing relationship
@@ -254,9 +293,12 @@ than contents.
 Request: [id the sender chose for this message]
 Reply to: [on a reply, the id it answers; omit on a first message]
 Kind: [proposal | acceptance | conditional acceptance | rejection | correction | result | blocked |
-  merge turn request | merge turn assignment | merge turn return | recovery update.
+  merge turn request | merge turn assignment | merge turn return | recovery update |
+  project handoff.
   The three merge-turn kinds are about the order into a shared target and nothing else: no kind
-  here assigns work to another parent, because no parent can]
+  here lets one parent assign work to another, because no parent can. Project handoff is the one
+  downward assignment, it belongs to a supervisor alone, and only that project's own parent
+  receives it]
 From / To: [each side's role, task id and Linear scope]
 Scope: [the issues, files, interfaces or behaviour this is about, and the base revision]
 Asking: [the action or decision required, or the decision being returned]
@@ -390,7 +432,17 @@ needed to resume:
   revision, assignment state, and the synchronisation jobs still owed.
 - Per direct agreement with a peer parent: the request and reply ids, the counterpart parent and
   its project, the agreed area and base revision, whether the agreement is still conditional and
-  on what, and whether a follow-up owner has explicitly accepted.
+  on what, and whether a follow-up owner has explicitly accepted. Beside it keep what is still
+  open, because that is what recovery reads first: each request sent and not yet answered with
+  what would settle it, the revision the agreement stands on, who owns the next step, and each
+  follow-up still marked unassigned, raised as a blocker where it is a required dependency. For a
+  condition this project accepted, record the child that was instructed and the revision where the
+  change took effect, which is the adoption evidence the peer is owed.
+- Where this task supervises an initiative: the stable initiative ID with the body revision its
+  finish condition was read at, the approved project set with each project's parent task id and
+  observed state, the handoff request id sent to each parent and the last result id returned, the
+  decisions still owed upward, and the limits the designation imposed. See
+  [Initiative supervision](initiative-supervision.md).
 - Actual worktree/branch ownership and how local-only prerequisites are preserved.
 - Per mutation: stable request ID, actual task/host/turn IDs, receipt location.
 - Independent task creation/reuse route, authorization source, and verified

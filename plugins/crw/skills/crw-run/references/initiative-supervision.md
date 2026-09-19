@@ -1,0 +1,230 @@
+# Initiative supervision
+
+Run executes the scope its task is bound to. Where that scope is an initiative, this file is the
+entry: how a task becomes that initiative's supervisor, which projects it is executing, when it is
+finished, what each parent receives, what comes back, and how it recovers. The roles themselves are
+the shared [supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+and the project-level procedures [crw-run](../SKILL.md) already owns are not repeated here one
+level up.
+
+Nothing here is a transport. It establishes no automatic resume, no supervisor host goal, no
+registration a runtime performs and no wake-up.
+[OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity) records that the bundled
+relay holds no supervisor relationship, so every sentence below about a recorded relationship is
+conditional on an installation that has one, and an instruction a reader follows is not a store
+that enforces it.
+
+## One request in four starts a supervision
+
+An initiative turns up in requests that want quite different things, and the difference is in the
+request rather than in the link.
+
+| Request | Owner | Effect on binding |
+|---|---|---|
+| Execute this initiative's agreed projects, naming the initiative | this entry, through [crw-run](../SKILL.md) | designates this task as that initiative's supervisor |
+| Define or plan it | [crw-define](../../crw-define/SKILL.md), [crw-plan](../../crw-plan/SKILL.md) | none; planning creates no supervisor and moves no ownership |
+| How is it going | a status read | none; it reads existing records and wakes nothing |
+| An initiative link carried as context by other work | the operation already running | none; it locates context |
+
+A designation is explicit and names the initiative. A link by itself rebinds no existing parent,
+and a title, a folder, a branch or a chat link makes no role at all: identity stays on the stable
+IDs under [OPS-7.1](operations.md#ops-71-what-an-assignment-binds). Explicit read-only,
+status-only, plan-only, no-create, no-goal and narrower delivery limits survive this routing
+exactly as they survive it in Run, and they travel down without widening
+([OPS-7.3](operations.md#ops-73-isolation-between-parents)).
+
+## What the binding fixes
+
+Bind three things together, because a supervision missing any of them has no boundary:
+
+- the stable initiative ID and URL, with the revision of the body the finish condition was read from;
+- the approved project set, each project by stable ID; and
+- the completion boundary, which is that finish condition as the initiative states it, together
+  with what the designation excludes.
+
+The approved set is the set agreed at designation. A project created or linked to the initiative
+afterwards is outside it, and admitting one is a scope change recorded with its source and date,
+for the same reason a project link does not approve future backlog additions one level down.
+Executing an initiative is therefore never a standing claim on whatever the initiative later
+accumulates, and it reaches no work outside it.
+
+Where a project in the set already answers to a different initiative's execution supervisor, it
+keeps that one: this initiative references its outcome instead of issuing it work, and the
+reference is recorded as a reference so nobody later reads it as an instruction. A supervisor
+binding makes this task no project's parent and no issue's child, it holds no checkout, and it
+merges nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). Where an
+installation records these relationships, one live scope per task per role is the rule it enforces,
+so a second same-role binding is refused rather than silently replacing the first.
+
+The record is the initiative's own, written by the supervisor under the
+[initiative body standard](../../crw-plan/references/integrations.md#initiative-body-standard) and
+its comments and updates. The supervision record that makes recovery possible is in
+[Coordination record](task-packet.md#coordination-record).
+
+## Reuse before creating anything
+
+Read in this order and stop at the first level that already exists, because every later step
+assumes the earlier one was checked:
+
+1. **The supervisor.** If this initiative already has one, that task is the supervisor. Read its
+   record and status without waking it, and continue there rather than binding a second.
+2. **Each project's parent.** A project in the set with a parent keeps it. Read that parent's
+   coordination record for its issue scope, delivery limits and current state.
+3. **Each parent's children.** A live child is the owner of its issue. It is not reassigned, not
+   duplicated and not addressed by this task.
+4. **The pull requests already open.** Each issue's one current delivery pull request is in its
+   parent's record; read it there rather than asking for a new one or opening a second.
+
+Repeating the designation, and resuming after an interruption, run this same order and converge on
+the same tasks. Reuse is the first move and creation is what remains after it, so a supervision
+that starts twice does not produce two of anything. A busy parent, an unreachable record or an
+uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
+
+## Hand a project to its parent
+
+What travels down is one project's brief and nothing below it: the project's criteria and the
+revision they were read at, its prerequisites including the peers it shares a surface with, the
+authority and limits in force, and the current state as locators rather than contents. The shape is
+[Project handoff](task-packet.md#project-handoff), written in English like every instruction
+between tasks.
+
+Two carriers, chosen by whether the parent exists. A project with no parent gets the handoff as the
+first prompt of the new task, prefixed with the project designation so that task runs its own
+[Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding). An
+existing parent gets it as a [Coordination message](task-packet.md#coordination-message) of kind
+project handoff, carrying the [restoration block](task-packet.md#restoration-block) when that
+parent's turn is already running.
+
+A handoff sent is not a parent bound. The transport accepting it, the parent binding the project,
+and the parent returning a result are three facts recorded separately, and the first does not
+establish the second.
+
+From there the project is the parent's. It decides the issues, their dependencies and order, which
+children exist, and how each delivery is verified and integrated. The supervisor does not repeat
+that investigation, write those issue bodies or review those diffs, because running the same
+enquiry once per level is how one project's cost becomes three. Nor does it instruct a child: a
+change it wants in a child's work is said to that child's parent.
+
+Preparation is per project and never a queue. A project whose brief is ready is handed over now,
+while another is still being prepared, and a project whose prerequisites are met does not wait on
+an unrelated one. Holding a ready project needs a concrete reason recorded against it: a
+prerequisite not yet verified, a shared resource whose order is still being decided, or a limit the
+designation imposes.
+
+## What travels back up
+
+A parent returns four things and no more: the project's result, the evidence per criterion, the
+problems it could not resolve, and the decisions it needs. Everything else stays where it already
+is. The child's per-finding trail stays on its pull request, the parent's issue records stay in the
+project, and the raw receipts stay in their private evidence locations; the report carries the
+pointer to each.
+
+Real delivery facts are read through the relationships that already hold them rather than recopied
+upward. Which pull request delivers an issue, which revision a verdict was recorded against and
+whether a merge actually landed are already recorded by the parent and, where an installation holds
+the assignment, by that record; the supervisor reads them there and treats
+[Implementation Done](../../crw-plan/references/integrations.md#implementation-done) as the test for
+a landing. A green check, a parent's acceptance and a completed turn are not that evidence.
+
+The supervisor decides what a pair of parents cannot settle alone: a disagreement, a change that
+widens either project's scope, who owns newly discovered work, and shared resources including the
+order in which projects reach a shared target. It verifies each reported project outcome against
+the initiative's finish condition and stops there. Child delivery, parent acceptance, the merge,
+installation, observed behaviour, project completion and initiative completion stay separate
+claims, so a few projects marked done do not finish the initiative.
+
+## Recover the supervision
+
+After a compaction, a turn ending or a restart, read the supervision record first, then refresh
+only what can have moved: each parent's status and its last returned result, the state of the
+requests still outstanding, and the current head and checks of the pull requests already named.
+The investigation, the plan and the issue bodies are not regenerated; they are in Linear and in
+each parent's record, and rewriting them from this task's view replaces those records with a guess.
+
+A child that is alive keeps its issue. Uncertain delivery, an unreadable record or an elapsed wait
+is not proof that a writer is gone, and recovery that cannot read a level reports that level as
+unknown rather than treating it as empty. Reconcile before creating, never after.
+
+## Cases
+
+These are the situations this entry has to get right. Three of them are already worked one level
+down in the [operations scenarios](operations/scenarios.md) as S29, S30 and S31, and are cited
+rather than rewritten.
+
+### C1 Several projects, ready at different times
+
+Observed: the approved set holds four projects. Two have verified prerequisites, one waits on a
+contract another project is still delivering, and one has no parent yet.
+Clauses: [OPS-7.1](operations.md#ops-71-what-an-assignment-binds),
+[OPS-7.3](operations.md#ops-73-isolation-between-parents).
+Action: hand the two ready projects to their parents now, and create the missing parent for the
+third as its brief is finished, rather than preparing all four and starting together. Record
+against the waiting project the exact prerequisite and where its verification will appear.
+Preserved: no project is delayed by another project's preparation, and the waiting one is held by a
+recorded dependency rather than by a queue.
+
+### C2 A project that contributes to several initiatives
+
+Observed: a project in the approved set is also linked to another initiative, which has its own
+execution supervisor.
+Clauses: [OPS-7.3](operations.md#ops-73-isolation-between-parents),
+[OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity); worked as S29.
+Action: leave its execution supervisor and its parent as they are, reference its outcome, and
+record the reference as a reference. Do not instruct that parent, clone its children or count its
+delivery twice. A requirement for that project goes to its own supervisor, which decides it.
+Preserved: one execution owner per scope, and no second supervisor reaching into a bound parent.
+
+### C3 The existing parent is busy
+
+Observed: the project's parent exists and its turn is running.
+Clauses: [OPS-7.3](operations.md#ops-73-isolation-between-parents).
+Action: read its state and steer the verified active turn with the handoff, rather than waiting for
+idle or creating a second parent. A transport that refuses a message to an active task is
+protecting that turn. If the turn changes between reading and sending, read again and reclassify
+instead of retrying blind.
+Preserved: one parent per project, its running work intact, and no duplicate writer.
+
+### C4 The existing parent is idle
+
+Observed: the project's parent exists, has no running turn, and its last result is older than the
+current project state.
+Clauses: [OPS-7.1](operations.md#ops-71-what-an-assignment-binds).
+Action: send the handoff by the ordinary message path with the restoration block, because an idle
+task has usually lost the context its first prompt gave it. Refresh the brief to the current
+revision before sending rather than resending the original.
+Preserved: the same parent, the same binding, and a brief that matches what is true now.
+
+### C5 The binding cannot be settled
+
+Observed: two candidates match by name, or a record names a supervisor whose task cannot be
+confirmed, or the designation does not resolve to one initiative.
+Clauses: [OPS-7.1](operations.md#ops-71-what-an-assignment-binds),
+[OPS-7.2](operations.md#ops-72-never-route-on-a-display-name-or-a-working-directory); the
+ownership half is worked as S30.
+Action: bind nothing. Report the exact ambiguity with its candidates and what would settle it, and
+ask. Meanwhile continue any part of the work whose ownership is not ambiguous. Never pick by title,
+by folder or by whichever record was read last.
+Preserved: no supervision created on a guess, and no existing parent rebound by accident.
+
+### C6 Read-only, report-only or no-create scope
+
+Observed: the request names the initiative, and the scope forbids creating tasks, writing records
+or both.
+Clauses: [OPS-7.3](operations.md#ops-73-isolation-between-parents); worked as S31.
+Action: resolve the binding, read the projects and their parents, and return the brief each parent
+would receive, the reuse order and the gaps, without creating a task or writing a record. Name the
+one missing permission rather than substituting a narrower action and calling it done.
+Preserved: the limit, and a result the user can act on without repeating the investigation.
+
+### C7 Part of the set is already finished
+
+Observed: two projects in the approved set are complete, with their pull requests merged and their
+outcomes verified.
+Clauses: [OPS-7.1](operations.md#ops-71-what-an-assignment-binds); landing evidence per
+[Implementation Done](../../crw-plan/references/integrations.md#implementation-done).
+Action: record the verified outcome and its evidence pointer, and execute only what remains. Do not
+reopen a finished project, re-verify a landing already verified at the same revision, or hand its
+parent a brief it has already delivered. Completing the initiative still needs its finish condition
+to hold on those outcomes together.
+Preserved: finished work stays finished, and the initiative is not reported complete because some
+of its parts are.
