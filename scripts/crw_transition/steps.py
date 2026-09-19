@@ -5,8 +5,10 @@ code, and nothing is removed before the replacement is proven able to serve it. 
 from what is on disk, so an interrupted run converges on the next one.
 """
 
+import errno
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -63,8 +65,31 @@ def retire(path, into=None, stem=None):
             continue
         os.close(handle)
         break
-    os.replace(str(path), target)
+    try:
+        os.replace(str(path), target)
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            _discard(target)
+            raise
+        # A custom settings path can live on another filesystem -- a mounted volume is the ordinary
+        # case -- and a rename cannot cross one. Copy first, then unlink, so the archive exists
+        # before the original stops existing: this failure happens after the standdown, and an
+        # unrecoverable source there means no completion hook at all.
+        try:
+            shutil.copy2(str(path), target)
+        except OSError:
+            _discard(target)
+            raise
+        os.unlink(str(path))
     return target
+
+
+def _discard(target):
+    """Remove this function's own placeholder, so a retry does not skip a name for no reason."""
+    try:
+        os.unlink(target)
+    except OSError:
+        pass
 
 
 def _answer(step, outcome, detail, **extra):
@@ -110,6 +135,27 @@ def adapter_paths(host):
         return None, None
     base = Path(destination) / "current" / "bin"
     return str(base / inventory.INTERPRETER_SCRIPT), str(base / inventory.ADAPTER_SCRIPT)
+
+
+def registered_settings(host):
+    """The document the registered hook actually reads, and where it came from.
+
+    A manual install can name a custom path permanently while a valid document also sits at the
+    fixed path. Building the plugin-owned settings from the fixed one silently replaces the marker
+    root, the database and the journal the registration was using, and reports success doing it.
+    What the registration names wins.
+    """
+    for entry in host["hook"]["entries"]:
+        named = entry.get("settings")
+        if not named or not entry.get("proven"):
+            continue
+        document, _outcome, _detail, _found = completion.read_configuration(Path(named))
+        if document is not None:
+            return document, "the settings the registration names, " + str(named)
+    document = host["settings"].get("document")
+    if document is not None:
+        return document, "the settings at " + str(host["settings"]["path"])
+    return None, None
 
 
 def preflight(host, options):
@@ -349,7 +395,18 @@ def hook_standdown(host, options, *, apply=False):
             parts = entry["identity"].split(":")
             return int(parts[-2]), int(parts[-1])
 
-        for entry in sorted(entries, key=position, reverse=True):
+        # Re-derived from the document about to be written, never carried from the snapshot.
+        # document and again are both reads taken AFTER any change, so they agree with each other
+        # while the identities decided on are already stale, and popping a stale index removes
+        # somebody else's hook and leaves ours registered.
+        current = completion.adapter_entries(again.value, event)
+        if sorted(item["command"] for item in current) != sorted(item["command"] for item in entries):
+            return _answer("hook standdown", REFUSED,
+                           "the registrations of this adapter changed after they were read, so"
+                           " nothing was removed; rerun to decide against the file as it stands",
+                           wanted=sorted(item["identity"] for item in entries),
+                           found=sorted(item["identity"] for item in current))
+        for entry in sorted(current, key=position, reverse=True):
             matcher, index = position(entry)
             if matcher < len(groups) and index < len(groups[matcher].get("hooks") or []):
                 groups[matcher]["hooks"].pop(index)
@@ -610,13 +667,42 @@ ORDER = (("hook standdown", hook_standdown), ("settings retire", settings_retire
 MCP_STEPS = ("mcp record retire", "mcp table standdown", "mcp record install")
 
 
+def hook_recheck(host):
+    """Whether a registration of this adapter is in the hook file after the sequence ran.
+
+    Hook ownership spans two artifacts. The installer decides it from the settings and then locks
+    hooks.json separately, so a concurrent user-owned install that made its decision before these
+    settings became plugin-owned can still append after the standdown. Both registrations would
+    then run on every Stop.
+
+    Closing that race needs the other side to decide ownership under the lock it writes in, and
+    that side is not this command's to change. What is in reach is refusing to report success over
+    it: the file is read again at the end, and a registration that reappeared is named.
+    """
+    again = inventory.read_hook(host["codexHome"], host["hook"]["event"],
+                               repo_root=host["repoRoot"])
+    if again["reading"] is not None:
+        return _answer("hook recheck", REFUSED,
+                       "the hook file could not be read back, so whether a registration reappeared"
+                       " was not established", reading=again["reading"])
+    if again["entries"]:
+        return _answer("hook recheck", REFUSED,
+                       "a registration of this adapter is in the hook file again ("
+                       + ", ".join(item["identity"] for item in again["entries"])
+                       + "). Another install appended after the standdown, and both it and the"
+                       " plugin declaration would run on every " + str(host["hook"]["event"])
+                       + ". Rerun this transition to remove it",
+                       identities=[item["identity"] for item in again["entries"]])
+    return _answer("hook recheck", SETTLED,
+                   "no registration of this adapter is in the hook file")
+
 def transition(host, options, *, apply=False):
     """Run the steps in order, stopping at the first refusal."""
     results = [preflight(host, options)]
     if results[0]["outcome"] == REFUSED:
         results += [_answer(name, NOT_REACHED, "preflight refused") for name, _ in ORDER]
         return results
-    previous = host["settings"]["document"]
+    previous, _carried = registered_settings(host)
     lock = None
     try:
         for name, step in ORDER:
@@ -644,6 +730,8 @@ def transition(host, options, *, apply=False):
     finally:
         if lock is not None:
             lock.__exit__(None, None, None)
+    if apply and all(item["outcome"] in DONE for item in results):
+        results.append(hook_recheck(host))
     return results
 
 

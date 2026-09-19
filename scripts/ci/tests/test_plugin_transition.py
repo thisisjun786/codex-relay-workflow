@@ -9,6 +9,7 @@ this repository's code, that it refuses rather than leaving a host without a hoo
 skills, and that running it twice changes nothing the second time.
 """
 
+import errno
 import json
 import os
 import shutil
@@ -397,10 +398,12 @@ class RunningItAgainChangesNothing(TransitionCase):
         code, answer = host.transition("--apply")
         self.assertEqual(code, 0)
         outcomes = self.host.outcomes(answer)
-        # preflight settles on every run by answering that nothing blocks. Every STEP has to
-        # report that it found nothing left to do.
+        # preflight and the recheck settle on every run: they are readings, not work. Every STEP
+        # has to report that it found nothing left to do.
+        readings = ("preflight", "hook recheck")
         self.assertEqual({step: outcome for step, outcome in outcomes.items()
-                          if step != "preflight" and outcome != "already_done"}, {})
+                          if step not in readings and outcome != "already_done"}, {})
+        self.assertEqual(outcomes["hook recheck"], "settled")
         self.assertEqual((host.config(), host.hooks_document(), host.settings(), host.record()),
                          first)
 
@@ -726,10 +729,25 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(code, 0)
         installed = host.record()
         self.assertEqual(installed["owner"], "plugin")
-        # The second run still holds the pre-lock reading, which named the user-owned record.
+        # The second run still holds the pre-lock reading, which named the user-owned record and
+        # the registrations the first run has since removed. It stops at the hook step, because a
+        # stale positional identity is exactly what must not be acted on.
         results = steps.transition(stale, {"accept_hook_trust_gap": True}, apply=True)
         outcomes = {item["step"]: item["outcome"] for item in results}
-        self.assertEqual(outcomes.get("mcp record retire"), "already_done", json.dumps(results)[:800])
+        self.assertEqual(outcomes.get("hook standdown"), "refused", json.dumps(results)[:900])
+        self.assertEqual(host.record(), installed)
+
+        # And with the hook surface refreshed but the MCP reading still stale -- the shape the
+        # ownership lock exists for -- the retire step stands down instead of taking the plugin
+        # record the first run wrote. Driven through transition(), because the re-read happens
+        # there, inside the lock, not in the step.
+        current = {**stale,
+                   "hook": inventory.read_hook(host.home, repo_root=ROOT),
+                   "settings": inventory.read_settings(host.home)}
+        results = steps.transition(current, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes.get("mcp record retire"), "already_done",
+                         json.dumps(results)[:900])
         self.assertEqual(host.record(), installed)
 
     def test_a_populated_override_is_refused_before_anything_is_removed(self):
@@ -824,6 +842,90 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual([r["outcome"] for r in answer["results"]], ["settled", "settled"])
         self.assertIsNone(host.settings())
         self.assertIsNone(host.record())
+
+    def test_positions_are_re_derived_so_a_hook_added_after_the_reading_is_not_popped(self):
+        """document and again are both reads taken AFTER a change, so they agree while stale."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        stale = inventory.snapshot(host.home, repo_root=ROOT)
+        document = host.hooks_document()
+        foreign = {"type": "command", "command": "/bin/true"}
+        document["hooks"]["Stop"][0]["hooks"].insert(0, foreign)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        answer = steps.hook_standdown(stale, {"accept_hook_renumbering": True}, apply=True)
+        self.assertEqual(answer["outcome"], "settled", json.dumps(answer)[:500])
+        left = host.hooks_document()["hooks"]["Stop"][0]["hooks"]
+        self.assertEqual(left, [foreign], "the stale index popped the wrong hook")
+
+    def test_the_settings_the_registration_names_are_what_is_carried_forward(self):
+        """A valid document at the fixed path must not override the one the hook actually reads."""
+        host = self.host
+        host.link_skills()
+        host.register_hook()
+        custom = host.root / "registered-settings.json"
+        fixed = host.home / "crw-completion-hook.json"
+        registered = json.loads(fixed.read_text(encoding="utf-8"))
+        registered["markerRoot"] = str(host.marker / "registered")
+        custom.write_text(json.dumps(registered), encoding="utf-8")
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].rsplit(" ", 1)[0] + " " + str(custom)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        # A DIFFERENT, perfectly valid document is left at the fixed path.
+        unrelated = dict(registered)
+        unrelated["markerRoot"] = str(host.marker / "unrelated")
+        fixed.write_text(json.dumps(unrelated), encoding="utf-8")
+        host.register_mcp()
+        host.install_plugin()
+
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
+        self.assertEqual(host.settings()["markerRoot"], str(host.marker / "registered"))
+
+    def test_an_archive_that_cannot_be_renamed_is_copied_across_the_boundary(self):
+        """os.replace cannot cross a filesystem, and this one runs after the standdown."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        source = Path(self.directory) / "settings-on-another-volume.json"
+        source.write_text('{"kept": true}', encoding="utf-8")
+        home = Path(self.directory) / "home-for-archives"
+        home.mkdir()
+        real_replace = os.replace
+
+        def refuse_to_rename(src, dst, *args, **keywords):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        os.replace = refuse_to_rename
+        try:
+            target = steps.retire(source, into=home, stem="crw-completion-hook.json")
+        finally:
+            os.replace = real_replace
+        self.assertFalse(source.exists())
+        self.assertTrue(Path(target).is_file())
+        self.assertEqual(json.loads(Path(target).read_text(encoding="utf-8")), {"kept": True})
+        self.assertEqual(Path(target).parent, home)
+
+    def test_a_registration_that_reappears_after_the_standdown_is_reported(self):
+        """Hook ownership spans two artifacts, so a concurrent install can still append."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        before = host.hooks_document()
+        code, _ = host.transition("--apply")
+        self.assertEqual(code, 0)
+        # Exactly what a concurrent user-owned install leaves behind.
+        (host.home / "hooks.json").write_text(json.dumps(before, indent=2), encoding="utf-8")
+        answer = steps.hook_recheck(inventory.snapshot(host.home, repo_root=ROOT))
+        self.assertEqual(answer["outcome"], "refused")
+        self.assertIn("in the hook file again", answer["detail"])
+        self.assertEqual(answer["identities"], ["user:Stop:0:0"])
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
