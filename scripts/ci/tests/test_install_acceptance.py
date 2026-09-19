@@ -2285,11 +2285,91 @@ RESOLVES_LIKE_PYTHON = {
          ("def outer():",
           "    def consumer():",
           "        return CHANGED",
-          "    return consumer"),
-         "outer.consumer", True,
-         "the pair the four above must not break: with no definition taking the name, the"
-         " closure really does read the module constant, and counting definitions as bindings"
-         " sits one line from stopping every outward lookup."),
+         "    return consumer"),
+        "outer.consumer", True,
+        "the pair the four above must not break: with no definition taking the name, the"
+        " closure really does read the module constant, and counting definitions as bindings"
+        " sits one line from stopping every outward lookup."),
+    "a qualified owner an import rebinds to another module":
+        (REFUSAL,
+         ("import json as reading",
+          "",
+          "def consumer():",
+          "    return reading.UNREADABLE"),
+         "consumer", False,
+         "the qualifier's spelling is not the module it names. Comparing it with the names this"
+         " module happens to bind lets any source borrow a spelling and be read as the owner,"
+         " which is the same-named-attribute case one level up."),
+    "a qualified owner reached under a name the source chose":
+        (REFUSAL,
+         ("import crw_runtime.reading as r",
+          "",
+          "def consumer():",
+          "    return r.UNREADABLE"),
+         "consumer", True,
+         "its other half: the owner really is that module, written under the name the source"
+         " gave it. Matching spellings misses this one and accepts the one above, and both"
+         " stop once the qualifier is resolved through the source's own imports."),
+    "a decorator alias written as an annotated binding":
+        (REFUSAL,
+         ("prop: object = property",
+          "",
+          "class Holder:",
+          "    @prop",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "prop: object = property is the same binding with a type written on it. Reading only"
+         " the bare assignment leaves the alias reaching nothing, so the class is indexed as"
+         " holding an ordinary method and the descriptor read is never seen."),
+    "a decorator alias written as a bare binding":
+        (REFUSAL,
+         ("prop = property",
+          "",
+          "class Holder:",
+          "    @prop",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "its pair: the unannotated form was already right, so admitting the annotated one must"
+         " not have changed what the bare one binds."),
+    "an annotated alias to something that is not a descriptor":
+        (REFUSAL,
+         ("prop: object = staticmethod",
+          "",
+          "class Holder:",
+          "    @prop",
+          "    def carrier():",
+          "        return reading.UNREADABLE",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", False,
+         "the other pair: an annotation does not make a binding a descriptor. Reading"
+         " self.carrier through a staticmethod alias hands back the function rather than"
+         " running it, so inventing a call here would be the borrowed answer again."),
+    "a refusal a wildcard import brings in":
+        (REFUSAL,
+         ("from crw_runtime.reading import *",
+          "",
+          "def consumer():",
+          "    return UNREADABLE"),
+         "consumer", True,
+         "a star is not a name. Treating it as one leaves the imported answers empty and the"
+         " consumer disappears, though Python really does bind the refusal here."),
+    "a wildcard import from a module that exports no answer":
+        (REFUSAL,
+         ("from json import *",
+          "",
+          "def consumer():",
+          "    return UNREADABLE"),
+         "consumer", False,
+         "its pair: the owner is still asked what it exports. Expanding a star into every bare"
+         " name in sight would make the spelling alone enough, which is what asking the owner"
+         " exists to prevent."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3791,6 +3871,13 @@ def _hands_on(tree, spelled):
             bound = [(node.lineno, inner.id, spelling) for target in node.targets
                      for inner in ast.walk(target)
                      if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store)]
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            # prop: object = property is the same binding with a type written on it. Reading
+            # only ast.Assign here makes the annotated form reach nothing, and the class using
+            # @prop is then indexed as holding an ordinary method.
+            spelling = (_dotted(node.value) or "").rpartition(".")[2]
+            bound = ([(node.lineno, node.target.id, spelling)]
+                     if isinstance(node.target, ast.Name) else [])
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             # A def or a class of that name shadows the builtin it is spelled like, and what it
             # reaches is not the decorator, so it is recorded as reaching nothing.
@@ -4751,12 +4838,13 @@ def source_spellings(tree):
 
 
 def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), built=(),
-                     imported_answers=(), known_keys=()):
+                     imported_answers=(), known_keys=(), qualifies=None):
     """The matcher: which node is a refusal, spelled any of the derived ways."""
     answers = spellings["answer"]
     attributes = spellings["module attribute"] | spellings["collection"]
     names = spellings["own global"] | spellings["collection"] | frozenset(imported_answers)
     owners = spellings.get("owner", frozenset())
+    qualifies = qualifies or {}
 
     def spelled(node, klass):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -4788,7 +4876,11 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
                 return None
             # The owner has to be a module that really exports one. Matching the attribute name
             # alone makes any object with a same-named attribute hold an answer.
-            if node.attr in attributes and (through or "").rpartition(".")[2] in owners:
+            # Which module a qualifier names is the analysed source's own import to answer:
+            # import json as reading wears a spelling this module happens to own, and
+            # import crw_runtime.reading as r wears one it does not.
+            named_module = qualifies.get(through, (through or "").rpartition(".")[2])
+            if node.attr in attributes and named_module in owners:
                 return (through or "") + "." + node.attr
             return None
         if isinstance(node, ast.Name) and node.id in names:
@@ -5124,19 +5216,43 @@ def refusals_reached(source):
         if not isinstance(owner, types.ModuleType):
             continue
         for alias in node.names:
+            if alias.name == "*":
+                # from X import * imports every name the module exports, so the answers among
+                # them arrive here bare and under no alias. Only a module this process has
+                # already imported can say which those are, and __all__ decides when the
+                # module declares one.
+                exported = getattr(owner, "__all__", None)
+                if exported is None:
+                    exported = [name for name in vars(owner) if not name.startswith("_")]
+                for name in exported:
+                    if name in answers_here and getattr(owner, name, None) in REFUSAL_ANSWERS:
+                        imported_answers.add(name)
+                continue
             if alias.name in answers_here and getattr(owner, alias.name, None) in REFUSAL_ANSWERS:
                 imported_answers.add(alias.asname or alias.name)
+    # Which module each qualifier in THIS source names, so an owner is decided by the module a
+    # spelling reaches rather than by the spelling itself.
+    qualifies = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                qualifies[alias.asname or alias.name] = alias.name.rpartition(".")[2]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if alias.name != "*":
+                    qualifies[alias.asname or alias.name] = alias.name
     # To a fixpoint, because self.second = self.first holds the refusal only once the pass
     # knows that self.first does.
     held, growing = {}, True
     while growing:
         wider = _held_by_class(
             tree, _refusal_spelled(spellings, held, classes, as_class, shadowed, built,
-                                   imported_answers, known_keys), held)
+                                   imported_answers, known_keys, qualifies), held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _refusal_spelled(spellings, held, classes, as_class, shadowed,
-                                                built, imported_answers, known_keys)),
+                                                built, imported_answers, known_keys,
+                                                qualifies)),
             spellings)
 
 
