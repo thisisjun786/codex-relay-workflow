@@ -263,7 +263,11 @@ initiatives reference its outcome instead of issuing it work, so no second super
 that parent or clones its children. Preserve other project coordinators and route cross-project
 prerequisites by relation; do not absorb their issues. A project with no supervisor, and a
 standalone issue with no project, run exactly as they do today in a project- or issue-scoped task:
-do not invent an initiative, a project or an upper task to complete the shape. An explicit
+do not invent an initiative, a project or an upper task to complete the shape. These roles describe
+relationships rather than ranks, so an issue-scoped task running without a parent is the owner of
+its own scope rather than a delegated child: the rows above that reserve merging and the Linear
+record for a parent describe the delegated case, and a standalone owner carries those duties as far
+as its own assignment authorizes them. An explicit
 current-task implementation request keeps that mode and issue scope; it is not evidence that an
 independent child was created. Reuse the responsible child for the same issue's follow-ups, not for
 a new issue. Explicit project-focus switches preserve old bindings and active ownership before

@@ -60,9 +60,10 @@ and observed behavior. Reuse valid proof; read
 readiness or integration determines the next action.
 
 If the claimed result still has a consequential gap, choose its correction or
-missing verification and route it one level down from whoever is asking: a parent takes an issue's
-gap to its responsible child, a supervisor takes the same gap to that project's parent and never to
-its children, and a standalone issue keeps its own issue-scoped owner. Where the gap spans projects
+missing verification and route it one level down from whoever is asking, unless the fix is the
+caller's own to make, in which case it stays with the caller: a parent takes an issue's gap to its
+responsible child or handles what its project owns itself, a supervisor takes the same gap to that
+project's parent and never to its children, and a standalone issue keeps its own issue-scoped owner. Where the gap spans projects
 it goes to the parents that own the work, while an unresolved
 disagreement, a scope change, new ownership or a shared resource is their common supervisor's
 decision even when those parents agree. Where the projects
