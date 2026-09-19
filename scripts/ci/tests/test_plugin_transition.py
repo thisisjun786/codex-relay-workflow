@@ -351,10 +351,13 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1)
-        standdown = [r for r in answer["results"] if r["step"] == "hook standdown"][0]
-        self.assertEqual(standdown["outcome"], "refused")
-        self.assertEqual(standdown["shiftedIdentities"], ["user:Stop:0:1"])
+        # Refused at preflight, before the settings are archived: the settings retire runs first
+        # now, so refusing only at the standdown would leave the registration in place with its
+        # configuration already moved aside.
+        self.assertEqual(answer["results"][0]["outcome"], "refused")
+        self.assertIn("user:Stop:0:1", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), document)
+        self.assertEqual(sorted(host.home.glob("*.superseded-*")), [])
         code, answer = host.transition("--apply", "--accept-hook-renumbering")
         self.assertEqual(code, 0)
         self.assertEqual(host.hooks_document()["hooks"]["Stop"][0]["hooks"], [foreign])
@@ -388,7 +391,8 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
         code, answer = host.transition("--apply")
         outcomes = self.host.outcomes(answer)
-        self.assertEqual(outcomes["hook standdown"], "refused")
+        self.assertEqual(outcomes["preflight"], "refused")
+        self.assertEqual(outcomes["hook standdown"], "not_reached")
         self.assertEqual(outcomes["settings install"], "not_reached")
         # The user-owned document omits owner entirely, so the question is whether the PLUGIN
         # ever became the owner while a registration was still there. It must not have.
@@ -1167,6 +1171,84 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn(str(state), answer["hostRecordPath"])
         self.assertIn(answer["recordedHostRecord"], (False, None))
         self.assertIsNotNone(answer["recordedDetail"])
+
+    def test_a_plugin_disabled_after_preflight_stops_the_unlink(self):
+        """preflight reads the replacement once; the removals happen afterwards."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        text = host.config().replace('[plugins."crw@crw"]\nenabled = true',
+                                     '[plugins."crw@crw"]\nenabled = false')
+        (host.home / "config.toml").write_text(text, encoding="utf-8")
+        answer = steps.skill_unlink(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused")
+        self.assertIn("disabled", answer["detail"])
+        self.assertTrue(sorted((host.home / "skills").iterdir()))
+
+    def test_a_link_replaced_after_the_inventory_is_left_alone(self):
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        replaced = host.home / "skills" / "crw-run"
+        replaced.unlink()
+        replaced.symlink_to(host.root)
+        answer = steps.skill_unlink(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused")
+        self.assertIn("crw-run", answer["detail"])
+        self.assertTrue(replaced.is_symlink())
+        self.assertEqual(replaced.resolve(), host.root.resolve())
+
+    def test_two_registrations_differing_only_in_behaviour_are_refused(self):
+        host = self.host
+        custom, fixed = self.registered_at(host, "first.json")
+        second = json.loads(custom.read_text(encoding="utf-8"))
+        second["mode"] = "hold"
+        second["isolationAssertedBy"] = "someone"
+        other = host.root / "second.json"
+        other.write_text(json.dumps(second), encoding="utf-8")
+        document = host.hooks_document()
+        entry = dict(document["hooks"]["Stop"][0]["hooks"][0])
+        entry["command"] = entry["command"].rsplit(" ", 1)[0] + " " + str(other)
+        document["hooks"]["Stop"][0]["hooks"].append(entry)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        host.install_plugin()
+        code, answer = host.transition("--apply", "--accept-hook-renumbering")
+        self.assertEqual(code, 1)
+        self.assertIn("disagree about", answer["results"][0]["detail"])
+
+    def test_an_empty_live_argument_list_is_not_refilled_from_history(self):
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        superseded = host.home / "crw-bridge-mcp.json.superseded-20200101T000000Z"
+        record = dict(host.record())
+        record["args"] = ["--from-history"]
+        superseded.write_text(json.dumps(record), encoding="utf-8")
+        (host.home / "crw-bridge-mcp.json").unlink()
+        answer = steps.mcp_record_install(inventory.snapshot(host.home, repo_root=ROOT), {},
+                                          apply=True)
+        self.assertIn(answer["outcome"], ("settled", "already_done"), json.dumps(answer)[:400])
+        self.assertEqual(host.record()["args"], [])
+
+    def test_the_preserved_receipt_names_the_carried_document(self):
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json",
+                                           markerRoot=str(self.host.marker / "registered"))
+        unrelated = json.loads(fixed.read_text(encoding="utf-8"))
+        unrelated["markerRoot"] = str(host.marker / "unrelated")
+        fixed.write_text(json.dumps(unrelated), encoding="utf-8")
+        host.install_plugin()
+        code, answer = host.transition()
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1200])
+        self.assertEqual(answer["preserved"]["markerRoot"], str(host.marker / "registered"))
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""

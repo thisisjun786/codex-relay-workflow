@@ -336,6 +336,20 @@ def preflight(host, options):
                         " this command builds always records " + completion.EVERY_INVOCATION
                         + ", so transitioning would change what this host records without being"
                           " asked")
+    shifted = host["hook"].get("later") or []
+    if shifted and not options.get("accept_hook_renumbering"):
+        # Asked here as well as in the lock, because the settings are archived before the
+        # standdown: refusing only at the standdown would leave the registration in place with its
+        # configuration already moved aside, which is a command that refused and still broke the
+        # host.
+        refusals.append("removing this adapter's registration shifts the index of "
+                        + ", ".join(shifted) + ", and Codex recorded trust against those"
+                        " positions. Pass --accept-hook-renumbering to do it knowingly")
+    if host["settings"].get("destinationChanged"):
+        refusals.append("the destination changed while this host was being read ("
+                        + json.dumps(host["settings"]["destinationChanged"])
+                        + "), so nothing was validated against the installation this document"
+                          " names; rerun to decide against the host as it now stands")
     for entry in host["hook"]["entries"]:
         if not entry["proven"]:
             refusals.append("the registration " + entry["identity"] + " runs a program this"
@@ -682,7 +696,14 @@ def mcp_record_install(host, options, *, apply=False):
     retired = _retired_record(host)
     # After the table is removed the registration is gone, so an interrupted run would rebuild the
     # record with no arguments. The retired record is where they survive.
-    arguments = registration.get("args") or (retired or {}).get("args") or []
+    # "args" absent and "args" empty are different answers: falling back on an empty live list
+    # restored historical arguments the current registration had deliberately dropped.
+    if registration:
+        arguments = list(registration.get("args") or [])
+    elif retired is not None:
+        arguments = list(retired.get("args") or [])
+    else:
+        arguments = []
     try:
         wanted = bridgerecord.document(command=command, arguments=arguments,
                                        name=inventory.SERVER_NAME, issue="CRW-115",
@@ -705,6 +726,30 @@ def mcp_record_install(host, options, *, apply=False):
                    applied=written.get("applied"), wrote=written.get("wrote"))
 
 
+def plugin_refusals(host):
+    """Whether the plugin can still serve what is about to be removed.
+
+    preflight reads this once, and the steps that remove things run afterwards. A plugin disabled
+    or removed in between leaves a host whose manual surfaces are being taken away and whose
+    replacement is no longer there, so the question is asked again before the last removal.
+    """
+    plugin = inventory.read_plugin(host["codexHome"])
+    found = []
+    if plugin["configEntry"] != reading.PRESENT:
+        found.append("the plugin is no longer registered in "
+                     + str(inventory.config_path(host["codexHome"])) + " ("
+                     + str(plugin["configEntry"]) + ")")
+    if plugin.get("enabled") is False:
+        found.append("the plugin entry " + str(plugin.get("entryKey")) + " is disabled")
+    if not plugin.get("cacheVersion"):
+        found.append("no single installed plugin version could be named"
+                     + (": " + str(plugin["detail"]) if plugin.get("detail") else ""))
+    linked = {Path(item["path"]).name for item in host["skills"]["crwOwned"]}
+    missing = sorted(linked - set(plugin.get("skills") or []))
+    if missing:
+        found.append("the installed package no longer carries " + ", ".join(missing))
+    return found
+
 def skill_unlink(host, options, *, apply=False):
     owned = host["skills"]["crwOwned"]
     if not owned:
@@ -713,12 +758,26 @@ def skill_unlink(host, options, *, apply=False):
         return _answer("skill unlink", WOULD, "would remove "
                        + ", ".join(item["path"] for item in owned),
                        paths=[item["path"] for item in owned])
-    removed = []
+    changed = plugin_refusals(host)
+    if changed:
+        return _answer("skill unlink", REFUSED, "; ".join(changed))
+    removed, left = [], []
     for item in owned:
         path = Path(item["path"])
-        if path.is_symlink():
-            path.unlink()
-            removed.append(str(path))
+        # Re-established here rather than trusted from the inventory: a link replaced since then is
+        # somebody else's, and "is a symlink" is not the question ownership was decided on.
+        owner = inventory.checkout_of(path) if path.is_symlink() else None
+        if owner is None or not (path.resolve() / "SKILL.md").is_file() \
+                or str(path.resolve()) != item.get("target"):
+            left.append(str(path))
+            continue
+        path.unlink()
+        removed.append(str(path))
+    if left:
+        return _answer("skill unlink", REFUSED,
+                       "these links are no longer the ones ownership was established on, so they"
+                       " were left: " + ", ".join(left),
+                       removed=removed, applied=bool(removed), wrote=bool(removed))
     return _answer("skill unlink", SETTLED, "removed " + ", ".join(removed), applied=True,
                    wrote=True, removed=removed,
                    foreignLeft=[item["path"] for item in host["skills"]["foreign"]])
@@ -862,7 +921,8 @@ def disable(host, options, *, apply=False):
 
 def preserved_paths(host):
     """What disable and remove do not touch, named so the output can say it rather than imply it."""
-    document = host["settings"]["document"] or {}
+    document = (host.get("registered") or {}).get("document") \
+        or host["settings"]["document"] or {}
     return {k: v for k, v in {
         "relayStore": document.get("dbPath"),
         "markerRoot": document.get("markerRoot"),

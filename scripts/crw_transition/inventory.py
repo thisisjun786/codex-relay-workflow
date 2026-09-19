@@ -414,7 +414,8 @@ def newest_retired(codex_home):
 # The fields a transition must not change without being asked: where the work is recorded and which
 # store it is recorded in. Two registrations naming documents that disagree about these are two
 # installations, and choosing between them by hook order picks one silently.
-OPERATIONAL = ("markerRoot", "dbPath", "journalRoot", "relayExecutable")
+OPERATIONAL = ("markerRoot", "dbPath", "journalRoot", "relayExecutable",
+               "mode", "isolationAssertedBy", "timeoutSeconds", "journalPolicy")
 
 
 def registered_document(hook, settings, codex_home):
@@ -616,6 +617,14 @@ def snapshot(codex_home, *, repo_root, destination=None, event=None):
     document, carried, conflict = registered_document(hook, settings, codex_home)
     settings["carriedFrom"] = carried
     settings["conflictingRegistrations"] = conflict
+    again = destination_from(document)
+    if not destination and again is not None and str(again) != str(dest or ""):
+        # The registration or its settings moved between the two reads, so the destination the
+        # first read answered is not the one this document names. Reported as a changed host
+        # rather than validating one installation and configuring another.
+        settings["destinationChanged"] = {"first": str(dest) if dest else None,
+                                          "second": str(again)}
+        dest = again
     return {
         "codexHome": str(codex_home),
         "repoRoot": str(repo_root),
