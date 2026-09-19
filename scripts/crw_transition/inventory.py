@@ -135,7 +135,7 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
     answer["cacheVersions"] = [str(path) for path in found]
     version = found[0] if len(found) == 1 else None
     if len(found) > 1:
-        answer["detail"] = ("more than one cached version is present (" 
+        answer["detail"] = ("more than one cached version is present ("
                             + ", ".join(p.name for p in found)
                             + "), and which one a session loads is not readable from here")
     if version is not None:
@@ -435,4 +435,3 @@ def snapshot(codex_home, *, repo_root, destination=None, event=None):
         "pointer": read_pointer(dest),
         "inFlight": read_in_flight(document),
     }
-

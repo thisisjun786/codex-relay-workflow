@@ -162,7 +162,7 @@ def preflight(host, options):
         if not entry["proven"]:
             refusals.append("the registration " + entry["identity"] + " runs a program this"
                             " repository cannot prove is its own adapter (" + str(entry["why"])
-                            + "), so it is left alone. Edit or remove it by hand: " 
+                            + "), so it is left alone. Edit or remove it by hand: "
                             + entry["command"])
     for entry in host["hook"]["unrecognised"]:
         refusals.append("the registration " + entry["identity"] + " names the packaged adapter or"

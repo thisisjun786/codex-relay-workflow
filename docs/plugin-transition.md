@@ -140,4 +140,3 @@ every receipt. There is deliberately no purge flag.
 Written, registered, trusted and fired are four claims. These commands can establish the first two.
 That a hook fired on a trusted path, that a promoted pointer serves a real installation, and that a
 round trip completed are separate observations with their own task.
-
