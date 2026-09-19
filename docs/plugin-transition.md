@@ -48,23 +48,31 @@ declaration is the double fire this exists to prevent, whoever created it.
 ## The order, and the two windows
 
     preflight
-    1 remove the registration that runs our adapter
-    2 retire the settings that registration named
+    1 retire the settings the registration names
+    2 remove the registration that runs our adapter
     3 write the plugin-owned settings, recording the adapter under the destination pointer
     4 retire the user-owned bridge record
     5 remove the config.toml table
     6 write the plugin-owned bridge record
     7 remove the CRW-owned skill links
 
-Only part of that order is forced, and the forced part is what prevents doubles: the registration
+Part of that order is forced, and the forced part is what prevents doubles: the registration
 goes before the new settings, the old settings go before the new ones, and the table goes before the
 plugin record. Steps 4 to 6 are held under the same ownership lock `register-mcp` takes, because a
 user-owned registration landing in the middle would put the record back and leave the host with no
 bridge.
 
-Two windows follow from that order, and both are printed by the run:
+The settings are retired before the registration is removed, and that is deliberate. A custom
+settings path is recorded only in the hook command, so removing the command first and stopping there
+leaves a file the next run cannot rediscover, and a host with no completion hook. Retiring first
+costs a window in which the old registration runs against settings that are no longer there, which
+it answers by releasing in silence, and costs no window in which two adapters run, because the
+plugin-owned settings are not installed until step 3.
 
-- between 1 and 3 no completion hook fires, so a Stop in that window is not recorded anywhere;
+Three windows follow, and all three are printed by the run:
+
+- between 1 and 2 the old registration runs with no settings to read and releases without recording;
+- between 2 and 3 no completion hook fires at all;
 - between 5 and 6 a session that starts finds no bridge registered.
 
 ## Renumbering and trust

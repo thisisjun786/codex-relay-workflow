@@ -305,7 +305,19 @@ def preflight(host, options):
     # so nothing else here catches it.
     refusals.extend(completion.override_complaints(completion.OWNER_PLUGIN))
 
-    conflict = (host.get("registered") or {}).get("conflict") or []
+    if len(plugin.get("entryKeys") or []) > 1:
+        refusals.append("this host registers the plugin from more than one marketplace ("
+                        + ", ".join(plugin["entryKeys"]) + "). Every one of them loads, so"
+                        " transitioning onto one leaves the others running beside it: settle which"
+                        " installation this host keeps first")
+
+    registered = host.get("registered") or {}
+    unreadable = (registered.get("conflict") or {}).get("unreadable") or []
+    if unreadable:
+        refusals.append("a registration names settings that could not be read, so what it is"
+                        " running was not established and no other document stands in for it: "
+                        + "; ".join(unreadable))
+    conflict = (registered.get("conflict") or {}).get("disagree") or []
     if conflict:
         # Two registrations reading documents that disagree about where work is recorded and which
         # store it goes to are two installations. Taking the first by hook order removes both
@@ -532,9 +544,24 @@ def settings_retire(host, options, *, apply=False):
     if not apply:
         return _answer("settings retire", WOULD, "would retire " + ", ".join(paths), paths=paths)
     home = Path(host["codexHome"])
+    known = ((host.get("registered") or {}).get("conflict") or {}).get("documents") or {}
+    if host["settings"].get("document") is not None:
+        known.setdefault(str(host["settings"]["path"]), host["settings"]["document"])
     moved = []
     for candidate in paths:
         with hostrecord.Locked(Path(candidate)):
+            # The snapshot proved what this file said; the lock only serialises the rename. A
+            # writer that finished in between has settings this command never read, and archiving
+            # them takes a live installation's configuration away and leaves its hook releasing in
+            # silence. The proof is made current here, inside the lock, before anything moves.
+            now, outcome, detail, _found = completion.read_configuration(Path(candidate))
+            was = known.get(candidate)
+            if was is not None and now != was:
+                return _answer("settings retire", REFUSED,
+                               str(candidate) + " changed after it was read (" + str(outcome or "")
+                               + str(detail or "") + "), so nothing was archived; rerun to decide"
+                               " against the settings as they now stand",
+                               retired=moved)
             moved.append({"from": candidate,
                           "to": retire(candidate, into=home, stem=completion.CONFIG_NAME)})
     return _answer("settings retire", SETTLED, "retired " + ", ".join(p["from"] for p in moved),

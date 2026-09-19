@@ -747,8 +747,15 @@ class TheFindingsFromReview(TransitionCase):
         # stale positional identity is exactly what must not be acted on.
         results = steps.transition(stale, {"accept_hook_trust_gap": True}, apply=True)
         outcomes = {item["step"]: item["outcome"] for item in results}
-        self.assertEqual(outcomes.get("hook standdown"), "refused", json.dumps(results)[:900])
+        # It stops at the first step whose proof has gone stale, which is the retire: the settings
+        # on disk are the plugin-owned ones the first run wrote, not the document this reading
+        # proved. Archiving them would take a live installation's configuration away.
+        self.assertEqual(outcomes.get("settings retire"), "refused", json.dumps(results)[:900])
+        self.assertIn("changed after it was read",
+                      [item for item in results if item["step"] == "settings retire"][0]["detail"])
+        self.assertEqual(outcomes.get("hook standdown"), "not_reached")
         self.assertEqual(host.record(), installed)
+        self.assertIsNotNone(host.settings())
 
         # And with the hook surface refreshed but the MCP reading still stale -- the shape the
         # ownership lock exists for -- the retire step stands down instead of taking the plugin
@@ -1249,6 +1256,47 @@ class TheFindingsFromReview(TransitionCase):
         code, answer = host.transition()
         self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1200])
         self.assertEqual(answer["preserved"]["markerRoot"], str(host.marker / "registered"))
+
+    def test_two_marketplaces_registering_the_plugin_are_refused(self):
+        """Codex identifies an installation by plugin@marketplace, and both declarations load."""
+        host = self.ready()
+        host.append_config('[plugins."crw@another"]\nenabled = true\n')
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("more than one marketplace", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_registration_whose_settings_cannot_be_read_is_not_replaced_by_another(self):
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        custom.write_text("{ not json", encoding="utf-8")
+        host.install_plugin()
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("could not be read", answer["results"][0]["detail"])
+        self.assertIn("registered.json", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+        self.assertTrue(fixed.is_file())
+
+    def test_settings_written_after_the_reading_are_not_archived(self):
+        """The lock serialises the rename; it does not make an older proof current."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        fresh = dict(host.settings())
+        fresh["markerRoot"] = str(host.marker / "written-by-somebody-else")
+        (host.home / "crw-completion-hook.json").write_text(json.dumps(fresh), encoding="utf-8")
+        answer = steps.settings_retire(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:400])
+        self.assertIn("changed after it was read", answer["detail"])
+        self.assertEqual(json.loads(
+            (host.home / "crw-completion-hook.json").read_text(encoding="utf-8")), fresh)
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""

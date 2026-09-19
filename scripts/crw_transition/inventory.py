@@ -155,7 +155,7 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
     package can serve what a transition is about to remove. The payload is checked against the
     manifest the package ships rather than against a list here.
     """
-    answer = {"configEntry": reading.ABSENT, "entryKey": None, "enabled": None,
+    answer = {"configEntry": reading.ABSENT, "entryKey": None, "entryKeys": [], "enabled": None,
               "cacheVersion": None, "payload": {}, "skills": [], "detail": None,
               "trustKeys": [], "trusted": None}
     text = read_config_text(codex_home)
@@ -179,11 +179,20 @@ def read_plugin(codex_home, *, name=PLUGIN_NAME):
             plugins = parsed.get("plugins")
             entry = None
             if isinstance(plugins, dict):
-                for key, value in sorted(plugins.items()):
-                    if key.split("@")[0] == name and isinstance(value, dict):
-                        entry, answer["entryKey"] = value, key
-                        answer["configEntry"] = reading.PRESENT
-                        break
+                # Every entry, not the first: Codex identifies an installation by <plugin>@<market>,
+                # so two marketplaces can each register crw and both declarations keep loading.
+                # Stopping at the first validated one marketplace's cache and left the other one
+                # running, which is the double fire this transition exists to end.
+                matching = [(key, value) for key, value in sorted(plugins.items())
+                            if key.split("@")[0] == name and isinstance(value, dict)]
+                answer["entryKeys"] = [key for key, _value in matching]
+                if matching:
+                    entry, answer["entryKey"] = matching[0][1], matching[0][0]
+                    answer["configEntry"] = reading.PRESENT
+                if len(matching) > 1:
+                    answer["detail"] = ("this configuration registers " + name + " from more than"
+                                        " one marketplace (" + ", ".join(answer["entryKeys"])
+                                        + "), and every one of them loads")
             if entry is not None and "enabled" in entry:
                 answer["enabled"] = entry["enabled"] is True
             state = (parsed.get("hooks") or {}).get("state")
@@ -425,24 +434,40 @@ def registered_document(hook, settings, codex_home):
     not necessarily the one in use -- and everything downstream, including which destination this
     host runs, has to follow the registered one rather than whichever file is easiest to find.
     """
-    documents = []
+    documents, unreadable = [], []
     for entry in hook.get("entries") or []:
         named = entry.get("settings")
         if not named or not entry.get("proven"):
             continue
-        document, _outcome, _detail, _found = completion.read_configuration(Path(named))
-        if document is not None:
-            documents.append((named, document))
+        document, outcome, detail, _found = completion.read_configuration(Path(named))
+        if document is None:
+            if outcome == completion.CONFIG_ABSENT:
+                # Absent is the interrupted-run state: a previous attempt archived this file and
+                # stopped before writing the new one, and the recovery is exactly what the retired
+                # document is for. It falls through rather than refusing.
+                continue
+            # Anything else is a file that is there and cannot be acted on. Erasing it and falling
+            # back to the fixed path makes a registration whose settings could not be read
+            # indistinguishable from one that names none, and the fallback then configures the
+            # plugin from another installation's store, marker, mode and journal.
+            unreadable.append(str(named) + " (" + str(outcome) + ": " + str(detail) + ")")
+            continue
+        documents.append((named, document))
     distinct = {tuple(document.get(field) for field in OPERATIONAL)
                 for _named, document in documents}
-    if len(distinct) > 1:
-        return None, None, [named for named, _document in documents]
+    if unreadable or len(distinct) > 1:
+        return None, None, {"disagree": [named for named, _document in documents]
+                            if len(distinct) > 1 else [],
+                            "unreadable": unreadable,
+                            "documents": dict(documents)}
     if documents:
-        return documents[0][1], "the settings the registration names, " + documents[0][0], []
+        return (documents[0][1], "the settings the registration names, " + documents[0][0],
+                {"documents": dict(documents)})
     if settings.get("document") is not None:
-        return settings["document"], "the settings at " + str(settings["path"]), []
+        return (settings["document"], "the settings at " + str(settings["path"]),
+                {"documents": {str(settings["path"]): settings["document"]}})
     retired, name = newest_retired(codex_home)
-    return retired, ("the retired document " + name) if name else None, []
+    return retired, ("the retired document " + name) if name else None, {}
 
 def read_settings(codex_home):
     """This hook's settings, and who owns the registration they belong to."""
@@ -599,7 +624,8 @@ def snapshot(codex_home, *, repo_root, destination=None, event=None):
     # reported success doing it. The second read carries the destination for the detector.
     first = read_hook(codex_home, event, repo_root=repo_root)
     document, carried, conflict = registered_document(first, settings, codex_home)
-    if document is None and not conflict:
+    if document is None and not (conflict or {}).get("disagree") \
+            and not (conflict or {}).get("unreadable"):
         # A host that has been disabled, or interrupted after the retire step, has no live
         # document at all. The destination and the operational locations are still recorded in the
         # file that was retired, so they are read from there rather than asked for again.
