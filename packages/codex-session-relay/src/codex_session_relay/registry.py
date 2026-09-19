@@ -143,24 +143,28 @@ class Registry:
         existing = self.store.one("SELECT * FROM relationships WHERE relationship_id = ?", (rid,))
         if existing is not None:
             record = self._row_to_record(existing)
-            if (record["authorizedScope"]["artifactRoots"] != roots
-                    or record["authorizedScope"]["allowedRecipients"] != recipients):
-                raise RegistrationError(
-                    RefusalReason.RELATIONSHIP_CONFLICT,
-                    f"{rid!r} already exists with a different scope",
+            same = (
+                record["authorizedScope"]["artifactRoots"] == roots
+                and record["authorizedScope"]["allowedRecipients"] == recipients
+                and existing["parent_host_id"] == parent.host_id
+                and existing["child_host_id"] == child.host_id
+            )
+            if not same:
+                # One of those four differs. Which ones may is decided by whether this
+                # identity is still LIVE: a live assignment claimed from a second host is the
+                # contradiction, because one relationship cannot be running in two places at
+                # once. A DEAD one is a different question - that tenure ended, and a task
+                # which has since moved is stating where it is NOW, exactly as a reactivated
+                # binding does. The authorized SCOPE has to be restated exactly either way.
+                scope_same = (
+                    record["authorizedScope"]["artifactRoots"] == roots
+                    and record["authorizedScope"]["allowedRecipients"] == recipients
                 )
-            hosts_match = (existing["parent_host_id"] == parent.host_id
-                           and existing["child_host_id"] == child.host_id)
-            if existing["status"] in LIVE and not hosts_match:
-                # A LIVE assignment claimed from a second host is the contradiction: one
-                # relationship cannot be running in two places at once. A DEAD one is a
-                # different question - that tenure ended, and a task which has since moved is
-                # stating where it is NOW, exactly as a reactivated binding does. Requiring
-                # the old host there left the handback either unreachable or a lie.
-                raise RegistrationError(
-                    RefusalReason.RELATIONSHIP_CONFLICT,
-                    f"{rid!r} already exists on different hosts",
-                )
+                if existing["status"] in LIVE or not scope_same:
+                    raise RegistrationError(
+                        RefusalReason.RELATIONSHIP_CONFLICT,
+                        f"{rid!r} already exists with a different scope or hosts",
+                    )
             if existing["status"] not in LIVE:
                 try:
                     returned = self._returning_tenure(
