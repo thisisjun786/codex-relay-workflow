@@ -323,7 +323,10 @@ has to be greater than zero: a bound of zero is met by a process that started th
 reading would report a persistence it never observed, and the observation this exists for is a
 supervisor that outlived the shell which launched it. `sandbox` has to be the policy object the
 relay records, carrying its mode at `type`, because a record declaring a bare mode could never
-agree with the row the store holds.
+agree with the row the store holds. A record may also declare only settings a creation can
+ask for, plus the approval policy the contract decides on every receipt: a key outside those
+is one nothing in the path requests, verifies or preserves, so a capture and a store row that
+both carry it agree with each other about a field delivery would drop.
 
 The record names parameters, never command lines. The checker composes every command it runs, and
 every relay probe carries both the state flag and the state environment variable, because the flag

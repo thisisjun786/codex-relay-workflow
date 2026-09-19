@@ -4448,6 +4448,41 @@ class FortyFifthHostedRound(TrialCase):
                     asked.add(node.name)
         self.assertEqual(asked, {"alive"}, "a liveness decision is made outside alive()")
 
+    def test_a_declared_setting_the_contract_cannot_carry_refuses_the_start(self):
+        # A record could declare a setting no creation can ask for and no receipt can verify.
+        # With the capture and the store row both copying it the comparison agreed, every
+        # capability cell passed, and the trial was declared ready on a field nothing in the path
+        # requests, verifies or preserves.
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["futureSetting"] = "x"
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["receipt-" + task + ".json"]["settings"]["actual"][
+                "futureSetting"] = "x"
+        self.world.payloads["settings-show"]["payload"]["settings"]["futureSetting"] = "x"
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused, "a setting no creation can ask for was declared and accepted")
+        self.assertIn("futureSetting", refused.detail["fields"])
+
+    def test_every_setting_a_creation_can_ask_for_may_still_be_declared(self):
+        # The bound on that refusal, so it refuses unsupported keys rather than unfamiliar ones:
+        # the two carryable settings beyond the four a record must name still load.
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["cwd"] = participant["cwd"]
+                participant["expect"]["runtimeWorkspaceRoots"] = []
+        self.world.flush()
+        self.assertIsNone(self.world.refusal())
+
+    def test_what_a_record_may_declare_is_what_a_creation_can_carry(self):
+        # Support: the declarable set is derived from the requestable one rather than written
+        # beside it, and the approval policy is the single addition, which is the exception the
+        # contract itself makes by deciding that one on every receipt.
+        self.assertEqual(set(startup.DECLARABLE_SETTINGS),
+                         set(startup.REQUESTABLE_SETTINGS) | {"approvalPolicy"})
+        self.assertLessEqual(set(startup.REQUIRED_EXPECT), set(startup.DECLARABLE_SETTINGS))
+
     def test_the_final_doctor_grades_the_reachability_it_reports(self):
         # The socket and the write access were graded once, at the start. The same payload the
         # identity recheck reads answers both again, and a path that stopped answering leaves

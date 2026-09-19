@@ -80,8 +80,9 @@ RELAY_SUBCOMMANDS = ("doctor", "assignment-find", "criteria-show", "settings-sho
 SERVICE_VERBS = ("status",)
 
 # What a participant's expect must name at minimum. The predicate compares every key the record
-# declares rather than this list, so a settings field added later is compared by declaring it; the
-# minimum is here because a permission that went uncompared passed behind a usable true once.
+# declares rather than this list, so a settings field added later is compared by declaring it,
+# within what the creation path can actually carry; the minimum is here because a permission that
+# went uncompared passed behind a usable true once.
 REQUIRED_EXPECT = ("model", "reasoningEffort", "sandbox", "approvalPolicy")
 
 # The rest of the relay's settings contract: the access a delivery actually runs with, beside the
@@ -138,6 +139,14 @@ BOUNDED_SETTINGS = ("model", "reasoningEffort")
 # not among them: the contract decides it first and alone on every receipt, so empty findings do
 # establish that one.
 REQUESTABLE_SETTINGS = ("cwd", "model", "reasoningEffort", "runtimeWorkspaceRoots", "sandbox")
+
+# And what a record may declare: those, and the approval policy, which the contract decides on
+# every receipt without being asked for it. Derived from the settings a creation can ask for
+# rather than listed again beside them. A key outside this is one no creation can request, no
+# receipt can verify and no delivery preserves, so comparing it against a captured value confirms
+# nothing: a capture and a store row that both carry it agree with each other about a field
+# nothing in the path would keep.
+DECLARABLE_SETTINGS = REQUESTABLE_SETTINGS + ("approvalPolicy",)
 
 
 def blank_settings(values):
@@ -975,6 +984,18 @@ def load_start(path, *, environment=None, mode="preflight"):
                 raise Refused("a participant's expect does not name every required setting",
                               boundary=boundary.get("name"), taskId=participant.get("taskId"),
                               required=list(REQUIRED_EXPECT))
+            beyond = sorted(key for key in expect if key not in DECLARABLE_SETTINGS)
+            if beyond:
+                # Comparing a declared key against a captured one says the two agree, never that
+                # the setting is one anything in the path carries. A record naming a field no
+                # creation can ask for and no receipt can verify passed every capability cell as
+                # long as the capture and the store row both copied it, and the trial was
+                # declared ready on a setting delivery would not preserve.
+                raise Refused("a record may only declare settings a creation can ask for, and the"
+                              " approval policy the contract decides on every receipt; nothing"
+                              " here can request, verify or preserve the rest",
+                              boundary=boundary.get("name"), taskId=participant.get("taskId"),
+                              fields=beyond, declarable=list(DECLARABLE_SETTINGS))
             # The relay records a sandbox as the policy object and reads its type out of it, so a
             # mode on its own is a value the store can never hold and this record can never agree
             # with. Refused here, where the operator can still fix it, rather than at a cell.
