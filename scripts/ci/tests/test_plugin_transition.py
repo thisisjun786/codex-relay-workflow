@@ -182,6 +182,7 @@ class PreflightRefusesBeforeItRemovesAnything(TransitionCase):
         self.assertEqual(self.host.outcomes(answer)["preflight"], "refused")
         self.assertEqual((host.config(), host.hooks_document(), host.settings()), before)
 
+    @needs_reader
     def test_a_disabled_plugin_entry_is_refused(self):
         host = self.ready(enabled=False)
         code, answer = host.transition("--apply")
