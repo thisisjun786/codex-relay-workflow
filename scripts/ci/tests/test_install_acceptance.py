@@ -1180,6 +1180,55 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", True,
          "open takes its file by keyword as readily as by position, and which one a caller"
          " wrote is not a fact about what it opens."),
+    "super() where another class stands beside this one":
+        (REFUSAL,
+         ("class A:",
+          "    def carrier(self):",
+          "        return \"fine\"",
+          "",
+          "class B(A):",
+          "    pass",
+          "",
+          "def helper():",
+          "    return reading.UNREADABLE",
+          "",
+          "class C(A):",
+          "    carrier = helper",
+          "",
+          "class D(B, C):",
+          "    def consumer(self):",
+          "        return super().carrier()"),
+         "consumer", True,
+         "super() searches the rest of THIS class's line, D then B then C then A, so C answers."
+         " Searching each base's own line in turn exhausts B's ancestors and reaches A first,"
+         " which is a definition the call never makes."),
+    "super() with nothing standing beside this one":
+        (REFUSAL,
+         ("class A:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class D(A):",
+          "    def consumer(self):",
+          "        return super().carrier()"),
+         "consumer", True,
+         "its pair: the ordinary single-base super() has to keep reaching the base, so starting"
+         " after the class must not have started after the whole line."),
+    "a class reached through another name":
+        (REFUSAL,
+         ("class Holder:",
+          "    @staticmethod",
+          "    def carrier():",
+          "        return reading.UNREADABLE",
+          "",
+          "Alias = Holder",
+          "",
+          "def consumer():",
+          "    return Alias.carrier()"),
+         "consumer", True,
+         "Alias = Holder binds the class itself, so the call through it is the same call. A"
+         " qualifier a parameter shadows is still not a class, which is the case beside this"
+         " one and the reason the two are resolved in that order."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2265,6 +2314,24 @@ def _hands_on(tree, spelled):
         """Whether any decorator on this definition reaches one of these builtins."""
         return any(means((_dotted(mark) or "").rpartition(".")[2], seed, mark.lineno)
                    for mark in getattr(node, "decorator_list", []))
+
+    def names_class(name, at, followed=0):
+        """The class this name reaches at that line: its own name, or one bound to it.
+
+        Alias = Holder makes Alias.carrier() the same call as Holder.carrier(), and the binding
+        is a name like any other. Ordered the same way as the decorator names, by the last
+        binding above the use, and bounded so a cycle answers rather than recurses.
+        """
+        if name in parents:
+            return name
+        if followed > len(module_bindings):
+            return None
+        above = sorted((line, value) for line, bound, value in module_bindings
+                       if bound == name and line < at)
+        if not above:
+            return None
+        line, value = above[-1]
+        return names_class(value, line, followed + 1)
     defined, methods, plain, receivers, properties = set(), {}, set(), {}, {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -2412,17 +2479,21 @@ def _hands_on(tree, spelled):
             chain.pop()
         return set()
 
-    def inherited(klass, named, seen=(), aliases=None):
+    def inherited(klass, named, seen=(), aliases=None, after=False):
         """The method this class reaches by that name, its own or one it inherits.
 
         Walked in the order Python searches, so a class settles the name for everything after it
         in the line and finding nothing in one is not the same answer as finding a binding this
         reader cannot follow. An alias made in a class body binds the same method object, so
         self.alias() reaches what self.carrier() does.
+
+        With after, the class itself is skipped and the REST OF ITS OWN line is searched, which
+        is what super() does. Searching each base's line in turn instead exhausts the first
+        base's ancestors before reaching the base written beside it.
         """
         if klass is None:
             return set()
-        for reached_in in mro.get(klass, (klass,)):
+        for reached_in in list(mro.get(klass, (klass,)))[1 if after else 0:]:
             if (reached_in, named) in methods:
                 return {methods[(reached_in, named)]}
             for scope, _around in class_scope.get(reached_in, ()):
@@ -2624,11 +2695,14 @@ def _hands_on(tree, spelled):
                     known |= targets
                     growing = True
 
-    def a_property(klass, named, seen=()):
-        """The property this class reaches by that name, its own or one it inherits."""
+    def a_property(klass, named, seen=(), after=False):
+        """The property this class reaches by that name, its own or one it inherits.
+
+        With after, the rest of this class's own line, which is where super() looks.
+        """
         if klass is None:
             return None
-        for reached_in in mro.get(klass, (klass,)):
+        for reached_in in list(mro.get(klass, (klass,)))[1 if after else 0:]:
             if (reached_in, named) in properties:
                 return properties[(reached_in, named)]
             for scope, _around in class_scope.get(reached_in, ()):
@@ -2659,11 +2733,8 @@ def _hands_on(tree, spelled):
         _where, klass = places.get(id(node), (MODULE_LEVEL, None))
         if (_dotted(node.value) is None and isinstance(node.value, ast.Call)
                 and _dotted(node.value.func) == "super"):
-            for base in parents.get(klass, ()):
-                reached = a_property(base, node.attr)
-                if reached:
-                    return {reached}
-            return set()
+            reached = a_property(klass, node.attr, after=True)
+            return {reached} if reached else set()
         if _dotted(node.value) not in instance(function):
             return set()
         reached = a_property(klass, node.attr)
@@ -2681,11 +2752,7 @@ def _hands_on(tree, spelled):
                 # super().name in a subclass starts the same lookup one class up, and which
                 # class that is, is written right here.
                 _where, klass = places.get(id(node), (MODULE_LEVEL, None))
-                for base in parents.get(klass, ()):
-                    reached = inherited(base, node.func.attr, (), aliases)
-                    if reached:
-                        return reached
-                return set()
+                return inherited(klass, node.func.attr, (), aliases, after=True)
             # cls.name in a classmethod names a method of this class exactly as self.name does,
             # and Example.name names one of Example's just as statically.
             _where, klass = places.get(id(node), (MODULE_LEVEL, None))
@@ -2695,6 +2762,8 @@ def _hands_on(tree, spelled):
                 # A parameter or a local of that name is not the class of that name: which
                 # object it holds is a fact about the caller.
                 named_class = None
+            elif named_class is not None:
+                named_class = names_class(named_class, node.lineno) or named_class
             return inherited(klass if through in instance(function) else named_class,
                              node.func.attr, (), aliases)
         return set()
