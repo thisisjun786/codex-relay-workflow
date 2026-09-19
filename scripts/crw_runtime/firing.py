@@ -77,14 +77,29 @@ CANNOT_START = (reading.ABSENT, reading.UNREADABLE)
 
 
 def _not_registered(observed):
+    """Whether anything in the hook file runs this adapter.
+
+    What an empty hook file establishes is the PRESENT. A registration removed after the hook
+    had already fired leaves its journal exactly where it was, so "no record of one can exist"
+    is a claim about the past that the journal can refute -- and the count sits in the same
+    payload, which made that payload contradict itself. This answer claims the half it reads.
+    """
     if not observed.get("registrationReadable"):
         return NOT_RULED_OUT, ("the hook file could not be read, so whether this adapter is"
                                " registered for the event was not established")
     found = observed.get("adapterRegistrations") or 0
     if found:
         return RULED_OUT, (str(found) + " registration(s) in the hook file run this adapter")
-    return ESTABLISHED, ("the hook file was read and registers this adapter for nothing, so no"
-                         " invocation of it can have happened and no record of one can exist")
+    kept = observed.get("unregisteredRecords") or 0
+    if kept:
+        return ESTABLISHED, ("the hook file was read and registers this adapter for nothing, so"
+                             " nothing on this host invokes it now. The " + str(kept)
+                             + " record(s) under the journal this command settled on are what"
+                             " an earlier registration left: this answer explains why no"
+                             " FURTHER record can appear and does not claim none exists")
+    return ESTABLISHED, ("the hook file was read and registers this adapter for nothing, so"
+                         " nothing on this host invokes it and no further record of one can be"
+                         " written")
 
 
 def _record_path_unidentified(observed):
@@ -282,9 +297,14 @@ def _recorded_on_another_path(observed):
     # An unjudged peer only matters here when it could be a SECOND journal: this cause is two
     # journals disagreeing, and a peer sharing the one journal its neighbour already named
     # cannot disagree with itself however its startability reads.
+    eligible = _distinct_journals(holding + empty + unread)
     unjudged = [entry for entry in _unjudged_peer(observed)
-                if _distinct_journals([entry]) - _distinct_journals(holding + empty + unread)]
-    if unjudged:
+                if _distinct_journals([entry]) - eligible]
+    # Novelty is not enough: a SECOND journal has to exist for there to be a disagreement at
+    # all. On a host whose only registration is unjudged that set is empty, so its journal was
+    # novel by default and this cause stood on a host that has exactly one directory -- and
+    # one directory cannot disagree with itself whoever failed to judge it.
+    if unjudged and len(eligible | _distinct_journals(unjudged)) > 1:
         return NOT_RULED_OUT, ("a registration whose startability was never established names "
                                + _named(unjudged) + ", so whether its journal counts toward"
                                  " this question was not settled either")
@@ -385,7 +405,8 @@ def _nothing_recorded(observed):
 # its predicate as well as its provenance for the same reason the swap gate's cells do: a rule
 # written at the site it is applied is a rule that drifts from the one that was declared.
 CAUSE_RULES = {
-    NOT_REGISTERED: (("registrationReadable", "adapterRegistrations"), _not_registered),
+    NOT_REGISTERED: (("registrationReadable", "adapterRegistrations", "unregisteredRecords"),
+                     _not_registered),
     RECORD_PATH_UNIDENTIFIED: (("relativeSettings", "silentRegistrations"),
                                _record_path_unidentified),
     ADAPTER_CANNOT_RUN: (("startProbes",), _adapter_cannot_run),

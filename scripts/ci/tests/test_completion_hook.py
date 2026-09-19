@@ -2581,6 +2581,57 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          "one journal was reported as possibly disagreeing with itself because"
                          " a peer naming it could not be judged")
 
+    def test_a_lone_unjudged_registration_is_not_two_journals_disagreeing(self):
+        """No peer at all, which the shared-journal case above does not cover.
+
+        The guard there asked whether an unjudged journal was NOVEL against the ones already
+        read. On a host whose only registration is unjudged that set is empty, so novelty is
+        satisfied by default and the cause stood on a host with exactly one journal. This cause
+        is two journals disagreeing; one directory cannot disagree with itself.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            path = Path(temporary) / "hooks.json"
+            document = json.loads(path.read_text(encoding="utf-8"))
+            entries = document["hooks"][completion.EVENT][0]["hooks"]
+            # The ONE registration's interpreter is relative, so this command does not probe it
+            # and never establishes whether the host can start it.
+            entries[0]["command"] = "./python " + entries[0]["command"].split(" ", 1)[1]
+            path.write_text(json.dumps(document), encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        named = found["configuration"]["namedSettings"]
+        cell = found["firingRecordAbsence"]
+        self.assertEqual(len({entry.get("journalRoot") for entry in named}), 1,
+                         "the fixture did not build the single-journal host this case is"
+                         " about: " + repr(named))
+        self.assertEqual([entry.get("startable") for entry in named], [None],
+                         "the fixture did not leave the one registration unjudged")
+        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
+                         [one["cause"] for one in cell.get("candidates") or []],
+                         "a host with one journal was told its journals may disagree, on the"
+                         " strength of nobody having judged the only registration it has")
+
+    def test_records_already_written_survive_the_registration_being_removed(self):
+        """An empty hook file establishes the PRESENT. A registration removed after the hook
+        had fired leaves its journal exactly where it was, and this answer used to say no
+        record of an invocation could exist beside a count, in the same payload, saying one
+        does."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            completion.run(json.dumps(STOP).encode("utf-8"), codex_home=temporary, environ={})
+            (Path(temporary) / "hooks.json").unlink()
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["firingJournal"]["value"], "1",
+                         "the fixture did not leave the record this case is about")
+        cell = found["firingRecordAbsence"]
+        self.assertEqual(cell.get("value"), firing.NOT_REGISTERED,
+                         "the registration really is gone, so this stays the cause")
+        self.assertIn("1 record(s)", cell.get("evidence") or "",
+                      "the answer explained an absence the payload's own count refutes,"
+                      " without ever naming the records it was reading past")
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

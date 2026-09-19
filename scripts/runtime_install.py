@@ -1090,7 +1090,10 @@ def cmd_diagnose(args):
 
     residual = residue.survey(
         residue_root, pointer_path=owned_pointer,
-        recorded_pointer=((record or {}).get("pointer") or {}).get("path"),
+        # The whole ownership entry, not the path out of it: a rollback keeps the path and
+        # withdraws the evidence that a link this command placed is at it, and only the
+        # record itself can tell those two states apart.
+        pointer_ownership=(record or {}).get("pointer"),
         protection=None if residue_root is None else ownership_of)
     try:
         classes = {

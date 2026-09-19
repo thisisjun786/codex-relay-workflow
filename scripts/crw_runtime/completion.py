@@ -1685,6 +1685,14 @@ def status(codex_home=None, environ=None, event=EVENT):
     # Why there is no record, decided over the cells above and over no reading of its own.
     # 'ours' is None only when the hook file itself could not be read, which is why whether a
     # registration exists is passed as the readability of that file and not as a count of zero.
+    # What the journal this command settled on holds where NO registration named one. It is the
+    # same reading published as firingJournal below, passed rather than taken a second time, so
+    # the cause and the count in one payload cannot disagree. Without it the absence cause was
+    # decided from the hook file alone and claimed no record of an invocation could exist,
+    # beside a count in the same answer saying one does.
+    unregistered_records = (int(journal_cell["value"])
+                            if not named_journals and str(journal_cell.get("value")).isdigit()
+                            else None)
     absence = firing.decide({
         "registrationReadable": ours is not None,
         "adapterRegistrations": len(ours or []),
@@ -1692,6 +1700,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         "silentRegistrations": silent,
         "namedJournals": named_journals,
         "startProbes": start_probes,
+        "unregisteredRecords": unregistered_records,
     })
 
     return {

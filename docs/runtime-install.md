@@ -1816,8 +1816,12 @@ still holds, one whose owner could not be established, and a finished environmen
 selects are each reported with that decision's own reason and none of them is listed for
 removal — a dead staging lock says no installer holds the directory, never that nothing is
 running out of it. The owned pointer reaches `residualPaths` only when it dangles AND the host
-record records that path as this command's own; a dangling link the record does not claim is
-reported as foreign and left alone, because a link's shape is not its ownership.
+record records that a link **this command placed** is at that path; a dangling link the record
+does not claim is reported as foreign and left alone, because a link's shape is not its
+ownership. Those are two different readings of one entry: a failed promotion keeps the pointer
+`path`, so a retry derives the same pointer, and a rollback that established the link it placed
+is gone withdraws `recordedAt` and `recordedBy`. A record in that state names a location and
+claims no link, so whatever link stands there afterwards is reported as foreign.
 `firingJournal`, `journalRoot` and `firingRecordAbsence` come from `hook-status`;
 `skillLinks`, the `checks.results` cells, `scope.socketConnect`, `definitionVersion` and
 `repositoryCommit` from `diagnose`; `sessionId` and `turnId` from the journal records
@@ -1833,7 +1837,7 @@ beside it, and each declares which of them answers it.
 
 | Cause | What it says | What it does not say |
 | --- | --- | --- |
-| `not_registered` | the hook file was read and registers this adapter for nothing | that the file is the one the host loads |
+| `not_registered` | the hook file was read and registers this adapter for nothing, so nothing on this host invokes it now | that the file is the one the host loads, or that nothing was ever recorded — a registration removed after the hook fired leaves its journal where it was, and this answer names those records rather than reading past them |
 | `record_path_unidentified` | a registration spells its settings relatively, or names none, so no file reachable from here answers for it | that the hook has or has not recorded |
 | `adapter_cannot_run` | the registered adapter or its interpreter is not there, so the host cannot start it | that it was ever startable |
 | `settings_absent` / `settings_unusable` | **one or more** registrations name a settings file that is absent, or that this hook's own reader rejects, so every invocation of *those* registrations releases without recording | which repair the file needs, or anything about a peer registration whose settings are fine |

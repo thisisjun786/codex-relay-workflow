@@ -31,7 +31,7 @@ import os
 import stat
 from pathlib import Path
 
-from . import pointer, staging
+from . import hostrecord, pointer, staging
 
 # Why a path is named. The decision itself comes from staging and is reported verbatim; this
 # only names the two questions this module adds around it.
@@ -143,13 +143,19 @@ def _target_exists(path):
     return True, "the target exists"
 
 
-def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=None):
+def survey(destination, *, pointer_path=None, pointer_ownership=None, protection=None):
     """Every directory under this destination, classified by staging.decide.
 
     'protection' is the caller's ownership reading, called with an environment path and
     answering (protected, selected). A caller that passes none made no such reading, and then
     nothing is reported as residue at all: no residue found and nobody looked are different
     answers, and the second one must never be printed as an empty cleanup list.
+
+    'pointer_ownership' is the host record's whole pointer entry and not the path out of it.
+    That object answers two questions -- which path this host's pointer IS, and whether a link
+    this command PLACED is at it -- and a rollback takes the second away while keeping the
+    first. Handed only the path, this survey could not tell those apart and read a preserved
+    location as placement evidence.
     """
     answer = {"destination": None if destination is None else str(destination), "read": False,
               "entries": [], "pointer": None, "residualPaths": [], "recoveryRequires": [],
@@ -183,7 +189,7 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
         # assembly left a cell saying residual=true above an empty residualPaths, so a listing
         # failure in the destination silently dropped a pointer repair that had been
         # established independently of it.
-        return _with_pointer(answer, pointer_path, recorded_pointer, root)
+        return _with_pointer(answer, pointer_path, pointer_ownership, root)
     answer["read"] = True
     for path in found:
         entry = Path(path)
@@ -245,13 +251,13 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
         elif liveness == staging.UNKNOWN:
             answer["unreadable"].append(str(entry) + ": " + liveness_detail)
 
-    return _with_pointer(answer, pointer_path, recorded_pointer, root)
+    return _with_pointer(answer, pointer_path, pointer_ownership, root)
 
 
-def _with_pointer(answer, pointer_path, recorded_pointer, destination):
+def _with_pointer(answer, pointer_path, pointer_ownership, destination):
     """Read the pointer and publish it. One place, because the two exits used to differ and the
     difference was a dropped repair rather than a difference anybody intended."""
-    answer["pointer"] = _pointer_finding(pointer_path, recorded_pointer, destination)
+    answer["pointer"] = _pointer_finding(pointer_path, pointer_ownership, destination)
     if answer["pointer"].get("residual"):
         answer["residualPaths"].append(answer["pointer"]["path"])
         answer["recoveryRequires"].append(
@@ -267,7 +273,7 @@ def _with_pointer(answer, pointer_path, recorded_pointer, destination):
     return answer
 
 
-def _pointer_finding(pointer_path, recorded_pointer, destination):
+def _pointer_finding(pointer_path, pointer_ownership, destination):
     """Whether the pointer is a residue, which needs OWNERSHIP and not only shape.
 
     pointer.read establishes what is at the path; it does not establish whose it is. A link this
@@ -276,6 +282,13 @@ def _pointer_finding(pointer_path, recorded_pointer, destination):
     link reaches residualPaths only when the host record positively records that path as the
     pointer this command owns. A dangling link the record does not claim is reported under its
     own name and left alone.
+
+    Ownership here is the PLACEMENT half of the record's pointer entry, asked of hostrecord
+    rather than tested against a key here. The entry keeps 'path' across a failed promotion on
+    purpose -- a retry has to derive the same pointer -- while a rollback that established the
+    link is gone withdraws 'recordedAt' and 'recordedBy'. Reading the surviving path as
+    placement evidence let a foreign dangling link appearing at that location afterwards be
+    published as this command's own residue, which is the one direction this may not fail in.
 
     It also has to be THIS destination's pointer. Diagnosis prefers the RECORDED pointer when
     classifying a runtime, and that pointer can sit under a different destination from the one
@@ -293,7 +306,8 @@ def _pointer_finding(pointer_path, recorded_pointer, destination):
                            " survey describes " + str(destination) + ", so it belongs to"
                            " another installation and nothing about it is reported here")}
     read = pointer.read(path)
-    claimed = recorded_pointer is not None and str(Path(recorded_pointer)) == path
+    claimed = (hostrecord.placement_recorded(pointer_ownership)
+               and str(Path(pointer_ownership["path"])) == path)
     found = {"path": path, "state": read["state"], "target": read.get("target"),
              "detail": read["detail"], "recordClaimsIt": claimed, "residual": False,
              "finding": None}
@@ -315,7 +329,9 @@ def _pointer_finding(pointer_path, recorded_pointer, destination):
     found["detail"] = (
         "the pointer names " + str(read["target"]) + ", which does not exist"
         + (", and the host record records this path as this command's own pointer" if claimed
-           else ". The host record does not record this path as this command's pointer, so"
-                " whose link it is was not established and it is reported rather than listed"
-                " for removal"))
+           else ". The host record does not record a link THIS COMMAND PLACED at this path --"
+                " either it names another path, or a rollback established the link it placed"
+                " is gone and withdrew the placement while keeping the path it is known by --"
+                " so whose link this is was not established and it is reported rather than"
+                " listed for removal"))
     return found

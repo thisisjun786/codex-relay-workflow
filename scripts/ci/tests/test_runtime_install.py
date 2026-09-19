@@ -9656,6 +9656,33 @@ class DiagnosisReportsResidue(unittest.TestCase):
                          "a link the record does not claim is reported, never listed for"
                          " removal")
 
+    def test_a_pointer_whose_placement_was_withdrawn_is_not_this_commands_residue(self):
+        """Keeping the path is not claiming the link. The ownership entry answers two questions
+        and a failed promotion takes one away: it keeps 'path' so a retry derives the same
+        pointer, and a rollback that established the link it placed is GONE withdraws
+        recordedAt and recordedBy. Read as placement evidence, that surviving path published
+        whatever link appeared at the location afterwards as this command's own residue -- and
+        pointer.remove refuses exactly such a link, so the cleanup list was naming a path its
+        own recovery would not act on.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            # Exactly the state a rollback leaves behind.
+            record["pointer"] = {"path": str(host.pointer_path)}
+            hostrecord.save(host.record_path, record)
+            self.assertFalse(hostrecord.placement_recorded(record["pointer"]),
+                             "the fixture did not build the withdrawn-placement record this"
+                             " case is about")
+            # Somebody else's dangling link arrives at that location afterwards.
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            found = _diagnose(host)
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.FOREIGN_POINTER,
+                         "a preserved pointer PATH was read as evidence that this command"
+                         " placed the link now standing at it")
+        self.assertNotIn(str(host.pointer_path), found.get("residualPaths") or [],
+                         "a link no placement evidence claims was published as owned residue")
+
 
 class ResidueNeverNamesLiveWork(unittest.TestCase):
     """Support for the cases above, not evidence of the CRW-100 defect. Each is a direction the
@@ -9922,7 +9949,7 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
                 found = residue.survey(
                     Path(str(host.destination / "un\x00readable")),
                     pointer_path=record["pointer"]["path"],
-                    recorded_pointer=record["pointer"]["path"],
+                    pointer_ownership=record["pointer"],
                     protection=lambda environment: (False, False))
             except Exception as error:
                 found = {"read": None, "unreadable": [], "residualPaths": [],
