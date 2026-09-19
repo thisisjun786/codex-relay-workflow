@@ -1952,6 +1952,11 @@ def source_spellings(tree):
     namespace = dict(vars(sys.modules[__name__]))
     # An import written inside a function never reaches the module namespace, so the name it
     # binds is read out of the import itself and resolved to what it actually imports.
+    # An import inside a function binds only in that function, and this namespace is one for
+    # the whole file, so two scopes using one alias for two things cannot both be represented.
+    # Every candidate is collected and the one that reads source wins, because taking the other
+    # would be the silent pass this module exists to refuse; taking this one only over-reports.
+    imported = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
             owner = sys.modules.get(node.module)
@@ -1960,14 +1965,26 @@ def source_spellings(tree):
             for alias in node.names:
                 value = getattr(owner, alias.name, None)
                 if value is not None:
-                    # Assigned rather than defaulted: where a local import takes a name the
-                    # module also uses, the local import is what that name means there.
-                    namespace[alias.asname or alias.name] = value
+                    imported.setdefault(alias.asname or alias.name, []).append(value)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 owner = sys.modules.get(alias.name)
                 if owner is not None:
-                    namespace[alias.asname or alias.name.split(".")[0]] = owner
+                    imported.setdefault(alias.asname or alias.name.split(".")[0],
+                                        []).append(owner)
+
+    def reads_source(value):
+        own = getattr(value, "__name__", "")
+        if "source" in own.lower():
+            return True
+        try:
+            return list(inspect.signature(value).parameters)[:1] == ["source"]
+        except (ValueError, TypeError):
+            return False
+
+    for name, candidates in imported.items():
+        reading_ones = [value for value in candidates if reads_source(value)]
+        namespace[name] = (reading_ones or candidates)[0]
 
     def is_source_file(value):
         return isinstance(value, Path) and value.suffix == ".py" and value.exists()
