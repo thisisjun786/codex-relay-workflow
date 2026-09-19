@@ -414,7 +414,7 @@ def cmd_linkage_up(services, args) -> dict:
 def cmd_linkage_counterpart(services, args) -> dict:
     return services.linkage.counterpart(
         args.from_task, args.to_task, quoted_revision=args.quoted_revision,
-        quoted_scope=args.quoted_scope)
+        quoted_scope=args.quoted_scope, from_scope=args.from_scope)
 
 
 def cmd_relationship_resume(services, args) -> dict:
@@ -1915,7 +1915,10 @@ def build_parser() -> argparse.ArgumentParser:
     outstanding.set_defaults(handler=cmd_linkage_outstanding)
 
     handover = subparsers.add_parser("linkage-handover")
-    handover.add_argument("--role", required=True, choices=["supervisor", "parent", "child"])
+    handover.add_argument("--role", required=True, choices=["supervisor", "parent"],
+                          help="a child is replaced by registering its successor with"
+                               " --supersedes, which moves the assignment and its issue scope"
+                               " together")
     handover.add_argument("--scope", required=True)
     handover.add_argument("--expect-task", required=True)
     handover.add_argument("--task", required=True)
@@ -1962,8 +1965,12 @@ def build_parser() -> argparse.ArgumentParser:
     counterpart = subparsers.add_parser("linkage-counterpart")
     counterpart.add_argument("--from-task", required=True)
     counterpart.add_argument("--to-task", required=True)
+    counterpart.add_argument("--from-scope",
+                             help="the sender's Linear scope. A task may own several, and"
+                                  " OPS-7.4 binds both scopes to a message")
+    counterpart.add_argument("--quoted-scope",
+                             help="the scope the message believes it is addressing")
     counterpart.add_argument("--quoted-revision", type=int)
-    counterpart.add_argument("--quoted-scope")
     counterpart.set_defaults(handler=cmd_linkage_counterpart)
 
     resume = subparsers.add_parser("relationship-resume")

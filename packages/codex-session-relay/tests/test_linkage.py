@@ -610,5 +610,111 @@ class ReviewFoundTheseByReproducingThem(LinkageTestCase):
         self.assertTrue([row for row in upward["contention"]
                          if row.get("contention") == "instruction_conflict"])
 
+class TheHostedReviewFoundTheseOnTheOpenPullRequest(LinkageTestCase):
+    """Seven findings from two hosted reviewers on PR 61, each reproduced before it was fixed.
+
+    Their root is one assumption that was wrong twice over: that a task owns exactly one scope,
+    and that a relationship status is either active or gone. Neither holds - the role rule only
+    forbids two different ROLES, and a paused assignment still owns its issue.
+    """
+
+    def scoped(self):
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        return relationship["relationshipId"]
+
+    def test_pausing_an_assignment_keeps_its_issue(self):
+        """paused was collapsed into archived, so one store answered two ways.
+
+        AssignmentView still reported the child as responsible while the issue scope reported
+        no owner at all and linkage-down reported issue_without_child.
+        """
+        rid = self.scoped()
+        self.registry.set_status(rid, "paused", actor="test")
+        owner = self.linkage.owner(linkage.ISSUE, ISSUE)
+        self.assertIsNotNone(owner, "pausing released the issue instead of holding it")
+        self.assertEqual(owner["taskId"], CHILD)
+        self.assertEqual(owner["status"], "paused")
+        answer = self.linkage.down(linkage.PROJECT, PROJECT)
+        self.assertNotIn("issue_without_child", [gap["gap"] for gap in answer["gaps"]])
+
+    def test_cancelling_still_releases_the_issue(self):
+        rid = self.scoped()
+        self.registry.set_status(rid, "cancelled", actor="test")
+        self.assertIsNone(self.linkage.owner(linkage.ISSUE, ISSUE))
+
+    def test_resuming_over_a_reassigned_issue_is_refused(self):
+        """Cancelling RELEASES an issue, so another child can take the scope meanwhile.
+
+        resume checked relationships and never looked at who holds the scope now, so it
+        reactivated the old binding and left the issue with two live owners.
+        """
+        rid = self.scoped()
+        self.registry.set_status(rid, "cancelled", actor="test")
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint("01child-two", HOST))
+        self.assertRefused(
+            RefusalReason.DUPLICATE_SCOPE_OWNER, self.registry.resume, rid,
+            expect_generation=1, expect_artifact_roots=[self.root],
+            expect_allowed_recipients=[PARENT], actor="test")
+        live = self.store.all(
+            "SELECT task_id FROM scope_bindings WHERE scope_key = ? AND role = ?"
+            "  AND status IN ('active','paused')",
+            (ISSUE, linkage.CHILD))
+        self.assertEqual([row["task_id"] for row in live], ["01child-two"])
+        self.assertEqual(self.registry.get(rid)["status"], "cancelled",
+                         "the refused resume moved the relationship anyway")
+
+    def test_a_child_is_not_handed_over_through_linkage(self):
+        """It moved the binding and the edge while relationships kept naming the old child."""
+        self.scoped()
+        self.assertRefused(
+            RefusalReason.SCOPE_ROLE_MISMATCH,
+            self.linkage.handover, role=linkage.CHILD, scope_key=ISSUE,
+            expect_task_id=CHILD, endpoint=Endpoint("01child-two", HOST),
+            acknowledged=[], evidence="trying to move a child sideways", actor="test")
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
+
+    def test_a_parent_owning_two_projects_is_answered_about_the_right_one(self):
+        """_any_binding picked one scope per task by revision alone.
+
+        With parent P owning projects A and B and the child under B, the lookup could answer
+        about A and report unregistered_link despite a live B to issue edge.
+        """
+        self.supervise()
+        self.supervise(initiative="INIT-2", project=OTHER_PROJECT, parent=self.parent(),
+                       supervisor=self.supervisor(OTHER_SUPERVISOR), kind=linkage.REFERENCE)
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        answer = self.linkage.counterpart(PARENT, CHILD)
+        self.assertEqual(answer["state"], "linked")
+        self.assertEqual(answer["counterpart"]["scopeKey"], ISSUE)
+        self.assertNotIn("unregistered_link", answer["findings"])
+
+    def test_a_quoted_scope_selects_the_binding_instead_of_being_checked_against_one(self):
+        """A child holding two issues was answered about whichever binding sorted first, so a
+        correctly routed message was told foreign_scope about a scope nobody named."""
+        self.supervise()
+        first = self.register()
+        self.linkage.attach_issue(first["relationshipId"], PROJECT)
+        second = self.registry.register(
+            parent=Endpoint(PARENT, HOST, cwd="/parent"), child=Endpoint(CHILD, HOST),
+            issue_key="REL-2", artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-2", dispatch_turn_id="turn-2",
+            project_key=PROJECT)
+        self.assertEqual(second["issueKey"], "REL-2")
+        for issue in (ISSUE, "REL-2"):
+            answer = self.linkage.counterpart(PARENT, CHILD, quoted_scope=issue)
+            self.assertEqual(answer["counterpart"]["scopeKey"], issue)
+            self.assertNotIn("foreign_scope", answer["findings"], issue)
+
+    def test_a_revision_that_does_not_exist_yet_is_not_current_either(self):
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        answer = self.linkage.counterpart(PARENT, CHILD, quoted_revision=99)
+        self.assertIn("stale_revision", answer["findings"])
+
 if __name__ == "__main__":
     unittest.main()

@@ -702,7 +702,34 @@ class Linkage:
         if row is None:
             return "unscoped"
         at = self.clock.iso()
-        lower = ACTIVE if status == ACTIVE else ARCHIVED
+        # paused is LIVE ownership on both sides of this boundary. The relationship model
+        # treats a paused assignment as still responsible - it blocks a replacement
+        # registration - and LIVE here is active or paused for the same reason. Collapsing
+        # paused into archived released the issue scope while registry still reported the
+        # child as responsible, so one store answered two ways about the same assignment.
+        lower = status if status in LIVE else ARCHIVED
+        if lower == ACTIVE:
+            # Reactivating must not produce a second owner. Cancelling RELEASES an issue, so
+            # another child can be bound to it directly in the meantime; resume checks
+            # relationships and never looked at who holds the scope now.
+            row = db.execute(
+                "SELECT issue_key, child_task_id FROM relationships"
+                "  WHERE relationship_id = ?", (relationship_id,)
+            ).fetchone()
+            rival = db.execute(
+                "SELECT task_id FROM scope_bindings"
+                "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
+                "    AND status IN ('active','paused') AND superseded_by IS NULL"
+                "    AND task_id != ?",
+                (ISSUE, row["issue_key"], CHILD, row["child_task_id"]),
+            ).fetchone()
+            if rival is not None:
+                raise LinkageError(
+                    RefusalReason.DUPLICATE_SCOPE_OWNER,
+                    "issue " + repr(row["issue_key"]) + " is now held by "
+                    + repr(rival["task_id"]) + ", so restoring "
+                    + repr(row["child_task_id"]) + " would leave it with two owners",
+                )
         db.execute(
             "UPDATE scope_bindings SET status = ?, updated_at = ?"
             "  WHERE scope_kind = ? AND scope_key = ? AND role = ? AND task_id = ?",
@@ -921,36 +948,65 @@ class Linkage:
             raise refusal.error()
         return self.link(lid)
 
-    def counterpart(self, from_task, to_task, *, quoted_revision=None, quoted_scope=None):
+    def counterpart(self, from_task, to_task, *, quoted_revision=None, quoted_scope=None,
+                    from_scope=None):
         """What a message can establish about whom it is addressing.
 
+        A task may own SEVERAL scopes of one role - one parent with two projects, one child
+        with two issues - because the role rule only forbids holding two DIFFERENT roles. So
+        picking one binding per task by revision alone chose arbitrarily between them, and a
+        correctly routed message could be answered about the wrong scope: reported unlinked
+        when a live edge existed, or reported foreign_scope against a binding nobody named.
+
+        Both endpoints are therefore resolved as CANDIDATE SETS, and the pair that an actual
+        live link joins is the one answered about. OPS-7.4 says a message binds both Linear
+        scopes; from_scope and quoted_scope are how a caller supplies them, and when it does
+        they narrow the candidates rather than being checked after an arbitrary pick.
+
         Returns a record and never raises for an absence, and never reports a failure to READ
-        as an absence: an empty answer with readable True means the store said there is nothing,
-        and one with readable False means the store did not answer. This is the shape
-        intent.dispatch_generation_state uses, which separates stale from absent for the same
-        reason.
+        as an absence: an empty answer with readable True means the store said there is
+        nothing, and one with readable False means the store did not answer.
         """
         import sqlite3
 
-        blank = {
-            "state": "unreadable", "readable": False, "link": None,
-            "from": None, "counterpart": None, "currentOwner": None, "findings": [],
-        }
         try:
-            sender = self._any_binding(from_task)
-            recipient = self._any_binding(to_task)
+            senders = self._bindings_for(from_task)
+            recipients = self._bindings_for(to_task)
             findings = []
+            if from_scope is not None:
+                narrowed = [b for b in senders if b["scopeKey"] == from_scope]
+                if narrowed:
+                    senders = narrowed
+            wrong_scope = None
+            if quoted_scope is not None:
+                narrowed = [b for b in recipients if b["scopeKey"] == quoted_scope]
+                if narrowed:
+                    recipients = narrowed
+                else:
+                    wrong_scope = "foreign_scope"
+            sender = senders[0] if senders else None
+            recipient = recipients[0] if recipients else None
+            edge = None
+            for candidate_sender in senders:
+                for candidate_recipient in recipients:
+                    edge = self._joining_link(candidate_sender, candidate_recipient)
+                    if edge is not None:
+                        sender, recipient = candidate_sender, candidate_recipient
+                        break
+                if edge is not None:
+                    break
             current = None
             if recipient is not None and (recipient["status"] not in LIVE
                                           or recipient["supersededBy"]):
                 findings.append("stale_owner")
                 current = self.owner(recipient["scopeKind"], recipient["scopeKey"])
             # The sender can be stale too. A message FROM a task that no longer owns its scope
-            # is exactly as misrouted as one addressed to a replaced owner, and reporting only
-            # the recipient let an archived sender read as a healthy relationship.
+            # is exactly as misrouted as one addressed to a replaced owner.
             if sender is not None and (sender["status"] not in LIVE
                                        or sender["supersededBy"]):
                 findings.append("stale_sender")
+            if wrong_scope is not None:
+                findings.append(wrong_scope)
             if sender is None or recipient is None:
                 if recipient is None:
                     findings.append("unregistered_link")
@@ -959,9 +1015,6 @@ class Linkage:
                     "from": sender, "counterpart": recipient, "currentOwner": current,
                     "findings": sorted(set(findings)),
                 }
-            if quoted_scope is not None and quoted_scope != recipient["scopeKey"]:
-                findings.append("foreign_scope")
-            edge = self._joining_link(sender, recipient)
             if edge is None:
                 findings.append("unregistered_link")
                 if self._role_pair_is_wrong(sender, recipient):
@@ -973,7 +1026,9 @@ class Linkage:
                 }
             if self._role_pair_is_wrong(sender, recipient):
                 findings.append("wrong_role")
-            if quoted_revision is not None and quoted_revision < edge["revision"]:
+            # Not "older than". A revision that does not exist yet is not current either, and
+            # reporting only the lower side let a message quoting a future linkage read clean.
+            if quoted_revision is not None and quoted_revision != edge["revision"]:
                 findings.append("stale_revision")
             for side in ("upper", "lower"):
                 live = self.owner(edge[side]["scopeKind"], edge[side]["scopeKey"])
@@ -989,21 +1044,28 @@ class Linkage:
                 "findings": sorted(set(findings)),
             }
         except sqlite3.Error:
-            return blank
+            return {
+                "state": "unreadable", "readable": False, "link": None,
+                "from": None, "counterpart": None, "currentOwner": None, "findings": [],
+            }
 
-    def _any_binding(self, task_id):
-        """The most recent binding for a task, live or not.
+    def _bindings_for(self, task_id):
+        """Every scope this task holds, live ones first, newest revision first.
 
         Deliberately not filtered to live rows: a message naming a replaced owner has to be
-        told that it did, and the only way to say so is to find the archived binding.
+        told that it did, and the only way to say so is to find the archived binding. Returned
+        as a LIST rather than one row, because a task may hold several scopes of one role and
+        choosing between them belongs to whoever knows which scope the message is about.
         """
-        row = self.store.one(
-            "SELECT * FROM scope_bindings WHERE task_id = ?"
-            "  ORDER BY CASE WHEN status IN ('active','paused') THEN 0 ELSE 1 END,"
-            "           revision DESC LIMIT 1",
-            (task_id,),
-        )
-        return self._binding_record(row) if row else None
+        return [
+            self._binding_record(row)
+            for row in self.store.all(
+                "SELECT * FROM scope_bindings WHERE task_id = ?"
+                "  ORDER BY CASE WHEN status IN ('active','paused') THEN 0 ELSE 1 END,"
+                "           revision DESC, scope_key",
+                (task_id,),
+            )
+        ]
 
     def _joining_link(self, sender, recipient):
         row = self.store.one(
@@ -1235,6 +1297,18 @@ class Linkage:
         if scope_kind is None:
             raise LinkageError(
                 RefusalReason.SCOPE_ROLE_MISMATCH, "unknown role " + repr(role))
+        if role == CHILD:
+            # A child is owned by its assignment, not by this table. Replacing one here would
+            # move the binding and the edge while the relationships row kept naming the
+            # outgoing task, so delivery and assignment state would go on targeting it, and a
+            # later pause could leave both bindings live. The supported path is
+            # register(supersedes=...), which moves both together.
+            raise LinkageError(
+                RefusalReason.SCOPE_ROLE_MISMATCH,
+                "a child is replaced by registering its successor with supersedes, which moves "
+                "the assignment and its issue scope together; handover covers a supervisor or "
+                "a parent",
+            )
         if not str(evidence or "").strip():
             raise LinkageError(
                 RefusalReason.HANDOVER_UNCONFIRMED, "a handover carries its evidence")
