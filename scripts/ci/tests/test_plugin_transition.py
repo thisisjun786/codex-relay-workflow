@@ -3030,6 +3030,44 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(host.hooks_document()["hooks"]["Stop"][0]["hooks"], [])
         self.assertEqual(host.settings()["owner"], "plugin")
 
+    @needs_reader
+    def test_a_legacy_table_with_no_record_survives_the_removal(self):
+        """With no ownership record the table is the only copy of what the host registered."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom = host.version / "bin" / "codex-thread-bridge-of-its-own"
+        custom.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        custom.chmod(0o755)
+        host.link_skills()
+        host.register_hook()
+        # =, because argparse reads a value beginning with -- as the next option.
+        registered = run([RUNTIME, "register-mcp", "--owner", "user", "--codex-home", host.home,
+                          "--bridge-command", custom, "--bridge-arg=--from-the-old-install",
+                          "--apply"])
+        self.assertEqual(registered.returncode, 0, registered.stdout[-600:])
+        # The legacy shape: a table in config.toml and no ownership record beside it.
+        (host.home / "crw-bridge-mcp.json").unlink()
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(steps.mcp_record_retire(snapshot, {}, apply=True)["outcome"],
+                         "already_done")
+        removed = steps.mcp_table_standdown(snapshot, {}, apply=True)
+        self.assertEqual(removed["outcome"], "settled", json.dumps(removed)[:600])
+        # Interrupted right here: the table is gone and the run never reached the record install.
+        self.assertNotIn("[mcp_servers." + inventory.SERVER_NAME + "]", host.config())
+        self.assertIsNone(host.record())
+        again = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(steps.bridge_command(again), str(custom))
+        written = steps.mcp_record_install(again, {}, apply=True)
+        self.assertEqual(written["outcome"], "settled", json.dumps(written)[:600])
+        self.assertEqual(host.record()["bridgeExecutable"], str(custom))
+        self.assertEqual(host.record()["args"], ["--from-the-old-install"])
+        # And the archive that carried it across is named in the answer that made it.
+        self.assertTrue(removed["preserved"], json.dumps(removed)[:600])
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

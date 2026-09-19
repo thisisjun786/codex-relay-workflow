@@ -1184,6 +1184,44 @@ def mcp_record_retire(host, options, *, apply=False):
                    wrote=True, retired=[{"from": str(path), "to": moved}])
 
 
+def _preserve_registration(host, again):
+    """Archive what a table says when nothing else on this host records it, or why it could not be.
+
+    A supported legacy install can have a config.toml table and no ownership record at all, and
+    then the table IS the only durable copy of the bridge executable and its arguments. Removing
+    it and stopping there -- an interrupted run, a refusal in the step after -- left the next run
+    with neither a table nor an archive, and the record install rebuilt from the pointer default
+    with no arguments: a custom executable and its argument replaced by defaults, reported as
+    success.
+
+    The archive lands under the record's own superseded stem, which is where _retired_record
+    already looks, so this is the existing recovery path rather than a second mechanism.
+    """
+    registration = (again.get("registration") or {})
+    command = registration.get("command")
+    if not command:
+        return None, None
+    home = Path(host["codexHome"])
+    try:
+        document = bridgerecord.document(command=command,
+                                         arguments=list(registration.get("args") or []),
+                                         name=inventory.SERVER_NAME, issue="CRW-115",
+                                         owner=bridgerecord.OWNER_USER)
+    except ValueError as error:
+        return None, ("the table registers " + repr(str(command)) + " and no record keeps it, and"
+                      " that identity cannot be archived (" + str(error) + "), so removing the"
+                      " table would be the last copy of it")
+    temporary = home / (bridgerecord.RECORD_NAME + ".preserving-" + str(os.getpid()))
+    try:
+        temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        return retire(temporary, into=home, stem=bridgerecord.RECORD_NAME), None
+    except OSError as error:
+        temporary.unlink(missing_ok=True)
+        return None, ("the table registers " + repr(str(command)) + " and no record keeps it, and"
+                      " archiving that identity failed (" + type(error).__name__ + ": "
+                      + str(error) + "), so nothing was removed")
+
+
 def mcp_table_standdown(host, options, *, apply=False):
     """Remove the table this repository rendered, and prove every other byte survived."""
     mcp = host["mcp"]
@@ -1227,6 +1265,14 @@ def mcp_table_standdown(host, options, *, apply=False):
         if stripped.replace("\n", "") != before.replace(block, "", 1).replace("\n", ""):
             return _answer("mcp table standdown", REFUSED,
                            "removing the block would have changed bytes outside it")
+        preserved = None
+        if host["mcp"].get("record") is None and _retired_record(host) is None:
+            # Nothing else on this host keeps what this table registers, so it is archived before
+            # the bytes go. Under the same lock, because a record written in between is one this
+            # would otherwise duplicate.
+            preserved, why = _preserve_registration(host, again)
+            if why:
+                return _answer("mcp table standdown", REFUSED, why)
         hostrecord.atomic_write(path, stripped)
         back = reading.read_text(path, "the Codex configuration")
     view = codexconfig.scan(back.value) if back.usable else None
@@ -1249,7 +1295,7 @@ def mcp_table_standdown(host, options, *, apply=False):
         return _answer("mcp table standdown", REFUSED, "the table is still registered after the"
                        " write", applied=True, wrote=True)
     return _answer("mcp table standdown", SETTLED, "removed the table and left every other byte",
-                   applied=True, wrote=True,
+                   applied=True, wrote=True, preserved=preserved,
                    otherTablesPreserved=True)
 
 

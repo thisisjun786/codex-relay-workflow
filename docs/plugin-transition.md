@@ -209,6 +209,12 @@ Every step decides from what is on disk, so nothing depends on a previous step's
 second run reports `already_done` for each step, writes nothing, and exits zero. A run interrupted
 anywhere converges on the next run.
 
+Convergence after the bridge table is removed depends on the identity surviving it. A legacy
+install can have a `config.toml` table and no ownership record, and then the table is the only
+durable copy of the bridge executable and its arguments. The table standdown archives that identity
+under the record's own `.superseded-` name before the bytes go, so a run interrupted between the
+two rebuilds the record from the archive instead of from the pointer default with no arguments.
+
 ## Update
 
 Nothing here migrates a session. The settings record the adapter, the interpreter and the relay
