@@ -101,7 +101,7 @@ def write_stub(path, behaviour, code=0):
 
 
 def settings_document(*, relay, marker, journal, timeout=5, mode="observe", policy=None,
-                      version=completion.CONFIG_VERSION):
+                      version=completion.CONFIG_VERSION, owner=None, adapter=True):
     document = {
         "configVersion": version,
         "event": "Stop",
@@ -115,6 +115,13 @@ def settings_document(*, relay, marker, journal, timeout=5, mode="observe", poli
         "installedBy": "CRW-115",
         "isolationAssertedBy": None,
     }
+    if owner is not None:
+        # The production path for a plugin installation, and the one the first draft of this file
+        # never exercised: every fixture omitted owner, so the branch that requires the adapter
+        # fields was compared in neither copy.
+        document["owner"] = owner
+        document["adapterInterpreter"] = str(sys.executable) if adapter else None
+        document["adapterEntryPoint"] = str(PACKAGED_PATH) if adapter else None
     return document
 
 
@@ -134,13 +141,15 @@ def journal_records(root):
 
 
 def drive(adapter, home, payload, *, document=None, settings_name="settings.json",
-          settings_is_directory=False, absent=False, raw=None):
+          settings_is_directory=False, absent=False, raw=None, settings_path=None):
     """Run one adapter once, and return what the host would have seen plus what was written."""
     root = home / adapter_label(adapter)
     root.mkdir(parents=True, exist_ok=True)
     journal = root / "journal"
-    settings = root / settings_name
-    if settings_is_directory:
+    settings = Path(settings_path) if settings_path else root / settings_name
+    if settings_path:
+        pass
+    elif settings_is_directory:
         settings.mkdir()
     elif raw is not None:
         settings.write_bytes(raw)
@@ -186,6 +195,28 @@ def differences(left, right):
     return found
 
 
+def reading_of(adapter, path):
+    """What each copy's settings reader DECIDED, which the journal cannot show.
+
+    A settings failure writes no record and returns nothing, because the record's location is what
+    could not be read. So driving run() over a broken settings file compares two silences and would
+    call any divergence agreement. The decision itself is the observable behaviour here, and this is
+    where it is compared.
+    """
+    if adapter is completion:
+        document, outcome, _detail, _found = completion.read_configuration(path)
+    else:
+        document, outcome, _detail = adapter.read_settings(path)
+    return {"outcome": outcome, "document": document is not None}
+
+
+def reading_differences(path, packaged=None):
+    left = reading_of(completion, path)
+    right = reading_of(packaged or PACKAGED, path)
+    if left == right:
+        return []
+    return ["settings reading: checkout " + repr(left) + " vs packaged " + repr(right)]
+
 class AgreementTests(unittest.TestCase):
     """One case per invocation class the adapter has to classify."""
 
@@ -201,10 +232,11 @@ class AgreementTests(unittest.TestCase):
                 marker=home / "marker", journal=home / "unused",
                 timeout=case.get("timeout", 5), mode=case.get("mode", "observe"),
                 policy=case.get("policy"), version=case.get("version",
-                                                            completion.CONFIG_VERSION))
+                                                            completion.CONFIG_VERSION),
+                owner=case.get("owner"), adapter=case.get("adapter", True))
             shared = {"document": document, "absent": case.get("absent", False),
                       "settings_is_directory": case.get("settingsIsDirectory", False),
-                      "raw": case.get("raw")}
+                      "raw": case.get("raw"), "settings_path": case.get("settingsPath")}
             payload = case.get("payload", json.dumps({
                 "session_id": "s-1", "turn_id": "t-1", "cwd": str(home),
                 "stop_hook_active": False}).encode("utf-8"))
@@ -276,24 +308,33 @@ class AgreementTests(unittest.TestCase):
                          completion.GUARD_TIMED_OUT)
 
     def test_absent_settings_are_absent_in_both(self):
-        left, right = self.run_case(absent=True)
-        self.assertEqual(differences(left, right), [])
-        self.assertEqual(left["written"], [])
-        self.assertEqual(right["written"], [])
-        self.assertIsNone(left["returned"])
-        self.assertIsNone(right["returned"])
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "nothing.json"
+            self.assertEqual(reading_differences(path), [])
+            self.assertEqual(reading_of(PACKAGED, path)["outcome"], completion.CONFIG_ABSENT)
 
     def test_malformed_settings_are_malformed_in_both(self):
-        left, right = self.run_case(version=99)
-        self.assertEqual(differences(left, right), [])
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.json"
+            path.write_text(json.dumps(settings_document(relay="/bin/true", marker="/tmp",
+                                                         journal="/tmp/j", version=99)),
+                            encoding="utf-8")
+            self.assertEqual(reading_differences(path), [])
+            self.assertEqual(reading_of(PACKAGED, path)["outcome"], completion.CONFIG_MALFORMED)
 
     def test_settings_that_are_a_directory_are_unreadable_in_both(self):
-        left, right = self.run_case(settingsIsDirectory=True)
-        self.assertEqual(differences(left, right), [])
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.json"
+            path.mkdir()
+            self.assertEqual(reading_differences(path), [])
+            self.assertEqual(reading_of(PACKAGED, path)["outcome"], completion.CONFIG_UNREADABLE)
 
     def test_settings_that_are_not_utf8_are_unreadable_in_both(self):
-        left, right = self.run_case(raw=b"\xff\xfe not text")
-        self.assertEqual(differences(left, right), [])
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.json"
+            path.write_bytes(b"\xff\xfe not text")
+            self.assertEqual(reading_differences(path), [])
+            self.assertEqual(reading_of(PACKAGED, path)["outcome"], completion.CONFIG_UNREADABLE)
 
     def test_every_payload_failure_is_the_same_failure_in_both(self):
         for payload, expected in ((b"not json at all", completion.STDIN_NOT_JSON),
@@ -312,6 +353,64 @@ class AgreementTests(unittest.TestCase):
         left, right = self.run_case(behaviour="garbage", policy=completion.NO_JOURNAL)
         self.assertEqual(differences(left, right), [])
         self.assertEqual(left["written"], [])
+
+    def test_a_plugin_owned_document_is_the_same_answer_in_both(self):
+        """The production path for a plugin installation, which the first draft never drove."""
+        answer = self.assert_agrees(behaviour="verdict_block", owner=completion.OWNER_PLUGIN)
+        self.assertEqual(json.loads(answer["returned"])["decision"], "block")
+
+    def test_a_plugin_owned_document_missing_its_adapter_fields_is_malformed_in_both(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.json"
+            path.write_text(json.dumps(settings_document(
+                relay="/bin/true", marker="/tmp", journal="/tmp/j",
+                owner=completion.OWNER_PLUGIN, adapter=False)), encoding="utf-8")
+            self.assertEqual(reading_differences(path), [])
+            self.assertEqual(reading_of(PACKAGED, path)["outcome"], completion.CONFIG_MALFORMED)
+
+    def test_a_plugin_owned_budget_at_the_launcher_ceiling_is_malformed_in_both(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.json"
+            path.write_text(json.dumps(settings_document(
+                relay="/bin/true", marker="/tmp", journal="/tmp/j",
+                owner=completion.OWNER_PLUGIN,
+                timeout=completion.LAUNCHER_CEILING_SECONDS)), encoding="utf-8")
+            self.assertEqual(reading_differences(path), [])
+            self.assertEqual(reading_of(PACKAGED, path)["outcome"], completion.CONFIG_MALFORMED)
+
+    def test_a_settings_path_that_is_a_device_is_unreadable_in_both(self):
+        self.assertEqual(reading_differences(Path("/dev/null")), [])
+        self.assertEqual(reading_of(PACKAGED, Path("/dev/null"))["outcome"],
+                         completion.CONFIG_UNREADABLE)
+
+    def test_a_settings_path_that_is_a_named_pipe_is_refused_without_opening_it_in_both(self):
+        """The regression this case exists for: opening a FIFO blocks until somebody writes.
+
+        A Stop blocked here is killed by the host, and a killed adapter records nothing, which is
+        the one outcome this adapter is built to avoid. Each call runs on its own thread with a
+        bound, so a copy that goes back to opening the path fails this instead of hanging the suite.
+        """
+        import threading
+        with tempfile.TemporaryDirectory() as raw:
+            home = Path(raw)
+            fifo = home / "settings.fifo"
+            os.mkfifo(fifo)
+            answers = {}
+
+            def call(label, adapter):
+                answers[label] = adapter.run(b"{}", settings=str(fifo))
+
+            for label, adapter in (("checkout", completion), ("packaged", PACKAGED)):
+                worker = threading.Thread(target=call, args=(label, adapter), daemon=True)
+                worker.start()
+                worker.join(10)
+                self.assertFalse(worker.is_alive(),
+                                 label + " opened a named pipe and blocked on it")
+            self.assertEqual(answers["checkout"], answers["packaged"])
+            self.assertIsNone(answers["packaged"])
+            self.assertEqual(reading_differences(fifo), [])
+            self.assertEqual(reading_of(PACKAGED, fifo)["outcome"],
+                             completion.CONFIG_UNREADABLE)
 
     def test_a_record_is_written_only_to_the_owner_and_only_readable_by_it(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -394,6 +493,25 @@ class MutationNoticedTests(unittest.TestCase):
         self.assertIsNotNone(thinner)
 
 
+    def test_a_dropped_plugin_owner_requirement_is_noticed(self):
+        """The mutation the first draft of this file missed, because no fixture set an owner."""
+        copy = self.mutated(OWNER_PLUGIN="not-the-plugin")
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.json"
+            path.write_text(json.dumps(settings_document(
+                relay="/bin/true", marker="/tmp", journal="/tmp/j",
+                owner=completion.OWNER_PLUGIN, adapter=False)), encoding="utf-8")
+            self.assertNotEqual(reading_differences(path, copy), [],
+                               "dropping the plugin-owner requirement went unnoticed")
+
+    def test_a_reader_that_stops_refusing_a_non_regular_file_is_noticed(self):
+        copy = self.mutated(observe=lambda path: None)
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.json"
+            path.mkdir()
+            self.assertNotEqual(reading_differences(path, copy), [],
+                               "a reader that stopped refusing a directory went unnoticed")
+
+
 if __name__ == "__main__":
     unittest.main()
-

@@ -40,6 +40,7 @@ import errno
 import json
 import os
 import re
+import stat as stat_module
 import subprocess
 import sys
 import time
@@ -121,9 +122,11 @@ DECISIONS = (BLOCK, RELEASE)
 
 JOURNAL_NAME = re.compile(r"^[0-9a-f]{32}\.json$")
 
-# The errno values the checkout's reading module treats as an access error rather than an
-# unreadable file. Mirrored so a permission problem and a corrupt file stay two answers here too.
-ACCESS_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+# How the checkout's reading module classifies a failure, mirrored rather than approximated: ANY
+# OSError established nothing and is an access error, while a decode or shape failure read
+# something and could not make sense of it. Getting this wrong sends an operator to the wrong
+# repair, and getting the pre-read part wrong is worse than that -- see read_settings.
+DECODE_FAILURES = (UnicodeDecodeError, ValueError)
 
 
 def now():
@@ -247,27 +250,77 @@ def complaints(document):
     return found
 
 
+def _kind(mode):
+    for predicate, name in ((stat_module.S_ISDIR, "directory"), (stat_module.S_ISSOCK, "socket"),
+                            (stat_module.S_ISFIFO, "named pipe"),
+                            (stat_module.S_ISBLK, "block device"),
+                            (stat_module.S_ISCHR, "character device")):
+        if predicate(mode):
+            return name
+    return "not a regular file"
+
+
+def observe(path):
+    """What is at this path, settled before anything is opened, or None for a regular file.
+
+    Mirrors the checkout reader's first two steps. ABSENT is only for established absence: a check
+    that could not be made is an access error, because "the check failed" and "there is nothing
+    there" are different answers and they are different repairs.
+    """
+    try:
+        found = os.lstat(str(path))
+    except FileNotFoundError:
+        return None, CONFIG_ABSENT, "nothing exists at " + str(path)
+    except OSError as error:
+        return None, CONFIG_UNREACHABLE, ("whether anything exists at " + str(path)
+                                          + " could not be established: " + str(error))
+    except ValueError as error:
+        # A NUL-bearing string cannot name a path, so nothing was established either.
+        return None, CONFIG_UNREACHABLE, str(path) + " cannot name a file: " + str(error)
+    if stat_module.S_ISLNK(found.st_mode):
+        try:
+            found = os.stat(str(path))
+        except FileNotFoundError:
+            return None, CONFIG_UNREADABLE, ("the configuration at " + str(path)
+                                             + " is a symbolic link whose target does not exist")
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                return None, CONFIG_UNREADABLE, ("the configuration at " + str(path)
+                                                 + " is a symbolic link that loops")
+            return None, CONFIG_UNREACHABLE, ("the configuration at " + str(path)
+                                              + " is a symbolic link whose target could not be"
+                                                " resolved: " + str(error))
+    if not stat_module.S_ISREG(found.st_mode):
+        return None, CONFIG_UNREADABLE, ("the configuration at " + str(path) + " is a "
+                                         + _kind(found.st_mode) + ", not a regular file")
+    return None
+
 def read_settings(path):
     """Absent, unreachable, unreadable and malformed stay four answers, because they are four repairs.
 
-    This is the one place the checkout adapter reaches its reading module and this file cannot.
-    The mapping is mirrored rather than approximated: a missing file is not a permission problem,
-    and a permission problem is not a corrupt file.
+    This is the one place the checkout adapter reaches its reading module and this file cannot, so
+    the module's ordered partition is mirrored here, INCLUDING the part that happens before any
+    read. What is at the path is established with lstat first, and anything that is not a regular
+    file is refused unopened.
+
+    That order is not tidiness. A hook whose settings path is a named pipe would block this process
+    on open until the host killed it, and a Stop that is killed mid-adapter releases with nothing
+    recorded -- the one failure this adapter exists to avoid. The checkout reader refuses a FIFO,
+    a socket, a device and a directory without opening any of them, and so does this.
     """
+    settled = observe(path)
+    if settled is not None:
+        return settled
     try:
         raw = Path(path).read_bytes()
-    except FileNotFoundError:
-        return None, CONFIG_ABSENT, "no configuration at " + str(path)
-    except NotADirectoryError:
-        return None, CONFIG_ABSENT, "no configuration at " + str(path)
-    except IsADirectoryError:
-        return None, CONFIG_UNREADABLE, str(path) + " is a directory, not a configuration file"
     except OSError as error:
-        outcome = CONFIG_UNREACHABLE if error.errno in ACCESS_ERRNOS else CONFIG_UNREADABLE
-        return None, outcome, "the configuration at " + str(path) + " could not be read: " + str(error)
+        # Every OSError from here is an access error, because it established nothing about the
+        # record. That is the module's rule, not a simplification of it.
+        return None, CONFIG_UNREACHABLE, ("the configuration at " + str(path)
+                                          + " could not be read: " + str(error))
     try:
         value = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as error:
+    except DECODE_FAILURES as error:
         return None, CONFIG_UNREADABLE, ("the configuration at " + str(path)
                                         + " could not be decoded: " + str(error))
     wrong = complaints(value)

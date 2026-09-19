@@ -44,6 +44,7 @@ REAL_TIME_MODULES = (
     "test_management_cli.py",
     "test_operational_scale.py",
     "test_service.py",
+    "test_stop_adapter.py",
     "test_wp1_regressions.py",
 )
 
