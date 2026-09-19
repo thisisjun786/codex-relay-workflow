@@ -1789,7 +1789,7 @@ def _journal_cell(config, held=None):
             held.append(handle)
 
 
-def journals_named(registrations, already_read=None):
+def journals_named(registrations, already_read=None, pinned=None):
     """Each REGISTRATION's own settings file, and what the journal under it holds.
 
     This exists because "no record" had several causes and the command answered none of them.
@@ -1857,7 +1857,8 @@ def journals_named(registrations, already_read=None):
         # every other entry follows.
         for taken in (already_read or {}).values():
             _keep(taken, read_by)
-        _read_named(registrations, already_read, read_by, held, found, scanned, aliases)
+        _read_named(registrations, already_read, read_by, held, found, scanned, aliases,
+                    pinned)
     finally:
         for descriptor in held:
             try:
@@ -1886,7 +1887,43 @@ def _stated_path_cell(named, what, read):
     return NOT_READ if found is None else found["value"]
 
 
-def _one_source_each(spellings):
+def _pin_spellings(spellings, held):
+    """Open and HOLD every spelling before any of them is read.
+
+    A descriptor taken now fixes what each spelling named at ONE moment. Everything downstream
+    -- the merge that decides whether two of them are one file, the reading this command
+    settles on, and each registration's own reading -- then asks about the objects this set
+    holds rather than about whatever the pathnames reach later. That is what makes their
+    answers comparable: a replacement arriving at a pathname afterwards cannot move one
+    consumer onto a different object from another.
+
+    A spelling nobody could open or identify is not in the set, and its consumer falls back to
+    reading the path. Its answer is then a moment later than the rest, which is the honest cost
+    of a spelling the kernel would not hold still.
+    """
+    pinned = {}
+    for spelling in spellings:
+        spelling = str(spelling)
+        if spelling in pinned:
+            continue
+        try:
+            # NONBLOCK so a named pipe at a settings path cannot stall this command.
+            descriptor = os.open(spelling, os.O_RDONLY | os.O_NONBLOCK)
+        except (OSError, ValueError):
+            continue
+        mine = reading.descriptor_identity(descriptor)
+        if mine is None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            continue
+        held.append(descriptor)
+        pinned[spelling] = (descriptor, mine)
+    return pinned
+
+
+def _one_source_each(spellings, pinned=None):
     """Collapse the spellings the kernel says name one file, holding each while it is a key.
 
     Two registrations can name ONE settings file through two absolute spellings, and counting
@@ -1908,8 +1945,18 @@ def _one_source_each(spellings):
     """
     seen, kept, held = {}, [], []
     judged = {}
+    borrowed = pinned or {}
     try:
         for spelling in spellings:
+            bound = borrowed.get(str(spelling))
+            if bound is not None:
+                # Already held by the caller, for longer than this call lives, so it is judged
+                # against the same objects everything else here will read.
+                if bound[1] not in seen:
+                    seen[bound[1]] = spelling
+                    kept.append(spelling)
+                judged[spelling] = bound[1]
+                continue
             try:
                 # NONBLOCK so a named pipe at a settings path cannot stall this command.
                 descriptor = os.open(spelling, os.O_RDONLY | os.O_NONBLOCK)
@@ -2001,7 +2048,8 @@ def _keep(taken, read_by, held=None):
     read_by[identity] = taken
 
 
-def _read_named(registrations, already_read, read_by, held, found, scanned, aliases):
+def _read_named(registrations, already_read, read_by, held, found, scanned, aliases,
+                pinned=None):
     # Every spelling this call will read, opened and HELD before any of them is read.
     # Discovering aliases one spelling at a time left a window: an atomic rewrite landing
     # between the first snapshot and the next spelling's lookup made two registrations that now
@@ -2009,26 +2057,13 @@ def _read_named(registrations, already_read, read_by, held, found, scanned, alia
     # two sources disagreeing. Pinned together they are compared as they were at one moment,
     # and each reading is taken THROUGH the descriptor that pinned it, so no reading can come
     # from an object the comparison was not about.
-    pinned = {}
-    for registration in registrations:
-        if not registration.get("settings"):
-            continue
-        spelling = str(_settled(registration["settings"]))
-        if spelling in pinned:
-            continue
-        try:
-            descriptor = os.open(spelling, os.O_RDONLY | os.O_NONBLOCK)
-        except (OSError, ValueError):
-            continue
-        mine = reading.descriptor_identity(descriptor)
-        if mine is None:
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
-            continue
-        held.append(descriptor)
-        pinned[spelling] = (descriptor, mine)
+    #
+    # The caller may supply the set. status() does, because its OWN reading has to come from
+    # the same objects: pinning here and reading there left a window between them, and the
+    # carried reading then held one object while these pins held another.
+    if pinned is None:
+        pinned = _pin_spellings(
+            [_settled(one["settings"]) for one in registrations if one.get("settings")], held)
     for registration in registrations:
         if not registration.get("settings"):
             # A relative spelling or no settings at all. There is no file here to open, and
@@ -2153,7 +2188,24 @@ def status(codex_home=None, environ=None, event=EVENT):
     # spellings keep their own places rather than being merged on a guess: describing two files
     # as one is the error this check exists to prevent, and a second entry is the cheaper cost.
     absolute = sorted({str(_settled(named)) for named in carried if named not in relative})
-    named_once, judged = _one_source_each(absolute)
+    # Pinned HERE, before the merge and before this command reads anything, and held until the
+    # last consumer is done. The merge, the reading settled on below, and every registration's
+    # own reading in journals_named then ask about one set of objects. Pinning inside that last
+    # call left a window in front of it: a replacement arriving after this command had read and
+    # revalidated its own snapshot, but before those pins were taken, left the carried reading
+    # holding the old object while the pins held the new one -- and two registrations naming
+    # ONE file received the old journalRoot and the new one, though there was no instant at
+    # which they named different files. recorded_on_another_path establishes off exactly that
+    # disagreement, so the payload named another path that was never another path.
+    #
+    # Detecting the disagreement instead was the other shape offered and it cannot produce a
+    # coherent answer: the configuration cell is already built from the carried reading by the
+    # time the pins exist, so a later consumer finding them different would have to report two
+    # answers about one path, which is the contradiction the carried reading exists to prevent.
+    # Removing the interval is the fix; there is then nothing to detect.
+    held = []
+    pinned = _pin_spellings(absolute + [configuration_path(home, environ)], held)
+    named_once, judged = _one_source_each(absolute, pinned)
     collapsed = len(named_once) < len(absolute)
     distinct = sorted(set(named_once) | set(relative))
     # A registration with no settings argument resolves its own path, which is not necessarily
@@ -2185,7 +2237,10 @@ def status(codex_home=None, environ=None, event=EVENT):
         # registration naming that same file gets. An identity released before it is used as a
         # key is recyclable, and a file deleted in between would hand it to whatever is created
         # next. Released immediately after that call, which is the only thing that uses it.
-        config, failed, detail, found = read_configuration(path, hold=True)
+        settled_pin = pinned.get(str(path))
+        config, failed, detail, found = (
+            read_configuration(path, descriptor=settled_pin[0]) if settled_pin is not None
+            else read_configuration(path, hold=True))
         # The merge above was judged on descriptors this call no longer holds, and this read is
         # a fresh lookup of the spelling. Where the two spellings were collapsed into one
         # source and the object read is NOT the one that judgement was made about -- a symlink
@@ -2303,9 +2358,18 @@ def status(codex_home=None, environ=None, event=EVENT):
         ],
         # The reading the configuration cell above is built from, so one file read once answers
         # both. 'found' is None in the branches where no file was read at all.
-        already_read=({str(path): (config, failed, detail, found)} if found is not None else {}))
-    # Its identity has stopped being a key, so the object no longer has to be held.
+        already_read=({str(path): (config, failed, detail, found)} if found is not None else {}),
+        # The same objects this command read its own settings through, so the carried reading
+        # and every registration's reading provably came from one file rather than from one
+        # pathname at two moments.
+        pinned=pinned)
+    # Every consumer of the pinned set is done, so the objects no longer have to be held.
     reading.release(found)
+    for descriptor in held:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
     if failed is not None:
         settings = _cell(failed, detail or "", configuration=str(path),
                          configurationSource=source)

@@ -3593,8 +3593,8 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
             elsewhere.write_text(named.read_text(encoding="utf-8"), encoding="utf-8")
             real = completion._one_source_each
 
-            def retargeted_after_the_merge(spellings):
-                answer = real(spellings)
+            def retargeted_after_the_merge(spellings, *passed, **keywords):
+                answer = real(spellings, *passed, **keywords)
                 moved = host / "moved-settings.json"
                 named.rename(moved)
                 named.symlink_to(elsewhere)
@@ -3634,8 +3634,8 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
             elsewhere.write_text(named.read_text(encoding="utf-8"), encoding="utf-8")
             real = completion._one_source_each
 
-            def the_discarded_alias_moves(spellings):
-                answer = real(spellings)
+            def the_discarded_alias_moves(spellings, *passed, **keywords):
+                answer = real(spellings, *passed, **keywords)
                 # The DISCARDED spelling is retargeted; the retained one is untouched.
                 alias.unlink()
                 alias.symlink_to(elsewhere)
@@ -3768,6 +3768,57 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
         self.assertEqual(len({entry["journalRoot"] for entry in found}), 1,
                          "a rewrite landing between the two reads split one settings file into"
                          " two journals, which reads as two sources disagreeing")
+
+    def test_a_replacement_between_the_snapshot_and_the_pins_is_not_two_sources(self):
+        """The window between status()'s own reading and the pinning that follows it.
+
+        status() reads the settings it settled on, revalidates the merge, and only then does
+        journals_named pin the registration spellings. An atomic replacement landing in
+        BETWEEN leaves the carried reading holding the old object while the pins hold the new
+        one -- and the exact-path lookup took the carried value without ever comparing it to
+        the pin. Two registrations aliasing one file then received the old journalRoot and the
+        new one, though there was no instant at which they named different files, and
+        recorded_on_another_path can establish off that: an absence given the wrong cause,
+        which is worse than one given none.
+
+        The replacement is performed at the entry to journals_named, which is exactly that
+        window. Anywhere else does not test this.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = Path(temporary)
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            register(temporary)
+            named = completion.configuration_path(host)
+            alias = host / "an-alias-of-the-settings.json"
+            alias.symlink_to(named)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = dict(written["hooks"][completion.EVENT][0]["hooks"][0])
+            entry["command"] = entry["command"].replace(str(named), str(alias))
+            written["hooks"][completion.EVENT][0]["hooks"].append(entry)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+
+            elsewhere = host / "journal-somewhere-else"
+            elsewhere.mkdir()
+            real = completion.journals_named
+
+            def replaced_before_the_pins(*passed, **keywords):
+                document = json.loads(named.read_text(encoding="utf-8"))
+                document["journalRoot"] = str(elsewhere)
+                replacement = host / "settings.replacement"
+                replacement.write_text(json.dumps(document), encoding="utf-8")
+                os.replace(replacement, named)
+                return real(*passed, **keywords)
+
+            with mock.patch.object(completion, "journals_named",
+                                   side_effect=replaced_before_the_pins):
+                found = completion.status(codex_home=temporary, environ={})
+
+        roots = {one["journalRoot"] for one in found["configuration"]["namedSettings"]}
+        self.assertEqual(len(roots), 1,
+                         "two registrations aliasing ONE settings file were given different"
+                         " journals, so a diagnosis can send the operator to a path that was"
+                         " never another path: " + repr(sorted(roots)))
 
     def test_a_pinned_spelling_that_is_unlinked_is_still_read(self):
         """Asking the PATH again undoes the reason the descriptor was pinned.
