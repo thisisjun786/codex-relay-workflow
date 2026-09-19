@@ -57,7 +57,8 @@ no existing parent. Where the request is an explicit designation to execute that
 agreed projects, that initiative runs through its projects' own parents under
 [Initiative supervision](references/initiative-supervision.md), which also settles which task
 holds the supervisor binding: this one where it is free to take it, and not this one where it is
-already some project's parent. Planning, a status read, a
+already bound to a scope of any level, since a task bound to a project or an issue would leave
+that work without its owner. Planning, a status read, a
 citation, an explanation of how the entry works, a usage question, and a quoted or unsubmitted
 example are none of them that designation, and that list is not closed: what makes one is the
 explicit request to execute, never the presence of a link.
@@ -192,7 +193,7 @@ them. Higher-priority host/tool restrictions still apply.
 | Invocation context | Action |
 |---|---|
 | Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, without creating a parent goal; host restrictions still apply |
-| Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task that is already a project's parent; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
+| Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task already bound to a scope of any level; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
 | Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings; refresh ownership and prerequisites, then continue the remaining in-scope obligations, including successors. Preserve an explicitly batch-limited assignment; do not repeat approval already covering the scope |

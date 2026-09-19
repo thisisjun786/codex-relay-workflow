@@ -151,13 +151,14 @@ On finding one, the later binding stops there: it sends no further handoffs, tel
 already handed projects to that its handoff is withdrawn and names the owner, and hands its record
 over. A parent settles that change the way it settled the first handoff, from the record rather
 than from the message: finding the initiative record now naming a supervisor other than the one its
-own record holds, it takes the recorded owner and updates its own record. Its children, results and
-pull requests are preserved rather than discarded, and they are also re-read against the owner's
-scope before they carry on: two designations need not describe the same execution, so work begun
-under the losing one can sit outside the winning approved set or outside its limits. Where it does,
-that work stops and is raised with an account of what was already done, rather than running on
-under a scope nobody approved. Where the scope agrees it simply continues, because the supervision
-changed and the project's work did not. A withdrawal, or a replacement handoff from the other side, is what prompts that
+own record holds, it reads that owner's scope before it writes anything, because two designations
+need not describe the same execution and the new owner's approved set may not contain this project
+at all. Where it does contain it, the parent takes the recorded owner, updates its own record, and
+carries on: its children, results and pull requests are untouched, since the supervision changed
+and the project's work did not. Where the winning set excludes this project, or narrows the limits
+the work was started under, the parent records no supervisor it is not in fact supervised by:
+it preserves the work already done, stops what now falls outside, and raises both, because a
+recorded ownership nobody authorized would route every later message to the wrong owner. A withdrawal, or a replacement handoff from the other side, is what prompts that
 read; neither is what settles it, which is also why forging either achieves nothing. That does not prevent an overlap; it bounds one to the work already started, which can be
 reconciled, instead of letting an initiative run to completion under two owners. A busy parent, an unreachable record or an
 uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
