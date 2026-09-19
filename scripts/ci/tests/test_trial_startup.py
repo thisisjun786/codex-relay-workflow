@@ -857,6 +857,12 @@ class StoreIdentity(TrialCase):
         self.assertEqual(cells_of(document, "storeIdentity")["storeAge"]["value"], NOT_VERIFIED)
 
     def test_an_unconfigured_ledger_is_not_applicable_rather_than_a_failure(self):
+        # A payload with no socket at all, which is the only way the relay reports no ledger:
+        # _ledger_location and _reachability both answer from services.socket_path. This case
+        # used to leave socketConnect at "ok" beside it, which is a payload no run produces, and
+        # the excuse it was testing covered that contradiction rather than a real absence.
+        self.world.payloads["doctor"]["payload"]["actorReachability"][
+            "socketConnect"] = "not configured"
         self.world.payloads["doctor"]["payload"]["ledger"] = {"configured": False, "split": False}
         self.world.flush()
         document = self.world.preflight()
@@ -5136,6 +5142,35 @@ class FortyFifthHostedRound(TrialCase):
                          UNKNOWN)
         self.assertFalse(document["readyToStart"],
                          "a peer that never said where its ledger lives was read as ready")
+
+    def test_a_payload_reaching_its_socket_with_no_ledger_contradicts_itself(self):
+        # not_applicable is for a question the source says does not arise. Here the source says
+        # the opposite: _ledger_location returns configured false only where there is no socket
+        # path, and _reachability answers "not configured" in exactly that case, so a payload
+        # reaching a socket while reporting no ledger is one no run produces. Excusing the
+        # question graded that receipt as having nothing to answer.
+        self.world.payloads["doctor"]["payload"]["ledger"] = {"configured": False, "split": False}
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a payload reaching its socket with no ledger was excused")
+        self.assertEqual(cells_of(document, "storeIdentity")["ledgerSplit"]["value"],
+                         NOT_VERIFIED)
+
+    def test_a_peer_reaching_its_socket_with_no_ledger_contradicts_itself(self):
+        # And the same reading per peer, which this cell can make because it already requires
+        # that peer's socket to be reachable.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["doctor-" + task + ".json"]["ledger"] = {"configured": False,
+                                                                         "split": False}
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a peer reaching its socket with no ledger was read as ready")
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
+                         NOT_VERIFIED)
 
     def test_a_service_disabled_during_the_last_probe_is_caught(self):
         # The intent was read before the last store probe, which can run for as long as its

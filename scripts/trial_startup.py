@@ -2092,10 +2092,23 @@ def reading_store(record, relay):
                                     " configured, and it answered " + str(shown(configured))
                                     + ", so where that ledger sits is not a question this"
                                     " payload settles")))
-    elif configured is False:
+    elif configured is False and reach == "not configured":
         cells.append(cell("ledgerSplit", NOT_APPLICABLE, probe=probe, provenance=EXECUTED,
-                          evidence="no socket is configured, so there is no transport ledger to"
-                                   " place beside this store"))
+                          evidence="this payload reports no socket configured, so there is no"
+                                   " transport ledger to place beside this store"))
+    elif configured is False:
+        # Not applicable is for a question the source says does not arise, and this source says
+        # the opposite. _ledger_location returns configured false only where there is no socket
+        # path, and _reachability answers "not configured" in exactly that case, so both come
+        # from the same value: a payload that reaches a socket while reporting no ledger is one
+        # no run produces. Excusing the question let that receipt through, and every probe this
+        # module composes passes --socket, so the excuse could only ever cover a fabricated one.
+        cells.append(graded("ledgerSplit", configured, False, probe=probe, provenance=EXECUTED,
+                            unreadable="doctor did not report where the transport ledger lives",
+                            evidence=("this payload reports no transport ledger configured while"
+                                      " answering " + str(shown(reach)) + " about the socket its"
+                                      " delivery would use, and the relay reads both from the"
+                                      " same socket path")))
     else:
         split = field(payload, "ledger", "split")
         cells.append(graded("ledgerSplit", split, split is False, probe=probe, provenance=EXECUTED,
@@ -2159,7 +2172,11 @@ def reading_store(record, relay):
         # to place, so it is unread rather than placed.
         ledger_unread = (not isinstance(peer_ledger, bool)
                          or (peer_ledger is True and not isinstance(peer_split, bool)))
-        ledger_beside = peer_ledger is False or peer_split is False
+        # The same reading for a peer: its socket answer and its ledger answer come from one
+        # value, and this cell already requires that socket to be reachable, so a capture
+        # reporting no ledger beside it is contradicting itself rather than describing a
+        # participant with none.
+        ledger_beside = peer_ledger is True and peer_split is False
         ledger_said = ("has no transport ledger configured" if peer_ledger is False
                        else "keeps its transport ledger beside that store" if peer_split is False
                        else "keeps its transport ledger split from that store")
