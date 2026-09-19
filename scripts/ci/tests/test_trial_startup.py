@@ -4915,6 +4915,68 @@ class FortyFifthHostedRound(TrialCase):
         self.assertFalse(document["readyToStart"],
                          "a supervisor that left during the gate's own wait was read as running")
 
+    def test_a_supervisor_that_leaves_before_the_witness_read_is_not_a_running_one(self):
+        # With the counter already advanced the gate waits for nothing, so the departure to catch
+        # is the one in the moment between reading liveness and reading the witness. The advance
+        # is real and the process behind it is gone.
+        if process_state_of(os.getpid()) is None:
+            raise unittest.SkipTest("this host does not report a process state to read")
+        self.world.start_supervisor()
+        original = startup.read_witness
+        gate = startup.gate_reads_held
+        armed = {"yes": False}
+
+        def arm(*arguments):
+            # The last reading before the supervisor's own, so the next witness read is the
+            # gate's and the departure lands between its liveness read and that one.
+            answer = gate(*arguments)
+            armed["yes"] = True
+            return answer
+
+        def read_after_it_leaves(path):
+            if armed["yes"] and self.world.supervisor is not None:
+                self.world.supervisor.terminate()
+                self.world.supervisor.wait(timeout=5)
+                self.world.supervisor = None
+            return original(path)
+
+        startup.gate_reads_held = arm
+        startup.read_witness = read_after_it_leaves
+        self.addCleanup(setattr, startup, "read_witness", original)
+        self.addCleanup(setattr, startup, "gate_reads_held", gate)
+        document = self.world.preflight()
+        answer = document["supervisorStillRunning"]
+        self.assertTrue(answer["advanced"], "the counter this case is about did not advance")
+        self.assertFalse(answer["aliveAgain"],
+                         "liveness was answered from before the departure it is about")
+        self.assertFalse(document["readyToStart"])
+
+    def test_a_participant_that_is_not_an_object_is_named_rather_than_raised(self):
+        # The role check reads roles off objects and passes over anything else, so a scalar among
+        # them reached the first attribute read and raised. A hand-written record gets told what
+        # is wrong with it instead of a document saying this run raised before it could report.
+        self.world.record["boundaries"][1]["participants"].append(7)
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertEqual(code, 2, stderr)
+        self.assertIn("not an object", json.dumps(payload),
+                      "the record was refused without saying what was wrong with it")
+
+    def test_the_store_is_asked_last_of_all_the_relay_is_asked(self):
+        # The supervisor gate waits for the counter and, on a service trial, runs a relay command
+        # of its own, so a store verdict taken before it sits behind both. The identity question
+        # is the last one the relay is asked.
+        self.world.start_supervisor()
+        self.world.record["supervisor"]["service"] = True
+        self.world.payloads["service status"]["payload"]["pid"] = self.world.supervisor.pid
+        self.world.flush()
+        self.world.preflight()
+        asked = [json.loads(line)["subcommand"]
+                 for line in self.world.calls.read_text().splitlines() if line.strip()]
+        self.assertEqual(asked[-1], "doctor",
+                         "a relay command ran after the store's identity was last confirmed")
+        self.assertIn("service status", asked[:-1])
+
     def test_a_root_is_judged_as_the_bytes_the_relay_receives(self):
         # The bound on that refusal: a root that is absolute without anything being taken off it
         # is still a root, trailing characters and all, because the relay compares it the same

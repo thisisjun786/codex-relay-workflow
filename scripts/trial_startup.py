@@ -1079,6 +1079,13 @@ def load_start(path, *, environment=None, mode="preflight"):
         if not isinstance(boundary, dict) or not isinstance(boundary.get("participants"), list):
             raise Refused("a boundary carries no participants", index=index)
         for participant in boundary.get("participants") or []:
+            if not isinstance(participant, dict):
+                # The role check above reads roles off objects and passes over anything else, so
+                # a scalar among them reached the first .get() and raised. A hand-written record
+                # deserves to be told which boundary carries what, not a document saying this run
+                # raised before it could report.
+                raise Refused("a boundary declares a participant that is not an object",
+                              boundary=boundary.get("name"), found=json.dumps(shown(participant)))
             expect = participant.get("expect")
             if not isinstance(expect, dict) or any(k not in expect for k in REQUIRED_EXPECT):
                 raise Refused("a participant's expect does not name every required setting",
@@ -2953,22 +2960,20 @@ def supervisor_still_running(record, relay=None, sleeper=time.sleep):
     # Only where the readings beside it still say there is something to wait for. A supervisor
     # already answered gone, in the caller's own session or writing under another pid is refused
     # on that, and waiting out its interval would spend the trial's time learning nothing.
-    waited_here = False
     while (still is True and detached and named
            and moved is not None and not (held is not None and held > moved)
            and time.monotonic() < deadline):
-        waited_here = True
         sleeper(min(WITNESS_POLL, max(deadline - time.monotonic(), 0)))
         found = read_witness(anchor.get("witness"))
         held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
         named = isinstance(found, dict) and same(found.get("pid"), pid)
-    if waited_here:
-        # Liveness was read before the wait, and a supervisor can write one last counter value
-        # and leave during it: the advance would then be real and the process behind it gone,
-        # and readiness published from an answer taken before the thing it is about happened.
-        # The gate's liveness answer is its last one.
-        still, theirs = alive(pid), session_of(pid)
-        detached = theirs is not None and theirs != caller
+    # Liveness last of all, after the counter it is being read beside. A supervisor can write one
+    # final value and leave -- during the wait, or in the moment between the first liveness read
+    # and the witness read when there was no wait at all -- and the advance it leaves behind is
+    # real. Reading liveness only when this waited left that second departure accepted, which is
+    # the same defect in the path that does not wait.
+    still, theirs = alive(pid), session_of(pid)
+    detached = theirs is not None and theirs != caller
     after = found.get("progress") if isinstance(found, dict) else None
     elapsed = time.monotonic() - anchor["at"]
     advanced = moved is not None and held is not None and held > moved
@@ -3137,10 +3142,12 @@ def preflight(record, *, sleeper=time.sleep):
     gate = order_gate(record, store_payload, entry)
     # The store's identity, asked again now that every probe that used it has run, and before
     # the launcher is read, so the spawn this makes is covered by that reading too.
-    store_held = store_still_the_same(record, relay)
-    # Before the launcher is read, so the probe this may make is covered by that reading, and
-    # after everything else, because its answer is the one that expires soonest.
     supervisor = supervisor_still_running(record, relay, sleeper=sleeper)
+    # After the supervisor gate rather than before it: that gate waits for the counter and, on a
+    # service trial, runs a relay command of its own, so a store replaced during either would sit
+    # behind a verdict taken before them. This is the last relay command the run makes, and the
+    # launcher reading below covers its spawn.
+    store_held = store_still_the_same(record, relay)
     launcher = launcher_unchanged(record, relay)
     captures = captures_still_fresh(record)
     # The window was ahead when the record was read; the witness delay and the probes take real
