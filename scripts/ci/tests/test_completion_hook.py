@@ -3346,6 +3346,157 @@ class OneFileAndOneRecordAnswerForThemselves(unittest.TestCase):
         self.assertEqual([entry["journalRoot"] for entry in found], [str(first), str(second)])
 
 
+class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
+    """Review and audit of PR #52 head 000b83f, which is where the settings cache landed.
+
+    Keying a cache on what the kernel calls a file closed one hole and opened two smaller ones,
+    both in the reader this branch changed to answer that question.
+    """
+
+    def _document(self, root):
+        return {"configVersion": 1, "relayExecutable": "/bin/true", "markerRoot": "/tmp/marker",
+                "mode": completion.OBSERVE, "journalRoot": str(root)}
+
+    def test_a_deleted_file_does_not_lend_its_identity_to_the_next_one(self):
+        """An inode is recycled as soon as its last name and its last descriptor are gone.
+
+        A settings file read and then deleted hands its (device, inode) to whatever is created
+        next, so a cache keyed on that pair served the deleted file's reading for an unrelated
+        file -- the exact over-merge the alias fix exists to avoid, arriving through time
+        instead of through a symlink. The reading is cached only while a descriptor holds the
+        object it names.
+        """
+        order = []
+        real = completion.read_configuration
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            first, second = temporary / "journal-one", temporary / "journal-two"
+            first.mkdir()
+            second.mkdir()
+            gone = temporary / "read-then-deleted.json"
+            arrives = temporary / "created-afterwards.json"
+            gone.write_text(json.dumps(self._document(first)), encoding="utf-8")
+            vacated = gone.stat().st_ino
+
+            def deleting_the_first_after_reading_it(path):
+                order.append(str(path))
+                answer = real(path)
+                if len(order) == 1:
+                    os.unlink(gone)
+                    arrives.write_text(json.dumps(self._document(second)), encoding="utf-8")
+                return answer
+
+            with mock.patch.object(completion, "read_configuration",
+                                   side_effect=deleting_the_first_after_reading_it):
+                found = completion.journals_named([
+                    {"registration": "read-then-deleted", "settings": str(gone),
+                     "startable": True},
+                    {"registration": "created-afterwards", "settings": str(arrives),
+                     "startable": True}])
+            recycled = arrives.stat().st_ino == vacated
+
+        if not recycled:
+            # This case cannot establish anything where the filesystem did not hand the inode
+            # back, and saying so is the honest answer: a silent pass would report a host this
+            # run never built. It is deterministic on tmpfs and ext4, which is where it runs.
+            self.skipTest("the filesystem did not reuse the inode, so the collision this case"
+                          " is about was never built")
+        self.assertEqual(found[1]["journalRoot"], str(second),
+                         "a file created after another was deleted was served the deleted"
+                         " file's reading, because it inherited its inode")
+
+    def test_one_record_reads_the_same_however_its_lines_end(self):
+        """The shared reader decodes as TEXT, and that is not cosmetic.
+
+        read_json was changed to open the file itself so it could take the identity from its
+        own descriptor, and reading the bytes raw dropped the universal-newline translation
+        Path.read_text had been doing. A record separated by CR or CRLF then reached the parser
+        at a different offset, so the line and column a malformed one reports -- which is what
+        an operator reads to find it -- moved with the file's line endings.
+        """
+        details = {}
+        for name, ending in (("lf", b"\n"), ("cr", b"\r"), ("crlf", b"\r\n")):
+            with tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "record.json"
+                path.write_bytes(b'{"configVersion": 1,' + ending + b'  bad}')
+                details[name] = reading.read_json(path, "a record").detail
+        self.assertEqual(len(set(details.values())), 1,
+                         "one malformed record reported a different position for each line"
+                         " ending: " + repr(details))
+
+
+class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
+    """Review of PR #52 head 000b83f. Two more answers this branch owns were being withheld
+    behind a different question, on the host whose repair they name."""
+
+    def _host(self, temporary):
+        fake_relay(temporary, stdout=json.dumps(RELEASED))
+        return Path(temporary)
+
+    def _standings(self, cell):
+        return {one["cause"]: one["standing"]
+                for group in ("candidates", "ruledOut", "notEvaluated")
+                for one in (cell.get(group) or [])}
+
+    def test_a_plugin_owned_host_names_the_journal_policy_it_states(self):
+        """A policy read from a file this command DID read is an answerable cause.
+
+        journalling_off required not_registered to be ruled out, and a plugin-owned host cannot
+        rule it out: the registration lives in a package manifest this command does not open.
+        So the payload published journalPolicy no_journal in one cell and, in the cell that
+        exists to explain the absence, reported only that the registration was unsettled --
+        withholding a repair it could read because a different question was open. The settings
+        causes and adapter_cannot_run were freed from that requirement for this exact host; the
+        two policy causes were the rest of the same class.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable,
+                     adapterEntryPoint=str(ENTRY_POINT),
+                     journalPolicy=completion.NO_JOURNAL)
+            cell = why_no_record(temporary)
+        self.assertEqual(self._standings(cell).get(firing.JOURNALLING_OFF), firing.ESTABLISHED,
+                         "the host states it keeps no journal and the answer did not say so")
+
+    def test_a_user_owned_host_with_nothing_named_still_evaluates_nothing(self):
+        """SUPPORT, not evidence. The direction the requirement change must not break: where no
+        settings file was read for the question to be about, the policy causes answer
+        not_evaluated rather than putting a candidate on the table no reading points at."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary)
+            cell = why_no_record(temporary)
+        self.assertNotEqual(self._standings(cell).get(firing.JOURNALLING_OFF),
+                            firing.ESTABLISHED)
+
+    def test_one_settings_file_named_through_an_alias_is_one_source(self):
+        """Two spellings of one file are one source, and the configuration is read.
+
+        The ambiguity check that decides whether a single file answers for the host was still
+        lexical, so a second registration naming this very file through a symlink counted as a
+        second source: the configuration went unread and reported the ambiguity, while the
+        cause partition beside it asked the kernel, read that one file once, and answered from
+        it. One payload, two answers about one file.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            named = completion.configuration_path(Path(temporary))
+            alias = Path(temporary) / "an-alias-of-the-settings.json"
+            alias.symlink_to(named)
+            hook_file = Path(temporary) / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = dict(written["hooks"][completion.EVENT][0]["hooks"][0])
+            entry["command"] = entry["command"].replace(str(named), str(alias))
+            written["hooks"][completion.EVENT][0]["hooks"].append(entry)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], reading.PRESENT,
+                         "one settings file named through two spellings was reported as two"
+                         " sources, so the configuration went unread")
+
+
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition
     is well formed; none of them would have failed on the behaviour CRW-100 reports."""

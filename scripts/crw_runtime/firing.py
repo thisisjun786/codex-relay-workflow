@@ -450,7 +450,20 @@ def _journalling_off(observed):
     # repairing the adapter still produces no firing evidence until journalling is switched
     # back on, so filtering this cause by startability hid a repair the other one does not
     # cover.
-    off = [entry for entry in (observed.get("namedJournals") or [])
+    entries = observed.get("namedJournals") or []
+    settled = _settled_settings(observed)
+    if settled is not None:
+        # The plugin-owned host, whose registration lives in a manifest this command does not
+        # read. Nothing in the hook file names a settings file, so namedJournals is empty and
+        # this cause had nothing to read on a host that states its policy plainly.
+        entries = [settled]
+    if not entries:
+        # Not "could not tell": no settings file was read for this question to be about, which
+        # is a question this host does not have rather than one left open.
+        return NOT_EVALUATED, ("no registration named a settings file this command could read,"
+                               " so there is no journal policy here for this question to be"
+                               " about")
+    off = [entry for entry in entries
            if entry.get("usable") and entry.get("recordsAnswer") == NO_RECORDS_KEPT]
     # ANY such registration, for the same reason a missing settings file is: a peer that keeps
     # a journal is not evidence that this one does. Requiring every registration to be off hid
@@ -477,7 +490,15 @@ def _policy_records_only_faults(observed):
     # Read over every usable registration rather than over the startable subset, and on the
     # entry's own policy and its own count. Both halves of this question are the
     # registration's own, so an unjudged peer neither creates nor removes the ambiguity.
-    faults = [entry for entry in (observed.get("namedJournals") or [])
+    entries = observed.get("namedJournals") or []
+    settled = _settled_settings(observed)
+    if settled is not None:
+        entries = [settled]
+    if not entries:
+        return NOT_EVALUATED, ("no registration named a settings file this command could read,"
+                               " so there is no journal policy here for this question to be"
+                               " about")
+    faults = [entry for entry in entries
               if entry.get("usable") and entry.get("faultsOnly")
               and entry.get("recordsAnswer") == COUNTED and not entry.get("records")]
     if faults:
@@ -588,8 +609,20 @@ CAUSE_REQUIRES = {
     # registration is simply not in the set those rules read -- which is both narrower and
     # exactly right, because its journal is empty BECAUSE it cannot start.
     RECORDED_ON_ANOTHER_PATH: (NOT_REGISTERED,),
-    JOURNALLING_OFF: (NOT_REGISTERED,),
-    POLICY_RECORDS_ONLY_FAULTS: (NOT_REGISTERED,),
+    # The two POLICY causes no longer require it either, for the reason given above about the
+    # settings causes: what a journal policy says is read from a settings file, the scoping is
+    # in the data, and requiring NOT_REGISTERED blanked them out on the one host that cannot
+    # rule it out. A plugin-owned host configured no_journal reported only "maybe it is not
+    # registered" while its own journalPolicy sat readable in the payload beside it -- an
+    # answerable cause withheld because a different question was open. They answer
+    # NOT_EVALUATED by themselves where no settings file was read for this question, so a
+    # user-owned host reads exactly as before.
+    #
+    # RECORDED_ON_ANOTHER_PATH keeps the requirement: it is a claim about two journals
+    # DISAGREEING, which needs two registrations this command could read, and there is no
+    # settled-settings host that can answer it.
+    JOURNALLING_OFF: (),
+    POLICY_RECORDS_ONLY_FAULTS: (),
     NOTHING_RECORDED: (NOT_REGISTERED,),
     # RECORDS_FOUND is the one terminal answer here: it says there is no absence to explain,
     # and unlike every cause above it cannot meaningfully stand beside one. It used to be

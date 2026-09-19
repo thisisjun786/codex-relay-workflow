@@ -141,15 +141,18 @@ def path_identity(path):
     return (found.st_dev, found.st_ino)
 
 
-def _descriptor_identity(opened):
+def descriptor_identity(opened):
     """The identity of the object a descriptor is open on, which nothing can retarget.
 
     path_identity answers for a SPELLING at the moment it is asked, which is all a lookup can
     claim and is enough to ASK whether a reading already taken covers this spelling. It is not
     enough to PUBLISH one under, and that asymmetry is the whole point of having both.
+
+    Takes an open file or a raw descriptor, because a caller that wants to HOLD an inode open
+    so it cannot be recycled has the second and a caller that is reading has the first.
     """
     try:
-        found = os.fstat(opened.fileno())
+        found = os.fstat(opened if isinstance(opened, int) else opened.fileno())
     except (OSError, ValueError):
         return None
     return (found.st_dev, found.st_ino)
@@ -311,9 +314,14 @@ def read_json(path, what, *, absent=None, shape=None):
             # them answers for a file these bytes did not come from -- so a caller merging two
             # spellings on that identity would reuse a reading taken from somewhere else.
             # A descriptor cannot be retargeted, so there is no interval left to race.
-            with open(str(path), "rb") as opened:
-                identity = _descriptor_identity(opened)
-                value = json.loads(opened.read().decode("utf-8"))
+            #
+            # TEXT mode, with the encoding named, because that is what Path.read_text did here
+            # and the difference is not cosmetic: text mode translates universal newlines, so
+            # a record containing CR or CRLF reaches json at a different offset without it, and
+            # the line and column a malformed one reports are part of what an operator reads.
+            with open(str(path), "r", encoding="utf-8") as opened:
+                identity = descriptor_identity(opened)
+                value = json.loads(opened.read())
             if shape is not None:
                 shape(value)
     except Refused as refused:

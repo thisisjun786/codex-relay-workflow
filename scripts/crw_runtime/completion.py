@@ -1681,6 +1681,85 @@ def journals_named(registrations, already_read=None):
         known = getattr(taken[3], "identity", None)
         if known is not None:
             read_by[known] = taken
+    # An identity is only a key while this call HOLDS the object it names. An inode is recycled
+    # the moment its last name and its last descriptor are gone, so a file deleted after it was
+    # read can hand its (device, inode) to an unrelated file created afterwards -- and a cache
+    # keyed on that pair would then serve one file's reading for another's. Holding a descriptor
+    # open removes the interval: the kernel cannot reuse an inode something still has open.
+    held = []
+    try:
+        _read_named(registrations, already_read, read_by, held, found, scanned, aliases)
+    finally:
+        for descriptor in held:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    return found
+
+
+def _journal_answer(cell):
+    """What one journal cell says about records kept under it, as the rules read it.
+
+    One function because there are two hosts and they must not drift: a registration in the
+    hook file names its own settings, and a plugin-owned host names none there while this
+    command still settles on one. The second used to carry no journal answer at all, so the
+    policy causes had nothing to read on exactly the host whose repair they name.
+    """
+    value = cell["value"]
+    policy = cell.get("journalPolicy")
+    answer = {"journalRoot": cell.get("journalRoot"), "journalPolicy": policy,
+              "faultsOnly": policy == FAULTS_ONLY,
+              "records": None, "recordsAnswer": firing.UNESTABLISHED}
+    # The POLICY is what decides whether a record is ever written, and journal() returns
+    # without writing on no_journal whatever root is configured. Keying this on the cell's
+    # NO_JOURNAL value alone read a host that keeps no journal by configuration as one whose
+    # journal happens to be empty, which is the substitution this whole answer set exists to
+    # remove.
+    if value == NO_JOURNAL or policy == NO_JOURNAL:
+        answer["recordsAnswer"] = firing.NO_RECORDS_KEPT
+    elif value == reading.ABSENT:
+        # The journal directory is established absent, so it holds nothing. That is a count
+        # this command read, not one nobody could take.
+        answer["records"], answer["recordsAnswer"] = 0, firing.COUNTED
+    elif str(value).isdigit():
+        answer["records"], answer["recordsAnswer"] = int(value), firing.COUNTED
+    return answer
+
+
+def _keep(path, taken, read_by, held):
+    """Cache this reading only while a descriptor holds the object it was read from.
+
+    The identity read_json reports is true of the bytes it returned. It stops being a usable
+    KEY the moment that inode can be recycled: a settings file deleted after it was read hands
+    its (device, inode) to whatever is created next, and a later spelling stat-ing to that pair
+    would be served the deleted file's reading. Opening it here pins it for the rest of this
+    call.
+
+    The descriptor is checked against the identity the READING carries, because the open is a
+    second lookup of the same spelling: if the path moved in between, this pins some other
+    object and establishes nothing about the one that was read. Not caching is the cost then,
+    and a second reading of one file is cheaper than one file's reading served for another's --
+    the same direction the journal aliasing takes.
+    """
+    identity = getattr(taken[3], "identity", None)
+    if identity is None:
+        return
+    try:
+        descriptor = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    if reading.descriptor_identity(descriptor) != identity:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        return
+    held.append(descriptor)
+    read_by[identity] = taken
+
+
+def _read_named(registrations, already_read, read_by, held, found, scanned, aliases):
     for registration in registrations:
         if not registration.get("settings"):
             # A relative spelling or no settings at all. There is no file here to open, and
@@ -1693,9 +1772,7 @@ def journals_named(registrations, already_read=None):
             taken = read_by.get(mine) if mine is not None else None
         if taken is None:
             taken = read_configuration(path)
-            fresh = getattr(taken[3], "identity", None)
-            if fresh is not None:
-                read_by[fresh] = taken
+            _keep(path, taken, read_by, held)
         config, refused, detail, read_back = taken
         entry = {"registration": registration.get("registration"),
                  "startable": registration.get("startable"),
@@ -1757,24 +1834,8 @@ def journals_named(registrations, already_read=None):
             taken = cell.get("journalIdentity")
             if taken is not None:
                 aliases[root] = taken
-        value = cell["value"]
         entry["journal"] = cell
-        entry["journalRoot"] = cell.get("journalRoot")
-        entry["journalPolicy"] = cell.get("journalPolicy")
-        entry["faultsOnly"] = cell.get("journalPolicy") == FAULTS_ONLY
-        # The POLICY is what decides whether a record is ever written, and journal() returns
-        # without writing on no_journal whatever root is configured. Keying this on the cell's
-        # NO_JOURNAL value alone read a host that keeps no journal by configuration as one
-        # whose journal happens to be empty, which is the substitution this whole answer set
-        # exists to remove.
-        if value == NO_JOURNAL or entry["journalPolicy"] == NO_JOURNAL:
-            entry["recordsAnswer"] = firing.NO_RECORDS_KEPT
-        elif value == reading.ABSENT:
-            # The journal directory is established absent, so it holds nothing. That is a
-            # count this command read, not one nobody could take.
-            entry["records"], entry["recordsAnswer"] = 0, firing.COUNTED
-        elif value.isdigit():
-            entry["records"], entry["recordsAnswer"] = int(value), firing.COUNTED
+        entry.update(_journal_answer(cell))
         found.append(entry)
     return found
 
@@ -1806,8 +1867,26 @@ def status(codex_home=None, environ=None, event=EVENT):
     # registrations naming different relative files, or one relative beside one absolute, look
     # like a single source, and the reader then described one hook while suppressing another
     # that may carry a different mode or relay.
-    distinct = sorted({str(_settled(named)) for named in carried if named not in relative}
-                      | set(relative))
+    # Two spellings the kernel says are ONE file are one source, however they are spelled.
+    # _settled removes lexical differences and deliberately does not resolve a symlink, so a
+    # second registration naming this same file through an alias counted as a second source:
+    # the configuration went unread as ambiguous and reported not_read, while the cause
+    # partition -- which does ask the kernel -- read that one file once and answered
+    # records_found from it. One payload, two answers about one file.
+    #
+    # Asked of the kernel here too, and only where the kernel can answer. Where it cannot, the
+    # spellings keep their own places rather than being merged on a guess: describing two files
+    # as one is the error this check exists to prevent, and a second entry is the cheaper cost.
+    absolute = sorted({str(_settled(named)) for named in carried if named not in relative})
+    named_once, already = [], set()
+    for spelling in absolute:
+        mine = reading.path_identity(spelling)
+        if mine is not None and mine in already:
+            continue
+        if mine is not None:
+            already.add(mine)
+        named_once.append(spelling)
+    distinct = sorted(set(named_once) | set(relative))
     # A registration with no settings argument resolves its own path, which is not necessarily
     # the one its neighbour names. Counted as a separate answer for that reason: "one path and
     # one silence" is two different files just as surely as two paths are.
@@ -2076,7 +2155,16 @@ def status(codex_home=None, environ=None, event=EVENT):
                             "settingsState": None if found is None else found.state,
                             "usable": config is not None,
                             "refusedAs": failed,
-                            "detail": detail},
+                            "detail": detail,
+                            # The journal half of the same host, derived from the very cell
+                            # published as firingJournal below rather than from a second
+                            # reading, so the cause and the count in one payload cannot
+                            # disagree. Without it the POLICY causes had nothing to read here:
+                            # a plugin-owned host whose settings say no_journal or faults_only
+                            # carries that answer in a file this command did read, and the
+                            # payload reported only that the registration could not be settled
+                            # while showing the policy one cell over.
+                            **_journal_answer(journal_cell)},
         "relativeSettings": bool(relative),
         "silentRegistrations": silent,
         "namedJournals": named_journals,
