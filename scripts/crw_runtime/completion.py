@@ -1511,6 +1511,8 @@ def _interpreter_cell(ours):
             if probe["value"] == reading.PRESENT and not os.access(str(resolved), os.X_OK):
                 probe = _cell(reading.UNREADABLE, "the registered interpreter is not executable",
                               path=str(resolved))
+            elif probe["value"] == reading.PRESENT:
+                probe = _answers_as_an_interpreter(resolved, "the registered interpreter")
             probed[key] = probe
         checked.append({"registration": entry["identity"], "word": first,
                         "resolved": str(resolved), "probe": probe})
@@ -1530,13 +1532,62 @@ def _interpreter_cell(ours):
                  probes=checked)
 
 
-def _recorded_program_cell(named, label):
+INTERPRETER_PROBE_SECONDS = 10
+
+# Printed by the interpreter itself, so exit 0 alone cannot answer for it.
+INTERPRETER_MARKER = "crw-interpreter-answered"
+
+
+def _answers_as_an_interpreter(resolved, label):
+    """Whether this program runs Python, asked by running it.
+
+    A file being there and executable establishes that the path is not empty. It establishes
+    nothing about what the host gets when it runs it, and reporting the registration startable
+    from that is a capability claimed from a presence check. An interpreter replaced by any
+    program that exits quietly -- /bin/true is the whole family, and it is the same family this
+    module already refuses to accept for the relay's guard subcommand -- read as a working
+    hook.
+
+    Asked the way _offers_guard asks the runtime, and for the same reason exit 0 is not enough
+    there: the answer has to come from the program's own output.
+
+    What this establishes is a MOMENT. It ran as a Python interpreter when this was asked, and
+    the evidence says so, because the host runs it again on the next Stop and this command
+    cannot speak for that one.
+    """
+    try:
+        finished = subprocess.run([str(resolved), "-c", "print('" + INTERPRETER_MARKER + "')"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  timeout=INTERPRETER_PROBE_SECONDS)
+    except subprocess.TimeoutExpired:
+        return _cell(NOT_READ, label + " did not answer within "
+                     + str(INTERPRETER_PROBE_SECONDS) + "s, so whether it runs was not"
+                     " established", path=str(resolved))
+    except OSError as error:
+        return _cell(NOT_STARTED, label + " could not be run: " + str(error),
+                     path=str(resolved),
+                     errno=errno.errorcode.get(error.errno, error.errno))
+    if finished.returncode == 0 and INTERPRETER_MARKER in _text(finished.stdout):
+        return _cell(reading.PRESENT, label + " ran and answered as a Python interpreter when"
+                     " this was asked; whether it does so on the next invocation is that"
+                     " invocation's own fact", path=str(resolved))
+    return _cell(firing.NOT_AN_INTERPRETER, label + " is there and executable and did not"
+                 " answer as a Python interpreter when it was run, so the adapter it is"
+                 " registered to start cannot have run through it", path=str(resolved))
+
+
+def _recorded_program_cell(named, label, asks=False):
     """A program these settings name, probed the way a registered one is.
 
     A plugin-owned hook has no entry in the hook file, so the cell above receives nothing and
     answers that no registration named a program. That is true about the hook file and useless
     about this host: the launcher starts the two programs recorded here, and if either is gone
     every Stop is released without a word. Same probe, different source.
+
+    'asks' is for a program that can be RUN to answer for itself. The entry point is a script
+    the interpreter runs, not a program this command can ask anything of, so presence is the
+    whole of what is establishable about it here; the interpreter is asked. Said as a parameter
+    rather than read off the label, because a label is prose and this is a decision.
     """
     if not named:
         return None
@@ -1547,6 +1598,8 @@ def _recorded_program_cell(named, label):
     probe = presence(named, label)
     if probe["value"] == reading.PRESENT and not os.access(str(named), os.X_OK):
         return _cell(reading.UNREADABLE, label + " is not executable", path=str(named))
+    if asks and probe["value"] == reading.PRESENT:
+        return _answers_as_an_interpreter(named, label)
     return probe
 
 
@@ -2206,7 +2259,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # gone, and then nothing runs at all: the same outage, a different repair.
         adapter_interpreter = (
             _recorded_program_cell(config.get("adapterInterpreter"),
-                                   "the recorded adapter interpreter")
+                                   "the recorded adapter interpreter", asks=True)
             or _cell(NOT_READ, "these settings record no adapter interpreter, which is the "
                      + OWNER_USER + " owner's shape: its registered command line carries the"
                      " interpreter instead"))
@@ -2310,7 +2363,8 @@ def status(codex_home=None, environ=None, event=EVENT):
         if probed_interpreter == NOT_READ:
             probed_interpreter = _stated_path_cell(
                 recorded_launcher.get("adapterInterpreter"),
-                "the recorded adapter interpreter", _recorded_program_cell)
+                "the recorded adapter interpreter",
+                lambda path, label: _recorded_program_cell(path, label, asks=True))
     launcher_probe = ([{"registration": "the launcher these settings record",
                         "adapter": probed,
                         "interpreter": probed_interpreter}]

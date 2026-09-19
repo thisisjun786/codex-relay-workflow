@@ -3934,6 +3934,47 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          " then read as the literal string, it establishes a repair for a"
                          " path the packaged launcher would have declined outright")
 
+    def test_an_interpreter_that_is_not_one_is_not_startable(self):
+        """A file being there establishes that the path is not empty, and nothing more.
+
+        The interpreter probe checked existence and the executable bit and then reported
+        PRESENT, which every rule downstream reads as "this registration can start". An
+        interpreter replaced by a program that exits quietly -- /bin/true is the whole family,
+        and it is the same family _offers_guard already refuses to accept for the relay -- read
+        as a working hook. The answer comes from running it now, and says it is a moment.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            # REPLACED after installation, which is the host this is about: the installer
+            # refuses an interpreter that is not one, so the only way to reach this state is
+            # for the program at that path to change afterwards.
+            hook_file = Path(temporary) / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(sys.executable, "/bin/true", 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                         firing.ESTABLISHED,
+                         "a registered interpreter that is not an interpreter was read as"
+                         " startable because a file exists at its path and is executable")
+
+    def test_a_recorded_interpreter_that_is_not_one_is_not_startable_either(self):
+        """SUPPORT, not evidence: the sibling site, pinned so the class stays closed at both.
+
+        The registered interpreter and the one plugin-owned settings record are two call sites
+        of the same presence-then-assert shape, and closing one of two is how this repository
+        keeps rediscovering a class it thought it had removed.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter="/bin/true",
+                     adapterEntryPoint=str(ENTRY_POINT))
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["adapterInterpreter"]["value"], firing.NOT_AN_INTERPRETER)
+
     def test_an_unread_settings_document_names_no_owner_to_the_operator(self):
         """Four states reach one predicate, and the sentence spoke for only one of them.
 

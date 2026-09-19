@@ -70,10 +70,16 @@ NO_RECORDS_KEPT = "no_records_kept"
 UNESTABLISHED = "unestablished"
 RECORD_ANSWERS = (COUNTED, NO_RECORDS_KEPT, UNESTABLISHED)
 
+# An interpreter that is there, and executable, and does not answer as one. A file existing at
+# a path establishes that the path is not empty; it establishes nothing about what runs. This
+# is the answer for a program that was asked and did not answer, which is a repair and not an
+# uncertainty.
+NOT_AN_INTERPRETER = "not_an_interpreter"
+
 # A target or an interpreter in one of these states cannot be started. PRESENT is the only
 # value that says it can; everything else is a spelling this command did not judge, and those
 # are not ruled out rather than established either way.
-CANNOT_START = (reading.ABSENT, reading.UNREADABLE)
+CANNOT_START = (reading.ABSENT, reading.UNREADABLE, NOT_AN_INTERPRETER)
 
 
 def _not_registered(observed):
