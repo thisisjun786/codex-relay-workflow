@@ -9,7 +9,9 @@ import sys
 import tempfile
 import unittest
 
-from .support import CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, RelayTestCase
+from .support import (
+    CHILD, DISPATCH_TURN, HOST, ISSUE, PARENT, DeliveryTestCase, RelayTestCase,
+)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -1795,3 +1797,39 @@ class ParticipantAccessReceipts(CliBase):
         )
         self.assertNotEqual(refused["sameStore"], "proven", refused)
         self.assertEqual(refused["accessReceipt"]["storeId"], stray["storeId"], refused)
+
+
+class RestorationFlagValidatesItsInput(DeliveryTestCase):
+    """--criteria accepts arbitrary JSON, and --restoration reads it before anything checks it.
+
+    This command's contract is a named refusal and an exit code, so a malformed array must
+    reach the refusal that words it rather than raising out of a comprehension on the way.
+    """
+
+    def _verdict(self, criteria, restoration):
+        from types import SimpleNamespace
+
+        from codex_session_relay import cli
+
+        return cli.cmd_verdict(
+            SimpleNamespace(ack=self.ack),
+            SimpleNamespace(
+                event="e" * 32, verdict="needs_changes", verdict_turn="v1",
+                criterion=None, finding=None, criteria=json.dumps(criteria),
+                restoration=restoration, reason=None, expect_criteria_digest=None,
+            ),
+        )
+
+    def test_a_null_entry_does_not_raise_out_of_the_restoration_marking(self):
+        from codex_session_relay.errors import RelayError
+
+        with self.assertRaises(RelayError) as caught:
+            self._verdict([None], "c1")
+        self.assertEqual(caught.exception.reason.value, "disposition_conflict")
+
+    def test_a_string_entry_does_not_raise_out_of_the_restoration_marking(self):
+        from codex_session_relay.errors import RelayError
+
+        with self.assertRaises(RelayError) as caught:
+            self._verdict(["c1"], "c1")
+        self.assertEqual(caught.exception.reason.value, "disposition_conflict")

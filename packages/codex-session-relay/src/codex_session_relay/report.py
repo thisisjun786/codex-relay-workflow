@@ -20,9 +20,12 @@ everywhere else.
 
 import json
 
-from . import cxc
+from . import cxc, restoration
 from .errors import DeliveryRefused, ReceiptRefused, RefusalReason
-from .transport import INBOX_ONLY
+from .identity import request_id as derive_request_id
+from .transport import (
+    DEFERRED_BUSY, HELD_UNCERTAIN, INBOX_ONLY, QUEUED, SENDING, WITHHELD_PRE_SEND,
+)
 
 NEWLINE = chr(10)
 VERSION = "relay-report/1"
@@ -214,6 +217,28 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
         # preflight read and this commit. Everything this decides can move, which is why the
         # rest of this package reads inside the caller transaction rather than before it.
         _assert_resubmission(db, event_id, row["submissionNo"])
+        # Measured INSIDE the write lock, for the reason the comment above gives: the attempt
+        # count this projection sizes itself against can move. A delivery that claims and
+        # settles a retry-safe attempt between a preflight read and this commit leaves the
+        # projection describing an attempt already consumed, and at a request-id digit
+        # boundary - projecting a9 while the send renders a10 - a report resting on the byte
+        # budget is recorded as carrying a block the real message drops.
+        #
+        # This is also the last moment at which refusing costs nothing. Recording a report is
+        # exactly what switches this event from the plain renderer to the composer and its
+        # byte budget, so a block that survived the verdict-time projection can still be
+        # squeezed out here, and nothing has frozen any bytes yet. Raising rolls this
+        # transaction back with nothing written.
+        projection = _project_restoration(store, event, row)
+        if projection is not None and projection["outcome"] in restoration.UNDELIVERABLE:
+            raise ReceiptRefused(
+                RefusalReason.RESTORATION_UNDELIVERABLE,
+                f"this report would push the restoration block on "
+                f"{projection['criterion']!r} out of the correction: {projection['detail']}. "
+                "Shorten the report or move the block and record it again. Afterwards there "
+                "is no supported way to send the block: the verdict does not resend and a "
+                "second channel is not allowed",
+            )
         # Delete then insert, rather than an upsert with a conflict target. A conflict target
         # has to match a constraint in the schema the database was actually created with, and
         # CREATE TABLE IF NOT EXISTS never changes an existing one, so naming one here made
@@ -242,8 +267,153 @@ def record(store, clock, *, event_id, repository, cxc_status, cxc_reason, summar
              "headSha": head_sha, "submissionNo": row["submissionNo"]},
             at=now,
         )
+        if projection is not None:
+            store.journal("restoration_rendered", event_id, projection, at=now)
     row["recordedAt"] = now
+    if projection is not None:
+        row["restoration"] = projection
     return row
+
+
+# The delivery states another attempt can still be claimed from, INCLUDING the two that are
+# merely unresolved. A delivery in sending has frozen one attempt's bytes without the
+# transport having answered, and held_uncertain means reconciliation has not established
+# whether that attempt reached anybody; a confirmed pre-send rejection is retry-safe and
+# returns either one to a claimable state. Treating them as finished would let a report
+# commit that the retry then renders with the block dropped, after the generation has already
+# opened. Erring toward measuring is the cheap direction: its cost is a refusal the
+# coordinator can act on, and the other mistake's cost is a correction sent without its block.
+_STILL_ATTEMPTABLE = (
+    QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND, SENDING, HELD_UNCERTAIN,
+)
+
+
+def _delivery_of(store, event_id):
+    """The delivery row this report would be rendered for, or None.
+
+    Read for the state, the hold and the attempt count in one statement, because all three
+    are answers about the same row and reading them apart invites them to disagree. The hold
+    matters as much as the state: the claim predicate requires hold_reason IS NULL, so a
+    delivery parked at its attempt cap keeps a claimable-looking state while being unable to
+    produce another message.
+
+    The last three columns are the half of _claim's predicate that no later event can make
+    true again. A superseded relationship has been replaced and nothing returns it. A
+    generation the assignment has already moved past cannot be claimed. And a correction the
+    child has already answered is annotated in delivery_supersession, which _claim consults
+    before anything else - that row is written precisely for the outstanding deliveries whose
+    state CANNOT be rewritten, so such a delivery sits at `sending` or `held_uncertain` with
+    its relationship and generation still current and reads as retryable from the state alone.
+    All three leave the claim refusing forever.
+
+    Being inactive is NOT one of them, which is the distinction this query turns on. paused,
+    cancelled and archived are statuses `resume` can lift, and a report recorded while the
+    assignment was paused stays attached to the queued delivery and is rendered by the first
+    claim after it comes back. Treating inactivity as permanent would accept an oversized
+    report during the pause and send it, without the block, once the assignment resumed.
+    """
+    return store.one(
+        "SELECT d.state, d.hold_reason, d.attempt_count,"
+        "       EXISTS (SELECT 1 FROM relationships r"
+        "                WHERE r.relationship_id = d.relationship_id"
+        "                  AND r.superseded_by IS NULL) AS relationship_live,"
+        "       NOT EXISTS (SELECT 1 FROM delivery_supersession s"
+        "                    WHERE s.event_id = d.event_id) AS correction_open,"
+        "       EXISTS (SELECT 1 FROM events e"
+        "                JOIN relationships rr ON rr.relationship_id = e.relationship_id"
+        "               WHERE e.event_id = d.event_id AND e.stage = 'final'"
+        "                 AND e.execution_generation >= rr.execution_generation)"
+        "           AS event_current"
+        "  FROM deliveries d WHERE d.event_id = ?",
+        (event_id,),
+    )
+
+
+def _project_restoration(store, event, row):
+    """What becomes of a declared restoration block once this report shapes the message.
+
+    Only a revision request carries one. It is the parent-to-child correction, and the block
+    travels inside the findings the verdict recorded; a completion receipt's criteria are the
+    child's own claims about its work, which is a different thing wearing the same key.
+
+    Composed rather than reasoned about, because the budget is spent by every section at once
+    and no rule about the findings alone can predict what a long evidence list will leave for
+    them. The composed message reports which findings it kept and this asks it.
+    """
+    if event["outcome"] != REVISION_OUTCOME:
+        return None
+    receipt = json.loads(event["receipt"]) if event["receipt"] else {}
+    findings = receipt.get("criteria") or []
+    block = restoration.declared(findings)
+    if block is None:
+        return restoration.not_carried(
+            basis=restoration.COMPOSED_BASIS,
+            detail="no finding declared a restoration block",
+        )
+    delivery = _delivery_of(store, event["event_id"])
+    unclaimable = (
+        "no delivery is queued for it" if delivery is None
+        else f"the delivery is held: {delivery['hold_reason']!r}"
+        if delivery["hold_reason"] is not None
+        else "its relationship has been superseded"
+        if not delivery["relationship_live"]
+        else "the correction it belongs to has already been answered and superseded"
+        if not delivery["correction_open"]
+        else "the event is behind the assignment's current generation"
+        if not delivery["event_current"]
+        else f"the delivery is {delivery['state']!r}"
+        if delivery["state"] not in _STILL_ATTEMPTABLE else None
+    )
+    if unclaimable is not None:
+        # Nothing will render this report, so what its composition would have done to the
+        # block is not a delivery question and refusing it would reject a supported update on
+        # the strength of a message that will never be built. The correction has already gone
+        # out, or has stopped being sendable for a reason this layer does not own; either way
+        # the bytes that went are recorded against the attempt that froze them. Unmeasured in
+        # its own sense: a fact that was never established, and here never arises.
+        return restoration.unmeasured(
+            f"no further attempt will render this report; {unclaimable}",
+            basis=restoration.COMPOSED_BASIS,
+        )
+    # The request id sits on a line of the message and a10 is longer than a1, so a report
+    # resting on the byte budget would be measured against a length the next send does not
+    # have. Retries are ordinary here: a busy or archived recipient defers before anything is
+    # sent.
+    attempt = delivery["attempt_count"] + 1
+    try:
+        composed = compose_revision(
+            {"event_id": event["event_id"], "relationship_id": event["relationship_id"]},
+            receipt, derive_request_id(event["event_id"], attempt), row, budget=BUDGET,
+        )
+    except (ValueError, KeyError, TypeError, DeliveryRefused, ReceiptRefused) as error:
+        # Every failure reachable here is deterministic and recurs at delivery, because
+        # rendering happens again inside the claim transaction. Calling it unmeasured would
+        # commit a report whose own delivery can never succeed: each attempt would raise the
+        # same way, roll the claim back, and leave the correction queued forever. The block
+        # would then be stranded by a message nobody can compose rather than by one that
+        # dropped it, which is the same silence arriving by a longer route. Unmeasured is for
+        # a fact that was never established, not for one established as failing.
+        raise ReceiptRefused(
+            RefusalReason.RESTORATION_UNDELIVERABLE,
+            f"this report cannot be composed into a revision message, so the restoration "
+            f"block on {block['id']!r} cannot travel and every delivery attempt would fail "
+            f"the same way inside its claim: {error}",
+        ) from error
+    projected = restoration.project_survivors(findings, composed.survivors)
+    # Which attempt these bytes belong to. A projection is preflight: it describes the
+    # message the NEXT attempt would render, and the bytes an attempt actually froze are
+    # recorded per attempt and returned by show.
+    projected["attempt"] = attempt
+    # The workflow-restore SECTION is a second carrier of resumption context and the composer
+    # may drop it whole, since it is not marked essential. That is reported, never refused: it
+    # is already named in the omission notice, every ordinary long report uses this path, and
+    # refusing here would start rejecting reports that have always been accepted.
+    projected["restoreSection"] = (
+        "absent" if not (row.get("restore") or {})
+        else "budget_dropped" if "workflow restore" in composed.omitted
+        else "carried"
+    )
+    return projected
 
 
 def read(store, event_id: str):
@@ -824,9 +994,18 @@ class _Section:
     whole; when they have to shrink they keep their heading and say how much is missing.
     """
 
-    def __init__(self, name, lines, rank, *, essential=False, keep=0, last=False):
+    def __init__(self, name, lines, rank, *, essential=False, keep=0, last=False, owners=None):
+        owners = list(owners) if owners is not None else []
+        owners += [None] * (len(lines) - len(owners))
+        # Filtered together, so an owner cannot drift onto a line other than the one it was
+        # recorded against.
+        pairs = [(line, owner) for line, owner in zip(lines, owners) if line is not None]
         self.name = name
-        self.lines = [line for line in lines if line is not None]
+        self.lines = [line for line, _ in pairs]
+        # Which finding each line belongs to, None for headings and markers. _one_finding can
+        # emit two lines for a single finding, so a surviving line COUNT cannot be mapped back
+        # to the findings that survived without this.
+        self.owners = [owner for _, owner in pairs]
         self.rank = rank
         self.essential = essential
         self.keep = keep
@@ -835,7 +1014,40 @@ class _Section:
         self.last = last
 
 
-def _compose(sections, event_id, *, budget) -> str:
+class _Composed:
+    """The fitted message, and what fitting it cost.
+
+    Returning the text alone said what the recipient would read and nothing about what came
+    out to make it fit, so a caller that needed to know had to re-parse the bytes it had just
+    been handed. omitted names the sections that were dropped or shortened; survivors names
+    the findings still standing afterwards, which is what lets a restoration block be reported
+    as delivered or not instead of being left to silence.
+    """
+
+    __slots__ = ("text", "omitted", "survivors")
+
+    def __init__(self, text, omitted, survivors):
+        self.text = text
+        self.omitted = tuple(omitted)
+        self.survivors = frozenset(survivors)
+
+
+def _survivors(sections, kept_counts) -> set:
+    """Which owned lines are still in the message, named by owner.
+
+    Counted rather than searched. A shortened section keeps a PREFIX of its lines plus a
+    marker, so the owners line up by index for exactly the kept count and the marker belongs
+    to nobody.
+    """
+    out = set()
+    for section, count in zip(sections, kept_counts):
+        for owner in section.owners[:count]:
+            if owner is not None:
+                out.add(owner)
+    return out
+
+
+def _compose(sections, event_id, *, budget) -> _Composed:
     """Fit the message, and say out loud whatever did not fit.
 
     Silence is the failure mode being designed against. A message that quietly loses its
@@ -844,6 +1056,7 @@ def _compose(sections, event_id, *, budget) -> str:
     record.
     """
     blocks = [list(section.lines) for section in sections]
+    kept_counts = [len(block) for block in blocks]
     removed = []
     tail = next((i for i, section in enumerate(sections) if section.last), None)
 
@@ -892,6 +1105,7 @@ def _compose(sections, event_id, *, budget) -> str:
         state["bytes"] -= sum(sizes[index])
         blocks[index] = []
         sizes[index] = []
+        kept_counts[index] = 0
 
     for index in order:
         section = sections[index]
@@ -914,6 +1128,7 @@ def _compose(sections, event_id, *, budget) -> str:
             marker_size = _size(marker)
             blocks[index] = kept + [marker]
             sizes[index] = kept_sizes + [marker_size]
+            kept_counts[index] = len(kept)
             if section.name not in removed:
                 removed.append(section.name)
 
@@ -923,7 +1138,7 @@ def _compose(sections, event_id, *, budget) -> str:
             f"a message budget of {budget} bytes cannot hold this report even reduced to its "
             "required parts; raise the budget rather than shipping a message that lost them"
         )
-    return out
+    return _Composed(out, removed, _survivors(sections, kept_counts))
 
 
 def _omission_line(removed, event_id) -> str:
@@ -941,7 +1156,7 @@ def _non_verification(status: str) -> str:
 
 # ------------------------------------------------------------------------ rendering
 
-def render_completion(row, receipt, request, report, *, budget=BUDGET) -> str:
+def compose_completion(row, receipt, request, report, *, budget=BUDGET) -> _Composed:
     """Child to parent, led by what the parent has to decide.
 
     Result, then the pull request, then the evidence, then what is still open, then what to
@@ -990,7 +1205,12 @@ def render_completion(row, receipt, request, report, *, budget=BUDGET) -> str:
     return _compose(sections, event_id, budget=budget)
 
 
-def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
+def render_completion(row, receipt, request, report, *, budget=BUDGET) -> str:
+    """The bytes alone, for a caller that only has to send them."""
+    return compose_completion(row, receipt, request, report, budget=budget).text
+
+
+def compose_revision(row, receipt, request, report, *, budget=BUDGET) -> _Composed:
     """Parent to child, shaped as an instruction the child can execute.
 
     DISPATCH-TASK-01 fixes the fields. What leads is the thing that was violated and the
@@ -1010,10 +1230,15 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
     head.append(f"cxc: {report['cxcStatus']} - {report['cxcReason']}")
     head.append(f"  meaning: {cxc.MEANING[report['cxcStatus']]}")
 
+    # Kept beside its lines rather than recomputed later. The composer reports which findings
+    # its shortening left standing, and it can only do that if it was told which line belonged
+    # to which finding before it started removing them.
+    finding_lines, finding_owners = _finding_lines(receipt, review)
+
     sections = [
         _Section("header", head, rank=0, essential=True, keep=4),
-        _Section("violated criteria", _finding_lines(receipt, review), rank=0, essential=True,
-                 keep=2),
+        _Section("violated criteria", finding_lines, rank=0, essential=True, keep=2,
+                 owners=finding_owners),
         _Section("SCOPE", _scope_lines(report, generation), rank=1, essential=True, keep=2),
         _Section("preserve", _preserve_lines(), rank=0, essential=True, keep=2),
         # A correction that hides the dependencies and risks the report marked open sends the
@@ -1077,6 +1302,11 @@ def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
             rank=0, essential=True, keep=2, last=True,
         ))
     return _compose(sections, event_id, budget=budget)
+
+
+def render_revision(row, receipt, request, report, *, budget=BUDGET) -> str:
+    """The bytes alone, for a caller that only has to send them."""
+    return compose_revision(row, receipt, request, report, budget=budget).text
 
 
 def _pr_lines(report):
@@ -1158,31 +1388,43 @@ def _finding_lines(receipt, review):
     against instructions the parent never gave. So the receipt leads, the review adds notes
     and source anchors by id, and anything the review raises on its own is kept but labelled
     as not part of the recorded verdict.
+
+    Returns the lines and, beside them, which finding each line belongs to. One finding can
+    occupy two lines, so the composer cannot work out which findings its shortening left
+    standing from a line count alone, and a restoration block would go back to being
+    unobservable.
     """
     authoritative = [item for item in (receipt.get("criteria") or []) if item.get("id")]
     enrichment = {}
     for item in (review or {}).get("findings") or []:
         enrichment[item["id"]] = item
     if not authoritative and not enrichment:
-        return ["", "violated criteria: no per-criterion findings were recorded"]
+        return ["", "violated criteria: no per-criterion findings were recorded"], [None, None]
 
     lines = ["", "violated criteria:"]
+    owners = [None, None]
     seen = set()
     if not authoritative:
         # A legacy relationship can reach needs_changes with no registered criteria, so the
         # review findings are all there is. Saying where they came from still matters: the
         # child should not read them as a recorded verdict it can look up.
         lines.append("  from the review; this assignment has no recorded criteria set:")
+        owners.append(None)
     for item in authoritative or list(enrichment.values()):
         extra = enrichment.get(item["id"], {})
         seen.add(item["id"])
-        lines += _one_finding(item, extra)
+        rendered = _one_finding(item, extra)
+        lines += rendered
+        owners += [item["id"]] * len(rendered)
     unrecorded = [item for key, item in enrichment.items() if key not in seen]
     if authoritative and unrecorded:
         lines.append("  also raised in review, not part of the recorded verdict:")
+        owners.append(None)
         for item in unrecorded:
-            lines += _one_finding(item, {})
-    return lines
+            rendered = _one_finding(item, {})
+            lines += rendered
+            owners += [item["id"]] * len(rendered)
+    return lines, owners
 
 
 def _one_finding(item, extra):
@@ -1190,7 +1432,8 @@ def _one_finding(item, extra):
     # An enrichment-only finding has no disposition of its own, and rendering the absence as
     # "None" told the reader a criterion had a judgment named None.
     disposition = item.get("verdict")
-    rendered = f"  {item['id']}: {disposition}" if disposition else f"  {item['id']}"
+    name = f"{item['id']}{restoration.label(item)}"
+    rendered = f"  {name}: {disposition}" if disposition else f"  {name}"
     if note:
         rendered += f" - {note}"
     out = [rendered]

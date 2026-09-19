@@ -749,3 +749,31 @@ class RestartPreservation(DeliveryTestCase):
             self.delivery.get(dispatched_event)["attempt_count"], attempts_before,
         )
         self.assertEqual(len(self.adapter.sends), sends_before)
+
+
+class CompletionCriteriaCarryNoCorrection(DeliveryTestCase):
+    """A completion is the child reporting on its own work. It carries no restoration block.
+
+    Its criteria are the child's claims, they never pass through normalise_findings, and the
+    receipt schema lets an item carry any extra property. So a stray truthy "restoration"
+    must not print the marker a correction uses, or the message would claim something the
+    relay's own accounting denies one method away.
+    """
+
+    def test_a_stray_declaration_on_a_completion_is_not_labelled(self):
+        import json
+
+        _relationship, event_id = self.queued_event()
+        row = self.store.one("SELECT receipt FROM events WHERE event_id = ?", (event_id,))
+        receipt = json.loads(row["receipt"])
+        receipt["criteria"] = [
+            {"id": "c1", "verdict": "verified", "restoration": "false"},
+            {"id": "c2", "verdict": "verified", "restoration": True},
+        ]
+        self.store.db.execute(
+            "UPDATE events SET receipt = ? WHERE event_id = ?",
+            (json.dumps(receipt), event_id),
+        )
+        message = self.delivery.preview_message(event_id)
+        self.assertIn("  c1: verified", message)
+        self.assertNotIn("[restoration block]", message)

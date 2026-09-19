@@ -88,6 +88,11 @@ class RefusalReason(str, Enum):
     REVIEW_NOT_BOUND = "review_not_bound"
     STALE_MARK_CONTEXT = "stale_mark_context"
 
+    # A correction that declares a restoration block and cannot carry it. Raised BEFORE the
+    # next execution generation is opened, because afterwards there is no supported way to
+    # send the block again and nothing to roll back to.
+    RESTORATION_UNDELIVERABLE = "restoration_undeliverable"
+
 
 class RelayError(Exception):
     """Base for every refusal this package raises."""

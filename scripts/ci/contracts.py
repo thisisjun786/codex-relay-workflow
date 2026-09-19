@@ -7,10 +7,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECKS = (
-    ("hook", "skills/crw-run/scripts/hook_probe.py",
-     "skills/crw-run/references/hook-contract.md", ["replay"]),
+    ("hook", "plugins/crw/skills/crw-run/scripts/hook_probe.py",
+     "plugins/crw/skills/crw-run/references/hook-contract.md", ["replay"]),
     ("operations", "scripts/check_operations_contract.py",
-     "skills/crw-run/references/operations.md", []),
+     "plugins/crw/skills/crw-run/references/operations.md", []),
     # Re-derives the committed component identity from this checkout, so the one
     # compatibility definition cannot drift away from the source it describes.
     ("runtime", "scripts/runtime_install.py",

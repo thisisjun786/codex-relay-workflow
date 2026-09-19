@@ -2,6 +2,16 @@
 
 Shared guidance and Jun's workflow defaults for `crw-define`, `crw-next`, `crw-plan`, `crw-run`, `crw-loop`, `crw-check`, and `crw-logic`. Read the operation-specific skill for scope. Apply these defaults within the user's assignment and current host permissions.
 
+## Skill names under each installation
+
+These documents name the skills without a prefix, which is how a linked
+installation exposes them. A plugin installation namespaces every skill under the
+plugin, so `crw-run` is offered to the model as `crw:crw-run` and the same mapping
+applies to each name above. Read a name written here as whichever spelling the
+current installation exposes, and use the exposed spelling when invoking a skill
+or telling a user how to invoke one. The directory name, the file layout, and the
+relative links between these documents are identical in both installations.
+
 ## Resolve the project target
 
 Use an explicit target for the current operation. When it is omitted, use the

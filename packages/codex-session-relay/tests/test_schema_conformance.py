@@ -475,5 +475,30 @@ def _attempt_record(record):
     return {k: v for k, v in record.items() if not k.startswith("_")}
 
 
+class CriteriaItemsStayOpen(unittest.TestCase):
+    """The restoration declaration rides on a finding, which works only while items are open.
+
+    verification-verdict.json freezes additionalProperties on the verdict RECORD and leaves
+    its criteria items alone, and that asymmetry is the whole reason a correction can say
+    which finding carries its restoration block without a schema change or a store migration.
+    Closing the items would invalidate every stored verdict that carries a declaration. The
+    packaged digests already catch the edit; this says what the edit would cost, so whoever
+    makes it reads a consequence rather than a hash mismatch.
+    """
+
+    def test_the_record_is_closed_and_its_criteria_items_are_not(self):
+        schema = _load("verification-verdict")
+        self.assertIs(
+            schema.get("additionalProperties"), False,
+            "the verdict record is closed, which is why the outcome is reported beside it",
+        )
+        items = schema["properties"]["criteria"]["items"]
+        self.assertNotIn(
+            "additionalProperties", items,
+            "a finding must keep accepting the restoration declaration; closing this would "
+            "invalidate stored verdicts that carry one",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

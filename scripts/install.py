@@ -2,6 +2,7 @@
 """Link this repository's skills into Codex without replacing existing work."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
@@ -10,6 +11,29 @@ LEGACY_NAMES = (
     "linear-focus", "linear-next", "linear-plan",
     "linear-run", "linear-check", "linear-logic", "crw-focus",
 )
+MANIFEST = Path(__file__).resolve().parent.parent / "plugins/crw/.codex-plugin/plugin.json"
+
+
+def declared_skills(manifest_path):
+    """Read the skills location the plugin manifest declares, or fail with a reason."""
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"{manifest_path}: {exc}") from exc
+    declared = manifest.get("skills") if isinstance(manifest, dict) else None
+    if not isinstance(declared, str) or not declared.startswith("./"):
+        raise ValueError(f"{manifest_path}: skills must be declared as a ./ relative path")
+    relative = Path(declared[2:].strip("/"))
+    if not relative.name or relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"{manifest_path}: the declared skills path must stay inside the plugin")
+    root = (manifest_path.parent.parent / relative).resolve()
+    plugin_root = manifest_path.parent.parent.resolve()
+    if not root.is_relative_to(plugin_root):
+        # A symlinked component would resolve outside the package the installer links from.
+        raise ValueError(f"{root}: the declared skills path resolves outside {plugin_root}")
+    if not root.is_dir():
+        raise ValueError(f"{root}: the declared skills directory does not exist")
+    return root
 
 
 def main() -> int:
@@ -20,7 +44,12 @@ def main() -> int:
     codex_dir = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     parser.add_argument("--dest", type=Path, default=codex_dir / "skills")
     args = parser.parse_args()
-    source_root = Path(__file__).resolve().parent.parent / "skills"
+    # The plugin manifest declares where the skills live, so the linked
+    # installation and the packaged installation cannot drift apart.
+    try:
+        source_root = declared_skills(MANIFEST)
+    except ValueError as exc:
+        parser.error(str(exc))
     sources = sorted(p for p in source_root.iterdir() if (p / "SKILL.md").is_file())
     if not sources:
         parser.error(f"No skills found in {source_root}")
