@@ -1296,6 +1296,57 @@ RESOLVES_LIKE_PYTHON = {
          "a class body binds for itself. Letting one class's sm = staticmethod decide what @sm"
          " means in the next suppresses a receiver that class never gave up, and the name Holder"
          " actually reaches is the module-level one."),
+    "an attribute read off an instance of a class here":
+        (REFUSAL,
+         ("class Innocent:",
+          "    NOT_READ = \"fine\"",
+          "",
+          "innocent = Innocent()",
+          "",
+          "def consumer():",
+          "    return innocent.NOT_READ"),
+         "consumer", False,
+         "an instance answers to its class, and Innocent binds that name to something that is"
+         " not an answer. Matching on the attribute name alone makes every object with an"
+         " attribute spelled like one owe a declaration."),
+    "an attribute read off an instance of a class that holds one":
+        (REFUSAL,
+         ("class Holder:",
+          "    unread = reading.UNREADABLE",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer():",
+          "    return holder.unread"),
+         "consumer", True,
+         "its pair, and it was wrong in the other direction: asking the class answers both, so"
+         " the instance that really does hold a refusal stops being missed at the same time."),
+    "a read taken on what a call other than open returned":
+        (TEXT,
+         ("def make(thing):",
+          "    return thing",
+          "",
+          "def helper():",
+          "    return make(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "the helper is accounted either way, because HERE is named in it. What make answers"
+         " with is a question about the run, so the read taken on it says nothing about source"
+         " text and every caller downstream would be claimed on a guess."),
+    "a descriptor made by calling property":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return completion.NOT_READ",
+          "    alias = property(carrier)",
+          "    def consumer(self):",
+          "        return self.alias"),
+         "consumer", True,
+         "property(carrier) makes the same descriptor the decorator does, so reading self.alias"
+         " runs the getter. Indexed only from decorators, the real consumer leaves both"
+         " inventories."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2430,6 +2481,26 @@ def _hands_on(tree, spelled):
             # A property is called by being read, so an attribute access naming one is a call.
             if decorated_by(node, ("property", "cached_property"), klass):
                 properties.setdefault((klass, where.rpartition(".")[2]), where)
+    # A descriptor made by calling property() rather than by decorating. alias = property(carrier)
+    # in a class body is the same getter under a second name, and reading self.alias runs it.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in node.body:
+            if not isinstance(statement, ast.Assign) or not isinstance(statement.value, ast.Call):
+                continue
+            if not means((_dotted(statement.value.func) or "").rpartition(".")[2],
+                         ("property", "cached_property"), statement.lineno, node.name):
+                continue
+            for given in list(statement.value.args)[:1]:
+                reached = methods.get((node.name,
+                                       (_dotted(given) or "").rpartition(".")[2]))
+                if not reached:
+                    continue
+                for target in statement.targets:
+                    for inner in ast.walk(target):
+                        if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
+                            properties.setdefault((node.name, inner.id), reached)
     # The places that ARE getters, so a class alias naming one can be recognised as naming a
     # property rather than an ordinary method.
     property_places = set(properties.values())
@@ -3143,7 +3214,7 @@ def source_spellings(tree):
     return frozenset(handles), hands_source, undecided, frozenset(called)
 
 
-def _refusal_spelled(spellings, held, classes=()):
+def _refusal_spelled(spellings, held, classes=(), as_class=None):
     """The matcher: which node is a refusal, spelled any of the derived ways."""
     answers = spellings["answer"]
     attributes = spellings["module attribute"] | spellings["collection"]
@@ -3156,6 +3227,9 @@ def _refusal_spelled(spellings, held, classes=()):
             through = _dotted(node.value)
             reader = (klass if through in ("self", "cls")
                       else (through or "").rpartition(".")[2] or None)
+            # A name holding an instance answers to its class: what innocent.NOT_READ reads is
+            # what Innocent binds, and what holder.unread reads is what Holder binds.
+            reader = (as_class or {}).get(reader, reader)
             if reader is not None and node.attr in held.get(reader, ()):
                 return (through or "") + "." + node.attr
             if reader in classes:
@@ -3192,7 +3266,8 @@ def _handle_names(tree, handles):
                 return reaches(expression.value)
             if isinstance(expression, ast.BoolOp):
                 return any(reaches(value) for value in expression.values)
-            if isinstance(expression, ast.Call) and _dotted(expression.func) == "open":
+            if (isinstance(expression, ast.Call)
+                    and (_dotted(expression.func) or "").rpartition(".")[2] == "open"):
                 return any(reaches(given) for given in list(expression.args)
                            + [given.value for given in expression.keywords])
             return _dotted(expression) in known
@@ -3247,7 +3322,8 @@ def _source_spelled(handles, hands_source, held):
             # rather than left out: the place itself was already accounted through HERE, and
             # what this recovers is the helper handing the text ON to its caller.
             if (isinstance(node.func, ast.Attribute) and node.func.attr.startswith("read")
-                    and isinstance(node.func.value, ast.Call)):
+                    and isinstance(node.func.value, ast.Call)
+                    and (_dotted(node.func.value.func) or "").rpartition(".")[2] == "open"):
                 for argument in (list(node.func.value.args)
                                  + [given.value for given in node.func.value.keywords]):
                     opened = spelled(argument, klass)
@@ -3322,14 +3398,28 @@ def refusals_reached(source):
     # answered by what the class binds rather than by the spelling of its name.
     classes = frozenset(node.name for node in ast.walk(tree)
                         if isinstance(node, ast.ClassDef))
+    # And which names hold an instance of one, to a fixpoint so second = first carries too. An
+    # instance is asked of its class rather than matched on the spelling of its attribute.
+    as_class, growing = {}, True
+    while growing:
+        growing = False
+        for node in ast.walk(tree):
+            for target, value in _bindings(node):
+                made = (_dotted(value.func) or "").rpartition(".")[2] if isinstance(
+                    value, ast.Call) else as_class.get(_dotted(value))
+                named = _dotted(target)
+                if made in classes and named and named not in as_class:
+                    as_class[named] = made
+                    growing = True
     # To a fixpoint, because self.second = self.first holds the refusal only once the pass
     # knows that self.first does.
     held, growing = {}, True
     while growing:
-        wider = _held_by_class(tree, _refusal_spelled(spellings, held, classes), held)
+        wider = _held_by_class(tree, _refusal_spelled(spellings, held, classes, as_class), held)
         growing = wider != held
         held = wider
-    return _occurrences(tree, _refusal_spelled(spellings, held, classes)), spellings
+    return (_occurrences(tree, _refusal_spelled(spellings, held, classes, as_class)),
+            spellings)
 
 
 def source_text_reached(source):
