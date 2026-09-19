@@ -2816,6 +2816,80 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                             "settings this reader rejects took the owner default with them,"
                             " and an absence was established for a plugin-owned host")
 
+    def test_a_link_that_points_away_and_back_does_not_publish_its_identity(self):
+        """Bracketing a listing with two path lookups is not enough. A link that points away
+        and back again agrees with itself across the brackets while the listing in between came
+        from somewhere else, and the count was filed under an identity it never came from. The
+        identity now comes from the descriptor the listing was read through, which cannot be
+        retargeted.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            there = Path(temporary) / "where-the-link-points-before-and-after"
+            away = Path(temporary) / "where-the-link-points-during"
+            there.mkdir()
+            away.mkdir()
+            alias = Path(temporary) / "a-link-that-points-away-and-back"
+            alias.symlink_to(there)
+            amend_settings(temporary, journalRoot=str(alias))
+            document = json.loads(second.read_text(encoding="utf-8"))
+            # The second registration really names the directory the link points at either side
+            # of the listing, and never the one it was listed from.
+            document["journalRoot"] = str(there)
+            second.write_text(json.dumps(document), encoding="utf-8")
+
+            real, calls = completion._journal_cell, []
+
+            def listing(config):
+                calls.append(config.get("journalRoot"))
+                if len(calls) == 1:
+                    alias.unlink()
+                    alias.symlink_to(away)
+                    try:
+                        return real(config)
+                    finally:
+                        alias.unlink()
+                        alias.symlink_to(there)
+                return real(config)
+
+            with mock.patch.object(completion, "_journal_cell", side_effect=listing):
+                found = completion.status(codex_home=temporary, environ={})
+            self.assertEqual(calls[0], str(alias),
+                             "the fixture did not list the link first: " + repr(calls))
+        named = found["configuration"]["namedSettings"]
+        self.assertEqual([entry.get("journalRoot") for entry in named],
+                         [str(alias), str(there)],
+                         "a listing taken from the directory the link pointed at DURING the"
+                         " read was published under the identity it pointed at either side of"
+                         " it, and the registration that really names that identity inherited"
+                         " the wrong count")
+
+    def test_settings_nobody_could_read_leave_the_registration_unsettled(self):
+        """An owner nobody could read is not the default owner. Where no document was read at
+        all, nothing establishes who owns the registration, so an empty hook file establishes
+        nothing either -- and taking the default there established an absence on a host whose
+        plugin package may be registering the hook perfectly well.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary)
+            completion.configuration_path(Path(temporary)).write_text(
+                "{ this is not json", encoding="utf-8")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.CONFIG_UNREADABLE,
+                         "the fixture did not build the unreadable settings this case is"
+                         " about: " + repr(found["configuration"]["value"]))
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertNotEqual(standings.get(firing.NOT_REGISTERED), firing.ESTABLISHED,
+                            "settings nobody could read were answered with the default owner,"
+                            " and an absence was established from a hook file that may not be"
+                            " where this host's registration lives at all")
+
     def test_records_already_written_survive_the_registration_being_removed(self):
         """An empty hook file establishes the PRESENT. A registration removed after the hook
         had fired leaves its journal exactly where it was, and this answer used to say no

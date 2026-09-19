@@ -345,6 +345,10 @@ REGISTRATION_RELATIVE_TARGET = "registration_names_a_relative_adapter"
 # legitimately name, which would then share this one's snapshot.
 NO_ROOT = "<no journal root>"
 
+# Refuse to open anything but a directory, where the platform can. Zero elsewhere, which only
+# costs a later NotADirectoryError from scandir -- the same reading, taken one step later.
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+
 # A spelling this command cannot judge from here: relative, with a separator, so it names one
 # program from the hook's workspace and another from wherever a diagnosis happens to run.
 WORKSPACE_DEPENDENT = "workspace_dependent_spelling"
@@ -1550,7 +1554,11 @@ def _journal_cell(config):
                                  " its own invocations", journalPolicy=policy)
     directory = Path(root).expanduser()
     try:
-        days = sorted(entry.name for entry in os.scandir(str(directory)) if entry.is_dir())
+        # Opened ONCE, and every reading below is taken through this descriptor. Two separate
+        # path lookups around a listing cannot promise they described the directory it read:
+        # a link can point away and back between them, and the count is then filed under the
+        # identity of a directory it never came from. A descriptor cannot be retargeted.
+        handle = os.open(str(directory), os.O_RDONLY | _DIRECTORY)
     except FileNotFoundError:
         return _cell(reading.ABSENT, "the journal directory does not exist, so this hook has"
                                      " recorded no invocation into it",
@@ -1559,19 +1567,49 @@ def _journal_cell(config):
         # ValueError as well: complaints() accepts any absolute string, and one carrying a
         # NUL cannot name a path at all, so scandir raises it. A settings document that
         # reads back fine must still produce a journal reading rather than a traceback.
-        return _cell(reading.ACCESS_ERROR, "the journal could not be listed: " + str(error),
-                     journalRoot=str(directory), journalPolicy=policy)
-    days = [day for day in days if JOURNAL_DAY.match(day)]
-    counted = 0
-    for day in days:
+        return _cell(reading.ACCESS_ERROR, "the journal could not be opened: " + str(error),
+                     journalRoot=str(directory), journalPolicy=policy,
+                     # A path lookup is enough HERE and nowhere else: no listing was taken, so
+                     # there is no count that could be attributed to the wrong directory. All
+                     # another spelling can inherit is "nobody could read this", which is what
+                     # two spellings of one unreadable thing should both say.
+                     journalIdentity=reading.path_identity(directory))
+    try:
+        # The identity of what was actually opened, reported beside the count so a caller can
+        # tell two spellings apart by what they REACHED rather than by how they were written.
+        taken = os.fstat(handle)
+        identity = (taken.st_dev, taken.st_ino)
         try:
-            counted += sum(1 for entry in os.scandir(str(directory / day))
-                           if entry.is_file() and JOURNAL_NAME.match(entry.name))
-        except OSError:
-            return _cell(reading.ACCESS_ERROR, "a journal day could not be listed",
-                         journalRoot=str(directory), journalPolicy=policy, days=days)
-    return _cell(str(counted), "invocations this hook recorded for itself",
-                 journalRoot=str(directory), journalPolicy=policy, days=days)
+            days = sorted(entry.name for entry in os.scandir(handle) if entry.is_dir())
+        except (OSError, ValueError) as error:
+            return _cell(reading.ACCESS_ERROR, "the journal could not be listed: " + str(error),
+                         journalRoot=str(directory), journalPolicy=policy,
+                         journalIdentity=identity)
+        days = [day for day in days if JOURNAL_DAY.match(day)]
+        counted = 0
+        for day in days:
+            try:
+                # Opened RELATIVE to the journal's own descriptor, so a day is read under the
+                # directory that was listed rather than under whatever the spelling names now.
+                inner = os.open(day, os.O_RDONLY | _DIRECTORY, dir_fd=handle)
+            except OSError:
+                return _cell(reading.ACCESS_ERROR, "a journal day could not be listed",
+                             journalRoot=str(directory), journalPolicy=policy, days=days,
+                             journalIdentity=identity)
+            try:
+                counted += sum(1 for entry in os.scandir(inner)
+                               if entry.is_file() and JOURNAL_NAME.match(entry.name))
+            except OSError:
+                return _cell(reading.ACCESS_ERROR, "a journal day could not be listed",
+                             journalRoot=str(directory), journalPolicy=policy, days=days,
+                             journalIdentity=identity)
+            finally:
+                os.close(inner)
+        return _cell(str(counted), "invocations this hook recorded for itself",
+                     journalRoot=str(directory), journalPolicy=policy, days=days,
+                     journalIdentity=identity)
+    finally:
+        os.close(handle)
 
 
 def journals_named(registrations, already_read=None):
@@ -1656,12 +1694,14 @@ def journals_named(registrations, already_read=None):
         # cannot, the spellings keep their own keys rather than being merged on a guess: a
         # second reading of one directory is the cost, and a shared reading of two different
         # ones is what that refuses to cost.
-        # Taken BEFORE the listing rather than after it. An identity captured afterwards can
-        # already be one the link acquired while the listing ran, which is the substitution
-        # this exists to prevent rather than a narrower version of it.
-        before = reading.path_identity(configured) if configured else None
-        if before is not None and root not in scanned:
-            alias = next((key for key, taken in aliases.items() if taken == before), None)
+        # This spelling's identity, to look up a snapshot already taken from that directory.
+        # A lookup may ask a path: it reports what the spelling reached at the moment it was
+        # asked, which is all any reading of a live filesystem claims. What may NOT come from
+        # a path lookup is the identity a snapshot is PUBLISHED under, and that one is taken
+        # from the descriptor the listing itself was read through.
+        mine = reading.path_identity(configured) if configured else None
+        if mine is not None and root not in scanned:
+            alias = next((key for key, taken in aliases.items() if taken == mine), None)
             if alias is not None:
                 root = alias
         if root in scanned:
@@ -1672,17 +1712,15 @@ def journals_named(registrations, already_read=None):
         else:
             cell = _journal_cell(config)
             scanned[root] = cell
-            # Published for OTHER spellings to share only where the directory did not move
-            # under the listing. One identity read cannot describe the other side of a read it
-            # did not take part in: a link retargeted between the stat and the scandir would
-            # file the NEW target's listing under the OLD target's identity, and a later
-            # registration that really names the old one would be handed a count belonging to
-            # a directory it never mentioned. Disagreement withholds the sharing rather than
-            # the reading -- this registration still gets its own cell under its own spelling,
-            # and nobody else inherits it.
-            after = reading.path_identity(configured) if configured else None
-            if before is not None and after == before:
-                aliases[root] = before
+            # Published under the identity the READING reports, which it took from the
+            # descriptor it listed. Bracketing the listing with two path lookups was not
+            # enough: a link pointing away and back again agrees with itself across the
+            # brackets while the listing in between came from somewhere else, and the count
+            # was then filed under an identity it never came from. A descriptor cannot be
+            # retargeted, so there is no interval left to race.
+            taken = cell.get("journalIdentity")
+            if taken is not None:
+                aliases[root] = taken
         value = cell["value"]
         entry["journal"] = cell
         entry["journalRoot"] = cell.get("journalRoot")
@@ -1931,23 +1969,30 @@ def status(codex_home=None, environ=None, event=EVENT):
     unregistered_records = (int(journal_cell["value"])
                             if not named_journals and str(journal_cell.get("value")).isdigit()
                             else None)
+    # Whether the hook file is where this host's registration would BE. The plugin owner
+    # registers through its package manifest, which this command does not read, so on a
+    # correctly plugin-owned host an empty hook file is exactly what a working installation
+    # looks like and establishes nothing at all about registration.
+    #
+    # Three states, not two. Where NO document was read -- undecodable bytes, a file this
+    # process cannot open -- nothing establishes who owns the registration, so the hook file
+    # establishes nothing either and the question stays open. Where a document WAS read, the
+    # owner comes from the document rather than from the validated configuration: a file that
+    # reads back fine and fails some other check still records who owns the registration, and
+    # taking the default there established an absence for a plugin-owned host and suppressed
+    # settings_unusable, the cause that would have named the actual repair. An ABSENT document
+    # is neither: owner_of answers that as the user owner on purpose, because the plugin writes
+    # a document when it takes the registration.
+    if found is None or not found.usable:
+        registration_read_here = False
+    else:
+        recorded = found.value if isinstance(found.value, dict) else None
+        registration_read_here = (
+            owner_of(config if config is not None else recorded) != OWNER_PLUGIN)
     absence = firing.decide({
         "registrationReadable": ours is not None,
         "adapterRegistrations": len(ours or []),
-        # Whether the hook file is where this host's registration would BE. The plugin owner
-        # registers through its package manifest, which this command does not read, so on a
-        # correctly plugin-owned host an empty hook file is exactly what a working installation
-        # looks like and establishes nothing at all about registration.
-        #
-        # Read from the DOCUMENT and not from the validated configuration. A settings file that
-        # reads back fine and fails some other check still records who owns the registration,
-        # and taking the default there established an absence on a host whose plugin package
-        # may be registering the hook perfectly well -- and suppressed settings_unusable, which
-        # is the cause that would have named the real repair.
-        "registrationReadHere": owner_of(
-            config if config is not None
-            else (found.value if found is not None and found.usable
-                  and isinstance(found.value, dict) else None)) != OWNER_PLUGIN,
+        "registrationReadHere": registration_read_here,
         "relativeSettings": bool(relative),
         "silentRegistrations": silent,
         "namedJournals": named_journals,
