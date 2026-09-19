@@ -4483,6 +4483,47 @@ class FortyFifthHostedRound(TrialCase):
                          set(startup.REQUESTABLE_SETTINGS) | {"approvalPolicy"})
         self.assertLessEqual(set(startup.REQUIRED_EXPECT), set(startup.DECLARABLE_SETTINGS))
 
+    def test_one_lifecycle_capture_cannot_answer_for_two_participants(self):
+        # Reading either spelling and taking the first that agreed let a single host response
+        # name one participant at threadId and another at taskId, and answer both of their cells.
+        shared = self.world.captures["lifecycle-" + World.PARENT_A + ".json"]
+        shared["taskId"] = World.CHILD_A
+        self.world.record["captures"]["parentLifecycle"][World.CHILD_A]["path"] = str(
+            self.world.trial / ("lifecycle-" + World.PARENT_A + ".json"))
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "one capture was read as evidence for two participants")
+        for name in (World.PARENT_A, World.CHILD_A):
+            self.assertEqual(
+                cells_of(document, "parentLifecycle")["lifecycle:" + name]["value"], NOT_VERIFIED,
+                name + " was verified by a capture that names somebody else too")
+
+    def test_a_receipt_naming_two_participants_verifies_neither(self):
+        # The same rule on the other capture that carries an identity: taking threadId and never
+        # looking at the taskId beside it read a receipt that names two as evidence for one.
+        capture = self.world.captures["receipt-" + World.PARENT_A + ".json"]
+        capture["taskId"] = World.CHILD_A
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt naming two participants was read as evidence for one")
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_a_capture_naming_one_participant_still_answers_for_it(self):
+        # The bound: agreeing on the one identity it carries is still evidence, under either
+        # spelling, so this refuses conflicting identities rather than second spellings.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["lifecycle-" + task + ".json"]
+            capture["taskId"] = capture.pop("threadId")
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
     def test_the_final_doctor_grades_the_reachability_it_reports(self):
         # The socket and the write access were graded once, at the start. The same payload the
         # identity recheck reads answers both again, and a path that stopped answering leaves

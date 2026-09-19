@@ -483,6 +483,29 @@ def same(left, right):
     return str(left) == str(right)
 
 
+def identities_in(payload, *keys):
+    """Every identity this capture carries, under either spelling, absent ones dropped.
+
+    Two spellings reach these captures. The host names the thread it created at threadId, and the
+    relay's own word for the same participant is taskId, and they are the same string.
+    """
+    found = [field(payload, key) for key in keys]
+    return [value for value in found if value is not MISSING and value is not None]
+
+
+def names_participant(payload, task, *keys):
+    """Whether this capture names this participant, on every identity it carries.
+
+    Reading either spelling on its own and accepting the first that agreed let one capture naming
+    one participant at threadId and another at taskId be read as evidence for both of them, so a
+    single host response answered two per-participant cells and the condition those cells exist
+    to catch arrived as two passes. Every identity the payload carries has to agree, and at least
+    one has to be there: a capture that names nobody names nobody.
+    """
+    carried = identities_in(payload, *keys)
+    return bool(carried) and all(same(value, task) for value in carried)
+
+
 def structurally_same(left, right):
     """Recursive equality that does not let a bool be a number.
 
@@ -1509,8 +1532,7 @@ def reading_lifecycle(record):
             # A predicate insisting on a string failed every capture a real host produced, so both
             # shapes are read, and each is read where the state actually is.
             state = status_state(status)
-            names = (same(field(payload, "threadId"), task)
-                     or same(field(payload, "taskId"), task))
+            names = names_participant(payload, task, "threadId", "taskId")
             if status is MISSING and refusal is None:
                 cells.append(cell("lifecycle:" + str(task), UNKNOWN,
                                   evidence="the capture carries no thread status to read",
@@ -1570,11 +1592,11 @@ def reading_capability(record, relay):
                 # same string, and the lifecycle capture is read on both spellings for that
                 # reason. Reading only the relay's word made every receipt a real bridge wrote
                 # unreadable, and an unreadable cell refuses the start: a check meant to refuse
-                # one bad arrangement would have refused every good one.
-                identifies = field(found["payload"], "threadId")
-                if identifies is MISSING:
-                    identifies = field(found["payload"], "taskId")
-                names = same(identifies, task)
+                # one bad arrangement would have refused every good one. Every spelling the
+                # payload carries has to agree, so one capture cannot answer for two.
+                carried = identities_in(found["payload"], "threadId", "taskId")
+                identifies = carried[0] if carried else MISSING
+                names = names_participant(found["payload"], task, "threadId", "taskId")
                 verified = field(found["payload"], "settings", "verified")
                 if not isinstance(verified, list):
                     # A list is the only shape this answer takes. Anything else is a reading
