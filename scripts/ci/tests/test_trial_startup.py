@@ -119,7 +119,7 @@ class World:
     PARENT_B, CHILD_B = "task-parent-b", "task-child-b"
     STORE_ID, DEVICE, INODE, NONCE = "store0000000001", 64512, 4242, "nonce-01"
 
-    def __init__(self, base):
+    def __init__(self, base, *, one_repository=False):
         self.root = Path(tempfile.mkdtemp(dir=str(base), prefix="crw111-"))
         self.trial = self.root / "trial"
         self.install = self.root / "install"
@@ -130,9 +130,22 @@ class World:
         self.repos = {}
         for name, issue in (("A", self.ISSUE_A), ("B", self.ISSUE_B)):
             repo = self.root / ("repo-" + name)
-            repo.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["git", "init", "-q", str(repo)], check=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if one_repository and name == "B":
+                # B is a linked worktree of A: its own root, the same repository. Every checkout
+                # on the host these trials run on is arranged this way, so a boundary declaration
+                # meets it as the ordinary case rather than an exotic one. git needs a commit to
+                # branch a worktree from, which is the only way this world differs elsewhere.
+                identity = ["-c", "user.name=trial", "-c", "user.email=trial@example.invalid"]
+                subprocess.run(["git", "-C", str(self.repos["A"]), *identity, "commit", "-q",
+                                "--allow-empty", "-m", "a root to add a worktree from"],
+                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["git", "-C", str(self.repos["A"]), "worktree", "add", "-q",
+                                "-b", "linked", str(repo)],
+                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                repo.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["git", "init", "-q", str(repo)], check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.repos[name] = repo
         self.launcher = self.bin / "codex-session-relay"
         self.launcher.write_text(LAUNCHER, encoding="utf-8")
@@ -2676,6 +2689,69 @@ class TwentySeventhHostedRound(TrialCase):
         for value in ("idle", {"state": "idle", "activeTurn": None}):
             with self.subTest(value=value):
                 self.assertEqual(self.status_cell(value)["value"], VERIFIED)
+
+
+class LinkedWorktreesAreOneRepository(TrialCase):
+    """Two boundaries whose roots are linked worktrees of a single repository.
+
+    Their roots differ and `git rev-parse --show-toplevel` reports those differing roots, so a
+    declaration settled on roots read one repository as two and let the start proceed. Every
+    checkout on the host these trials run on is a linked worktree of one repository, so that is
+    the ordinary arrangement rather than an edge of it. Nothing else in this world disagrees,
+    which is what makes readiness the reading's own verdict.
+    """
+
+    def setUp(self):
+        self.world = World(self.base, one_repository=True)
+        self.addCleanup(self.world.stop)
+
+    def test_the_fixture_is_one_repository_under_two_roots(self):
+        # Support: git's own answer about the world this case is built on, so the cases below
+        # are about the reading rather than about whether the fixture was built as claimed.
+        def ask(path, *arguments):
+            return subprocess.run(["git", "-C", str(path), "rev-parse", *arguments],
+                                  capture_output=True, text=True, check=True).stdout.strip()
+
+        self.assertNotEqual(ask(self.world.repos["A"], "--show-toplevel"),
+                            ask(self.world.repos["B"], "--show-toplevel"))
+        self.assertEqual(
+            (self.world.repos["A"] / ask(self.world.repos["A"], "--git-common-dir")).resolve(),
+            (self.world.repos["B"] / ask(self.world.repos["B"], "--git-common-dir")).resolve())
+
+    def test_two_worktrees_of_one_repository_refuse_the_start(self):
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "two linked worktrees of one repository were read as two repositories")
+
+    def test_the_reading_says_which_repository_each_boundary_is_in(self):
+        self.world.start_supervisor()
+        cells = cells_of(self.world.preflight(), "boundaries")
+        for name in ("A", "B"):
+            cell = cells.get("repositoryIdentity:" + name)
+            self.assertIsNotNone(cell, "no reading settled which repository boundary " + name
+                                 + " is in")
+            self.assertEqual(cell["value"], NOT_VERIFIED)
+            self.assertIn("linked worktrees of one repository", cell["evidence"])
+        # The root each participant sits in still agrees with the root its boundary declared,
+        # which is why a reading of the roots cannot be the one that refuses this.
+        self.assertEqual(cells["toplevel:A:" + World.PARENT_A]["value"], VERIFIED)
+        self.assertEqual(cells["toplevel:B:" + World.PARENT_B]["value"], VERIFIED)
+
+    def test_two_separate_repositories_are_still_two_identities(self):
+        separate = World(self.base)
+        self.addCleanup(separate.stop)
+        separate.start_supervisor()
+        cells = cells_of(separate.preflight(), "boundaries")
+        for name in ("A", "B"):
+            self.assertEqual(cells["repositoryIdentity:" + name]["value"], VERIFIED)
+
+    def test_a_root_git_cannot_read_is_unknown_rather_than_another_repository(self):
+        self.world.record["boundaries"][1]["repositoryRoot"] = str(self.world.root / "nowhere")
+        self.world.flush()
+        cells = cells_of(self.world.preflight(), "boundaries")
+        self.assertEqual(cells["repositoryIdentity:B"]["value"], UNKNOWN)
+        self.assertFalse(cells["repositoryIdentity:B"]["met"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover

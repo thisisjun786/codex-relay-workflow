@@ -1243,6 +1243,28 @@ def participants_of(record):
     return found
 
 
+def repository_identity(root):
+    """Which repository a declared root is in, read the way git decides it rather than by path.
+
+    Linked worktrees of one repository have distinct toplevels, so comparing declared roots — or
+    the --show-toplevel each participant reports — reads one repository as two. That is not an
+    edge case here: this project runs as linked worktrees of a single repository, so a
+    declaration settled on roots passes for exactly the ordinary arrangement it exists to refuse.
+    --git-common-dir resolves to one directory for every linked worktree of one repository, and
+    to different ones for genuinely separate repositories, which is the identity the declaration
+    claims to be comparing.
+
+    git answers it relative to the directory it ran in, so a bare .git is that directory's own.
+    Returns MISSING where git had no answer, because a repository nobody could read is unknown
+    rather than one that disagreed.
+    """
+    probe = Relay.git(root, "rev-parse", "--git-common-dir")
+    found = (probe["stdout"] or "").strip()
+    if probe["exitCode"] != 0 or not found:
+        return MISSING, probe
+    return str(resolve(Path(str(root)) / found)), probe
+
+
 def reading_boundaries(record, relay):
     """Two identities, confirmed against the registration that created them."""
     cells = []
@@ -1261,10 +1283,31 @@ def reading_boundaries(record, relay):
                                 + json.dumps(keys) + ", scope references " + json.dumps(scopes)
                                 + ", repository roots " + json.dumps(roots)
                                 + ", participants " + json.dumps(tasks)
-                                + ". Two boundaries in one repository are not two repository"
-                                  " identities, and two sharing a participant are not two"
-                                  " parents. A blank identity is not one either"),
+                                + ". Two boundaries with one issue key are not two boundaries,"
+                                  " and two sharing a participant are not two parents. A blank"
+                                  " identity is not one either. Distinct roots are not distinct"
+                                  " repositories, because linked worktrees of one repository have"
+                                  " distinct roots, so which repository each boundary is in is"
+                                  " read by git rather than taken from these paths"),
                       measured_at=stamp()))
+
+    # Roots are spellings; this is the identity. Read once per boundary and compared across them,
+    # because the false pass this refuses is two linked worktrees of one repository reported as
+    # two repositories, which is how every checkout on this host is arranged.
+    identities = [repository_identity(b.get("repositoryRoot")) for b in boundaries]
+    for boundary, (identity, probe) in zip(boundaries, identities):
+        shared = [str(other.get("name")) for other, (twin, _) in zip(boundaries, identities)
+                  if other is not boundary and identity is not MISSING and twin == identity]
+        cells.append(graded("repositoryIdentity:" + str(boundary.get("name")), identity,
+                            not shared, probe=probe, provenance=EXECUTED,
+                            unreadable=("git reported no common directory for "
+                                        + str(boundary.get("repositoryRoot"))),
+                            evidence=("this boundary's repository is " + str(shown(identity))
+                                      + (", which is the repository " + ", ".join(shared)
+                                         + " is in as well, so these are linked worktrees of one"
+                                           " repository rather than two repositories"
+                                         if shared else
+                                         ", which no other boundary is in"))))
 
     for boundary in boundaries:
         name = boundary.get("name")
