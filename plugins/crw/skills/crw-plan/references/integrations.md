@@ -294,7 +294,10 @@ shared target. The resource decision and the merge order are two decisions and a
 Where the two projects share no supervisor, or answer to different ones, neither supervisor
 acquires authority over the pair and none is invented or rebound: the parents record the unsettled
 part, hold only that part while their independent work continues, and raise that decision to the
-user, who is the owner it falls to.
+user, who is the owner it falls to. Two supervisors coordinate across their initiatives by the same
+route and the same form, and neither acquires authority over the other's projects by using it: a
+requirement for a project one of them owns is raised with that project's own supervisor, which
+decides it.
 
 Only the owning parent instructs its own children, and no parent instructs another. A peer
 message is a request or an agreement: the parent that receives it decides what its own issues and

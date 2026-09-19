@@ -237,8 +237,9 @@ Stop after this issue; do not start another issue or create an empty PR.
 
 ## Coordination message
 
-Use this between parents coordinating directly, for a parent's escalation to its supervisor, and
-for a supervisor's decision returning to them.
+Use this between parents coordinating directly, between two supervisors coordinating across their
+initiatives, for a parent's escalation to its supervisor, and for a supervisor's decision returning
+to them. It carries coordination between owners; it is never a route into anyone else's children.
 It is not a delivery channel: it carries no receipt, no acknowledgement and no verdict, and it
 never instructs another parent's child. The path and the rules it follows are
 [Direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents).
@@ -250,7 +251,7 @@ than contents.
 ```text
 Request: [id the sender chose for this message]
 Reply to: [on a reply, the id it answers; omit on a first message]
-Kind: [proposal | conditional acceptance | rejection | correction | result | blocked |
+Kind: [proposal | acceptance | conditional acceptance | rejection | correction | result | blocked |
   merge turn request | merge turn assignment | merge turn return | recovery update.
   The three merge-turn kinds are about the order into a shared target and nothing else: no kind
   here assigns work to another parent, because no parent can]
