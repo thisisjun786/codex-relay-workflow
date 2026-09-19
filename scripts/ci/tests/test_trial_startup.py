@@ -4322,6 +4322,35 @@ class FortyFifthHostedRound(TrialCase):
         # would refuse every receipt a bridge writes.
         self.assertNotIn("approvalPolicy", keys)
 
+    def test_a_creation_that_reported_no_profile_does_not_clear_a_stored_one(self):
+        # The row is what a resume is compared against, so a store expectation does not stop
+        # mattering because the creation response was silent about it. Answering not_applicable
+        # there said the question did not arise while the store held the value it is about.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["receipt-" + task + ".json"]["creation"].pop(
+                "activePermissionProfile")
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a stored permission expectation nothing established was read as met")
+        cell = cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]
+        self.assertEqual(cell["value"], UNKNOWN)
+
+    def test_neither_side_naming_a_profile_is_still_not_applicable(self):
+        # Support: the arrangement the not_applicable answer is actually for. With no permission
+        # source anywhere there is nothing for a resume to be checked against, and refusing it
+        # would refuse a working trial.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["receipt-" + task + ".json"]["creation"].pop(
+                "activePermissionProfile")
+        self.world.payloads["settings-show"]["payload"]["settings"].pop(
+            "expectedPermissionProfile")
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        cell = cells_of(document, "capability")["permissionProfile:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_APPLICABLE)
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
     def test_the_final_doctor_grades_the_reachability_it_reports(self):
         # The socket and the write access were graded once, at the start. The same payload the
         # identity recheck reads answers both again, and a path that stopped answering leaves

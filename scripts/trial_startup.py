@@ -1654,11 +1654,30 @@ def reading_capability(record, relay):
             # send unless it is read here.
             profile = receipt_permission_profile(receipt)
             expected = field(settings, "expectedPermissionProfile")
-            if profile is MISSING or profile is None:
+            no_profile = profile is MISSING or profile is None
+            no_expectation = expected is MISSING or expected is None
+            if no_profile and no_expectation:
                 cells.append(cell("permissionProfile:" + str(task), NOT_APPLICABLE, probe=probe,
                                   provenance=EXECUTED,
-                                  evidence="the creation response reported no permission profile,"
-                                           " so a resume has nothing to be checked against"))
+                                  evidence="neither the creation response nor the store's row"
+                                           " names a permission profile, so there is no"
+                                           " permission source for a resume to be checked"
+                                           " against"))
+            elif no_profile:
+                # The row is what a resume is compared against, so the store's expectation does
+                # not stop mattering because the creation was silent about it. Which way the
+                # relay would answer depends on what a resume reports, and that is not readable
+                # here: a resume naming this same profile sends, and one naming another is
+                # withheld. A predicate missing one of the two values it reads answers unreadable
+                # rather than false, which is the same rule every graded cell here follows.
+                cells.append(cell("permissionProfile:" + str(task), UNKNOWN, probe=probe,
+                                  provenance=EXECUTED,
+                                  evidence=("the creation response reported no permission profile"
+                                            " and the store expects "
+                                            + json.dumps(shown(expected)) + ", which this"
+                                            " creation never established. Whether the first send"
+                                            " is withheld depends on the profile a resume"
+                                            " reports, and no capture here carries one")))
             else:
                 # The relay's own equality, not this module's stricter one. This cell predicts a
                 # specific downstream check rather than judging the profile itself, so comparing
