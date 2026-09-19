@@ -7,8 +7,10 @@ description: "Coordinate one Linear project through independent issue children, 
 
 Use the selected Linear project as the planning source and keep this Codex task
 as its coordinator: one parent per project, one child per issue. Follow the shared
-[parent and child scope](../crw-plan/references/integrations.md#parent-and-child-scope),
-including standalone issues and explicit current-task work. Each child owns its
+[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope),
+including standalone issues and explicit current-task work. Where the initiative above this
+project has an execution supervisor, it verifies this parent's reported outcome and instructs this
+task, never this task's children; where it has none, nothing changes. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
@@ -45,6 +47,10 @@ An explicit request for a parent goal or unattended host continuation routes to
 Run execution; they do not themselves create a goal. Inside an authorized Loop, Run
 returns progress and pending obligations to the same Loop owner without creating
 another goal. Existing scope and authorization survive skill routing.
+
+An initiative link is not a Run target. Run executes one project, so resolve the project actually
+being executed under the shared target rules; the link is context, it rebinds no existing parent,
+and this skill establishes no supervisor.
 
 Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
 no-merge, or current-task limits override the default. An issue or milestone
@@ -95,6 +101,15 @@ children run calls for bounded observation; a blocked issue does not stop indepe
 work. If the host ends the turn, preserve the unfinished project and exact resume step,
 not a claim that the first batch completed the request. Run alone promises no automatic
 future wake-up. A status-only request wakes nothing.
+
+A request from a peer parent is answered here, by this task, under
+[Direct coordination between parents](../crw-plan/references/integrations.md#direct-coordination-between-parents):
+decide what this project's own issues and children do about it, never reach into the other
+project's children, and escalate to the supervisor only an unresolved disagreement, a scope
+change, new ownership, or a shared resource including the order into a shared target. Where the
+two projects share no supervisor, or answer to different ones, invent none: record the unsettled
+part, hold only that part, keep the independent work moving, and raise that decision to the user.
+Record the agreement and whether it is still conditional; a peer message moves no delivery by itself.
 
 For authorized automatic continuation, [crw-loop](../crw-loop/SKILL.md) owns the parent
 host goal and automatic continuation across turns. Returning from Run hands
