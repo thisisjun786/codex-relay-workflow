@@ -2493,6 +2493,53 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(steps.MAX_GUARD_SECONDS,
                          numbers["MAX_SECONDS"] - numbers["MARGIN_SECONDS"])
 
+    def test_a_missing_relay_under_the_pointer_is_refused(self):
+        """The adapter does not answer a Stop by itself; it runs the relay for the decision."""
+        host = self.ready()
+        (host.version / "bin" / "codex-session-relay").unlink()
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("the relay at", answer["results"][0]["detail"])
+        self.assertIn("codex-session-relay", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_cached_package_that_declares_something_else_is_refused(self):
+        """A structurally valid declaration is not a declaration of this repository's launcher."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        document["hooks"]["Stop"][0]["hooks"][0]["command"] = "true"
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("does not declare a Stop hook that runs", answer["results"][0]["detail"])
+        self.assertIn("crw_stop_hook.py", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_cached_package_without_the_bridge_server_is_refused(self):
+        """The same question asked of the surface the record hands over."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "mcp.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        # Structurally valid on purpose: the payload contract passes it, and what refuses is the
+        # question of whether the server it declares starts this repository's bridge launcher.
+        entry = dict(document["mcpServers"]["codex-thread-bridge"])
+        # A file the package really ships, so the payload contract is satisfied, and the wrong
+        # program for this server, which is the only thing left to notice.
+        entry["args"] = ["./wiring/crw_stop_hook.py"]
+        document["mcpServers"] = {"codex-thread-bridge": entry}
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("does not declare the codex-thread-bridge server running",
+                      answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

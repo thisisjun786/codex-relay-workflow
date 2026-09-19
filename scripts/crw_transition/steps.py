@@ -179,6 +179,18 @@ def adapter_paths(host):
     return str(base / inventory.INTERPRETER_SCRIPT), str(base / inventory.ADAPTER_SCRIPT)
 
 
+def relay_command(host):
+    """The relay the settings will record, under the same pointer the adapter is recorded under.
+
+    Probed like the rest because the adapter does not answer a Stop by itself: it runs this as a
+    subprocess for the guard decision. With it missing, every Stop reaches a working adapter and
+    releases with guard_unreachable, which is a host that looks installed and judges nothing.
+    """
+    destination = host.get("destination")
+    return str(Path(destination) / "current" / "bin" / inventory.RELAY_SCRIPT) \
+        if destination else None
+
+
 def mcp_refusals(mcp):
     """Every reason the bridge surface cannot be transitioned, as a list.
 
@@ -280,7 +292,71 @@ def payload_complaints(repo_root, cache_version):
                  " scripts/ci/plugin.py --payload, so what is installed is not a package this"
                  " transition can rely on: " + (done.stdout + done.stderr).strip()[:400]],
                 {"payloadCheck": argv, "exitCode": done.returncode})
-    return [], {"payloadCheck": argv, "exitCode": done.returncode}
+    return (declaration_complaints(repo_root, cache_version),
+            {"payloadCheck": argv, "exitCode": done.returncode})
+
+
+def _programs(command):
+    """The program file names a declared command runs, by their own last component."""
+    return {Path(word.strip("\"'")).name for word in str(command).split()
+            if word.strip("\"'").endswith(".py")}
+
+
+def _declared(root):
+    """What a plugin payload at this root declares: hook commands per event, and server commands."""
+    events, servers = {}, {}
+    for path in sorted((Path(root) / "wiring" / "hooks").glob("*.json")):
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for event, groups in ((document or {}).get("hooks") or {}).items():
+            for group in groups or []:
+                for hook in (group or {}).get("hooks") or []:
+                    command = str((hook or {}).get("command") or "")
+                    if command:
+                        events.setdefault(event, []).append(command)
+    try:
+        document = json.loads((Path(root) / "wiring" / "mcp.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        document = {}
+    for name, entry in ((document or {}).get("mcpServers") or {}).items():
+        words = [str((entry or {}).get("command") or "")]
+        words += [str(word) for word in ((entry or {}).get("args") or [])]
+        servers[name] = " ".join(words)
+    return events, servers
+
+
+def declaration_complaints(repo_root, cache_version):
+    """Whether the installed package declares the surfaces this transition is handing over.
+
+    The payload contract answers whether the package is well formed: its hook check accepts any
+    nonempty event and command, and its server check any nonempty name. Well formed is not the
+    question here. What is about to be removed is a working Stop hook and a working bridge
+    registration, and the only thing that makes their removal safe is that the installed package
+    declares the launchers this repository ships. So the cached declarations are compared with
+    this checkout's own, by event, by server name, and by which program each one runs.
+    """
+    ours_events, ours_servers = _declared(Path(repo_root) / "plugins" / "crw")
+    cached_events, cached_servers = _declared(cache_version)
+    found = []
+    for event, commands in sorted(ours_events.items()):
+        wanted = {name for command in commands for name in _programs(command)}
+        got = {name for command in cached_events.get(event) or [] for name in _programs(command)}
+        missing = sorted(wanted - got)
+        if missing:
+            found.append("the installed package does not declare a " + str(event) + " hook that"
+                         " runs " + ", ".join(missing) + ", which is what would answer the Stop"
+                         " this transition is removing the registration for")
+    for name, command in sorted(ours_servers.items()):
+        wanted = _programs(command)
+        got = _programs(cached_servers.get(name) or "")
+        missing = sorted(wanted - got)
+        if missing:
+            found.append("the installed package does not declare the " + str(name) + " server"
+                         " running " + ", ".join(missing) + ", which is what would start the"
+                         " bridge this transition is removing the registration for")
+    return found
 
 
 def runtime_complaints(host):
@@ -305,7 +381,8 @@ def runtime_complaints(host):
     found = []
     interpreter, adapter = adapter_paths(host)
     for label, path in (("the adapter", adapter), ("its interpreter", interpreter),
-                        ("the bridge", bridge_command(host))):
+                        ("the bridge", bridge_command(host)),
+                        ("the relay", relay_command(host))):
         if not _executable(path):
             found.append(label + " at " + str(path) + " is not an executable file, so recording it"
                          " would name something that cannot run")
