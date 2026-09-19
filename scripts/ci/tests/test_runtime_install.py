@@ -5963,6 +5963,42 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=write_then_strand))
+        if breaking == "settle the staging claim while another run holds it and the selection moves":
+            # Both at once: a competing claim writer AND a promotion that landed elsewhere.
+            # The lock this call lost says nothing about what the next run will do with this
+            # directory, so the two answers have to be composed rather than one hiding the
+            # other.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def busy_after_moving_on(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    hostrecord.update(
+                        host.record_path, host.data["definitionVersion"],
+                        select={c["component"]: str(host.previous_site / c["module"])
+                                for c in host.data["components"]})
+                    runtime_install.pointer.place(host.pointer_path, host.previous)
+                    Path(str(staging.claim_path(environment))
+                         + hostrecord.LOCK_SUFFIX).write_text("a rival", encoding="utf-8")
+                    raise hostrecord.Busy("another run holds the claim lock")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=busy_after_moving_on))
+        if breaking == "settle the staging claim while a promotion is in flight":
+            # Somebody else is mid-promotion, holding the lock that serialises the two writes
+            # this snapshot reads. Taken outside it, the record load and the pointer reading
+            # can straddle that promotion and describe a state that never existed.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def hold_promotion_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    host.held.append(
+                        hostrecord.Exclusive(host.record_path, timeout=1.0).__enter__())
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=hold_promotion_then_fail))
         if breaking == "settle the staging claim after the record vanishes":
             # The host record disappears between the promotion and the claim write. It reads
             # back as ABSENT, which is USABLE and carries an empty record -- so an empty
@@ -6429,6 +6465,63 @@ class SettledRecordTests(unittest.TestCase):
                       "the record still did not land, which is reported as itself")
         self.assertTrue(claim.get("recoveryRequires"),
                         "with what to do instead: wait for the run that holds it")
+
+    def test_a_lost_claim_lock_does_not_speak_for_the_selection(self):
+        """The lock this call did not take says nothing about what the next run will do.
+
+        Answered as a branch of its own, it sat in front of every state-dependent answer and
+        asserted a selection it had never read -- so a contended settle whose promotion had
+        been superseded was still told to rerun this install, which would rebuild the old
+        staging and could repromote it over the newer runtime.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            moved = _advice(UpdateRecoveryTests()._run(
+                host,
+                breaking="settle the staging claim while another run holds it and the"
+                         " selection moves")[1], host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            ours = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim while another run holds it")[1],
+                other)
+
+        self.assertTrue(ours, "the contrast needs the other case to say something")
+        self.assertNotEqual(moved, ours,
+                            "a contended settle whose selection has moved on must not be told"
+                            " what one still holding the selection is told: " + moved[:300])
+
+    def test_the_recovery_snapshot_is_taken_under_the_promotion_lock(self):
+        """Read outside it, the record and the pointer can straddle another promotion.
+
+        A snapshot that cannot be taken consistently is reported as not established rather
+        than assembled from two readings of two different moments.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.held = []
+            try:
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="settle the staging claim while a promotion is in flight")
+                contested = _advice(payload, host)
+            finally:
+                for holder in host.held:
+                    holder.__exit__(None, None, None)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            settled_state = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim")[1], other)
+
+        selection = (payload.get("claim") or {}).get("selection")
+        self.assertIsInstance(selection, dict,
+                              "the snapshot the advice came from travels with it: "
+                              + json.dumps(payload.get("claim"))[:400])
+        self.assertIsNone(selection["selects"],
+                          "a snapshot that could not be taken under the lock establishes"
+                          " nothing about the selection")
+        self.assertTrue(selection["detail"], "and says why it could not be taken")
+        self.assertNotEqual(contested, settled_state,
+                            "so it must not be given the advice that reads the selection")
 
     def test_a_host_record_that_vanished_is_not_reported_as_a_selection_that_moved(self):
         """ABSENT is usable, and an absent record carries an empty one.

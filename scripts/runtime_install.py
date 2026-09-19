@@ -45,6 +45,12 @@ EXIT_OK, EXIT_REFUSED, EXIT_USAGE = 0, 1, 2
 # deliberately, which is why they are declared together and why the result says 'promoted'.
 EXIT_INCOMPLETE = 3
 
+# How long the settle failure path waits for the promotion lock to take a consistent snapshot
+# of what this host selects. Short on purpose: this is already a failure path, and "could not
+# be established" is a modelled answer, so waiting the promotion timeout to improve a sentence
+# would be the wrong trade.
+SETTLE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
+
 # The two components, named once. The MCP server name spells the bridge's component name, and
 # that shared spelling is stated here rather than left for a reader to infer from two literals
 # that happen to match.
@@ -3130,28 +3136,44 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
     # else, and would have this command report a host record that VANISHED as another run
     # having moved on. The authority for what this host selected is gone in that case, and
     # losing it is not the same event as being superseded by a successful promotion.
-    current = hostrecord.load(record_path, definition_version)
-    if current.ok:
-        protected, protection = protected_environment(current.value, environment,
-                                                      environment.parent, data)
-        selected = protection["recordSelectsIt"]
+    # UNDER THE PROMOTION LOCK, because promotions are what move these two truths and they are
+    # written one after the other. Read outside it, the record load and the pointer reading can
+    # straddle another run's promotion and describe a state that never existed at any instant.
+    # A short timeout rather than the promotion default: this is already a failure path, "could
+    # not be established" is a modelled answer, and waiting a minute to improve a sentence
+    # would be the wrong trade. A lock this call could not take leaves both answers None, which
+    # is the same fail-closed answer an unreadable record gets.
+    #
+    # It is still a SNAPSHOT and the advice says so. Nothing can hold this lock until an
+    # operator acts, so what is reported is what the record said at this moment, not a promise
+    # about when they read it.
+    try:
+        with hostrecord.Exclusive(record_path, timeout=SETTLE_SNAPSHOT_TIMEOUT_SECONDS):
+            current = hostrecord.load(record_path, definition_version)
+            if current.ok:
+                protected, protection = protected_environment(current.value, environment,
+                                                              environment.parent, data)
+                selected = protection["recordSelectsIt"]
+            else:
+                protected, selected = None, None
+    except hostrecord.Busy as error:
+        current, protected, selected = None, None, None
+        snapshot_detail = "another run holds the promotion lock: " + str(error)
     else:
-        protected, selected = None, None
+        snapshot_detail = None
+
+    absent = current is not None and current.state == reading.ABSENT
 
     # Ordered as staging.decide() orders it, because that is whose behaviour this describes:
     # an unreadable claim is answered before the state is consulted at all, and only then does
     # the selected/protected pair choose between finishing, keeping and reclaiming.
+    #
+    # 'contended' is no longer one of these branches. It is a fact about THIS call -- the lock
+    # it did not take -- and it was sitting in front of every state-dependent answer asserting
+    # a selection it had not read. What the next run will do is decided by the same pair here
+    # as anywhere else, and the lock this call lost is said alongside rather than instead.
     if settled:
         record_requires = None
-    elif contended:
-        record_requires = (
-            "wait for the run that holds " + str(lock) + " and then run install again against"
-            " the same destination. This call never took that lock, so it wrote nothing and"
-            " changed nothing: the replacement itself finished, this environment is selected"
-            " and the owned pointer names it, and what is missing is only the claim that"
-            " records it. The other run may be writing that very claim. Nothing here is this"
-            " run's to remove -- that lock file is a live writer's, and taking it away would"
-            " let a second writer into a read-modify-write that is still running.")
     elif not left.usable:
         record_requires = (
             "make the claim at " + str(path) + " readable or remove it, then run install"
@@ -3160,7 +3182,7 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " cannot be read is not a claim this command may act on, so the next run reports"
             " the directory and leaves it exactly as it stands rather than finishing the"
             " promotion.")
-    elif current.state == reading.ABSENT:
+    elif absent:
         record_requires = (
             "restore the host record at " + str(record_path) + " before rerunning, and do not"
             " remove this environment. The record is GONE, not merely saying something else:"
@@ -3171,11 +3193,13 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " may still reach this environment and a process may still be running out of it.")
     elif selected is None:
         record_requires = (
-            "read " + str(record_path) + " before acting on this. The host record could not be"
-            " read here, so what the next run would do with this directory could not be"
-            " established -- and that is the difference between finishing the missing"
-            " bookkeeping, leaving the directory alone, and removing and rebuilding it. Do not"
-            " rerun to settle the record until that reading succeeds.")
+            "read " + str(record_path) + " before acting on this"
+            + ("" if snapshot_detail is None else " (" + snapshot_detail + ")")
+            + ". What this host selects could not be established here, so what the next run"
+            " would do with this directory could not be either -- and that is the difference"
+            " between finishing the missing bookkeeping, leaving the directory alone, and"
+            " removing and rebuilding it. Do not rerun to settle the record until that reading"
+            " succeeds.")
     elif selected is True:
         record_requires = (
             "clear whatever stopped the write at " + str(path) + " -- the error is in"
@@ -3204,6 +3228,15 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " selects this environment or points at it now, so a claim recording it records"
             " nothing anybody reads. The next run reads this directory as an abandoned staging"
             " and would remove and rebuild it rather than finish any bookkeeping.")
+    # The lock this call never took, said alongside the state answer rather than in place of
+    # it. Suppressed when the record already settled, because then there is nothing to wait
+    # for: the run that held the lock may well be the one that wrote it.
+    contended_requires = None if not (contended and not settled) else (
+        "wait for the run that holds " + str(lock) + " before anything else. This call never"
+        " took that lock, so it wrote nothing and changed nothing, and the other run may be"
+        " writing this very claim. Nothing there is this run's to remove -- that lock file is"
+        " a live writer's, and taking it away would let a second writer into a"
+        " read-modify-write that is still running.")
     residue_requires = None if not residual else (
         "look at " + str(lock) + " before anything else touches it. A lock file is there and"
         " whether it outlived the call that took it or belongs to a run still writing could"
@@ -3216,10 +3249,17 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             "detail": raised,
             "readBack": {"state": left.state, "saying": says, "detail": left.detail},
             "residualPaths": residual,
+            # The snapshot the advice was derived from, reported as its own cell so a reader
+            # can see WHICH reading produced it. It is a snapshot and not a guarantee: nothing
+            # holds the promotion lock until somebody acts on this.
+            "selection": {"state": None if current is None else current.state,
+                          "selects": selected, "protected": protected,
+                          "detail": snapshot_detail},
             # Composed the way a refusal composes its own, so a reader meets one sentence
             # covering everything outstanding rather than one per thing that went wrong.
             "recoveryRequires": "; and ".join(
-                part for part in (record_requires, residue_requires) if part) or None}
+                part for part in (contended_requires, record_requires, residue_requires)
+                if part) or None}
 
 
 def _finish_promotion(record_path, data, environment, pointer_path, standing, *, issue,
