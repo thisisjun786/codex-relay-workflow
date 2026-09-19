@@ -977,6 +977,20 @@ def reading_process(record, relay, sleeper=time.sleep):
     return cells
 
 
+def is_status_shaped(value):
+    """Whether this is the kind of thing a host answers a lifecycle call with at all.
+
+    A status is a word the host uses or the structured object its lifecycle call returns. JSON
+    false, 0, a null and a list are none of those, and str() turns the first two into a nonempty
+    word: a capture carrying "status": false read as a resolved participant and verified the
+    cell, with no evidence the host resolved the participant at all. That is the missing-rollout
+    condition this reading exists to catch, arriving as a pass. A bool is an int in Python, so
+    nothing here may fall back on truthiness or on str() to tell a status from a value that is
+    not one.
+    """
+    return isinstance(value, (str, dict))
+
+
 def reading_lifecycle(record):
     """Per participant, a captured host response. A creation receipt is not one of these.
 
@@ -1002,16 +1016,26 @@ def reading_lifecycle(record):
             refusal = next((text for text in LIFECYCLE_REFUSALS if text in said), None)
             status = field(payload, "status")
             # The host's own lifecycle answer carries status as a structured object, not a word.
-            # A predicate insisting on a string failed every capture a real host produced.
-            resolved_status = (status is not MISSING and status is not None
-                               and (bool(str(status).strip()) if not isinstance(status, (dict, list))
-                                    else bool(status)))
+            # A predicate insisting on a string failed every capture a real host produced, so both
+            # shapes are admitted and anything that is neither is not an answer to read.
+            resolved_status = is_status_shaped(status) and bool(
+                status.strip() if isinstance(status, str) else status)
             names = (same(field(payload, "threadId"), task)
                      or same(field(payload, "taskId"), task))
             if status is MISSING and refusal is None:
                 cells.append(cell("lifecycle:" + str(task), UNKNOWN,
                                   evidence="the capture carries no thread status to read",
                                   provenance=CAPTURED, measured_at=found["capturedAt"]))
+                continue
+            if not is_status_shaped(status) and refusal is None:
+                # Not a disagreement: a value that is not a status is a reading nobody took, and
+                # the start is refused for the same reason an absent capture refuses it.
+                cells.append(cell("lifecycle:" + str(task), UNKNOWN,
+                                  evidence=("the capture carries " + json.dumps(shown(status))
+                                            + " where the thread status belongs, which is not a"
+                                            " status a host answers with"),
+                                  provenance=CAPTURED, measured_at=found["capturedAt"],
+                                  detail=found["path"]))
                 continue
             ok = (refusal is None and names and resolved_status
                   and not carries(payload, "error") and not carries(payload, "isError"))

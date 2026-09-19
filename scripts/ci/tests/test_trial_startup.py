@@ -2632,5 +2632,51 @@ class TwentySixthHostedRound(TrialCase):
         self.assertIn("cwd", cell["evidence"])
 
 
+class TwentySeventhHostedRound(TrialCase):
+    """A capture that names the right participant and carries something that is not a status.
+
+    This reading exists to catch a participant the host has no rollout for. str() turns JSON
+    false and 0 into nonempty words, so a malformed capture resolved the participant and verified
+    the cell, and the start went ahead on a reading that never answered its own question.
+    """
+
+    def status_cell(self, value):
+        self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
+            "threadId": World.PARENT_A, "status": value, "goal": None}
+        self.world.flush()
+        return cells_of(self.world.preflight(), "parentLifecycle")["lifecycle:" + World.PARENT_A]
+
+    def test_a_value_that_is_not_a_status_never_resolves_a_participant(self):
+        for value in (False, True, 0, None, [], ["idle"]):
+            with self.subTest(value=value):
+                cell = self.status_cell(value)
+                self.assertEqual(cell["value"], UNKNOWN,
+                                 json.dumps(value) + " was read as a resolved participant")
+                self.assertFalse(cell["met"])
+                self.assertIn("not a status a host answers with", cell["evidence"])
+
+    def test_the_start_is_refused_when_a_status_is_not_a_status(self):
+        self.world.start_supervisor()
+        self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
+            "threadId": World.PARENT_A, "status": False, "goal": None}
+        self.world.flush()
+        self.assertFalse(self.world.preflight()["readyToStart"])
+
+    def test_a_refusal_carried_beside_a_malformed_status_is_still_named(self):
+        # Unreadable never overtakes a refusal the host actually named.
+        self.world.captures["lifecycle-" + World.PARENT_A + ".json"] = {
+            "threadId": World.PARENT_A, "status": 0, "error": "thread not found"}
+        self.world.flush()
+        cell = cells_of(self.world.preflight(), "parentLifecycle")["lifecycle:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("thread not found", cell["evidence"])
+
+    def test_a_word_and_a_structured_status_are_still_resolved(self):
+        # Support: the shapes a real host answers with keep passing.
+        for value in ("idle", {"state": "idle", "activeTurn": None}):
+            with self.subTest(value=value):
+                self.assertEqual(self.status_cell(value)["value"], VERIFIED)
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()
