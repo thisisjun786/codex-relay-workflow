@@ -1486,7 +1486,16 @@ def reading_capability(record, relay):
                 findings = field(found["payload"], "settings", "findings")
                 if findings is MISSING:
                     findings = field(found["payload"], "findings")
-                names = same(field(found["payload"], "taskId"), task)
+                # The bridge writes the thread it created at threadId and writes no taskId at
+                # all; taskId is the relay's own word for the same participant, which is the
+                # same string, and the lifecycle capture is read on both spellings for that
+                # reason. Reading only the relay's word made every receipt a real bridge wrote
+                # unreadable, and an unreadable cell refuses the start: a check meant to refuse
+                # one bad arrangement would have refused every good one.
+                identifies = field(found["payload"], "threadId")
+                if identifies is MISSING:
+                    identifies = field(found["payload"], "taskId")
+                names = same(identifies, task)
                 disagreed = [] if actual is MISSING else [
                     key for key, value in sorted(expect.items())
                     if not declared_agrees(value, field(actual, key))
@@ -1501,8 +1510,7 @@ def reading_capability(record, relay):
                 # disagreement says it answered none.
                 absent = [name for name, value in (("the settings the host echoed", actual),
                                                    ("its findings", findings),
-                                                   ("the task it is about",
-                                                    field(found["payload"], "taskId")))
+                                                   ("the thread it is about", identifies))
                           if value is MISSING]
                 cells.append(graded("receiptEcho:" + str(task), MISSING if absent else actual, ok,
                                     provenance=CAPTURED,
@@ -1511,7 +1519,7 @@ def reading_capability(record, relay):
                                     evidence=(("the host echoed every declared setting and"
                                                " reported no findings" if ok else
                                                "this receipt names task "
-                                               + str(shown(field(found["payload"], "taskId")))
+                                               + str(shown(identifies))
                                                + ", disagrees at " + ", ".join(disagreed)
                                                + " and reports findings "
                                                + json.dumps(shown(findings)))

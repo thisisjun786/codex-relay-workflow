@@ -321,7 +321,10 @@ class World:
                                                    "approvalPolicy", "runtimeWorkspaceRoots")}
             echo["cwd"] = self.payloads["taskCwd"][task]
             self.captures["receipt-" + task + ".json"] = {
-                "taskId": task,
+                # The bridge names the thread it created at threadId and writes no taskId at
+                # all. The fixture preferred the relay's own word for the same participant, so a
+                # reading that refuses every receipt a real bridge writes passed here.
+                "threadId": task,
                 # The profile arrives raw beside the thread, not inside it, and the store's
                 # expectation is the whole object rather than an id-shaped stand-in.
                 "creation": {"thread": {"id": task, "environments": settings["environments"]},
@@ -1263,7 +1266,7 @@ class ReproducedDefects(TrialCase):
             NOT_VERIFIED)
 
     def test_a_receipt_about_another_task_is_not_this_ones_evidence(self):
-        self.world.captures["receipt-" + World.PARENT_A + ".json"]["taskId"] = "somebody-else"
+        self.world.captures["receipt-" + World.PARENT_A + ".json"]["threadId"] = "somebody-else"
         self.world.flush()
         document = self.world.preflight()
         self.assertEqual(
@@ -4226,6 +4229,40 @@ class FortyFourthHostedRound(TrialCase):
         self.assertLess(startup.moment(window["readAt"], "readAt"),
                         startup.moment(window["opensAt"], "window.opensAt"),
                         "the window check passed at a moment the window had already opened")
+
+
+class FortyFifthHostedRound(TrialCase):
+    """The receipt shape a bridge writes, rather than the one the fixture preferred again."""
+
+    def test_a_receipt_in_the_bridges_own_shape_is_read(self):
+        # The bridge identifies the thread it created at threadId. The fixture wrote the relay's
+        # word for the same participant, so the cell passed here and would have answered
+        # unreadable for every receipt a real trial captured, refusing every good trial.
+        capture = self.world.captures["receipt-" + World.PARENT_A + ".json"]
+        self.assertIn("threadId", capture)
+        self.assertNotIn("taskId", capture)
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"], VERIFIED)
+
+    def test_the_bridge_writes_the_created_thread_at_threadid(self):
+        # Support, and the guard on that choice, read as the calls the creation path makes rather
+        # than as words in a file: if the bridge ever writes the participant under another key,
+        # this fails instead of the checker quietly refusing every receipt.
+        source = relay_source("packages", "codex-thread-bridge", "src", "codex_thread_bridge",
+                              "bridge.py")
+        node = next(n for n in ast.walk(ast.parse(source))
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and n.name == "create_thread")
+        written = {word.arg for call in ast.walk(node)
+                   if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                   and call.func.attr == "update"
+                   and isinstance(call.func.value, ast.Name) and call.func.value.id == "receipt"
+                   for word in call.keywords}
+        self.assertIn("threadId", written)
+        self.assertNotIn("taskId", written)
 
 
 if __name__ == "__main__":                                           # pragma: no cover
