@@ -349,6 +349,7 @@ NO_ROOT = "<no journal root>"
 # costs a later NotADirectoryError from scandir -- the same reading, taken one step later.
 _DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 
+
 # A spelling this command cannot judge from here: relative, with a separator, so it names one
 # program from the hook's workspace and another from wherever a diagnosis happens to run.
 WORKSPACE_DEPENDENT = "workspace_dependent_spelling"
@@ -1568,13 +1569,20 @@ def _journal_cell(config):
         # NUL cannot name a path at all, so scandir raises it. A settings document that
         # reads back fine must still produce a journal reading rather than a traceback.
         return _cell(reading.ACCESS_ERROR, "the journal could not be opened: " + str(error),
-                     # No identity at all. An open that yielded no descriptor established
-                     # nothing about WHICH directory refused it, and a lookup taken afterwards
-                     # answers about whatever the spelling names by then: a link retargeted in
-                     # between would publish this refusal under a readable directory's
-                     # identity, and the next registration naming that directory would inherit
-                     # a failure belonging to something else instead of listing it. An
-                     # identity nobody established may not be published.
+                     # No identity. An open that yielded no descriptor established nothing
+                     # about WHICH object refused it, and every way of naming it afterwards is
+                     # another lookup of the same spelling: a link retargeted after the refusal
+                     # publishes it under a readable directory's identity, and the next
+                     # registration naming that directory inherits a failure belonging to
+                     # something else. Opening the object merely to NAME it was tried and has
+                     # the same window, which the case below caught.
+                     #
+                     # The cost is that two spellings reaching one unreadable object stay two
+                     # journal roots, so recorded_on_another_path is NOT_RULED_OUT for them.
+                     # That is an unestablished answer rather than a false one, and this is the
+                     # direction this reading fails in on purpose. Closing it would need the
+                     # listing re-opened through the descriptor that named the object -- on
+                     # Linux, /proc/self/fd -- which is a larger change than this contract.
                      journalRoot=str(directory), journalPolicy=policy)
     try:
         # The identity of what was actually opened, reported beside the count so a caller can
