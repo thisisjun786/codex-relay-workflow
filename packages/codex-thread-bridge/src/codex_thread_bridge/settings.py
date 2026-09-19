@@ -41,6 +41,16 @@ The failures are kept apart because a caller has to answer each one differently:
     unsupported_approval_policy / unsupported_sandbox_type
                               the requested shape has no representation this bridge can use.
 
+The approval policy is the one setting a caller DECLARES rather than requests. It is never
+transmitted on resume, because a value this bridge does not own has no business being sent to a
+thread it did not create: the declaration is a claim about the thread, and `findings` judges the
+host's answer against it. Measured on codex-cli 0.154.0 in both directions, omitting the
+parameter preserves the thread's own policy and does NOT inherit the CODEX_HOME config default --
+a thread on on-request under a config default of never resumed as on-request, and the mirror
+resumed as never. That is what makes preservation a mechanism rather than a hope, and it is why
+the guard's predicate is now "the observed policy is not the declared one" instead of "the
+observed policy is not never". It refuses exactly as before for a caller that declares nothing.
+
 A raised RpcError or TransportError is the third cause named in the issue, delivery failure, and
 it deliberately stays on the bridge's existing failed / outcome_unknown / not_attempted path
 rather than becoming a finding: whether the request arrived at all is a different question from
@@ -108,6 +118,28 @@ SETTING_UNOBSERVABLE = "setting_unobservable"
 UNSUPPORTED_APPROVAL_POLICY = "unsupported_approval_policy"
 UNSUPPORTED_SANDBOX_TYPE = "unsupported_sandbox_type"
 
+# The approval policies AskForApproval gives a plain string name, from
+# `codex app-server generate-json-schema --experimental` on codex-cli 0.154.0. Its fourth shape is
+# a granular object, which has no name a caller could type, so it can be OBSERVED but never
+# DECLARED -- and an observed granular policy therefore never equals a declaration and stays
+# refused, which is the honest outcome for a policy this bridge cannot describe.
+APPROVAL_POLICIES = ("never", "on-request", "untrusted")
+
+# The only policy under which nothing can ever ask this bridge for a decision. Every other policy
+# means the thread may raise an approval request mid-turn that this bridge refuses and cannot
+# route to the thread's own approver.
+UNATTENDED_APPROVAL_POLICY = "never"
+
+APPROVAL_LIMITS = (
+    "This bridge services no approval. It answers every server-to-client request with a refusal, "
+    "so it never grants one and a report message never stands in for an approval that was not "
+    "given. It also holds no route back to the thread's own approver: the protocol has no method "
+    "by which a second client hands an approval request to the client that owns the thread, so an "
+    "approval refused here is not shown to that approver either. Delivering a report and "
+    "servicing the code execution a report may provoke are separate capabilities, and only the "
+    "first one is claimed."
+)
+
 # thread/read reports model, reasoningEffort, cwd, environments and projectId, and nothing about
 # sandbox or approvalPolicy. That bounds what the post-acceptance annotation can ever say.
 ANNOTATED = ("model", "reasoningEffort", "cwd")
@@ -172,8 +204,17 @@ class SettingsContract:
         model=None,
         reasoning_effort=None,
         runtime_workspace_roots=None,
-        approval_policy="never",
+        approval_policy=UNATTENDED_APPROVAL_POLICY,
     ):
+        # Declared, never transmitted. Checked here, before any RPC, so a policy this bridge
+        # cannot name is refused locally rather than carried to the host and reported back as
+        # though the host had disagreed. The default keeps every existing caller on exactly the
+        # behaviour it had: declare nothing and only a never thread is accepted.
+        if approval_policy not in APPROVAL_POLICIES:
+            raise ValueError(
+                f"approval_policy must be one of {list(APPROVAL_POLICIES)}; a granular policy has "
+                "no name a caller can declare"
+            )
         self.approval_policy = approval_policy
         self.cwd = cwd
         self.model = model
@@ -290,11 +331,18 @@ class SettingsContract:
         return params
 
     def resume_params(self, thread_id: str):
-        """ThreadResumeParams. With nothing requested this is byte-identical to the old resume."""
+        """ThreadResumeParams. With nothing requested this is byte-identical to the old resume.
+
+        approvalPolicy is deliberately absent, whatever the caller declared. ThreadResumeParams
+        makes it optional, and sending it would be asking to SET the policy of a thread this
+        bridge does not own -- the one move this path must never make. Measured on codex-cli
+        0.154.0: omitting it returns the thread's own policy and does not pick up the CODEX_HOME
+        config default, in both directions. Preservation is therefore a property of the request
+        that goes out, not an assumption about how the host treats one that does.
+        """
         params = {"threadId": thread_id, "excludeTurns": True}
         if not self.requested:
             return params
-        params["approvalPolicy"] = self.approval_policy
         if self.sandbox_mode is not None:
             params["sandbox"] = self.sandbox_mode
         if self.cwd is not None:
@@ -334,10 +382,16 @@ class SettingsContract:
     def findings(self, response):
         """Ordered findings against a start or resume response.
 
-        The approval policy is decided first and alone. With an authorized policy of never, a
-        returned on-request is not one mismatch among several: it means this bridge cannot service
-        the thread at all, and letting a generic mismatch shadow it would misreport a permanently
-        closed channel as a retryable difference.
+        The approval policy is decided first and alone, and it is judged against what the caller
+        DECLARED. A thread whose policy is not the declared one is not one mismatch among several:
+        the caller is addressing a thread in a state it did not expect, and letting a generic
+        mismatch shadow that would report a wrongly-addressed thread as a retryable difference.
+
+        Declaring nothing keeps the original meaning exactly: the default declaration is never, so
+        a returned on-request still refuses. What changes is that a caller who knows the thread is
+        on on-request can now say so and be judged against the truth, instead of against an
+        assumption no caller could reach. The policy is still never transmitted, so this decides
+        whether to USE the thread, never what the thread's policy becomes.
         """
         returned_policy = response.get("approvalPolicy")
         if returned_policy is None:
@@ -414,6 +468,41 @@ class SettingsContract:
                     }
                 )
         return found
+
+    def approvals(self, response):
+        """What this observation supports saying about approvals on the thread just addressed.
+
+        Separate from the settings receipt on purpose. That receipt answers "did the thread come
+        back in the state I asked for"; this one answers "who decides, and what happens if this
+        turn asks" -- which is the question a report delivery has to keep apart from the code
+        execution a report may provoke.
+
+        ThreadResumeResponse requires both approvalPolicy and approvalsReviewer, so both are read
+        rather than guessed. Neither is ever written.
+        """
+        observed = response.get("approvalPolicy")
+        interactive = observed != UNATTENDED_APPROVAL_POLICY
+        return {
+            "declared": self.approval_policy,
+            "observed": observed,
+            # The host's own answer to "who reviews approvals here". Read only; this bridge sends
+            # no approvalsReviewer and so cannot move a thread's approvals to another reviewer.
+            "reviewer": response.get("approvalsReviewer"),
+            "transmitted": False,
+            "preservation": "omitted_from_resume",
+            "interactive": interactive,
+            "servicedByThisBridge": False,
+            "onApprovalRequest": "refused_not_routed",
+            "meaning": (
+                "This thread may ask for an approval during the turn. This bridge refuses every "
+                "such request and cannot hand it to the thread's own approver, so that work stays "
+                "undone rather than becoming approved."
+                if interactive
+                else "Nothing on this thread can ask for an approval, so delivery and approval "
+                "cannot be confused here."
+            ),
+            "limits": APPROVAL_LIMITS,
+        }
 
     def receipt(self, response, *, at: str):
         """The observable settings receipt. It never claims more than the observation supports."""

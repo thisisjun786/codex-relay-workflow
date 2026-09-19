@@ -43,7 +43,6 @@ async def test_create_and_followup_carry_the_stated_pair_and_exact_messages(
     assert next(p for name, p in fake.calls if name == "thread/resume") == {
         "threadId": first["threadId"],
         "excludeTurns": True,
-        "approvalPolicy": "never",
         "model": MODEL,
         "config": {"model_reasoning_effort": EFFORT},
     }

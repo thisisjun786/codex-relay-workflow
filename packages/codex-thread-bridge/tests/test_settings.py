@@ -13,6 +13,8 @@ Measured on the pre-change tree: 21 of these 22 fail, and the one that passes is
 fingerprint-replay compatibility test, which must pass on both sides.
 """
 
+import json
+
 import pytest
 from conftest import EFFORT, EXECUTION, MODEL
 
@@ -280,10 +282,13 @@ async def test_a_resume_always_carries_the_authorized_pair(bridge, fake_server, 
     assert sent(fake, "thread/resume") == {
         "threadId": created["threadId"],
         "excludeTurns": True,
-        "approvalPolicy": "never",
         "model": MODEL,
         "config": {"model_reasoning_effort": EFFORT},
     }
+    # The approval policy is declared, not sent. A resume that carried one would be asking to SET
+    # the policy of a thread this bridge did not create, which is the one thing this path must
+    # never do; preservation is a property of the request, not of how the host treats it.
+    assert "approvalPolicy" not in sent(fake, "thread/resume")
     assert result["status"] == "accepted" and result["turnId"]
     assert result["settings"]["verification"] == "observed_at_resume"
     assert result["settings"]["requested"] == {"model": MODEL, "reasoningEffort": EFFORT}
@@ -314,7 +319,7 @@ async def test_resume_carries_the_settings_it_can_express(bridge, fake_server, t
     )
     resume = sent(fake, "thread/resume")
     assert resume["sandbox"] == "workspace-write"
-    assert resume["approvalPolicy"] == "never"
+    assert "approvalPolicy" not in resume
     assert resume["cwd"] == str(tmp_path)
     assert resume["model"] == "anthropic/claude-opus-5"
     assert resume["config"]["model_reasoning_effort"] == "xhigh"
@@ -645,3 +650,239 @@ async def test_a_matching_mode_does_not_rescue_an_unreadable_policy(bridge, fake
     assert result["status"] == "failed"
     assert result["rpcError"]["code"] == "settings_not_preserved"
     assert fake.count("turn/start") == 0
+
+
+# ------------------------------------------------- declared approval policy (CRW-122 Phase 1)
+#
+# The defect: a parent's recovery or merge-turn return to an IDLE supervisor whose approvalPolicy
+# is on-request was refused with unsupported_approval_policy BEFORE turn/start, so the report
+# could never be delivered. Reproduced against a real isolated app-server on codex-cli 0.154.0
+# before any of this existed: status failed, expected "never", returned "on-request",
+# attemptedEffects ["thread/resume"], zero turn/start.
+
+
+async def test_an_idle_thread_on_on_request_accepts_a_declared_delivery(
+    bridge, fake_server, tmp_path
+):
+    """RED: this is the failure the whole phase exists for.
+
+    Declaring the policy the thread is actually on lets the report through. Nothing is relaxed:
+    the declaration is compared against the host's answer and is never transmitted.
+    """
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.approval_policy = "on-request"
+    result = await send(
+        bridge, "m", created["threadId"], "parent report", 
+        expected_settings={"approval_policy": "on-request"},
+    )
+    assert result["status"] == "accepted", result.get("error")
+    assert result["turnId"]
+    assert fake.count("turn/start") == 1
+    assert result["settings"]["findings"] == []
+    # The policy was preserved by not being sent, not by being sent and ignored.
+    assert "approvalPolicy" not in sent(fake, "thread/resume")
+    assert result["approvals"]["observed"] == "on-request"
+    assert result["approvals"]["declared"] == "on-request"
+    assert result["approvals"]["transmitted"] is False
+    assert result["approvals"]["preservation"] == "omitted_from_resume"
+
+
+async def test_declaring_nothing_still_refuses_an_interactive_thread(bridge, fake_server, tmp_path):
+    """COMPATIBILITY: the guard is not deleted, and a caller that declares nothing is unchanged."""
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.approval_policy = "on-request"
+    result = await send(bridge, "m", created["threadId"], "hello")
+    assert result["status"] == "failed"
+    assert result["rpcError"]["code"] == "unsupported_approval_policy"
+    assert result["settings"]["findings"][0]["expected"] == "never"
+    assert fake.count("turn/start") == 0
+
+
+async def test_a_policy_that_changed_under_the_caller_is_refused(bridge, fake_server, tmp_path):
+    """The declaration is a claim about the thread, so a thread in another state is refused.
+
+    This is the "state changed, judge it again" case: the caller addressed a supervisor it
+    believed was on on-request and the host reports untrusted instead.
+    """
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.approval_policy = "untrusted"
+    result = await send(
+        bridge, "m", created["threadId"], "hello",
+        expected_settings={"approval_policy": "on-request"},
+    )
+    assert result["status"] == "failed"
+    assert result["rpcError"]["code"] == "unsupported_approval_policy"
+    assert result["settings"]["findings"][0]["returned"] == "untrusted"
+    assert fake.count("turn/start") == 0
+
+
+async def test_a_granular_policy_is_observed_but_can_never_be_declared(bridge, fake_server, tmp_path):
+    """AskForApproval's fourth shape has no name, so it is refused however it is addressed."""
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.approval_policy = {"granular": {"mcp_elicitations": True, "rules": True,
+                                         "sandbox_approval": True}}
+    result = await send(
+        bridge, "m", created["threadId"], "hello",
+        expected_settings={"approval_policy": "on-request"},
+    )
+    assert result["status"] == "failed"
+    assert result["rpcError"]["code"] == "unsupported_approval_policy"
+    assert result["settings"]["findings"][0]["returned"] == "granular"
+    assert fake.count("turn/start") == 0
+    # And a caller cannot declare one either, refused locally before anything is sent.
+    settled = len(fake.calls)
+    with pytest.raises(ValueError, match="approval_policy must be one of"):
+        await send(
+            bridge, "granular-declaration", created["threadId"], "hello",
+            expected_settings={"approval_policy": "granular"},
+        )
+    assert fake.calls[settled:] == []
+
+
+async def test_transmitting_a_policy_would_have_relaxed_an_interactive_thread(
+    bridge, fake_server, tmp_path
+):
+    """Why the parameter is omitted rather than set to the value the caller declared.
+
+    Measured on codex-cli 0.154.0 a resume reports the thread's own policy and ignores the
+    parameter, so against that host the old transmission was merely an ill-shaped request. This
+    fake models the other host, the one that ACTS on the parameter. Against it the old resume --
+    which always carried approvalPolicy "never" -- would have moved an on-request supervisor to
+    never and then delivered the message under a policy nobody asked it to change, reporting
+    success because the value it found was the value it had just written.
+
+    Sending nothing cannot do that, whichever host is on the other end. The thread stays where it
+    was and the send is refused until a caller declares the policy the thread is really on.
+    """
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.honour_resume_policy = True
+    fake.approval_policy = "on-request"
+    result = await send(bridge, "m", created["threadId"], "hello")
+    assert "approvalPolicy" not in sent(fake, "thread/resume")
+    assert fake.approval_policy == "on-request", "the resume must not have moved the policy"
+    assert result["status"] == "failed"
+    assert result["rpcError"]["code"] == "unsupported_approval_policy"
+    assert fake.count("turn/start") == 0
+
+
+async def test_a_declared_delivery_still_leaves_a_setter_host_untouched(
+    bridge, fake_server, tmp_path
+):
+    """And declaring the policy does not start transmitting it either."""
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.honour_resume_policy = True
+    fake.approval_policy = "on-request"
+    result = await send(
+        bridge, "m", created["threadId"], "hello",
+        expected_settings={"approval_policy": "on-request"},
+    )
+    assert "approvalPolicy" not in sent(fake, "thread/resume")
+    assert fake.approval_policy == "on-request"
+    assert result["status"] == "accepted" and fake.count("turn/start") == 1
+
+
+async def test_an_approval_request_during_the_turn_is_refused_and_never_decided(
+    bridge, fake_server, tmp_path
+):
+    """Delivering a report and servicing the code it provokes are different capabilities.
+
+    The bridge answers an approval request with a JSON-RPC error, which declines to decide.
+    Answering in the approval vocabulary would write a verdict in the approver's own type and
+    make this bridge the approver.
+    """
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.approval_policy = "on-request"
+    fake.approval_request_on_turn = "item/commandExecution/requestApproval"
+    result = await send(
+        bridge, "m", created["threadId"], "please proceed",
+        expected_settings={"approval_policy": "on-request"},
+    )
+    assert result["status"] == "accepted"
+    answers = fake.client_answers
+    assert answers, "the host asked for an approval and got no answer at all"
+    assert all("error" in answer for answer in answers), answers
+    assert all("result" not in answer for answer in answers), answers
+    # Nothing that could be read as a decision in the approval vocabulary.
+    text = json.dumps(answers)
+    for decision in ("approved", "accept", "acceptForSession", "denied", "decline"):
+        assert decision not in text, f"{decision!r} would make this bridge the approver"
+    assert result["approvals"]["servicedByThisBridge"] is False
+    assert result["approvals"]["onApprovalRequest"] == "refused_not_routed"
+
+
+async def test_a_refused_send_is_preserved_as_undelivered(bridge, fake_server, tmp_path):
+    """A refusal has to say the message did not arrive, not leave it to be inferred."""
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.approval_policy = "on-request"
+    result = await send(bridge, "m", created["threadId"], "hello")
+    assert result["status"] == "failed"
+    assert result["delivery"] == "not_delivered"
+    assert "turn/start" not in result["attemptedEffects"]
+    assert fake.count("turn/start") == 0
+
+
+async def test_recovery_processes_one_refused_message_exactly_once(bridge, fake_server, tmp_path):
+    """Replay answers from the ledger, and a corrected declaration is a different request."""
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.approval_policy = "on-request"
+    first = await send(bridge, "deliver-1", created["threadId"], "parent report")
+    assert first["status"] == "failed" and fake.count("turn/start") == 0
+
+    # Replaying the same id repeats the refusal and sends nothing. No ACK loop, no retry storm.
+    for _ in range(5):
+        again = await send(bridge, "deliver-1", created["threadId"], "parent report")
+        assert again["replayed"] and again["delivery"] == "not_delivered"
+    assert fake.count("turn/start") == 0
+
+    # Correcting the declaration is a different request, so the old id refuses it outright.
+    with pytest.raises(ValueError, match="different arguments"):
+        await send(
+            bridge, "deliver-1", created["threadId"], "parent report",
+            expected_settings={"approval_policy": "on-request"},
+        )
+    assert fake.count("turn/start") == 0
+
+    # Under a new id it is delivered, once.
+    fixed = await send(
+        bridge, "deliver-2", created["threadId"], "parent report",
+        expected_settings={"approval_policy": "on-request"},
+    )
+    assert fixed["status"] == "accepted" and fixed["delivery"] == "turn_started"
+    assert fake.count("turn/start") == 1
+    for _ in range(5):
+        replay = await send(
+            bridge, "deliver-2", created["threadId"], "parent report",
+            expected_settings={"approval_policy": "on-request"},
+        )
+        assert replay["replayed"] and replay["turnId"] == fixed["turnId"]
+    assert fake.count("turn/start") == 1, "a replayed ACK must never start a second turn"
+
+
+async def test_an_accepted_delivery_is_not_reported_as_completed_work(
+    bridge, fake_server, tmp_path
+):
+    """Acceptance is the host taking the turn, and the receipt must not read as more."""
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    fake.approval_policy = "on-request"
+    fake.complete_turns = False
+    result = await send(
+        bridge, "m", created["threadId"], "hello",
+        expected_settings={"approval_policy": "on-request"},
+    )
+    assert result["status"] == "accepted"
+    assert result["delivery"] == "turn_started"
+    assert "completed" not in result["deliveryMeaning"].split(".")[0]
+    assert "does not say the peer read it" in result["deliveryMeaning"]
+    observed = await bridge.wait_thread(created["threadId"], result["turnId"], 0)
+    assert observed["turn"]["status"] == "inProgress"
+    assert observed["timedOut"] is True
