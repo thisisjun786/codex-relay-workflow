@@ -9833,6 +9833,109 @@ class DiagnosisReportsResidue(unittest.TestCase):
                         "the recorded pointer named no destination and the survey did not say"
                         " so: " + repr(survey.get("unreadable")))
 
+    def test_a_relative_recorded_pointer_is_read_for_no_component(self):
+        """Blocking the residue survey is not enough. Every component is classified against the
+        pointer reading too, and one taken from the working directory is a judgment about
+        another installation's link -- or about a link sitting beside the diagnosis by
+        accident."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": "current", "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            here = Path(temporary) / "a-working-directory-with-a-link-in-it"
+            here.mkdir()
+            (here / "an-environment").mkdir()
+            pointer.place(here / "current", here / "an-environment")
+            entered = os.getcwd()
+            try:
+                os.chdir(here)
+                found = _diagnose(host, dest=None)
+            finally:
+                os.chdir(entered)
+        classified = found.get("components") or {}
+        self.assertTrue(classified, "the fixture produced no component classifications")
+        for name, component in classified.items():
+            with self.subTest(component=name):
+                self.assertFalse((component.get("conflictsRead") or {}).get("pointer"),
+                                 "a pointer reading was taken from the working directory and"
+                                 " this component was classified against it")
+                self.assertIsNone(component.get("pointerState"),
+                                  "a link beside the diagnosis was reported as this host's")
+
+    def test_both_reasons_a_destination_was_not_scanned_are_kept(self):
+        """A caller can fail to settle a destination twice. Keeping only the last of those
+        loses why the destination the operator actually named was never scanned, which is the
+        one they asked about."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": "current", "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host, dest="~no-such-user-for-crw-100/runtime")
+        unreadable = (found.get("residue") or {}).get("unreadable") or []
+        self.assertTrue(any("could not be settled" in one for one in unreadable),
+                        "the reason the OPERATOR's destination was not scanned was dropped: "
+                        + repr(unreadable))
+        self.assertTrue(any("not absolute" in one for one in unreadable),
+                        "the reason the recorded pointer named none was dropped: "
+                        + repr(unreadable))
+
+    def test_a_relative_recorded_pointer_is_not_surveyed_under_an_explicit_destination(self):
+        """The earlier fix turned on --dest being omitted. With an explicit destination equal
+        to the working directory the boundary check accepted the relative spelling as belonging
+        to it, read it from there, and could publish the relative string itself."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": "current", "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            here = Path(temporary) / "a-working-directory-named-as-the-destination"
+            here.mkdir()
+            (here / "an-environment").mkdir()
+            pointer.place(here / "current", here / "gone")
+            entered = os.getcwd()
+            try:
+                os.chdir(here)
+                found = _diagnose(host, dest=str(here))
+            finally:
+                os.chdir(entered)
+        self.assertNotEqual(((found.get("residue") or {}).get("pointer") or {}).get("path"),
+                            "current",
+                            "a relative recorded pointer was read against the working"
+                            " directory because --dest happened to name it")
+        self.assertNotIn("current", found.get("residualPaths") or [],
+                         "a relative spelling reached the cleanup list")
+
+    def test_protection_reads_the_recorded_link_and_not_one_derived_from_its_directory(self):
+        """A recorded pointer does not have to be spelled with the default basename. Handed
+        only its parent, the protection check reconstructed <parent>/current and read a link
+        nobody placed, so an environment the REAL pointer still reaches answered unprotected --
+        and unprotected is what the one decision here that authorises removal reads.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            _failed_update_leaving_its_candidate(host)
+            left = _diagnose(host).get("residualPaths") or []
+            self.assertTrue(left, "the fixture left no residue for this case to protect")
+            reached = Path(left[0])
+            # The link this host actually reaches a runtime through, spelled with a basename
+            # nothing would reconstruct from the directory alone.
+            link = reached.parent / "runtime-link"
+            pointer.place(link, reached)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(link), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host)
+        self.assertNotIn(str(reached), found.get("residualPaths") or [],
+                         "an environment the recorded link still reaches was published as"
+                         " removable, because the protection check read a link derived from"
+                         " that link's directory instead of the link itself")
+
 
 class ResidueNeverNamesLiveWork(unittest.TestCase):
     """Support for the cases above, not evidence of the CRW-100 defect. Each is a direction the

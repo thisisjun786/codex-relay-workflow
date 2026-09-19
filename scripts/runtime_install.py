@@ -382,7 +382,7 @@ def pointer_state(pointer_path, record, data):
     return read
 
 
-def protected_environment(record, environment, destination, data):
+def protected_environment(record, environment, destination, data, pointer_path=None):
     """Whether an environment is in use, so a later run must not remove it.
 
     Two readings and they are reported as two: the record's selection, and the pointer on disk.
@@ -390,6 +390,12 @@ def protected_environment(record, environment, destination, data):
     answer, because an environment nobody could establish as free is not an environment that is
     free. That direction is the safe one: the cost of keeping a directory is a named residual
     path, and the cost of removing a live one is the accident this exists to prevent.
+
+    'pointer_path' is the link to read, for a caller that KNOWS which link this host reaches a
+    runtime through. A caller that knows only a destination lets the deterministic path be
+    derived from it, which is what a run choosing where to PUT a link has. Derived from a
+    destination alone, a recorded pointer whose basename is not the default one named a link
+    nobody placed, and an environment the real pointer still reaches read as unprotected.
     """
     selects = None
     if record is not None:
@@ -400,7 +406,8 @@ def protected_environment(record, environment, destination, data):
                           for location in selected if location)
         except reading.RESOLVE_FAILURES:
             selects = None
-    names = pointer.names(pointer.pointer_path(destination), environment)
+    names = pointer.names(Path(pointer_path) if pointer_path
+                          else pointer.pointer_path(destination), environment)
     protected = selects is not False or names is not False
     return protected, {
         "recordSelectsIt": selects,
@@ -1052,7 +1059,10 @@ def cmd_diagnose(args):
     # diagnostic payload to it was the worst of both answers: nothing diagnosed, and nothing
     # said about the single input that failed. A spelling that cannot be expanded becomes a
     # reading here, the way every other unreadable spelling this command meets already does.
-    settled_destination, unreadable_destination = None, None
+    # A LIST, because this command can fail to settle a destination twice -- an unresolvable
+    # --dest beside a recorded pointer that names none -- and keeping only the last of those
+    # loses why the destination the operator actually named was never scanned.
+    settled_destination, unreadable_destination = None, []
     # Asked as "was the option given", not "is its string non-empty". --dest '' is a spelling
     # and not an absence: the installer settles it to the current directory, and judging it by
     # truthiness made this command read the one destination the operator did name as no
@@ -1064,15 +1074,27 @@ def cmd_diagnose(args):
         # relative spelling, and a working directory that has been removed answers ENOENT. Both
         # are one answer here -- this command could not settle the path it was given.
         except (OSError, RuntimeError) as error:
-            unreadable_destination = ("the destination named by --dest could not be settled: "
-                                      + str(destination) + ": " + type(error).__name__ + ": "
-                                      + str(error))
+            unreadable_destination.append(
+                "the destination named by --dest could not be settled: " + str(destination)
+                + ": " + type(error).__name__ + ": " + str(error))
     # The recorded pointer first: that is the link this host actually reaches a runtime
     # through, and a --dest supplied here only names where to look when nothing is recorded.
     owned_pointer = ((record or {}).get("pointer") or {}).get("path")
     if not owned_pointer and settled_destination:
         owned_pointer = str(pointer.pointer_path(settled_destination))
-    pointer_read = pointer_state(owned_pointer, record, data) if owned_pointer else None
+    # Only an ABSOLUTE recorded pointer names a link this command can read. hostrecord.shape
+    # accepts any string for it, and a relative one resolves against THIS process's working
+    # directory, so every reading taken from it would be about whatever sits beside the
+    # diagnosis rather than about this host's installation.
+    recorded_names_a_destination = bool(owned_pointer) and Path(owned_pointer).is_absolute()
+    if owned_pointer and not recorded_names_a_destination:
+        unreadable_destination.append(
+            "the host record's pointer path is not absolute (" + str(owned_pointer) + "), so it"
+            " names no link this command can read and no destination it can survey")
+    # Answered from the recorded link or not at all. A component classified against a pointer
+    # read from the working directory is classified against another installation's link.
+    pointer_read = (pointer_state(owned_pointer, record, data)
+                    if recorded_names_a_destination else None)
     # What a run left behind on this destination. Asked here because `residualPaths` used to
     # live only on a failed install's own result, so an operator who wanted the cleanup warning
     # after a failed update had to have kept that run's stdout; the procedure said so, and this
@@ -1088,16 +1110,6 @@ def cmd_diagnose(args):
     # residualPaths from an installation the operator never named, inside the same answer
     # that reported the destination they did name as unreadable. The pointer is the fallback
     # for a missing --dest, never for an unusable one.
-    # And only an ABSOLUTE recorded pointer names a destination at all. hostrecord.shape
-    # accepts any string for it, and a relative one resolves against THIS process's working
-    # directory: the survey then described wherever the diagnosis happened to be run from, and
-    # a staging claim sitting under that directory could be published in residualPaths as
-    # another installation's residue.
-    recorded_names_a_destination = bool(owned_pointer) and Path(owned_pointer).is_absolute()
-    if owned_pointer and not recorded_names_a_destination:
-        unreadable_destination = ("the host record's pointer path is not absolute ("
-                                  + str(owned_pointer) + "), so it names no destination this"
-                                  " command can survey and nothing was scanned for one")
     residue_root = (settled_destination if destination is not None
                     else (Path(owned_pointer).parent if recorded_names_a_destination else None))
     # Which directory the protection reading asks about. The pointer the HOST reaches a runtime
@@ -1121,15 +1133,27 @@ def cmd_diagnose(args):
         environment the real pointer still reaches, under a record that does not select it,
         classified as reclaimable while a live process was running out of it.
         """
-        protected, detail = protected_environment(record, environment, pointer_home, data)
+        # The recorded link itself where there is one, not a link derived from its directory.
+        # A recorded pointer whose basename is not the default one names a link nobody would
+        # reconstruct, and an environment that link still reaches then read as unprotected --
+        # which is the one reading here that authorises removal.
+        protected, detail = protected_environment(
+            record, environment, pointer_home, data,
+            pointer_path=owned_pointer if recorded_names_a_destination else None)
         return protected, detail["recordSelectsIt"]
 
     residual = residue.survey(
-        residue_root, pointer_path=owned_pointer,
+        residue_root,
+        # A pointer that names no link this command can read is not handed to the survey at
+        # all, whether or not --dest was supplied: read against the working directory, the
+        # boundary check accepted it as belonging to an explicit destination equal to that
+        # directory, and the relative string could reach residualPaths.
+        pointer_path=owned_pointer if recorded_names_a_destination else None,
         # The whole ownership entry, not the path out of it: a rollback keeps the path and
         # withdraws the evidence that a link this command placed is at it, and only the
         # record itself can tell those two states apart.
-        pointer_ownership=(record or {}).get("pointer"),
+        pointer_ownership=((record or {}).get("pointer")
+                           if recorded_names_a_destination else None),
         # A destination this command could not even spell out is the survey's own unreadable
         # reading, so it is carried in the same list as every other one rather than reported
         # as no destination having been named.

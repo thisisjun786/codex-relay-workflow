@@ -131,14 +131,17 @@ def survey(destination, *, pointer_path=None, pointer_ownership=None, protection
     first. Handed only the path, this survey could not tell those apart and read a preserved
     location as placement evidence.
 
-    'unreadable' is a reading the CALLER already failed to take about this destination, carried
-    into the same list as the ones taken here. A destination spelling the caller could not even
-    resolve is not the same answer as no destination having been named, and reporting it as the
-    second would have described a scan nobody asked for.
+    'unreadable' is the readings the CALLER already failed to take about this destination,
+    carried into the same list as the ones taken here. A destination spelling the caller could
+    not even resolve is not the same answer as no destination having been named, and reporting
+    it as the second would have described a scan nobody asked for. A sequence rather than one
+    string, because a caller can fail twice -- an unresolvable --dest beside a recorded pointer
+    that names no destination -- and keeping only the last of those loses why the destination
+    the operator actually named was never scanned.
     """
     answer = {"destination": None if destination is None else str(destination), "read": False,
               "entries": [], "pointer": None, "residualPaths": [], "recoveryRequires": [],
-              "unreadable": ([unreadable] if unreadable else []),
+              "unreadable": list(unreadable or []),
               "ownershipRead": protection is not None, "note": NOTE}
     if destination is None:
         # Only where the caller has not already said why there is nothing to scan. A spelling
