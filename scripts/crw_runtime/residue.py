@@ -168,7 +168,11 @@ def survey(destination, *, pointer_path=None, pointer_ownership=None, protection
               "unreadable": ([unreadable] if unreadable else []),
               "ownershipRead": protection is not None, "note": NOTE}
     if destination is None:
-        answer["unreadable"].append("no destination was named, so nothing was scanned")
+        # Only where the caller has not already said why there is nothing to scan. A spelling
+        # it could not resolve and an omitted argument are different answers, and printing
+        # both left one list contradicting itself.
+        if not answer["unreadable"]:
+            answer["unreadable"].append("no destination was named, so nothing was scanned")
         return answer
     root = Path(destination)
     # Built from the SURVEYED root's own spelling, because that is the spelling scandir will

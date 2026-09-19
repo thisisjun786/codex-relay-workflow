@@ -9705,6 +9705,38 @@ class DiagnosisReportsResidue(unittest.TestCase):
         self.assertIsNone(found.get("internalError"),
                           "an unexpandable --dest was reported as an internal fault rather"
                           " than as a reading of the input that failed")
+
+    def test_a_destination_that_failed_to_expand_is_not_an_omitted_one(self):
+        """The second half of the reading above, and the harder half.
+
+        The recorded pointer is the fallback for a --dest nobody gave. Used for a --dest that
+        was given and could not be read, it scanned the installation the host record names
+        while the same answer reported the operator's destination unreadable -- so a cleanup
+        list could have been published for a destination they never asked about.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            self.assertTrue((record.get("pointer") or {}).get("path"),
+                            "the fixture has no recorded pointer, so there is nothing this"
+                            " case could have wrongly fallen back to")
+            found = _diagnose(host, dest="~no-such-user-for-crw-100/runtime")
+        survey = found.get("residue") or {}
+        self.assertIsNone(survey.get("destination"),
+                          "a destination that could not be read was replaced by the recorded"
+                          " pointer's own, and the survey then described that one")
+        self.assertFalse(survey.get("read"),
+                         "nothing could be scanned, and the survey said it had scanned")
+        self.assertEqual(found.get("residualPaths") or [], [],
+                         "a cleanup list was published for a destination the operator never"
+                         " named")
+        self.assertTrue(any("could not be expanded" in one
+                            for one in survey.get("unreadable") or []),
+                        "the reason there is nothing to scan was dropped")
+        self.assertNotIn("no destination was named, so nothing was scanned",
+                         survey.get("unreadable") or [],
+                         "a destination WAS named; saying both is one list contradicting"
+                         " itself")
         self.assertTrue(
             any("could not be expanded" in one
                 for one in found.get("residue", {}).get("unreadable") or []),

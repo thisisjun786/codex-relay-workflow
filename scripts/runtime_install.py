@@ -1075,8 +1075,13 @@ def cmd_diagnose(args):
     # compares this with a pointer parent. A --dest spelled relatively kept that spelling here
     # while the record holds an absolute path, so an owned dangling pointer under the very
     # destination being surveyed compared unequal and was reported as another installation's.
-    residue_root = (settled_destination
-                    or (Path(owned_pointer).parent if owned_pointer else None))
+    # A destination that was SUPPLIED and could not be read is not an omitted one. Falling
+    # back here scanned the recorded pointer's own directory and could have filled
+    # residualPaths from an installation the operator never named, inside the same answer
+    # that reported the destination they did name as unreadable. The pointer is the fallback
+    # for a missing --dest, never for an unusable one.
+    residue_root = (settled_destination if destination
+                    else (Path(owned_pointer).parent if owned_pointer else None))
     # Which directory the protection reading asks about. The pointer the HOST reaches a runtime
     # through is the recorded one, and it does not have to sit under the destination this run
     # was invoked with.
