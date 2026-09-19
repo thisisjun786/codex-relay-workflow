@@ -63,11 +63,18 @@ def document(*, command, arguments=None, name=None, issue=None, owner=OWNER_PLUG
     """The record, built once so the writer and the launcher cannot disagree about its shape."""
     if owner not in OWNERS:
         raise ValueError("owner must be one of " + ", ".join(OWNERS) + ", not " + repr(owner))
-    if not command or not os.path.isabs(str(command)):
-        # The launcher runs with the installed package as its directory, so a relative command
-        # resolves inside the version cache -- the one place a runtime must never be.
-        raise ValueError("the bridge executable must be an absolute path, because the launcher"
-                         " runs from the installed package directory")
+    if not command or not str(command).strip():
+        raise ValueError("a bridge executable is required")
+    if owner == OWNER_PLUGIN and not os.path.isabs(str(command)):
+        # The packaged launcher runs with the installed package as its directory, so a relative
+        # command resolves inside the version cache -- the one place a runtime must never be.
+        # A user-owned record carries whatever the configuration registered instead, because
+        # nothing executes it: the launcher reads the owner and stands down before it ever
+        # looks at this field, and requiring more here would refuse a registration this command
+        # has always accepted.
+        raise ValueError("the bridge executable must be an absolute path when owner is "
+                         + OWNER_PLUGIN + ", because the packaged launcher runs from the"
+                         " installed package directory")
     return {
         "recordVersion": RECORD_VERSION,
         "owner": owner,
@@ -92,8 +99,11 @@ def complaints(found):
     executable = found.get("bridgeExecutable")
     if not isinstance(executable, str) or not executable.strip():
         wrong.append("bridgeExecutable must be a non-empty string")
-    elif not os.path.isabs(executable):
-        wrong.append("bridgeExecutable must be an absolute path")
+    elif found.get("owner") == OWNER_PLUGIN and not os.path.isabs(executable):
+        # Only the owner whose launcher executes it. Reading a user-owned record more strictly
+        # than it is written would report a perfectly good record as unusable, and an unusable
+        # record refuses both owners.
+        wrong.append("bridgeExecutable must be an absolute path when owner is " + OWNER_PLUGIN)
     arguments = found.get("args")
     if arguments is not None and (not isinstance(arguments, list)
                                   or not all(isinstance(word, str) for word in arguments)):

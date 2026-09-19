@@ -3680,7 +3680,7 @@ def cmd_measure(args):
 
 # ------------------------------------------------------------------------- register-mcp
 
-def _mcp_ownership(record_path, owner, configuration, name):
+def _mcp_ownership(record_path, owner, configuration, name, wanted):
     """Why this owner may not register the bridge, given what this host already holds.
 
     Two registrations of one server is the failure this prevents, and it is prevented in both
@@ -3690,6 +3690,11 @@ def _mcp_ownership(record_path, owner, configuration, name):
     Each artifact is read as itself. A record or a configuration that could not be read refuses
     rather than defaulting, because installing on an unanswered question is how a second bridge
     arrives.
+
+    wanted is the record this run would write. It is decided here, before the configuration is
+    touched, because deciding it afterwards is how the registration lands and the record does
+    not: the file then holds a second [mcp_servers] table while the record still names the
+    first, and the host starts two bridges out of a run that reported a refusal.
     """
     if owner not in bridgerecord.OWNERS:
         return "owner must be one of " + ", ".join(bridgerecord.OWNERS) + ", found " + repr(owner)
@@ -3713,6 +3718,19 @@ def _mcp_ownership(record_path, owner, configuration, name):
                     " package already declares it; a configuration entry beside it would run a"
                     " second bridge. Register with --owner " + bridgerecord.OWNER_PLUGIN
                     + ", or remove that record first")
+        if found is not None and found != wanted:
+            # Compared against the whole document, the same comparison the write makes, so this
+            # check and that write cannot disagree about what counts as the same record. A
+            # differing serverName is the case that hurts most -- the registration would append
+            # a table under one name while the record kept naming another -- but a differing
+            # command or argument list leaves the same split between the two artifacts.
+            differing = sorted(field for field in set(found) | set(wanted)
+                               if found.get(field) != wanted.get(field))
+            return ("the record at " + str(record_path) + " is already installed and says"
+                    " something else (" + ", ".join(differing) + "); this command does not"
+                    " overwrite it. Registering now would append a second table to the Codex"
+                    " configuration while the record went on naming the first, and the host"
+                    " would start two bridges. Repair or remove that record first")
         return None
     try:
         with reading.region(record_path, "the Codex configuration"):
@@ -3772,7 +3790,22 @@ def _register_mcp_owned(args, codex_home):
     before_text = before.value
     owner = getattr(args, "owner", bridgerecord.OWNER_USER)
     record_path = bridgerecord.record_path(codex_home)
-    conflict = _mcp_ownership(record_path, owner, before_text, args.name)
+    # Built before anything is written, for both owners, because the ownership decision needs
+    # it and because a record that cannot be built is a reason to register nothing rather than
+    # a result to report after the registration has already landed.
+    try:
+        wanted = bridgerecord.document(command=args.bridge_command,
+                                       arguments=args.bridge_arg or [], name=args.name,
+                                       issue=getattr(args, "issue", None), owner=owner)
+    except ValueError as error:
+        emit({"command": "register-mcp", "owner": owner, "path": str(path),
+              "record": str(record_path), "outcome": codexconfig.CONFLICT,
+              "detail": str(error), "applied": False, "wrote": False,
+              "otherTablesPreserved": True,
+              "note": "nothing was written: this run could not say what record would name the"
+                      " owner of the registration it was about to make"})
+        return EXIT_USAGE
+    conflict = _mcp_ownership(record_path, owner, before_text, args.name, wanted)
     if conflict:
         emit({"command": "register-mcp", "owner": owner, "path": str(path),
               "record": str(record_path), "outcome": codexconfig.CONFLICT,
@@ -3786,16 +3819,6 @@ def _register_mcp_owned(args, codex_home):
         # cannot carry and leaves the configuration alone. Reported as that: a record written
         # and no registration made, because on this host there is none until the plugin is
         # installed and its hooks and servers are trusted.
-        try:
-            wanted = bridgerecord.document(command=args.bridge_command,
-                                           arguments=args.bridge_arg or [], name=args.name,
-                                           issue=getattr(args, "issue", None))
-        except ValueError as error:
-            emit({"command": "register-mcp", "owner": owner, "record": str(record_path),
-                  "outcome": codexconfig.CONFLICT, "detail": str(error),
-                  "applied": False, "wrote": False, "otherTablesPreserved": True,
-                  "note": "nothing was written"})
-            return EXIT_USAGE
         try:
             written = bridgerecord.write(record_path, wanted, apply=args.apply)
         except hostrecord.Busy as error:
@@ -3897,11 +3920,10 @@ def _register_mcp_owned(args, codex_home):
     record = None
     if owner == bridgerecord.OWNER_USER and outcome not in REGISTER_REFUSALS:
         try:
-            record = bridgerecord.write(record_path, bridgerecord.document(
-                command=args.bridge_command, arguments=args.bridge_arg or [], name=args.name,
-                issue=getattr(args, "issue", None), owner=bridgerecord.OWNER_USER),
-                apply=args.apply)
-        except (ValueError, hostrecord.Busy) as error:
+            # The same document the ownership check settled on, so the check and the write
+            # cannot describe two different records.
+            record = bridgerecord.write(record_path, wanted, apply=args.apply)
+        except hostrecord.Busy as error:
             record = {"record": str(record_path), "outcome": bridgerecord.MALFORMED,
                       "applied": False, "wrote": False, "detail": str(error)}
     emit({

@@ -303,6 +303,111 @@ class BridgeRecordTest(unittest.TestCase):
         self.assertIn("alias", emitted["detail"], output)
         self.assertFalse(self.record.exists(), output)
 
+    # ------------------------------------------------------------ the record decides first
+
+    def configuration(self):
+        return self.home.codex_home / "config.toml"
+
+    def sections(self):
+        if not self.configuration().exists():
+            return []
+        prefix = "[mcp_servers."
+        return sorted(line.strip()[len(prefix):-1].strip('"') for line
+                      in self.configuration().read_text(encoding="utf-8").splitlines()
+                      if line.strip().startswith(prefix) and line.strip().endswith("]"))
+
+    def assert_refused_without_touching_the_configuration(self, before, status, emitted,
+                                                          output):
+        """A refusal that already appended a table is the failure, not the exit status.
+
+        Asserted on the bytes rather than on the section list, because a rewrite that happened
+        to produce the same set of names would still mean the file was replaced under a run
+        that reported it had written nothing.
+        """
+        self.assertNotEqual(status, 0, output)
+        self.assertFalse(emitted["wrote"], output)
+        self.assertEqual(self.configuration().read_bytes(), before,
+                         "a refused run leaves the configuration byte-identical: " + output)
+
+    @unittest.skipUnless(TOML_READER, "registering reads the configuration back, and that"
+                                      " reader arrived in Python 3.11")
+    def test_a_second_name_is_refused_before_the_configuration_is_touched(self):
+        """alias first, then the default name.
+
+        Without the pre-check the second run appends its own table and only then finds the
+        record naming the first, so the command reports a refusal while the host carries two
+        bridge registrations.
+        """
+        self.assertEqual(self.register("--name", "alias", "--apply")[0], 0)
+        self.assertEqual(self.sections(), ["alias"])
+        before = self.configuration().read_bytes()
+        status, emitted, output = self.register("--apply")
+        self.assert_refused_without_touching_the_configuration(before, status, emitted, output)
+        self.assertIn("serverName", emitted["detail"], output)
+        self.assertEqual(self.sections(), ["alias"], output)
+
+    @unittest.skipUnless(TOML_READER, "registering reads the configuration back, and that"
+                                      " reader arrived in Python 3.11")
+    def test_the_other_order_is_refused_the_same_way(self):
+        """The default name first, then an alias. Either can be installed first."""
+        self.assertEqual(self.register("--apply")[0], 0)
+        self.assertEqual(self.sections(), ["codex-thread-bridge"])
+        before = self.configuration().read_bytes()
+        status, emitted, output = self.register("--name", "alias", "--apply")
+        self.assert_refused_without_touching_the_configuration(before, status, emitted, output)
+        self.assertEqual(self.sections(), ["codex-thread-bridge"], output)
+
+    @unittest.skipUnless(TOML_READER, "registering reads the configuration back, and that"
+                                      " reader arrived in Python 3.11")
+    def test_a_record_naming_another_command_refuses_before_the_write_too(self):
+        """The same class wearing a different face: the name agrees and the command does not."""
+        other = self.home.destination / "current" / "bin" / "other-bridge"
+        other.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        other.chmod(0o755)
+        self.assertEqual(self.register("--apply")[0], 0)
+        # The entry is removed so the configuration itself raises no conflict, which is what
+        # leaves the record as the only thing that can catch the disagreement.
+        text = self.configuration().read_text(encoding="utf-8")
+        self.configuration().write_text(text.split("[mcp_servers.codex-thread-bridge]")[0],
+                                        encoding="utf-8")
+        before = self.configuration().read_bytes()
+        status, emitted, output = run("register-mcp", "--codex-home",
+                                      str(self.home.codex_home), "--bridge-command",
+                                      str(other), "--apply")
+        self.assert_refused_without_touching_the_configuration(before, status, emitted, output)
+        self.assertIn("bridgeExecutable", emitted["detail"], output)
+
+    @unittest.skipUnless(TOML_READER, "registering reads the configuration back, and that"
+                                      " reader arrived in Python 3.11")
+    def test_an_unchanged_reregistration_is_still_accepted(self):
+        """The positive control: the refusal above must not swallow an ordinary rerun."""
+        self.assertEqual(self.register("--apply")[0], 0)
+        status, emitted, output = self.register("--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(emitted["record"]["outcome"], bridgerecord.UNCHANGED, output)
+
+    @unittest.skipUnless(TOML_READER, "registering reads the configuration back, and that"
+                                      " reader arrived in Python 3.11")
+    def test_a_bridge_command_this_command_has_always_taken_still_registers(self):
+        """A user-owned record is read for its owner and never executed, so it carries what
+        the configuration registered rather than what a packaged launcher would need."""
+        status, emitted, output = run("register-mcp", "--codex-home",
+                                      str(self.home.codex_home), "--bridge-command",
+                                      "codex-thread-bridge", "--apply")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.sections(), ["codex-thread-bridge"], output)
+        self.assertEqual(json.loads(self.record.read_text())["bridgeExecutable"],
+                         "codex-thread-bridge")
+
+    def test_the_plugin_owner_still_needs_an_absolute_command(self):
+        """Relaxing the record for the user owner must not relax the launcher's own path."""
+        with self.assertRaises(ValueError):
+            bridgerecord.document(command="codex-thread-bridge",
+                                  owner=bridgerecord.OWNER_PLUGIN)
+        self.assertEqual(bridgerecord.document(command="codex-thread-bridge",
+                                               owner=bridgerecord.OWNER_USER)["owner"],
+                         bridgerecord.OWNER_USER)
+
 
 # ---------------------------------------------------------------- the packaged launchers
 
