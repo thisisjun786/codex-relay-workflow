@@ -156,7 +156,7 @@ An operator who fixes something mid-run has not produced an uninterrupted result
 that reports one is worse than a record that reports none. The trial keeps a ledger, appended as it
 goes at <trial root>/ledger.jsonl, and the checker grades it.
 
-    {"at": "<ISO-8601 UTC>", "kind": "segment_start|segment_end|window_open|window_close|intervention",
+    {"at": "<ISO-8601 UTC>", "kind": "dispatch|segment_start|segment_end|window_open|window_close|intervention",
      "segment": "<name>", "actor": "operator|user", "target": "<task, store or process>",
      "action": "<what was done>", "claimed": "preparation|window"}
 
@@ -164,6 +164,13 @@ The window is one named interval, so its open and its close must name the same s
 segments are built as intervals and two that intersect are a refusal, because a pairing taken from
 line order accepted two overlapping segments and counted one intervention inside both. `segment_end`
 carries `failed` or `succeeded`.
+The window opens at the dispatch. The ledger carries one `dispatch` line and its time is the window's
+own open, because a record naming a time some minutes ahead and a dispatch that went at once left
+everything between them outside the measured interval: an intervention the trial actually needed was
+counted as preparation and the window still read clean. What this cannot see is whether the dispatch
+happened when the line says; that time is the operator's record, and `window.corroboration` is how it is
+raised above a bare declaration.
+
 The window is bounded by `window_open` and `window_close`, which must be the same window the record declares;
 a ledger naming a different one is a refusal, because a moved boundary moves interventions out of
 the measured window. Every segment must close, and close saying `failed` or `succeeded`: a segment left

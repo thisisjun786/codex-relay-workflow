@@ -459,6 +459,13 @@ class World:
         return None
 
     def ledger_lines(self, lines):
+        # The window opens at the dispatch, so a ledger carries one. Supplied automatically at
+        # the window's own open unless a case writes its own, which keeps every other case about
+        # the thing it is testing.
+        if not any(line.get("kind") == "dispatch" for line in lines):
+            opens = next((line for line in lines if line.get("kind") == "window_open"), None)
+            if opens is not None:
+                lines = [{"at": opens["at"], "kind": "dispatch"}] + list(lines)
         (self.trial / "ledger.jsonl").write_text(
             "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
 
@@ -3830,6 +3837,97 @@ class FortiethHostedRound(TrialCase):
         named = constants_in(source, "normalise_environments")
         self.assertIn("runtimeWorkspaceRoots", named)
         self.assertIn("cwd", named)
+
+
+class FortyFirstHostedRound(TrialCase):
+    """The window the dispatch opened, a caller's own boolean, and roots that are not a list."""
+
+    def window(self, *, opened, closed, extra=()):
+        lines = [{"at": startup.stamp(opened), "kind": "window_open", "segment": "s"},
+                 {"at": startup.stamp(closed), "kind": "window_close", "segment": "s"}]
+        return list(extra) + lines
+
+    def graded(self, lines, **window):
+        self.world.record["window"] = dict(self.world.record["window"], **window)
+        self.world.ledger_lines(lines)
+        self.world.flush()
+        try:
+            return self.world.run_ledger(), None
+        except startup.Refused as refused:
+            return None, refused
+
+    def test_a_window_that_does_not_open_at_the_dispatch_is_refused(self):
+        # A record naming a time five minutes out and a dispatch that went at once left
+        # everything between them outside the measured interval, so an intervention the trial
+        # actually needed was counted as preparation and the window still read clean.
+        now = time.time()
+        opened, closed = now - 600, now - 60
+        lines = self.window(opened=opened, closed=closed,
+                            extra=[{"at": startup.stamp(opened - 300), "kind": "dispatch"}])
+        report, refused = self.graded(lines, opensAt=startup.stamp(opened),
+                                      closesAt=startup.stamp(closed))
+        self.assertIsNotNone(refused, "a window that opened after its own dispatch was graded")
+        self.assertIn("does not open at the dispatch", refused.reason)
+
+    def test_a_ledger_with_no_dispatch_is_refused(self):
+        now = time.time()
+        opened, closed = now - 600, now - 60
+        lines = [{"at": startup.stamp(opened), "kind": "window_open", "segment": "s"},
+                 {"at": startup.stamp(closed), "kind": "window_close", "segment": "s"}]
+        self.world.record["window"] = dict(self.world.record["window"],
+                                           opensAt=startup.stamp(opened),
+                                           closesAt=startup.stamp(closed))
+        (self.world.trial / "ledger.jsonl").write_text(
+            "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+        self.world.flush()
+        with self.assertRaises(startup.Refused) as caught:
+            self.world.run_ledger()
+        self.assertIn("one dispatch", caught.exception.reason)
+
+    def test_the_window_the_dispatch_opened_is_reported(self):
+        # Support: the ordinary arrangement, and the dispatch the window opened at is in the
+        # document rather than only checked and dropped.
+        now = time.time()
+        opened, closed = now - 600, now - 60
+        report, refused = self.graded(self.window(opened=opened, closed=closed),
+                                      opensAt=startup.stamp(opened),
+                                      closesAt=startup.stamp(closed))
+        self.assertIsNone(refused)
+        self.assertEqual(report["window"]["dispatchedAt"], startup.stamp(opened))
+        self.assertTrue(report["window"]["passed"])
+
+    def test_a_callers_own_verdict_does_not_enter_the_judgment_walk(self):
+        # Corroboration is the caller's evidence, not this checker's verdict. Copied whole, a
+        # boolean named passed inside it was counted as a judgment the checker had reached.
+        now = time.time()
+        opened, closed = now - 600, now - 60
+        report, refused = self.graded(
+            self.window(opened=opened, closed=closed),
+            opensAt=startup.stamp(opened), closesAt=startup.stamp(closed),
+            corroboration={"opensAt": startup.stamp(opened), "passed": False, "met": False})
+        self.assertIsNone(refused)
+        document = dict(report)
+        counted = startup.judgments(document)
+        failed = [j["at"] for j in counted if not j["value"]]
+        self.assertEqual(failed, [], "a caller's own boolean was counted as a verdict")
+        self.assertEqual(report["window"]["corroboration"],
+                         {"opensAt": startup.stamp(opened)})
+
+    def test_environment_roots_that_are_not_a_list_are_a_cell_rather_than_a_crash(self):
+        here = str(self.world.repos["A"])
+        self.world.payloads["settings-show"]["payload"]["settings"]["environments"] = [
+            {"environmentId": "local", "cwd": here, "runtimeWorkspaceRoots": 7}]
+        self.world.start_supervisor()
+        self.world.flush()
+        try:
+            document = self.world.preflight()
+        except TypeError as error:
+            self.fail("a row delivery cannot consume made the run raise instead of reporting: "
+                      + repr(error))
+        self.assertFalse(document["readyToStart"])
+        cell = cells_of(document, "capability")["deliverableSettings:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("environments is not a list of selections", cell["evidence"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover

@@ -194,7 +194,8 @@ EXECUTED = "executed"
 READ = "read"
 CAPTURED = "captured"
 
-LEDGER_KINDS = ("segment_start", "segment_end", "window_open", "window_close", "intervention")
+LEDGER_KINDS = ("segment_start", "segment_end", "window_open", "window_close", "intervention",
+                "dispatch")
 PREPARATION = "preparation"
 WINDOW = "window"
 
@@ -565,6 +566,11 @@ def normalised_environments(value):
         if not isinstance(entry, dict) or "environmentId" not in entry or "cwd" not in entry:
             return MISSING
         roots = entry.get("runtimeWorkspaceRoots")
+        if roots is not None and not isinstance(roots, list):
+            # list(7) raises, and a helper the capability reading calls before it can report
+            # anything would have turned a row delivery cannot consume into this run raising
+            # rather than into a cell saying so.
+            return MISSING
         out.append({"environmentId": entry["environmentId"], "cwd": entry["cwd"],
                     "runtimeWorkspaceRoots": list(roots) if roots is not None
                     else [entry["cwd"]]})
@@ -2290,11 +2296,23 @@ def ledger_report(record):
 
     opens = [e for e in entries if e["kind"] == "window_open"]
     closes = [e for e in entries if e["kind"] == "window_close"]
+    dispatches = [e for e in entries if e["kind"] == "dispatch"]
     if len(opens) > 1 or len(closes) > 1:
         raise Refused("a trial has one window", opened=len(opens), closed=len(closes))
     if not opens or not closes:
         raise Refused("the window is not bounded in this ledger", opened=len(opens),
                       closed=len(closes))
+    # The window is the interval the dispatch opened, not one declared ahead of it. A record
+    # naming a time five minutes out and a dispatch that went at once left everything between
+    # them outside the measured interval, so an intervention the trial actually needed was
+    # counted as preparation and the window still read clean.
+    if len(dispatches) != 1:
+        raise Refused("a trial has one dispatch, and the window opens at it",
+                      dispatched=len(dispatches))
+    if dispatches[0]["_at"] != opens[0]["_at"]:
+        raise Refused("the window does not open at the dispatch, so the interval between them"
+                      " is measured as preparation",
+                      dispatchedAt=dispatches[0].get("at"), opensAt=opens[0].get("at"))
     # One window is one named interval. Pairing an open and a close that name different segments
     # built a synthetic interval, and interventions were classified against something nobody ran.
     if not opens[0].get("segment") or opens[0].get("segment") != closes[0].get("segment"):
@@ -2425,7 +2443,12 @@ def ledger_report(record):
         "window": {
             "opensAt": opens[0].get("at"), "closesAt": closes[0].get("at"),
             "provenance": provenance, "corroborated": compared,
-            "corroboration": None if corroboration is MISSING else corroboration,
+            # Only the times that were actually compared. The supplied object was copied whole,
+            # so a caller's own boolean named passed or met travelled into the document and the
+            # judgment walk counted it as a verdict this checker had reached.
+            "corroboration": None if corroboration in (MISSING, None) else
+                             {key: corroboration.get(key) for key in compared},
+            "dispatchedAt": dispatches[0].get("at"),
             "interventions": len(inside), "entries": inside,
             "windowIsClean": clean, "passed": clean,
         },
