@@ -21,7 +21,7 @@ request rather than in the link.
 
 | Request | Owner | Effect on binding |
 |---|---|---|
-| Execute this initiative's agreed projects, naming the initiative | this entry, through [crw-run](../SKILL.md) | designates this task as that initiative's supervisor |
+| Execute this initiative's agreed projects, naming the initiative | this entry, through [crw-run](../SKILL.md) | binds a supervisor for that initiative: this task where it is free to take it, and otherwise the initiative's existing supervisor or one created for it |
 | Define or plan it | [crw-define](../../crw-define/SKILL.md), [crw-plan](../../crw-plan/SKILL.md) | none; planning creates no supervisor and moves no ownership |
 | How is it going | a status read | none; it reads existing records and wakes nothing |
 | An initiative link carried as context by other work | the operation already running | none; it locates context |
