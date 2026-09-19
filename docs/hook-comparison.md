@@ -46,7 +46,7 @@ document records that rather than asserting it, every block and reservation it p
 synthetic hold-mode output, and none of it describes what a default installation does when a turn
 ends, which is nothing.
 
-## Seventeen cells, seventeen readings
+## Twenty-two cells, twenty-two readings
 
 Each cell is filled by the reading its own question called for. A reading that could not be made
 answers `unreadable` and names why; it never answers false and never takes the value of the cell
@@ -63,7 +63,7 @@ because the places that hold one are not all cells.
 | `installSettings` | the install command | its own report, `settings.outcome` | the result beside it |
 | `registration` | the arm's `hooks.json` | the entries `adapter_entries` finds under `Stop` | the install command's report |
 | `foreignRegistration` | the arm's `hooks.json` | whether the entry another owner had there is still there | the count of entries |
-| `firedCommand` | that entry | its `command` string, executed as a program | a helper call into `completion.run` |
+| `firedCommand` | that entry | its `command` string, which is the command that gets run | a helper call into `completion.run`, or what the tracer says actually ran |
 | `adapterOutcome` | the hook's journal record | `adapterOutcome` | the process exit code, which is always zero |
 | `observation` | the hook's journal record | `observation`, what the turn was | the guard's own stdout, which this run never sees |
 | `guardDecision` | the hook's journal record | `guardDecision`, block or release | the state beside it |
@@ -74,7 +74,12 @@ because the places that hold one are not all cells.
 | `heldFile` | the assignment directory | the create-once `hold.json` reservation itself | counting decisions that said block |
 | `journalElapsedMs` | the hook's journal record | `elapsedMs`, the adapter's measure of itself | the harness's clock |
 | `processWallMs` | the harness | the wall clock around the process, interpreter start included | the adapter's `elapsedMs` |
-| `processExit` | the harness | the status the hook process exited with | anything it wrote |
+| `processExit` | the harness | the status the hook process exited with, relayed by the tracer when one started it | anything it wrote |
+| `startedExecutable` | the tracer | the path argument of the first `execve` it recorded | the argv this harness reported about itself |
+| `startedCommand` | the tracer | whether the argv it recorded is the argv the arm's own `hooks.json` names | either of the two alone |
+| `startedEntryPoint` | the tracer | the program position of that argv, which is where `command_for` puts the entry point | a mention of the entry point anywhere in the argv |
+| `unexpectedExecutions` | the tracer | every later `execve` that is not a descendant running this run's own launcher | a reading of the first line only |
+| `writesOutsideRoot` | the tracer | the write-class calls it recorded, resolved, that fall outside the run's own directory | the places this run created, which is a different question |
 
 Several of these pairings deserve their reason in the open. `printedBlock` answers in the vocabulary
 the host sees, which is that a block was printed or that nothing was printed; it is not translated
@@ -132,6 +137,66 @@ before the install is read back out of it afterwards, because a hook that displa
 `Stop` entry would have broken the property this scenario is named for. That foreign command is never
 executed. The harness runs only the entry naming this adapter, and the `stop_hook_active` flag is
 supplied by the harness rather than delivered by a host.
+
+## The witness at the process boundary
+
+Two of the things this harness could not see were the same failure wearing two faces: nothing observed
+the process. The command was read out of the arm's `hooks.json`, executed, and then reported back by the
+same file that executed it, so a run that started something else while reporting the registration would
+have agreed with itself. And the containment check confirmed the places the run *creates*, which says
+nothing about where its subprocesses actually wrote.
+
+Every firing is now **started by a tracer** rather than started and then traced. Attaching afterwards was
+measured and it works, and it is the weaker answer: the `execve` is over before any attach can land, so
+the only thing left to read would be this file consulting `/proc` and reporting what it saw, which is the
+harness attesting to itself. Started under the tracer, the kernel's own `execve` record is the first line
+of a file another program wrote, and the checks read it the way they read a journal.
+
+Five readings come out of that file, and each is a comparison against something fixed before any
+subprocess started.
+
+| Reading | What it catches |
+| -- | -- |
+| `startedExecutable` | a different binary behind the registration: a shim, a wrapper, a name resolved elsewhere |
+| `startedCommand` | this harness running something other than the command it reports, since the argv compared is the kernel's and the argv compared against is the arm's own hook file |
+| `startedEntryPoint` | a registration substituted to a different program. It reads the argv's **program position**, which is where `command_for` puts the entry point, and not a mention of the entry point anywhere in the argv: `python -c '<impostor>' completion_hook.py` names the canonical file in a position nothing executes |
+| `unexpectedExecutions` | a process that starts the expected interpreter and then becomes something else. Any later `execve` by the root process is unexpected even at the same image |
+| `writesOutsideRoot` | a write to a path the run never named |
+
+The two path readings compare the **raw strings the kernel recorded** against `sys.executable` and this
+checkout's entry point. They are not resolved first, and that is deliberate: a resolution taken after the
+run answers about the filesystem as it is afterwards, so a symlink standing where the entry point belongs,
+repointed at the real file by the program it started, resolves to exactly the right answer. The resolved
+forms are recorded beside the readings and decide nothing.
+
+A parser that read nothing answers "nothing was written outside" exactly as convincingly as a run that
+wrote nothing outside. So every on-arm firing must have been **seen writing something inside the root**.
+Each one journals its own invocation, which is such a write, so a firing this witness saw write nothing is
+a witness that stopped seeing rather than a hook that stayed quiet.
+
+The tracer is probed once per run, before the arms are built, by starting a process the same way a firing
+is started, having it write one file, and requiring that write to come back out of the same parser. A
+tracer that attaches and reports nothing is reported unusable rather than trusted.
+
+**Where no tracer can be established, `processWitness` answers not performed** and carries no verdict at
+all, beside the two criteria the contract itself cannot reach. The readings still say a reading was not
+taken, `notPerformed` still names the reason, and `standIns` truthfully regains the reported-argv entry. It
+never becomes "nothing was written". What it costs is that such a host does not answer this question, which
+is what `--require-witness` is for: with it, a run that cannot witness the boundary refuses instead.
+
+The witness fails a judgment rather than a row. A row answers whether that scenario reached the state it
+declared, and under a substitution it did; the finding is read from `judgmentsThatFailed`, where
+`processWitness/met` sits, in the same way a latency bound is missed while every row agrees with its own
+table.
+
+What it does not cover is emitted as data in `processWitness.doesNotCover` rather than left for a reader to
+assume: identity is by path, so a file replaced at that path during the run and put back before the last
+digest is not caught; writes through a descriptor this trace never saw opened, and the calls that write
+through one rather than through a path; a filesystem socket made by `bind`; ownership, timestamps and
+extended attributes, which are not in the traced set at all; where a path led at the syscall, since
+containment resolves it afterwards; the tracer itself, which is trusted rather than checked; and anything a
+process does after the tracer stops.
+
 
 ## Where absence is the answer, and why it is normal there
 
@@ -212,7 +277,8 @@ One JSON object on stdout, and nothing else on stdout.
 | `scenarios` | per scenario, per arm, every cell as a value with the source that answered it, the path it was read from, whether it was readable, and the detail when it was not; a reading that could not be taken is written as an object rather than as an answer; beside the observation and decision the scenario declared in advance, and the provenance of what was handed to the command |
 | `measures` | the six, each with its answer, the rows it was computed from, and its narrowing sentence |
 | `supplemental` | observations reported under their own name because they are not one of the six |
-| `wroteOnlyInsideItsRoot` | every place the run wrote, and whether each resolves inside the directory it created for itself |
+| `wroteOnlyInsideItsRoot` | every place the run CREATES, and whether each resolves inside the directory it made for itself. Where the processes actually wrote is `processWitness` |
+| `processWitness` | what the tracer recorded about every on-arm firing: the executable started, the argv recorded, the program position, any later execution, and the writes outside the root; or, where no tracer could be established, that this was not performed and why |
 | `judgmentsCounted` and `judgmentsThatFailed` | every field in this document named passed or met, and which of them said false. The exit status is taken from that list and from nothing else |
 | `measuresThatMissedTheirBound` | the measured criteria that were not met, kept as a readable summary of part of the list above |
 | `notPerformed` | what was not run and why, including the CRW-68 criteria this arrangement cannot reach |
@@ -246,13 +312,20 @@ python3 scripts/hook_comparison.py --root <a directory outside this checkout> > 
 The run needs Python 3.11 or newer, because the relay requires it; on an older interpreter the
 harness refuses and says so rather than reporting rows it could not take.
 
+It also needs a tracer to witness the process boundary. Where there is none, every row is still
+taken and `processWitness` answers not performed with the reason, which means a run on such a
+host does not answer which executable was started or where the processes wrote. Pass
+`--require-witness` to make that a refusal instead; evidence for those two questions has to come
+from a run that made it.
+
 The place named by `--root` is where the run makes a directory of its own; it is not where the run
 works. The harness writes a launcher and two Codex homes at fixed names, so using the named
 directory itself would replace whatever was already using those names, and a directory an operator
 points at is exactly where something else already lives. Everything the run writes goes in the
 directory it created, including the bytecode its subprocesses would otherwise leave beside the
-source they import, and `wroteOnlyInsideItsRoot` in the result is that claim checked against
-the resolved path of every place written rather than against how the paths are spelled. With no
+source they import. `wroteOnlyInsideItsRoot` in the result is that claim checked against the
+resolved path of every place the run CREATES rather than against how the paths are spelled, and
+`processWitness` is the same claim checked against every path the processes were seen writing. With no
 `--root` the run makes a temporary directory and removes it afterwards; with one it keeps everything,
 which is what an operator wants when a row has to be explained.
 
@@ -269,13 +342,13 @@ the run writes, so no installed runtime is read or changed.
 
 | Stand-in | What it replaces | What a row through it cannot prove |
 | -- | -- | -- |
-| the launcher | the console script an install places under the pointer at `<destination>/current/bin` | that the pointer resolves, or that an installed build offers `guard-evaluate` at all |
+| the relay launcher | the console script an install places under the pointer at `<destination>/current/bin` | that the pointer resolves, or that an installed build offers `guard-evaluate` at all |
 | the temporary Codex home | a Codex home a host actually reads | that the host discovers this registration, trusts it, invokes it, enforces the registered timeout, or accepts what it prints |
 | the composed Stop payload | a payload a host delivered | anything about what a host sends; it establishes classification given the fields it carries |
-| the supplied `stop_hook_active` | a host reporting a continuation in flight | that a host sets it when it continues a turn |
+| the supplied stop_hook_active | a host reporting a continuation in flight | that a host sets it when it continues a turn |
 | no daemon and no App Server | the running service | delivery, acknowledgement, parent verification, and recovery after a fault |
 | the harness as sole writer | a sandbox grant | that a real child under a real grant could not forge the facts the decision read |
-| the reported argv | a witness at the process boundary | which executable ran. The command is read back out of the hook file and compared, and the journal and the published observations are read from disk, so a hook process ran and reached the guard. A run that deliberately executed a different entry point, writing identical records while reporting the registered command, would not be caught |
+| the reported argv | a witness at the process boundary, **on a run that could not establish one** | which executable ran. It appears in this table only when `processWitness` answers not performed. Where a tracer could be established the kernel's own `execve` record answers it instead, and the row is absent from that run's `standIns` |
 
 ## What this does not answer
 
@@ -287,7 +360,8 @@ re-verification and a Linear write read back, on the same persistent database, n
 host and a real round trip between tasks. The separation of installation, registration, firing,
 delivery acceptance and artifact verification on a real host, together with recovery after a daemon,
 connection or hook fault, needs the installed runtime and the daemon; this harness separates
-registration from firing on a temporary destination and stops there. Two parents in different
+registration from starting the process from firing on a temporary destination, witnesses which
+executable that start reached, and stops there. Two parents in different
 repositories and Linear projects against one installed shared relay, with concurrent handover and
 per-parent separation, needs that shared service.
 

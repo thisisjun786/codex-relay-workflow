@@ -20,6 +20,9 @@ import ast
 import json
 import os
 from pathlib import Path
+import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -58,7 +61,8 @@ ARM_CELLS = ("installExit", "installResult", "installSettings", "registration",
 
 FIRING_CELLS = ("firedCommand", "adapterOutcome", "observation", "guardDecision", "guardState",
                 "printedBlock", "recordedAs", "observationFile", "heldFile", "journalElapsedMs",
-                "processWallMs", "processExit")
+                "processWallMs", "processExit", "startedExecutable", "startedCommand",
+                "startedEntryPoint", "unexpectedExecutions", "writesOutsideRoot")
 
 # Every answer that means there is nothing there, written here. The harness declares its own and
 # this check requires the two to be the same set: importing the harness's would have made every
@@ -101,6 +105,11 @@ CELL_READINGS = {
     "journalElapsedMs": ("journal", ["elapsedMs"]),
     "processWallMs": ("harness", ["wallMs"]),
     "processExit": ("harness", ["exitCode"]),
+    "startedExecutable": ("process-witness", ["startedExecutable"]),
+    "startedCommand": ("process-witness", ["startedCommand"]),
+    "startedEntryPoint": ("process-witness", ["startedEntryPoint"]),
+    "unexpectedExecutions": ("process-witness", ["unexpectedExecutions"]),
+    "writesOutsideRoot": ("process-witness", ["writesOutsideRoot"]),
 }
 
 MEASURES = ("missedDetectionStateAndReceiptAbsent", "missedDetectionReceiptAbsentOnly",
@@ -327,6 +336,11 @@ class ComparisonRunTests(unittest.TestCase):
         The run keeps its root, so the registration is on disk and this case reads it there with
         the product's own reader. Comparing the harness's firedCommand with the harness's argv
         would only have shown that it reported one fabricated string in two places.
+
+        The last comparison is not a self-report at all: the argv the KERNEL recorded, read
+        out of what the tracer wrote, against the registration read out of the hook file.
+        Until there was a witness, a run that started a different program while reporting the
+        registered command agreed with itself here.
         """
         answer = run_once()
         # Derived from the root this check made, so a run that reported a decoy home cannot
@@ -353,6 +367,16 @@ class ComparisonRunTests(unittest.TestCase):
                                             " registration was written into")
                 self.assertTrue(provenance["argv"][0].endswith("python3")
                                 or "python" in provenance["argv"][0])
+        if answer["processWitness"]["answer"] != "measured":
+            return
+        for scenario in SCENARIOS:
+            for index in range(FIRINGS[scenario]):
+                seen = firing(answer, scenario, "on", index)["witness"]
+                self.assertTrue(seen["executions"],
+                                scenario + " left no record of a start")
+                self.assertEqual(" ".join(seen["executions"][0]["argv"]), registered,
+                                 scenario + " was started with an argv the kernel recorded"
+                                            " and the registration does not name")
 
     def test_the_foreign_registration_is_still_there_and_was_never_executed(self):
         answer = run_once()
@@ -448,6 +472,8 @@ class ComparisonRunTests(unittest.TestCase):
             judgments.append(("supplemental/" + name, measure))
         for name in ("wroteOnlyInsideItsRoot", "sourceIdentity"):
             judgments.append((name, answer[name]))
+        if answer["processWitness"].get("answer") == "measured":
+            judgments.append(("processWitness", answer["processWitness"]))
         self.assertGreaterEqual(len(judgments), 8,
                                 "almost nothing carries a judgment, so this derivation is"
                                 " watching a document that stopped judging")
@@ -522,12 +548,17 @@ class ReadingTests(unittest.TestCase):
             "harness": {"source": "harness", "wallMs": 11, "exitCode": 0},
             "hook-file": {"source": "hook-file", "entries": 1, "foreign": "present",
                           "command": "python3 completion_hook.py settings.json"},
+            "process-witness": {"source": "process-witness",
+                                "startedExecutable": sys.executable,
+                                "startedCommand": "command_as_registered",
+                                "startedEntryPoint": str(ROOT / "scripts" / "completion_hook.py"),
+                                "unexpectedExecutions": [], "writesOutsideRoot": []},
         }
 
     def test_withholding_a_source_leaves_only_its_own_cells_unreadable(self):
         """One cell, one question: a source that did not answer moves nothing beside it."""
         every = self.payloads()
-        for withheld in ("journal", "stdout", "marker-root", "harness"):
+        for withheld in ("journal", "stdout", "marker-root", "harness", "process-witness"):
             kept = dict(every)
             kept.pop(withheld)
             for cell, source, _path, _producer in harness.CELLS:
@@ -926,6 +957,378 @@ class WitnessTests(unittest.TestCase):
                          " firing of the duplicate scenario")
 
 
+
+def _this_module_can_witness():
+    """This check's OWN answer to whether the host can witness a process, asked independently.
+
+    Not read out of the harness. The one failure that must not pass here is a harness that quietly
+    stops witnessing on a host that can, and a check that asked the harness whether it witnessed
+    would agree with it either way.
+    """
+    found = shutil.which("strace")
+    if not found:
+        return None
+    try:
+        done = subprocess.run([found, "-o", os.devnull, "--", "/bin/sh", "-c", "exit 3"],
+                              capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return found if done.returncode == 3 else None
+
+
+CAN_WITNESS = _this_module_can_witness() is not None
+
+# What the hook DID, as opposed to what it was started from. These are the cells a substitution is
+# supposed to leave untouched, which is the whole difficulty: a decoy that reaches the real code
+# produces every one of them identically. processWallMs is not here because it is a clock, and
+# firedCommand is not here because it is the registration, which is the thing being substituted.
+WHAT_THE_HOOK_DID = ("adapterOutcome", "observation", "guardDecision", "guardState",
+                     "printedBlock", "recordedAs", "observationFile", "heldFile", "processExit")
+
+
+class ProcessWitnessTests(unittest.TestCase):
+    """The two things this harness could not witness, each demonstrated by making it happen.
+
+    Every case builds its own destination and fires the registration through the harness's own
+    fire(), so what is measured is the path a run takes rather than a helper written for the case.
+    The unmanaged scenario is used because it needs no relay state, so no hold budget and no issue
+    key is spent and the cases cannot decide each other's outcomes.
+    """
+
+    def witness_arm(self):
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-witness-"))
+        self.addCleanup(shutil.rmtree, str(root), True)
+        root = root.resolve()
+        tracer = harness.tracer_probe(root)
+        self.assertTrue(tracer.get("usable"),
+                        "this host reported a tracer and the harness could not use it: "
+                        + str(tracer.get("because")))
+        arm = harness.Arm(root, "on", harness.launcher_for(root), tracer)
+        return arm, harness.build(arm, _declared("unmanaged"))
+
+    def fired_row(self, arm, built):
+        """One firing, assembled the way compare() assembles one."""
+        declared = _declared("unmanaged")
+        before = harness.journal_records(arm, built["session"], built["turn"])
+        fired = harness.fire(arm, built, declared["stopHookActive"])
+        record, unidentifiable = harness.record_of(
+            before, harness.journal_records(arm, built["session"], built["turn"]))
+        return harness.row(arm, declared, built, fired, record, declared["expected"],
+                           unidentifiable)
+
+    def register(self, arm, argv):
+        """Put this command in the arm's hook file and read it back with the product's reader."""
+        document = json.loads(harness.hooks_file(arm.codex_home).read_text(encoding="utf-8"))
+        for group in document["hooks"][completion.EVENT]:
+            for entry in group["hooks"]:
+                if completion.names_this_adapter(entry.get("command") or ""):
+                    entry["command"] = " ".join(shlex.quote(one) for one in argv)
+        harness.hooks_file(arm.codex_home).write_text(json.dumps(document, indent=2),
+                                                      encoding="utf-8")
+        arm.hook_file = arm._hook_file()
+
+    @unittest.skipUnless(HAVE_RELAY and CAN_WITNESS, "the demonstration starts a real process"
+                                                     " under a real tracer")
+    def test_the_executable_the_kernel_started_is_read_from_what_the_tracer_wrote(self):
+        """The reading is a file another program wrote, and this check reads it the same way.
+
+        Reading it here rather than believing the cell is the point of the change: what the row
+        used to carry was this harness reporting its own argv back, and a harness that ran
+        something else would have agreed with itself.
+        """
+        answer = run_once()
+        self.assertIn("processWitness", answer,
+                      "the run witnesses nothing at the process boundary, so which executable the"
+                      " kernel started is still only what this harness reported about itself")
+        traces = sorted((run_root() / "on" / "witness").glob("*.strace"))
+        self.assertTrue(traces, "no trace of any firing was left on disk to read")
+        first = traces[0].read_text(encoding="utf-8", errors="replace").splitlines()[0]
+        started = re.match(r"^\d+ execve\(\"([^\"]+)\", \[(.*)\], ", first)
+        self.assertTrue(started, "the first thing the tracer recorded is not a start: " + first[:200])
+        self.assertEqual(started.group(1), sys.executable,
+                         "the kernel started an executable other than the one the run registered")
+        self.assertEqual(answer["processWitness"]["answer"], "measured")
+        self.assertTrue(answer["processWitness"]["met"],
+                        json.dumps(answer["processWitness"].get("disagreed"))[:800])
+
+    @unittest.skipUnless(HAVE_RELAY and CAN_WITNESS, "the demonstration starts a real process"
+                                                     " under a real tracer")
+    def test_a_substituted_executable_is_caught_although_the_hook_does_the_same_thing(self):
+        """The registration is changed to a different executable that reaches the same code."""
+        self.assertTrue(hasattr(harness, "tracer_probe"),
+                        "the harness starts no witness at the process boundary, so an executable"
+                        " substituted behind an unchanged output cannot be caught")
+        arm, built = self.witness_arm()
+        honest = self.fired_row(arm, built)
+        decoy = arm.run_root / "decoy-python"
+        decoy.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + " \"$@\"\n",
+                         encoding="utf-8")
+        decoy.chmod(0o755)
+        registered = shlex.split(arm.hook_file["command"])
+        self.register(arm, [str(decoy)] + registered[1:])
+        substituted = self.fired_row(arm, built)
+        for cell in WHAT_THE_HOOK_DID:
+            self.assertEqual(substituted["cells"][cell]["value"], honest["cells"][cell]["value"],
+                             cell + " moved, so this is not a demonstration that an unchanged"
+                                    " output is still caught")
+        self.assertEqual(substituted["cells"]["startedExecutable"]["value"], str(decoy),
+                         "the witness did not name the executable the kernel actually started")
+        self.assertNotEqual(substituted["cells"]["startedExecutable"]["value"],
+                            harness.EXPECTED_WITNESS["startedExecutable"])
+        self.assertIn(sys.executable, substituted["cells"]["unexpectedExecutions"]["value"],
+                      "the decoy re-executed into the real interpreter in the same process and"
+                      " nothing recorded it")
+
+    @unittest.skipUnless(HAVE_RELAY and CAN_WITNESS, "the demonstration starts a real process"
+                                                     " under a real tracer")
+    def test_a_substituted_entry_point_is_caught_although_the_hook_does_the_same_thing(self):
+        """The registration keeps the interpreter and names a different program to run."""
+        self.assertTrue(hasattr(harness, "tracer_probe"),
+                        "the harness starts no witness at the process boundary, so an entry point"
+                        " substituted behind an unchanged output cannot be caught")
+        arm, built = self.witness_arm()
+        honest = self.fired_row(arm, built)
+        real = str(ROOT / "scripts" / completion.ENTRY_POINT_NAME)
+        decoy = arm.run_root / "decoy" / completion.ENTRY_POINT_NAME
+        decoy.parent.mkdir(parents=True, exist_ok=True)
+        decoy.write_text("import runpy\nrunpy.run_path(" + repr(real) + ", run_name='__main__')\n",
+                         encoding="utf-8")
+        registered = shlex.split(arm.hook_file["command"])
+        self.register(arm, [registered[0], str(decoy)] + registered[2:])
+        substituted = self.fired_row(arm, built)
+        for cell in WHAT_THE_HOOK_DID:
+            self.assertEqual(substituted["cells"][cell]["value"], honest["cells"][cell]["value"],
+                             cell + " moved, so this is not a demonstration that an unchanged"
+                                    " output is still caught")
+        self.assertEqual(substituted["cells"]["startedEntryPoint"]["value"], str(decoy),
+                         "the witness did not name the program the kernel was told to run")
+        self.assertEqual(substituted["cells"]["startedExecutable"]["value"], sys.executable,
+                         "the interpreter was not the thing substituted here")
+
+    @unittest.skipUnless(HAVE_RELAY and CAN_WITNESS, "the demonstration starts a real process"
+                                                     " under a real tracer")
+    def test_a_write_to_a_path_the_run_never_named_is_caught(self):
+        """A write outside the run's own directory, made on purpose, with every output unchanged."""
+        self.assertTrue(hasattr(harness, "tracer_probe"),
+                        "the harness witnesses no write a subprocess makes, so a write to a path"
+                        " the run never named cannot be caught")
+        arm, built = self.witness_arm()
+        honest = self.fired_row(arm, built)
+        outside = Path(tempfile.mkdtemp(prefix="hook-comparison-elsewhere-"))
+        self.addCleanup(shutil.rmtree, str(outside), True)
+        outside = outside.resolve()
+        written = outside / "written-where-nobody-looked"
+        (outside / "sitecustomize.py").write_text(
+            "open(" + repr(str(written)) + ", 'w').write('a write this run never named')\n",
+            encoding="utf-8")
+        kept = arm.environment
+        arm.environment = dict(kept, PYTHONPATH=str(outside))
+        try:
+            strayed = self.fired_row(arm, built)
+        finally:
+            arm.environment = kept
+        for cell in WHAT_THE_HOOK_DID:
+            self.assertEqual(strayed["cells"][cell]["value"], honest["cells"][cell]["value"],
+                             cell + " moved, so this is not a demonstration that an unchanged"
+                                    " output is still caught")
+        self.assertEqual(honest["cells"]["writesOutsideRoot"]["value"], [],
+                         "the honest firing already wrote outside the root, so the case below"
+                         " proves nothing: " + json.dumps(honest["cells"]["writesOutsideRoot"]))
+        self.assertIn(str(written), strayed["cells"]["writesOutsideRoot"]["value"],
+                      "a write to a path the run never named was not witnessed")
+
+    def test_a_host_that_cannot_witness_says_so_and_never_says_nothing_was_written(self):
+        """The third property: an unwitnessable boundary is a reading nobody took.
+
+        Driven with a probe that answers unusable, because the interesting host is the one this
+        check is not running on. What must not happen is the comfortable answer: an empty list of
+        writes outside the root, which reads exactly like a clean run.
+        """
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-unwitnessed-"))
+        self.addCleanup(shutil.rmtree, str(root), True)
+        (root / "inside").mkdir(parents=True, exist_ok=True)
+        answer = _document(root, tracer={"usable": False, "tracer": None,
+                                         "because": "there is no strace on this host"})
+        self.assertIn("processWitness", answer,
+                      "the document says nothing about the process boundary, so a host that"
+                      " cannot witness one cannot report that either")
+        witness = answer["processWitness"]
+        self.assertEqual(witness["answer"], "not_performed")
+        self.assertNotIn("met", witness, "a question nobody asked carries no verdict")
+        self.assertIn("strace", str(witness["because"]))
+        self.assertIn("the process witness", answer["notPerformed"],
+                      "the run did not record what it could not perform")
+        self.assertIn("the reported argv", answer["standIns"],
+                      "the stand-in the witness replaces was dropped on a run that did not"
+                      " witness anything, so the document describes a stronger run than the one"
+                      " that was made")
+        for name in ("CRW-68 criterion 4", "CRW-68 criterion 5", "CRW-68 criterion 7"):
+            self.assertIn(name, answer["notPerformed"], name + " stopped being reported")
+
+    def test_a_reading_the_witness_could_not_take_is_never_an_empty_list(self):
+        """The same property at the cell, where the substitution would actually be made."""
+        self.assertTrue(hasattr(harness, "witness_payload"),
+                        "the harness has no reading of the process boundary, so a host"
+                        " that cannot witness one has nothing to report it with")
+        arm = _SyntheticArm("on")
+        arm.tracer = {"usable": False, "because": "there is no strace on this host"}
+        payload = harness.witness_payload(arm, {"argv": ["python3", "hook.py"], "wallMs": 1,
+                                                "exitCode": 0, "stdout": "", "stderr": ""})
+        for cell in ("startedExecutable", "startedCommand", "startedEntryPoint",
+                     "unexpectedExecutions", "writesOutsideRoot"):
+            found = harness.read(cell, {"process-witness": payload})
+            self.assertTrue(harness.not_read(found["value"]),
+                            cell + " answered on a host where nothing could be witnessed")
+            self.assertEqual(found["value"].state, "ACCESS_ERROR",
+                             cell + " reported a question that was asked and could not be read,"
+                                    " where in fact it could not be asked at all")
+
+    def test_the_document_agrees_with_this_check_about_whether_the_host_can_witness(self):
+        """Both directions, so a harness that quietly stopped witnessing is caught here.
+
+        This is the case that runs everywhere. The probe above is this module's own, and the
+        answer compared against it is the run's, so agreement is a claim about the harness rather
+        than a restatement of it.
+        """
+        if not HAVE_RELAY:
+            self.skipTest("no run can be made on an interpreter the relay does not support")
+        answer = run_once()
+        self.assertIn("processWitness", answer)
+        reported = answer["processWitness"]["answer"]
+        if CAN_WITNESS:
+            self.assertEqual(reported, "measured",
+                             "this host can witness a process and the run did not: "
+                             + str(answer["processWitness"].get("because")))
+        else:
+            self.assertEqual(reported, "not_performed",
+                             "the run reported witnessing a process boundary this check could"
+                             " not witness")
+
+    @unittest.skipUnless(HAVE_RELAY and CAN_WITNESS, "the stand-in that closes is only closed on"
+                                                     " a run that witnessed something")
+    def test_the_cannot_measure_lists_lose_the_closed_item_and_keep_the_rest(self):
+        """What the deletion is allowed to remove, and what it is not."""
+        answer = run_once()
+        self.assertNotIn("the reported argv", answer["standIns"],
+                         "a run that witnessed the process boundary still reports the stand-in"
+                         " that stood in for it")
+        for name in ("the relay launcher", "the temporary Codex home", "the composed Stop payload",
+                     "the supplied stop_hook_active", "no daemon and no App Server",
+                     "the harness as sole writer"):
+            self.assertIn(name, answer["standIns"], name + " stopped being stated")
+        for name in ("CRW-68 criterion 4", "CRW-68 criterion 5", "CRW-68 criterion 7"):
+            self.assertIn(name, answer["notPerformed"], name + " stopped being reported")
+        self.assertNotIn("the process witness", answer["notPerformed"],
+                         "a witnessed run reported the witness as not performed")
+        self.assertTrue(answer["processWitness"]["doesNotCover"],
+                        "the witness claims completeness instead of emitting its blind spots")
+
+    def test_the_stand_ins_in_the_source_and_in_the_document_are_the_same_set(self):
+        """Derived from both rather than counted, so a new stand-in does not fail this."""
+        self.assertTrue(hasattr(harness, "STAND_IN_WITHOUT_WITNESS"),
+                        "the stand-in the witness closes is unconditional, so the document"
+                        " cannot tell a witnessed run from one that could not witness")
+        named = set(harness.STAND_INS) | set(harness.STAND_IN_WITHOUT_WITNESS)
+        written = (ROOT / "docs" / "hook-comparison.md").read_text(encoding="utf-8")
+        rows = set()
+        for line in written.splitlines():
+            if line.startswith("| ") and line.count("|") >= 4:
+                first = line.split("|")[1].strip()
+                if first in named:
+                    rows.add(first)
+        self.assertEqual(sorted(rows), sorted(named),
+                         "the stand-ins the source declares and the ones the document explains"
+                         " are different sets: " + json.dumps(sorted(named - rows)))
+
+
+class TheTraceParserCases(unittest.TestCase):
+    """SUPPORT. Drift guards on the parser the witness rests on, not evidence for a criterion.
+
+    None of these measures the behaviour CRW-102 is about. They exist because the parser decides
+    what the cells above can say, and every one of them is written as the direction a failure must
+    fall in: what it cannot read, it says it cannot read.
+    """
+
+    def parse(self, *lines):
+        return harness.parse_trace("\n".join(lines) + "\n", "/somewhere")
+
+    def test_an_interrupted_call_is_rejoined_with_the_half_that_resumed_it(self):
+        seen = self.parse(
+            '11 openat(AT_FDCWD</w>, "/a/b", O_WRONLY|O_CREAT <unfinished ...>',
+            '12 mkdir("/c", 0777)                    = 0',
+            '11 <... openat resumed>)                = 3</a/b>')
+        self.assertEqual(seen["unreadable"], [])
+        self.assertEqual(sorted(one["path"] for one in seen["writes"]), ["/a/b", "/c"])
+
+    def test_a_call_interrupted_and_never_resumed_is_a_line_nobody_read(self):
+        seen = self.parse('11 mkdir("/a" <unfinished ...>')
+        self.assertEqual(seen["writes"], [])
+        self.assertEqual(len(seen["unreadable"]), 1)
+        self.assertIn("never resumed", seen["unreadable"][0]["why"])
+
+    def test_an_argument_list_the_tracer_abbreviated_is_not_a_shorter_argv(self):
+        seen = self.parse('11 execve("/bin/x", ["/bin/x", "a", ...], 0x7f /* 8 vars */) = 0')
+        self.assertEqual(seen["executions"], [])
+        self.assertEqual(len(seen["unreadable"]), 1)
+
+    def test_flags_with_no_symbolic_name_are_unread_rather_than_read_as_no_write(self):
+        seen = self.parse('11 openat(AT_FDCWD</w>, "/a", 0x241)     = 3</a>')
+        self.assertEqual(seen["writes"], [])
+        self.assertEqual(len(seen["unreadable"]), 1)
+        self.assertIn("symbolic", seen["unreadable"][0]["why"])
+
+    def test_an_open_for_reading_is_not_a_write(self):
+        seen = self.parse('11 openat(AT_FDCWD</w>, "/a", O_RDONLY|O_CLOEXEC) = 3</a>')
+        self.assertEqual(seen["writes"], [])
+        self.assertEqual(seen["unreadable"], [])
+
+    def test_a_relative_path_after_a_change_of_directory_is_unread(self):
+        seen = self.parse('11 chdir("/elsewhere")                   = 0',
+                          '11 mkdir("under-here", 0777)             = 0')
+        self.assertEqual(seen["writes"], [])
+        self.assertEqual(len(seen["unreadable"]), 1)
+        self.assertIn("working directory", seen["unreadable"][0]["why"])
+
+    def test_a_call_that_failed_wrote_nothing_and_is_counted(self):
+        seen = self.parse('11 mkdir("/a", 0777)  = -1 EEXIST (File exists)')
+        self.assertEqual(seen["writes"], [])
+        self.assertEqual(seen["failedAttempts"], 1)
+
+    def test_a_restarted_call_is_not_counted_where_it_will_return_again(self):
+        seen = self.parse('11 mkdir("/a", 0777)  = ? ERESTARTSYS (To be restarted)')
+        self.assertEqual(seen["writes"], [])
+        self.assertEqual(seen["restarted"], 1)
+        self.assertEqual(seen["failedAttempts"], 0)
+
+    def test_a_symlink_writes_the_link_and_not_the_target_it_points_at(self):
+        seen = self.parse('11 symlink("/the/target", "/the/link")   = 0')
+        self.assertEqual([one["path"] for one in seen["writes"]], ["/the/link"])
+
+    def test_a_rename_touches_both_of_its_paths(self):
+        seen = self.parse('11 rename("/from", "/to")                = 0')
+        self.assertEqual(sorted(one["path"] for one in seen["writes"]), ["/from", "/to"])
+
+    def test_a_path_the_tracer_truncated_is_not_the_shorter_path_it_looks_like(self):
+        seen = self.parse('11 mkdir("/a/very/long/pa"..., 0777)     = 0')
+        self.assertEqual(seen["writes"], [])
+        self.assertEqual(len(seen["unreadable"]), 1)
+
+    def test_a_descriptor_the_tracer_resolved_answers_for_a_call_that_takes_one(self):
+        seen = self.parse('11 ftruncate(3</a/b>, 0)                 = 0')
+        self.assertEqual([one["path"] for one in seen["writes"]], ["/a/b"])
+
+    def test_a_call_outside_the_table_the_filter_is_built_from_is_unread(self):
+        seen = self.parse('11 fchown(3</a>, 1000, 1000)             = 0')
+        self.assertEqual(len(seen["unreadable"]), 1)
+        self.assertIn("not built to read", seen["unreadable"][0]["why"])
+
+    def test_the_syscall_filter_is_built_from_the_table_that_parses_it(self):
+        asked = harness.trace_argv("/usr/bin/strace", Path("/tmp/x"))
+        named = asked[asked.index("-e") + 1]
+        self.assertEqual(sorted(named[len("trace="):].split(",")), sorted(harness.TRACED_CALLS),
+                         "the tracer is asked for a different set of calls from the one the"
+                         " parser knows how to read")
+
 class DerivationTests(unittest.TestCase):
     """Properties of the declarations, derived rather than restated."""
 
@@ -1210,6 +1613,8 @@ class VerdictGuardTests(unittest.TestCase):
             reached.add("supplemental/" + name)
         for name in ("wroteOnlyInsideItsRoot", "sourceIdentity"):
             reached.add(name)
+        if "met" in answer["processWitness"]:
+            reached.add("processWitness")
         self.assertEqual(sorted(carried - reached), [],
                          "the document carries a verdict in a place the checks never look")
         self.assertEqual(sorted(reached - carried), [],
@@ -1769,6 +2174,8 @@ UNJUDGED_CELLS = (("on", "firedCommand"), ("on", "journalElapsedMs"))
 # rather than calling it, because compare() cannot be driven without a run.
 SWEEP_DOES_NOT_REACH = (
     "read(), which is driven directly by the reading cases",
+    "parse_trace(), tracer_probe() and witness_payload(), which the process witness cases"
+    " drive against real traces and real firings",
     "fire(), relay() and the installs, which need a run",
     "compare(), whose arm verdict is reproduced here because it cannot be driven without a run",
 )
@@ -1822,7 +2229,15 @@ def _answers(declared, expected, arm, index):
         return dict((cell, "ABSENT") for cell in FIRING_CELLS)
     values = {"adapterOutcome": "guard_answered",
               "firedCommand": "python3 completion_hook.py settings.json",
-              "journalElapsedMs": 5, "processWallMs": 9}
+              "journalElapsedMs": 5, "processWallMs": 9,
+              # Computed here rather than imported, the way every other expectation in this module
+              # is: a harness that changed what it expects of the process boundary would otherwise
+              # change this check along with it.
+              "startedExecutable": sys.executable,
+              "startedCommand": "command_as_registered",
+              "startedEntryPoint": str(ROOT / "scripts" / "completion_hook.py"),
+              "unexpectedExecutions": [],
+              "writesOutsideRoot": []}
     for cell, wanted in expected.items():
         if cell == "recordedAs":
             values[cell] = ("hook/" + declared["name"] + "/" + str(index)
@@ -1845,7 +2260,7 @@ def _cells(values, detail=None, replaced=None):
     return built
 
 
-def _build(root, mutate=None):
+def _build(root, mutate=None, tracer=None):
     """Every cell position a document carries, assembled, with at most one reading replaced.
 
     Assembled rather than run. The run cases drive the relay, the installs and the firings; what
@@ -1860,7 +2275,9 @@ def _build(root, mutate=None):
     def replaced_in(place):
         return where[3] if where is not None and where[:3] == place else None
 
-    scenarios = {"_arms": {}, "_wrote": [root / "inside"]}
+    scenarios = {"_arms": {}, "_wrote": [root / "inside"],
+                 "_tracer": dict(tracer) if tracer else {"usable": True, "tracer": "/usr/bin/true",
+                                                         "because": None}}
     for arm in ARMS:
         place = ("_arms", arm, 0)
         wanted = harness.ARM_INSTALL[arm]
@@ -1889,6 +2306,10 @@ def _build(root, mutate=None):
                                replaced=replaced_in(place))
                 firings.append({
                     "cells": cells, "expected": dict(expected),
+                    # The positive control the harness requires of every on-arm firing: it must
+                    # have been SEEN writing something inside the root, because a parser that read
+                    # nothing answers "nothing was written outside" just as convincingly.
+                    "witness": {"writesInsideRoot": 0 if arm == "off" else 3},
                     "provenance": {"stopPayload": "assembled by this check, never delivered"},
                     "verdict": harness.judge(_SyntheticArm(arm), declared, cells, expected)})
             scenarios[name][arm] = {"built": {"workspace": "w", "session": "s", "turn": "t"},
@@ -1900,10 +2321,10 @@ FIXED_IDENTITY = {"repositoryCommit": "0" * 40, "workingTree": "clean",
                   "sourceDigests": {"harness": "d" * 64}}
 
 
-def _document(root, mutate=None):
+def _document(root, mutate=None, tracer=None):
     """One document over those readings, computed by the harness from end to end."""
     with mock.patch.object(harness, "source_identity", lambda: dict(FIXED_IDENTITY)):
-        return harness.document(_build(root, mutate), root, dict(FIXED_IDENTITY))
+        return harness.document(_build(root, mutate, tracer), root, dict(FIXED_IDENTITY))
 
 
 def _failed(body):
@@ -2102,10 +2523,16 @@ UNREADABLE_PRODUCERS = {
     "_digest": ("UNREADABLE", "ACCESS_ERROR"),
     "repository_commit": ("UNREADABLE", "ACCESS_ERROR", "UNREADABLE"),
     "owned": ("ACCESS_ERROR",),
+    # The witness answers with an access error where the host carries no tracer - the question
+    # could not be asked at all - and with an unreadable one where a tracer ran and what it wrote
+    # could not be read. Two different facts about the same missing answer, kept apart here for
+    # the same reason every other pair in this table is.
+    "witness_payload": ("ACCESS_ERROR", "UNREADABLE", "UNREADABLE"),
 }
 
 # Every function that consumes a cell's value, derived below and compared with this.
-CELL_CONSUMERS = ("judge", "_reported", "_detection", "measures", "supplemental", "compare")
+CELL_CONSUMERS = ("judge", "_reported", "_detection", "measures", "supplemental", "compare",
+                  "process_witness")
 
 # What these two derivations cannot see, as data rather than as a claim of completeness.
 DERIVATION_BLIND_SPOTS = (

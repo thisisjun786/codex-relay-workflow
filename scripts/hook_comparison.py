@@ -75,7 +75,9 @@ RUNTIME = ROOT / "scripts" / "runtime_install.py"
 SOURCE = "hook-comparison"
 # 2 since CRW-103: a reading that was not taken is rendered as an object naming what was not read
 # and why, where it used to be printed as the bare string a real answer could also have been.
-HARNESS_VERSION = 2
+# 3 since CRW-102: every firing is started by a tracer, and three of the readings below are taken
+# from what that tracer recorded rather than from what this file reported about itself.
+HARNESS_VERSION = 3
 
 # The relay declares this floor in its own metadata, and the guard is imported by the command this
 # harness runs. Below it there is no run to report on, so the refusal is the answer and it is
@@ -120,6 +122,13 @@ NOT_PUBLISHED = "not_published"
 RESOLVED = "resolved"
 NOT_RESOLVED = "named_but_missing"
 
+# The process witness answers in its own vocabulary too. The command reading is a comparison
+# between two sources rather than a path, because what it asks is whether the argv the kernel
+# recorded is the argv the arm's own hook file names, and only the place holding both can say.
+COMMAND_AS_REGISTERED = "command_as_registered"
+COMMAND_DIFFERS = "command_differs"
+ENTRY_POINT_NOT_IN_ARGV = "entry_point_not_in_argv"
+
 # Sources. A payload carries the stamp of the source that produced it, and read() checks the stamp
 # before walking a path: handing one source's payload to another source's row is the cheapest way
 # for a reading to answer a question it was never asked.
@@ -129,6 +138,10 @@ JOURNAL = "journal"
 STDOUT = "stdout"
 MARKER_ROOT = "marker-root"
 HARNESS = "harness"
+# What the tracer recorded. A source of its own, and deliberately not HARNESS: these are the
+# readings this file used to answer about itself, and the whole point of them is that something
+# else now answers.
+WITNESS = "process-witness"
 
 # cell, source, the path the answer is read from, and what produces it.
 CELLS = (
@@ -149,6 +162,11 @@ CELLS = (
     ("journalElapsedMs", JOURNAL, ("elapsedMs",), "completion.run"),
     ("processWallMs", HARNESS, ("wallMs",), "hook_comparison.fire"),
     ("processExit", HARNESS, ("exitCode",), "hook_comparison.fire"),
+    ("startedExecutable", WITNESS, ("startedExecutable",), "hook_comparison.witness_payload"),
+    ("startedCommand", WITNESS, ("startedCommand",), "hook_comparison.witness_payload"),
+    ("startedEntryPoint", WITNESS, ("startedEntryPoint",), "hook_comparison.witness_payload"),
+    ("unexpectedExecutions", WITNESS, ("unexpectedExecutions",), "hook_comparison.witness_payload"),
+    ("writesOutsideRoot", WITNESS, ("writesOutsideRoot",), "hook_comparison.witness_payload"),
 )
 
 ARM_CELLS = ("installExit", "installResult", "installSettings", "registration",
@@ -473,14 +491,22 @@ STAND_INS = {
     "no daemon and no App Server":
         "replaces the running service. Delivery, acknowledgement, parent verification and recovery"
         " after a fault are outside every row here.",
-    "the reported argv":
-        "replaces a witness at the process boundary. The command is read back out of the hook file"
-        " and compared, and the journal and the published observations are read from disk, so a"
-        " row establishes that a hook process ran and reached the guard. It does not establish"
-        " which executable the kernel started.",
     "the harness as sole writer":
         "replaces a sandbox grant. It is what makes hold mode legitimate here, and it means no row"
         " proves that a real child under a real grant could not forge the facts the guard read.",
+}
+
+# Put back into the document, by name, on a run where the process boundary could not be witnessed.
+# The stand-in above was removed because a tracer now answers what it stood in for; on a host that
+# has no tracer nothing answers it, and a list that had quietly dropped the entry anyway would be
+# describing a different run from the one that was made.
+STAND_IN_WITHOUT_WITNESS = {
+    "the reported argv":
+        "replaces a witness at the process boundary, on this run only, because no tracer could be"
+        " established here. The command is read back out of the hook file and compared, and the"
+        " journal and the published observations are read from disk, so a row establishes that a"
+        " hook process ran and reached the guard. It does not establish which executable the"
+        " kernel started. A run on a host carrying a tracer answers that by observation.",
 }
 
 NOT_PERFORMED_HERE = {
@@ -491,7 +517,8 @@ NOT_PERFORMED_HERE = {
     "CRW-68 criterion 5":
         "installation, registration, firing, delivery acceptance and artifact verification"
         " distinguished on a real host, with recovery after a daemon, connection or hook fault."
-        " This run separates registration from firing on a temporary destination and stops there.",
+        " This run separates registration from starting the process from firing on a temporary"
+        " destination, witnesses which executable the start reached, and stops there.",
     "CRW-68 criterion 7":
         "two parents in different repositories and Linear projects against one installed shared"
         " relay, with concurrent handover and per-parent separation. It needs that shared service.",
@@ -627,25 +654,31 @@ FOREIGN_HOOKS = {
 class Arm(object):
     """One destination: its Codex home, its marker root, its store, and its install reading."""
 
-    def __init__(self, root, name, launcher):
+    def __init__(self, root, name, launcher, tracer=None):
         self.name = name
+        self.run_root = Path(root)
         self.root = Path(root) / name
         self.codex_home = self.root / "codex"
         self.markers = self.root / "markers"
         self.state = self.root / "state"
         self.journal = self.root / "journal"
         self.work = self.root / "work"
-        for directory in (self.codex_home, self.markers, self.state, self.journal, self.work):
+        self.witness = self.root / "witness"
+        for directory in (self.codex_home, self.markers, self.state, self.journal, self.work,
+                          self.witness):
             directory.mkdir(parents=True, exist_ok=True)
         self.db = self.state / "relay.sqlite3"
         self.launcher = launcher
+        # Handed in rather than probed here, because whether this host can witness a process is
+        # one fact about the host and both arms have to be told the same one.
+        self.tracer = tracer
         # Built before the install, because the install is the first subprocess and it is the one
         # an inherited settings pointer would send outside this root.
         self.environment = environment(self)
         hooks_file(self.codex_home).write_text(json.dumps(FOREIGN_HOOKS, indent=2),
                                                encoding="utf-8")
         self.places = [self.codex_home, self.markers, self.state, self.journal, self.work,
-                       hooks_file(self.codex_home)]
+                       self.witness, hooks_file(self.codex_home)]
         self.argv = self._install_argv()
         self.install = self._install()
         self.hook_file = self._hook_file()
@@ -929,21 +962,39 @@ def stop_payload(built, stop_hook_active):
 
 
 def fire(arm, built, stop_hook_active):
-    """Run the command the registration names, with the Stop payload on its stdin.
+    """Run the command the registration names, started by a tracer, with the Stop payload on stdin.
 
     Calling completion.run() here would have been a reading of this checkout. The row says a
     registered hook fired, and the registered hook is a COMMAND LINE in that arm's hooks.json: an
     interpreter, the entry point, and the settings path the install chose. Run a helper instead and
     the entry point, the settings argument and the stdin contract are all untested while the row
     still reaches its answer.
+
+    The tracer STARTS the command rather than attaching to it, and that is what makes which
+    executable ran an observation instead of a report. Attaching was measured and works, and the
+    execve is over before any attach can land, so the only answer left would be this file reading
+    /proc and reporting what it saw. Started under the tracer, the kernel's own execve record is
+    the first line of a file the tracer wrote. Where no tracer could be established the command
+    runs exactly as it did before and the witness readings say they could not be taken.
     """
     command = (arm.hook_file or {}).get("command")
     if not command:
         return None
+    argv = shlex.split(command)
+    tracer = arm.tracer or {}
+    log, prefix = None, []
+    if tracer.get("usable"):
+        # Named by mkstemp rather than by the scenario, because one turn can fire twice and a
+        # second firing writing over the first trace would leave the row describing the other one.
+        handle, named = tempfile.mkstemp(prefix=built["session"] + "-", suffix=".strace",
+                                         dir=str(arm.witness))
+        os.close(handle)
+        log = Path(named)
+        prefix = trace_argv(tracer["tracer"], log)
     started = time.monotonic()
     try:
         done = subprocess.run(
-            shlex.split(command),
+            prefix + argv,
             input=json.dumps(stop_payload(built, stop_hook_active)).encode("utf-8"),
             capture_output=True, timeout=300, env=arm.environment)
     except subprocess.TimeoutExpired:
@@ -952,16 +1003,38 @@ def fire(arm, built, stop_hook_active):
                 # able to ask at all. Those are two of the four answers reading.py keeps apart,
                 # and the reading each firing cell reports has to be the right one of them.
                 "faultedState": reading.UNREADABLE,
-                "argv": shlex.split(command)}
+                "argv": argv}
     except OSError as error:
         return {"faulted": "the registered command could not be started: " + str(error),
                 "faultedState": reading.ACCESS_ERROR,
-                "argv": shlex.split(command)}
+                "argv": argv}
     wall = int((time.monotonic() - started) * 1000)
-    return {"stdout": done.stdout.decode("utf-8", "replace"),
-            "stderr": done.stderr.decode("utf-8", "replace"),
-            "exitCode": done.returncode, "wallMs": wall,
-            "argv": shlex.split(command)}
+    answer = {"stdout": done.stdout.decode("utf-8", "replace"),
+              "stderr": done.stderr.decode("utf-8", "replace"),
+              "exitCode": done.returncode, "wallMs": wall,
+              "argv": argv, "tracerArgv": prefix or None,
+              "tracePath": str(log) if log is not None else None}
+    if log is None:
+        return answer
+    # The tracer writes its own diagnostics to the stderr the hook contractually leaves empty,
+    # and its own prefix is what tells them apart. A hook that forged the prefix would make this
+    # run red rather than green, which is the safe direction for a guess to fail in.
+    answer["tracerSaid"] = "\n".join(line for line in answer["stderr"].splitlines()
+                                     if line.startswith(TRACER + ":"))
+    try:
+        answer["trace"] = parse_trace(log.read_text(encoding="utf-8", errors="replace"),
+                                      os.getcwd())
+    except (OSError, ValueError) as error:
+        answer["traceDetail"] = ("the trace of this firing could not be read: "
+                                 + type(error).__name__ + ": " + str(error))
+    if answer["tracerSaid"] and not (answer.get("trace") or {}).get("executions"):
+        # The tracer never started it. That is not a firing that answered nothing, it is a firing
+        # that did not happen, and every cell under it has to say so rather than read an absence.
+        return {"faulted": "the tracer could not start the registered command: "
+                           + answer["tracerSaid"][:200],
+                "faultedState": reading.ACCESS_ERROR, "argv": argv,
+                "tracerArgv": prefix, "tracePath": str(log)}
+    return answer
 
 
 def journal_records(arm, session, turn):
@@ -1011,6 +1084,499 @@ def record_of(before, after):
                   " this session and turn")
 
 
+# ------------------------------------------------------------------ the process witness
+
+# Two questions this arrangement could not answer are answered here, and it could not answer
+# either one for the same reason: nothing observed the process. The command was read out of the
+# arm's hook file, executed, and reported back by the same file that executed it, so a run that
+# started something else while reporting the registration would have agreed with itself. And the
+# places checked for containment were the places this run creates, so a write anywhere else was
+# not permitted so much as invisible.
+#
+# The witness is a tracer that STARTS the registered command rather than one that attaches to it.
+# Attaching was measured and works, and it is the weaker answer: the execve happens before any
+# attach can land, so what would be left is this file reading /proc and reporting what it saw,
+# which is the harness attesting to itself and is the shape of the stand-in being removed.
+# Started under the tracer, the kernel's own execve record is the first line of a file ANOTHER
+# program wrote, and the checks read it the way they read a journal.
+#
+# A tracer is not available everywhere, and the two failures are not one. A host that has none is
+# an arrangement that cannot reach this criterion, reported not performed beside the two the
+# contract already cannot reach, with the stand-in truthfully put back and --require-witness
+# available to anyone who needs the run to insist. A tracer that ran and produced something
+# unreadable is a reading that was not taken, and nothing is met while one is outstanding.
+# Neither one ever becomes "nothing was written".
+
+TRACER = "strace"
+
+# PATH_MAX is 4096, so a path never needs more. Anything longer comes back truncated and is read
+# as a reading that was not taken rather than as the shorter path it looks like.
+TRACE_STRING_LIMIT = 4096
+
+WRITES = "writes"
+OPENS = "opens"
+STARTS = "starts"
+MOVES = "moves"
+
+# What a path argument IS, per call, rather than per line. A rename unlinks its source, so both of
+# its paths are touched; a symlink writes only the link it creates and its FIRST argument is a
+# target that need not exist at all; the *at forms carry a directory descriptor the relative path
+# is resolved against. "The first quoted string" would report a symlink's target as written and
+# miss a rename's source. Each entry is (kind, ((path position, the position holding the directory
+# descriptor that path is relative to, or None), ...)).
+#
+# The calls that write nothing are in this table because the tracer's filter is BUILT FROM ITS
+# KEYS: an execve is what names the executable, and a chdir is what makes a later relative path
+# unresolvable. Filter and parser cannot drift apart while there is only one list.
+#
+# Ownership, timestamps and extended attributes are deliberately absent. A metadata story told
+# halfway is worse than one not told, so they are declared below as not covered instead.
+TRACED_CALLS = {
+    "execve": (STARTS, ((0, None),)),
+    "execveat": (STARTS, ((1, 0),)),
+    "open": (OPENS, ((0, None),)),
+    "openat": (OPENS, ((1, 0),)),
+    "openat2": (OPENS, ((1, 0),)),
+    "creat": (WRITES, ((0, None),)),
+    "truncate": (WRITES, ((0, None),)),
+    "ftruncate": (WRITES, ((0, None),)),
+    "mkdir": (WRITES, ((0, None),)),
+    "mkdirat": (WRITES, ((1, 0),)),
+    "rmdir": (WRITES, ((0, None),)),
+    "unlink": (WRITES, ((0, None),)),
+    "unlinkat": (WRITES, ((1, 0),)),
+    "rename": (WRITES, ((0, None), (1, None))),
+    "renameat": (WRITES, ((1, 0), (3, 2))),
+    "renameat2": (WRITES, ((1, 0), (3, 2))),
+    "link": (WRITES, ((0, None), (1, None))),
+    "linkat": (WRITES, ((1, 0), (3, 2))),
+    "symlink": (WRITES, ((1, None),)),
+    "symlinkat": (WRITES, ((2, 1),)),
+    "mknod": (WRITES, ((0, None),)),
+    "mknodat": (WRITES, ((1, 0),)),
+    "chdir": (MOVES, ((0, None),)),
+    "fchdir": (MOVES, ((0, None),)),
+}
+
+# Which argument carries an open's flags, so that an open for reading is not counted as a write.
+# openat2 carries them inside a struct and a substring is what reads them there.
+OPEN_FLAGS = {"open": 1, "openat": 2, "openat2": 2}
+
+# An open is a write when it can change the file. O_RDONLY is the absence of all of these.
+WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND", "O_TMPFILE")
+
+# What the witness must find, fixed before any subprocess starts, and compared against the path
+# strings the KERNEL recorded rather than against what they resolve to afterwards. A resolution
+# taken after the run answers about the filesystem as it is then: a symlink standing where the
+# entry point belongs, repointed at the real file by the program it started, resolves to exactly
+# the right answer and is exactly the substitution this exists to catch. The installer writes
+# these two strings verbatim - runtime_install passes sys.executable when no --python is given,
+# interpreter_for keeps an absolute path unresolved, and command_for emits [interpreter, script,
+# settings] - so there is no legitimate alias to accommodate.
+EXPECTED_WITNESS = {
+    "startedExecutable": sys.executable,
+    "startedCommand": COMMAND_AS_REGISTERED,
+    "startedEntryPoint": str(ROOT / "scripts" / completion.ENTRY_POINT_NAME),
+    "unexpectedExecutions": [],
+    "writesOutsideRoot": [],
+}
+
+WITNESS_CELLS = tuple(cell for cell, source, _p, _q in CELLS if source == WITNESS)
+
+WITNESS_CRITERION = ("every firing was started by the command its own registration names,"
+                     " from the interpreter and the program this checkout declares, without"
+                     " re-executing into anything else, and wrote nowhere outside the"
+                     " directory the run made for itself")
+
+# What a row through this witness still cannot say, as data rather than as a claim of
+# completeness. A detector that declares no blind spot is claiming to have none.
+WITNESS_DOES_NOT_COVER = (
+    "identity here is by path. A file replaced at that path while the run is going and put back"
+    " before the last digest is not caught: sourceIdentity compares two moments and says nothing"
+    " about the interval between them, and the bytes the kernel actually read at exec are not"
+    " witnessed. A row establishes which path was started, not which bytes sat at it throughout",
+    "a write through a descriptor this trace never saw opened - inherited across the exec,"
+    " received over a unix socket, taken with pidfd_getfd or opened by handle - and the calls that"
+    " write through one rather than through a path: write, pwrite, copy_file_range, splice,"
+    " sendfile, a shared mapping, and io_uring, which can open and write with no syscall here",
+    "a filesystem socket created by bind, which makes a path without any call in this table",
+    "ownership, timestamps, extended attributes and access control lists. They are not in the"
+    " traced set, so they are not in the trace at all, and no row says anything about them",
+    "where a path led AT THE SYSCALL. Containment resolves it after the run, so a symlink that"
+    " changed in between is answered as it is afterwards",
+    "the tracer itself, which is trusted rather than checked, and its own trace file, which it"
+    " writes without tracing",
+    "anything a process does after the tracer stops, including a grandchild that outlives the"
+    " firing. That firing is reported as faulted rather than as one that wrote nothing",
+)
+
+_ESCAPES = {"n": 10, "t": 9, "r": 13, "f": 12, "v": 11, "b": 8, "a": 7, "\\": 92, '"': 34}
+
+
+def _arguments_of(text):
+    """The top-level arguments of one traced call, split on structure rather than on commas.
+
+    A path may hold a comma, a flag set holds pipes, and the tracer nests braces, brackets and the
+    angle brackets it puts a resolved path in. Counting commas would cut a path in half and then
+    resolve half of one, which is a wrong answer where an unreadable line was available.
+    """
+    found, depth, quoted, escaped, current = [], 0, False, False, []
+    for char in text:
+        if quoted:
+            current.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == '"':
+            quoted = True
+            current.append(char)
+            continue
+        if char in "([{<":
+            depth += 1
+        elif char in ")]}>":
+            depth -= 1
+        elif char == "," and depth == 0:
+            found.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    found.append("".join(current).strip())
+    return [one for one in found if one]
+
+
+def _string_argument(token):
+    """The path the tracer printed, back out of its own escaping, or None if it cannot be read.
+
+    A truncated string answers None rather than a shorter path. The tracer marks one by putting
+    its ellipsis after the closing quote, and a path cut off at its limit names a different file
+    from the one that was written - often a directory above it, which would resolve inside a root
+    the whole path leaves.
+    """
+    if not token.startswith('"'):
+        return None
+    closing = token.rfind('"')
+    if closing <= 0:
+        return None
+    if token[closing + 1:].strip():
+        return None
+    body, out, index = token[1:closing], bytearray(), 0
+    while index < len(body):
+        char = body[index]
+        if char != "\\":
+            out.extend(char.encode("utf-8"))
+            index += 1
+            continue
+        index += 1
+        if index >= len(body):
+            return None
+        marker = body[index]
+        if marker == "x":
+            digits = body[index + 1:index + 3]
+            if len(digits) < 2:
+                return None
+            try:
+                out.append(int(digits, 16))
+            except ValueError:
+                return None
+            index += 3
+        elif marker in "01234567":
+            digits = ""
+            while len(digits) < 3 and index < len(body) and body[index] in "01234567":
+                digits, index = digits + body[index], index + 1
+            out.append(int(digits, 8))
+        elif marker in _ESCAPES:
+            out.append(_ESCAPES[marker])
+            index += 1
+        else:
+            return None
+    return os.fsdecode(bytes(out))
+
+
+def _resolved_descriptor(token):
+    """The path the tracer's -y put on a descriptor, which is the kernel's own resolution of it.
+
+    Read rather than recomputed. Resolving the string here would answer about the filesystem as it
+    is after the run, and a file renamed or removed in between would resolve somewhere the write
+    never went.
+    """
+    if "<" not in token or not token.endswith(">"):
+        return None
+    inside = token[token.index("<") + 1:-1]
+    if inside.endswith(" (deleted)"):
+        inside = inside[:-len(" (deleted)")]
+    return inside or None
+
+
+def _path_argument(arguments, position, directory_position, cwd):
+    """One declared path argument, resolved, or the reason it could not be read.
+
+    A position holds either a path the caller passed or a descriptor the tracer resolved, and both
+    are answers. Anything else is a line this parser cannot read, and it says so rather than
+    guessing which of the two it was looking at.
+    """
+    if position >= len(arguments):
+        return None, "the call carries no argument at position " + str(position)
+    token = arguments[position]
+    named = _string_argument(token)
+    if named is None:
+        resolved = _resolved_descriptor(token)
+        if resolved is None:
+            return None, ("argument " + str(position) + " is neither a path this parser can read"
+                          " nor a descriptor the tracer resolved")
+        return resolved, None
+    if named.startswith("/"):
+        return named, None
+    base = None
+    if directory_position is not None and directory_position < len(arguments):
+        base = _resolved_descriptor(arguments[directory_position])
+    base = base or cwd
+    if not base:
+        return None, ("a relative path with no directory to resolve it against, because the"
+                      " working directory stopped being known at a chdir earlier in this trace")
+    return os.path.join(base, named), None
+
+
+def _argv_of(arguments, position):
+    """The argument list the kernel was handed, out of the array the tracer printed.
+
+    An array the tracer abbreviated holds a word that is not a quoted string, so it answers
+    unreadable rather than short. A short argv would be a different command that happened to agree
+    with the registration on its first words.
+    """
+    if position >= len(arguments):
+        return None, "the call carries no argument list"
+    token = arguments[position]
+    if not (token.startswith("[") and token.endswith("]")):
+        return None, "the argument list is not one this parser can read"
+    words = []
+    for one in _arguments_of(token[1:-1]):
+        named = _string_argument(one)
+        if named is None:
+            return None, "a word of the argument list could not be read"
+        words.append(named)
+    return words, None
+
+
+def _result_of(body):
+    """Where the arguments end and the result begins, across the tracer's column alignment.
+
+    Found by walking back from the end to an equals sign whose left side ends in the bracket
+    that closes the arguments. Splitting on the literal ") = " looked right and read nothing:
+    the tracer pads short calls out to a column, so a real line is ")        = 0" and every
+    one of them would have been reported as a call carrying no result.
+    """
+    at = len(body)
+    while True:
+        at = body.rfind("=", 0, at)
+        if at < 0:
+            return -1, None
+        before = body[:at].rstrip()
+        # An equals sign inside an argument - openat2 carries flags= inside a struct - has
+        # something other than the closing bracket to its left, so the walk goes on past it.
+        if before.endswith(")"):
+            return len(before) - 1, body[at + 1:].strip()
+
+
+def parse_trace(text, cwd):
+    """Every start and every write this trace recorded, and every line it could not read.
+
+    The unreadable lines are carried rather than dropped. A line this parser cannot read could be
+    the write, so a trace holding one cannot answer that nothing was written - which would be the
+    substitution this whole file refuses, arriving through a parser instead of through a cell.
+    """
+    answer = {"executions": [], "writes": [], "unreadable": [], "failedAttempts": 0,
+              "restarted": 0, "lines": 0, "writeCalls": 0, "rootPid": None}
+    unfinished = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        answer["lines"] += 1
+        head, _separator, body = line.partition(" ")
+        body = body.strip()
+        if not head.isdigit() or not body:
+            answer["unreadable"].append({"line": number, "text": line[:200],
+                                         "why": "no process identifier and call"})
+            continue
+        pid = int(head)
+        if body.startswith("+++") or body.startswith("---"):
+            continue
+        if body.startswith("<... "):
+            name = body[5:].split(" ", 1)[0]
+            held = unfinished.pop((pid, name), None)
+            if held is None:
+                answer["unreadable"].append({"line": number, "text": line[:200],
+                                             "why": "a resumed call whose interrupted half is not"
+                                                    " in this trace"})
+                continue
+            body = name + "(" + held + body.partition("resumed>")[2]
+        elif body.endswith("<unfinished ...>"):
+            if "(" not in body:
+                answer["unreadable"].append({"line": number, "text": line[:200],
+                                             "why": "an interrupted call with no arguments"})
+                continue
+            name = body.split("(", 1)[0].strip()
+            unfinished[(pid, name)] = body[body.index("(") + 1:-len("<unfinished ...>")].rstrip()
+            continue
+        name = body.split("(", 1)[0].strip()
+        if name not in TRACED_CALLS:
+            # The filter is built from this table's keys, so a call outside it is not one the
+            # tracer was asked for. Unreadable rather than skipped, because the two drifting apart
+            # is how a write stops being looked at without anyone noticing.
+            answer["unreadable"].append({"line": number, "text": line[:200],
+                                         "why": "a call this parser was not built to read"})
+            continue
+        opened, (closed, result) = body.find("("), _result_of(body)
+        if opened < 0 or closed < opened or result is None:
+            answer["unreadable"].append({"line": number, "text": line[:200],
+                                         "why": "the call carries no result"})
+            continue
+        arguments = _arguments_of(body[opened + 1:closed])
+        kind, positions = TRACED_CALLS[name]
+        if answer["rootPid"] is None:
+            answer["rootPid"] = pid
+        if result.startswith("?"):
+            # Interrupted and restarted by the kernel. It returns on a later line, and counting it
+            # here would count it twice.
+            answer["restarted"] += 1
+            continue
+        if result.startswith("-1"):
+            # It did not happen. Counted, because a run full of refused writes is worth seeing,
+            # and never added to what was written.
+            answer["failedAttempts"] += 1
+            continue
+        if kind == MOVES:
+            # From here on a relative path resolves against somewhere this parser was not told
+            # about, so those lines become unreadable rather than resolved against a directory
+            # they no longer mean. Whole-trace rather than per process: the stricter of the two.
+            cwd = None
+            continue
+        if kind == STARTS:
+            path, why = _path_argument(arguments, positions[0][0], positions[0][1], cwd)
+            argv, argv_why = _argv_of(arguments, 1 if name == "execve" else 2)
+            if path is None or argv is None:
+                answer["unreadable"].append({"line": number, "text": line[:200],
+                                             "why": why or argv_why})
+                continue
+            answer["executions"].append({"line": number, "pid": pid, "path": path, "argv": argv,
+                                         "resolved": os.path.realpath(path)})
+            continue
+        if kind == OPENS:
+            position, directory = positions[0]
+            path, why = _path_argument(arguments, position, directory, cwd)
+            flags = OPEN_FLAGS[name]
+            if path is None or flags >= len(arguments):
+                answer["unreadable"].append({"line": number, "text": line[:200],
+                                             "why": why or "an open whose flags are not here, so"
+                                                           " whether it could write is not read"})
+                continue
+            if "O_" not in arguments[flags]:
+                # Numeric flags. Reading them as "no write flag present" would turn an unreadable
+                # line into a clean one, and clean is the dangerous direction.
+                answer["unreadable"].append({"line": number, "text": line[:200],
+                                             "why": "an open whose flags carry no symbolic name,"
+                                                    " so whether it could write is not read"})
+                continue
+            if not any(flag in arguments[flags] for flag in WRITE_FLAGS):
+                continue
+            answer["writeCalls"] += 1
+            answer["writes"].append({"line": number, "pid": pid, "call": name,
+                                     "path": _resolved_descriptor(result) or path})
+            continue
+        answer["writeCalls"] += 1
+        for position, directory in positions:
+            path, why = _path_argument(arguments, position, directory, cwd)
+            if path is None:
+                answer["unreadable"].append({"line": number, "text": line[:200], "why": why})
+                continue
+            answer["writes"].append({"line": number, "pid": pid, "call": name, "path": path})
+    for pid, name in sorted(unfinished):
+        answer["unreadable"].append({"line": None, "text": name,
+                                     "why": "a call interrupted in process " + str(pid) + " and"
+                                            " never resumed before the trace ended"})
+    return answer
+
+
+def trace_argv(tracer, log):
+    """The tracer invocation. Its syscall filter is built from the table that parses it.
+
+    One list rather than two, so the filter and the parser cannot drift apart: a call added to the
+    table is asked for, and a call the tracer reports that the table does not know is an unreadable
+    line rather than a silence.
+    """
+    return [str(tracer), "-f", "-y", "-qqq", "-s", str(TRACE_STRING_LIMIT), "--kill-on-exit",
+            "-e", "trace=" + ",".join(sorted(TRACED_CALLS)), "-o", str(log), "--"]
+
+
+def tracer_probe(root):
+    """Whether this host's process boundary can be witnessed, answered by witnessing one.
+
+    A detector that has never been seen to detect is the shape this file refuses everywhere else:
+    a cell nobody has watched move the other way. So the probe starts a process the way a firing is
+    started, has it write one file, and requires that write to come back out of the parser. A
+    tracer that attaches and reports nothing is reported unusable rather than trusted.
+
+    The field is usable rather than passed or met, because the judgment walk collects those two
+    names wherever they sit and whether a host carries a tracer is a fact about the host, not a
+    verdict about the hook.
+    """
+    where = Path(root) / "witness"
+    where.mkdir(parents=True, exist_ok=True)
+    mark, log = where / "probe-mark", where / "probe.strace"
+    answer = {"tracer": None, "wrote": [str(where), str(mark), str(log)],
+              "what": "one process started the way a firing is started, made to write one file,"
+                      " and required to have that write read back out of the trace"}
+    found = shutil.which(TRACER)
+    if not found:
+        return dict(answer, usable=False,
+                    because="there is no " + TRACER + " on this host, so the process boundary"
+                            " cannot be witnessed here")
+    answer["tracer"] = found
+    argv = trace_argv(found, log) + [
+        sys.executable, "-c",
+        "import pathlib, sys; pathlib.Path(" + repr(str(mark)) + ").write_text('the write this"
+        " probe exists to be seen making'); sys.exit(3)"]
+    answer["argv"] = list(argv)
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return dict(answer, usable=False,
+                    because="the tracer did not finish its own probe within its timeout")
+    except OSError as error:
+        return dict(answer, usable=False,
+                    because="the tracer could not be started: " + str(error))
+    if done.returncode != 3:
+        return dict(answer, usable=False,
+                    because="the tracer did not relay the probe's exit status: it answered "
+                            + str(done.returncode) + " where 3 was asked for, saying "
+                            + (done.stderr.strip()[:200] or "nothing"))
+    try:
+        recorded = log.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError) as error:
+        return dict(answer, usable=False,
+                    because="the trace the probe wrote could not be read: " + str(error))
+    seen = parse_trace(recorded, os.getcwd())
+    answer["read"] = {"lines": seen["lines"], "writeCalls": seen["writeCalls"],
+                      "unreadable": len(seen["unreadable"])}
+    if seen["unreadable"]:
+        return dict(answer, usable=False,
+                    because="the probe's own trace carries " + str(len(seen["unreadable"]))
+                            + " lines this parser could not read, the first being: "
+                            + str(seen["unreadable"][0]["why"]))
+    started = [one for one in seen["executions"] if one["path"] == sys.executable]
+    if len(started) != 1:
+        return dict(answer, usable=False,
+                    because="the probe's trace names " + str(len(started)) + " starts of "
+                            + sys.executable + " where exactly one was made")
+    if not any(os.path.realpath(one["path"]) == os.path.realpath(str(mark))
+               for one in seen["writes"]):
+        return dict(answer, usable=False,
+                    because="the probe wrote a file this trace does not carry, so the tracer"
+                            " reports starts here without reporting writes")
+    return dict(answer, usable=True, because=None)
 
 # ------------------------------------------------------------------ payloads
 
@@ -1144,6 +1710,89 @@ def harness_payload(fired):
     return {"source": HARNESS, "wallMs": fired["wallMs"], "exitCode": fired["exitCode"]}
 
 
+
+def witness_payload(arm, fired):
+    """What the tracer recorded about this firing, answered in the vocabulary each cell asks in.
+
+    Three of these are comparisons against paths fixed before the run and one is a comparison
+    between two sources, and none of them is a resolution taken afterwards. A path resolved after
+    the run answers about the filesystem as it is then: a symlink standing where the entry point
+    belongs, repointed at the real file by the program it started, resolves to exactly the right
+    answer, which is the substitution rather than the absence of one. The resolved forms are kept
+    beside the readings as context and decide nothing.
+    """
+    if fired is None:
+        return {"source": WITNESS, "absent": NO_REGISTRATION}
+    if fired.get("faulted"):
+        return _faulted(WITNESS, fired, WITNESS_CELLS)
+    tracer = arm.tracer or {}
+    if not tracer.get("usable"):
+        # A host that cannot witness its process boundary. Not an absence: there is a process and
+        # it started something, and nobody here could see which.
+        why = tracer.get("because") or "no tracer was handed to this arm"
+        payload = {"source": WITNESS, "detail": why}
+        for cell in WITNESS_CELLS:
+            payload[cell] = Unreadable(why, state=reading.ACCESS_ERROR)
+        return payload
+    seen = fired.get("trace")
+    why = fired.get("traceDetail")
+    if isinstance(seen, dict) and not why:
+        if seen["unreadable"]:
+            why = ("the trace of this firing carries " + str(len(seen["unreadable"])) + " lines"
+                   " this parser could not read, the first being: "
+                   + str(seen["unreadable"][0]["why"]))
+        elif fired.get("tracerSaid"):
+            why = "the tracer reported a problem of its own: " + str(fired["tracerSaid"])[:200]
+        elif not seen["executions"]:
+            why = "the trace of this firing names no start, so what ran is not established"
+    if why or not isinstance(seen, dict):
+        payload = {"source": WITNESS, "detail": why or "this firing left no trace to read"}
+        for cell in WITNESS_CELLS:
+            payload[cell] = Unreadable(payload["detail"])
+        return payload
+    first = seen["executions"][0]
+    argv = first["argv"]
+    # Every later start is unexpected unless it is a descendant running this run's own relay
+    # launcher. The root process re-executing is unexpected even at the same image: a program that
+    # starts the expected interpreter and then becomes something else satisfies a reading taken
+    # only of the first line.
+    unexpected = [one["path"] for one in seen["executions"][1:]
+                  if one["pid"] == seen["rootPid"] or one["path"] != str(arm.launcher)]
+    outside, unresolved = [], []
+    for one in seen["writes"]:
+        answered = owned(one["path"], arm.run_root)
+        if not_read(answered):
+            unresolved.append(answered.why)
+        elif answered is False:
+            outside.append(one["path"])
+    payload = {
+        "source": WITNESS,
+        "startedExecutable": first["path"],
+        "startedCommand": (COMMAND_AS_REGISTERED if argv == list(fired["argv"])
+                           else COMMAND_DIFFERS),
+        "startedEntryPoint": argv[1] if len(argv) > 1 else ENTRY_POINT_NOT_IN_ARGV,
+        "unexpectedExecutions": sorted(set(unexpected)),
+        "writesOutsideRoot": sorted(set(outside)),
+        "witnessed": {
+            "rootPid": seen["rootPid"], "traceLines": seen["lines"],
+            "writeCalls": seen["writeCalls"], "writesSeen": len(seen["writes"]),
+            "writesInsideRoot": len(seen["writes"]) - len(outside) - len(unresolved),
+            "failedAttempts": seen["failedAttempts"], "restarted": seen["restarted"],
+            "tracePath": fired.get("tracePath"), "tracerArgv": fired.get("tracerArgv"),
+            "tracerSaid": fired.get("tracerSaid") or "",
+            "registeredArgv": list(fired["argv"]),
+            "executions": [dict(one, sameProcessAsTheStart=one["pid"] == seen["rootPid"])
+                           for one in seen["executions"]],
+        },
+    }
+    if unresolved:
+        # A path nobody could resolve is not a path inside the root, and it is not one outside it
+        # either. The reading that rests on it is the one that cannot be taken.
+        payload["writesOutsideRoot"] = Unreadable(unresolved[0])
+        payload["detail"] = unresolved[0]
+    return payload
+
+
 # ------------------------------------------------------------------ one row
 
 
@@ -1155,11 +1804,16 @@ def row(arm, declared, built, fired, record, expected, unidentifiable=None):
         STDOUT: stdout_payload(fired),
         MARKER_ROOT: marker_payload(arm, built, fired, (record or {}).get("guardRecordedAs")),
         HARNESS: harness_payload(fired),
+        WITNESS: witness_payload(arm, fired),
     }
     cells = {cell: read(cell, payloads) for cell in FIRING_CELLS}
     answer = {"cells": cells, "expected": dict(expected),
+              # Beside the cells rather than in them: what the tracer saw is evidence a reader
+              # needs to explain a disagreement, and none of it is a reading anything judges.
+              "witness": payloads[WITNESS].get("witnessed"),
               "provenance": {"codexHome": str(arm.codex_home),
                              "argv": (fired or {}).get("argv"),
+                             "tracer": (fired or {}).get("tracerArgv"),
                              "stopPayload": "composed by this harness, not delivered by a host",
                              "stopHookActive": declared["stopHookActive"]}}
     answer["verdict"] = judge(arm, declared, cells, expected)
@@ -1351,9 +2005,12 @@ def measures(scenarios):
         "firings": len(timings), "timingsNotTaken": missing, "arms": [ON],
         "met": judged(bool(latencies) and median <= LATENCY_MEDIAN_MS
                       and p95 <= LATENCY_P95_MS, missing),
-        "narrowing": "the interval measured is the hook process alone, started by this harness."
-                     " The contract's budget is per Stop as the host sees it, so meeting it here"
-                     " is necessary and not sufficient.",
+        "tracedByTheWitness": bool((scenarios.get("_tracer") or {}).get("usable")),
+        "narrowing": "the interval measured is the hook process alone, started by this harness"
+                     " and, where a tracer could be established, started UNDER it. A tracer adds"
+                     " and never subtracts, so a bound kept here is kept without one. The"
+                     " contract's budget is per Stop as the host sees it, so meeting it here is"
+                     " necessary and not sufficient.",
     }
     return answers
 
@@ -1402,6 +2059,58 @@ def supplemental(scenarios):
             "isNot": "evidence that the two hooks interact at run time. The foreign command is"
                      " never executed here; this reads the file, not a decision.",
         },
+    }
+
+
+def process_witness(scenarios, tracer):
+    """Whether every firing was started by the command the registration names and wrote only inside.
+
+    One judgment over every on-arm firing rather than a verdict inside each row. What is expected
+    is the same for every scenario - which interpreter, which program, no re-execution, no write
+    outside - so it is a property of the run in the way foreignRegistrationSurvives is, and not
+    something a scenario declares beside its observation and its decision. A row still answers
+    what it always answered: whether that scenario reached the state it declared. Under a
+    substitution it did, and making the row say otherwise would be the adjudication this file
+    refuses everywhere else; the finding is read from judgmentsThatFailed instead.
+
+    Where no tracer could be established this answers not performed and carries no verdict at all,
+    beside the two the contract itself cannot reach. The readings still say a reading was not
+    taken and notPerformed still names the reason, so nothing here ever reads as nothing having
+    been written. What it costs is that such a host does not answer this question, which is what
+    --require-witness exists for.
+    """
+    firings = _firings(scenarios, ON)
+    if not (tracer or {}).get("usable"):
+        return {"answer": NOT_PERFORMED, "arms": [ON], "tracer": tracer,
+                "criterion": WITNESS_CRITERION,
+                "because": ((tracer or {}).get("because")
+                            or "no tracer was probed for this run"),
+                "doesNotCover": list(WITNESS_DOES_NOT_COVER)}
+    disagreed, unreadable, silent = [], [], []
+    for declared, index, fired in firings:
+        where = declared["name"] + "#" + str(index)
+        for cell in WITNESS_CELLS:
+            found = fired["cells"][cell]["value"]
+            if not_read(found):
+                unreadable.append(where + "/" + cell)
+            elif not _answered(found, EXPECTED_WITNESS[cell]):
+                disagreed.append({"scenario": declared["name"], "firing": index, "cell": cell,
+                                  "wanted": EXPECTED_WITNESS[cell], "found": found})
+        seen = (fired.get("witness") or {}).get("writesInsideRoot")
+        if not isinstance(seen, int) or seen < 1:
+            silent.append(where)
+    return {
+        "answer": MEASURED, "arms": [ON], "tracer": tracer,
+        "criterion": WITNESS_CRITERION,
+        "expected": dict(EXPECTED_WITNESS), "firings": len(firings),
+        "disagreed": disagreed, "unreadable": unreadable, "witnessedNothing": silent,
+        # A parser that read nothing answers "no writes outside" exactly as convincingly as a run
+        # that made none, and the probe proves only that one syntax moved once. So every on-arm
+        # firing must have been SEEN writing something inside the root. Each one journals its own
+        # invocation, which is such a write, so a firing this witness saw write nothing is a
+        # witness that stopped seeing rather than a hook that stayed quiet.
+        "met": judged(not disagreed and not silent, unreadable),
+        "doesNotCover": list(WITNESS_DOES_NOT_COVER),
     }
 
 
@@ -1569,11 +2278,13 @@ def containment(root, places):
             "met": judged(not outside, not_taken),
             "what": "every place this run creates resolves inside the directory it made for"
                     " itself, by where the path leads rather than by how it is spelled",
-            "doesNotCover": "a write a subprocess made somewhere this run never named. Seeing"
-                            " those needs a witness at the process boundary, which is not built"
-                            " here; what is built is that the constructed environment carries no"
-                            " pointer out of this directory and no bytecode is left beside the"
-                            " source the subprocesses import."}
+            "doesNotCover": "a write a subprocess made somewhere this run never named. This"
+                            " judgment is about the places this run CREATES, and where the"
+                            " processes actually wrote is a different question: processWitness"
+                            " is where it is asked, including whether it could be asked at all on"
+                            " this host. What is also built here is that the constructed"
+                            " environment carries no pointer out of this directory and no"
+                            " bytecode is left beside the source the subprocesses import."}
 
 
 def refusal(detail, at=None, defect=None):
@@ -1666,9 +2377,13 @@ def stability(earlier, later):
 def compare(root):
     """Build both arms, drive every scenario at both, and read what each one has afterwards."""
     launcher = launcher_for(root)
-    arms = {name: Arm(root, name, launcher) for name in ARMS}
-    scenarios = {"_arms": {}, "_wrote": [launcher] + [place for arm in arms.values()
-                                                      for place in arm.places]}
+    # Before the arms. The install is the first subprocess an arm makes, and whether this host can
+    # witness a process has to be answered before anything that reading decides is started.
+    tracer = tracer_probe(root)
+    arms = {name: Arm(root, name, launcher, tracer) for name in ARMS}
+    scenarios = {"_arms": {}, "_tracer": tracer,
+                 "_wrote": [launcher] + [Path(place) for place in tracer.get("wrote") or []]
+                 + [place for arm in arms.values() for place in arm.places]}
     for name, arm in arms.items():
         cells = {cell: read(cell, {INSTALL: arm.install, HOOK_FILE: arm.hook_file})
                  for cell in ARM_CELLS}
@@ -1713,6 +2428,11 @@ def document(scenarios, root, earlier):
               for name, arm, index, fired in rows if not fired["verdict"]["passed"]]
     armed = [name for name in ARMS if not scenarios["_arms"][name]["installed"]["passed"]]
     answers = measures(scenarios)
+    witness = process_witness(scenarios, scenarios.get("_tracer"))
+    # A copy per run rather than a module constant edited in place: the stand-in the witness closes
+    # is closed on a run that made it and open on a run that could not, and a mutated global would
+    # carry one run's answer into the next document in the same interpreter.
+    witnessed = witness.get("answer") == MEASURED
     missed = sorted(name for name, measure in answers.items()
                     if measure.get("answer") == MEASURED and not measure.get("met"))
     body = {
@@ -1730,12 +2450,14 @@ def document(scenarios, root, earlier):
         "scenarios": dict((declared["name"], scenarios[declared["name"]])
                           for declared in SCENARIOS),
         "wroteOnlyInsideItsRoot": containment(root, scenarios["_wrote"]),
+        "processWitness": witness,
         "absenceIsNormalAt": [dict(place, arm=arm, scenario=name, cell=cell)
                               for (arm, name, cell), place in sorted(places.items())],
         "measures": answers,
         "supplemental": supplemental(scenarios),
-        "standIns": STAND_INS,
-        "notPerformed": NOT_PERFORMED_HERE,
+        "standIns": dict(STAND_INS) if witnessed else dict(STAND_INS, **STAND_IN_WITHOUT_WITNESS),
+        "notPerformed": dict(NOT_PERFORMED_HERE) if witnessed else dict(
+            NOT_PERFORMED_HERE, **{"the process witness": witness.get("because")}),
         "armsThatDisagreed": armed,
         "rowsThatDisagreed": failed,
         "measuresThatMissedTheirBound": missed,
@@ -1755,6 +2477,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Compare a destination that registered the"
                                                  " completion hook with one that did not.")
     parser.add_argument("--root", help="where to build both arms; a temporary directory otherwise")
+    parser.add_argument("--require-witness", action="store_true",
+                        help="refuse rather than report the process witness as not performed")
     args = parser.parse_args(argv)
 
     if sys.version_info < RELAY_PYTHON:
@@ -1775,7 +2499,15 @@ def main(argv=None):
     answer = None
     try:
         earlier = source_identity()
-        answer = document(compare(root), root, earlier)
+        # Asked before the work rather than after it: a caller who needs this run to witness the
+        # process boundary needs to be told it cannot before waiting for rows that will not carry
+        # the answer.
+        insisted = tracer_probe(root) if args.require_witness else {"usable": True}
+        if not insisted.get("usable"):
+            answer = refusal("the process boundary cannot be witnessed here and --require-witness"
+                             " was given: " + str(insisted.get("because")))
+        else:
+            answer = document(compare(root), root, earlier)
     except RelayError as error:
         answer = refusal("a relay command a scenario needed refused: " + str(error))
     except NotAValue as error:
