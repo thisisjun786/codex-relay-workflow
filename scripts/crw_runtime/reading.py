@@ -141,11 +141,25 @@ def path_identity(path):
     return (found.st_dev, found.st_ino)
 
 
+def _descriptor_identity(opened):
+    """The identity of the object a descriptor is open on, which nothing can retarget.
+
+    path_identity answers for a SPELLING at the moment it is asked, which is all a lookup can
+    claim and is enough to ASK whether a reading already taken covers this spelling. It is not
+    enough to PUBLISH one under, and that asymmetry is the whole point of having both.
+    """
+    try:
+        found = os.fstat(opened.fileno())
+    except (OSError, ValueError):
+        return None
+    return (found.st_dev, found.st_ino)
+
+
 class Reading:
     """A value and the state of the attempt that produced it."""
 
     def __init__(self, value=None, state=PRESENT, *, exception=None, source=None,
-                 at=None, detail=None, field=None):
+                 at=None, detail=None, field=None, identity=None):
         self.value = value
         self.state = state
         self.exception = exception
@@ -153,6 +167,13 @@ class Reading:
         self.at = at
         self.detail = detail
         self.field = field
+        # What the kernel called the object these BYTES came from, taken from the descriptor
+        # they were read through rather than from a second lookup of the path. A caller that
+        # wants to know whether two spellings named one file cannot ask a path for that: a link
+        # retargeted between the lookup and the open files the bytes under an identity they
+        # never came from, which is a wrong reading rather than a missing one. None wherever it
+        # was not established, and a None must never compare equal to anything.
+        self.identity = identity
 
     @property
     def ok(self):
@@ -285,12 +306,19 @@ def read_json(path, what, *, absent=None, shape=None):
         return settled
     try:
         with region(path, what):
-            value = json.loads(Path(str(path)).read_text(encoding="utf-8"))
+            # Opened ONCE, and the identity taken from that descriptor. Reading the bytes and
+            # then asking the path what it is are two lookups, and a link retargeted between
+            # them answers for a file these bytes did not come from -- so a caller merging two
+            # spellings on that identity would reuse a reading taken from somewhere else.
+            # A descriptor cannot be retargeted, so there is no interval left to race.
+            with open(str(path), "rb") as opened:
+                identity = _descriptor_identity(opened)
+                value = json.loads(opened.read().decode("utf-8"))
             if shape is not None:
                 shape(value)
     except Refused as refused:
         return refused.reading
-    return Reading(value=value, state=PRESENT, source=path)
+    return Reading(value=value, state=PRESENT, source=path, identity=identity)
 
 
 def read_text(path, what, *, absent=""):

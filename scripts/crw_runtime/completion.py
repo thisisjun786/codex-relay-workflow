@@ -1663,14 +1663,40 @@ def journals_named(registrations, already_read=None):
     # question is not -- and stored as the ANSWER rather than as the spelling, so a link
     # retargeted afterwards cannot make a stale snapshot look current.
     aliases = {}
+    # One reading per settings FILE, not per registration. Two registrations can name ONE file
+    # through two absolute spellings -- a symlink alias is not a lexical difference, and
+    # _settled deliberately does not resolve one, because resolving would make a key depend on
+    # what a link points at. Read twice, an atomic rewrite landing between the reads reported
+    # the old journalRoot in one entry and the new one in another, about one file, in one
+    # answer; _recorded_on_another_path then read that as two journals disagreeing on a host
+    # that has one. It is the same shape as the journal aliasing directly below, one level up.
+    #
+    # Keyed by the identity the READING carries, which read_json took from the descriptor the
+    # bytes came through. A path lookup may ASK this cache, because it reports what a spelling
+    # reached at the moment it was asked; what a reading is PUBLISHED under may not come from
+    # a lookup, or a link retargeted between the lookup and the open files those bytes under an
+    # identity they never came from.
+    read_by = {}
+    for taken in (already_read or {}).values():
+        known = getattr(taken[3], "identity", None)
+        if known is not None:
+            read_by[known] = taken
     for registration in registrations:
         if not registration.get("settings"):
             # A relative spelling or no settings at all. There is no file here to open, and
             # record_path_unidentified is the cause that owns that state.
             continue
         path = _settled(registration["settings"])
-        config, refused, detail, read_back = (already_read or {}).get(
-            str(path)) or read_configuration(path)
+        taken = (already_read or {}).get(str(path))
+        if taken is None:
+            mine = reading.path_identity(path)
+            taken = read_by.get(mine) if mine is not None else None
+        if taken is None:
+            taken = read_configuration(path)
+            fresh = getattr(taken[3], "identity", None)
+            if fresh is not None:
+                read_by[fresh] = taken
+        config, refused, detail, read_back = taken
         entry = {"registration": registration.get("registration"),
                  "startable": registration.get("startable"),
                  "settings": str(path), "settingsState": read_back.state,

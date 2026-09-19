@@ -85,6 +85,23 @@ def _not_registered(observed):
     payload, which made that payload contradict itself. This answer claims the half it reads.
     """
     if not observed.get("registrationReadable"):
+        # Unless a record settles it, for exactly the reason the plugin-owned branch below
+        # gives. A record this hook wrote is proof that something invoked this adapter, and it
+        # is the one kind of evidence this command can have about a registration it cannot
+        # read. Left unsettled anyway, the payload carried "maybe it is not registered" beside
+        # its own count of an invocation that happened, and -- because every rule below
+        # requires this one -- blocked RECORDS_FOUND, the answer that says there is no absence
+        # to explain. A host holding a record then reported cause_unreadable for an absence it
+        # was not showing. The rule was already written for the branch below; it was the
+        # unreadable half of the same class that had nobody asking it.
+        found_records = observed.get("unregisteredRecords") or 0
+        if found_records:
+            return RULED_OUT, (str(found_records) + " record(s) this hook wrote are under the"
+                               " journal this command settled on, so something invoked this"
+                               " adapter. The hook file could not be read, so whether that"
+                               " registration is still in place is the registration cell's"
+                               " question and not a cause of an absence this host does not"
+                               " show")
         return NOT_RULED_OUT, ("the hook file could not be read, so whether this adapter is"
                                " registered for the event was not established")
     found = observed.get("adapterRegistrations") or 0
@@ -600,6 +617,26 @@ NOTE = ("Registered, startable and observed to have recorded are separate claims
         " ran. That is why the answer is named for the journal and not for the hook.")
 
 
+def _settled_enough(standings, asked, name):
+    """Whether a cause a later rule depends on is settled enough for that rule to mean anything.
+
+    Ruled out is the plain case. The other one is a cause whose OWN rule answered NOT_EVALUATED:
+    that rule read this host and reported there is no question of that kind here -- no
+    registration named a command, no registration named a settings file this command could
+    read. A question that does not exist is not a question left open, and counting it as one is
+    the same substitution this module exists to remove, inverted: an inapplicable answer read as
+    an unresolved one. It left a host whose journal holds a record with every defect cause ruled
+    out, the terminal answer unasked, and cause_unreadable reported for an absence it was not
+    showing.
+
+    A cause the loop SKIPPED also carries NOT_EVALUATED, and that one still blocks: nothing read
+    the host for it, so it establishes nothing either way.
+    """
+    if standings.get(name) == RULED_OUT:
+        return True
+    return name in asked and standings.get(name) == NOT_EVALUATED
+
+
 def decide(observed):
     """Why there is no record, decided over the cells status() already produced.
 
@@ -608,15 +645,22 @@ def decide(observed):
     that needs two repairs is not an absence nobody could explain.
     """
     standings, details = {}, {}
+    # Which causes their own rule actually answered. A cause the loop SKIPPED carries
+    # NOT_EVALUATED because something upstream is still open; a cause the rule answered
+    # NOT_EVALUATED carries it because the rule read this host and found no question of that
+    # kind here at all. Those are not the same standing to depend on, and the stored value
+    # cannot tell them apart.
+    asked = set()
     for cause in CAUSE_ORDER:
         required = CAUSE_REQUIRES[cause]
-        blocked = [name for name in required if standings.get(name) != RULED_OUT]
+        blocked = [name for name in required if not _settled_enough(standings, asked, name)]
         if blocked:
             standings[cause] = NOT_EVALUATED
             details[cause] = ("not asked, because " + ", ".join(blocked) + " would have to be"
                               " ruled out first for this question to mean anything")
             continue
         standings[cause], details[cause] = CAUSE_RULES[cause][1](observed)
+        asked.add(cause)
 
     def entries(*wanted):
         return [{"cause": cause, "standing": standings[cause], "detail": details[cause]}

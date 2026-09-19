@@ -3247,6 +3247,105 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                       " without ever naming the records it was reading past")
 
 
+class OneFileAndOneRecordAnswerForThemselves(unittest.TestCase):
+    """Review on PR #52 head e8863b2, raised by the reviewer on that head and by an independent
+    audit of it at the same time.
+
+    Two answers this branch owns were still reading past evidence the payload already held: a
+    journal holding a record, and one settings file named twice.
+    """
+
+    def _document(self, root):
+        return {"configVersion": 1, "relayExecutable": "/bin/true", "markerRoot": "/tmp/marker",
+                "mode": completion.OBSERVE, "journalRoot": str(root)}
+
+    def test_a_record_answers_for_a_hook_file_this_command_cannot_read(self):
+        """A host holding a record is not showing an absence, whatever the hook file says.
+
+        The rule was already written one branch below, for a plugin-owned host whose hook file
+        WAS read and registers nothing: a record this hook wrote proves something invoked the
+        adapter. The unreadable half of the same class had nobody asking it, so
+        not_registered stayed unsettled, blocked every rule that requires it, and the payload
+        reported cause_unreadable for an absence its own count refutes.
+        """
+        found = firing.decide({"registrationReadable": False, "adapterRegistrations": 0,
+                               "registrationReadHere": True, "unregisteredRecords": 1,
+                               "namedJournals": [], "namedSettings": []})
+        self.assertEqual(found["value"], firing.RECORDS_FOUND,
+                         "an absence cause was reported for a host whose journal holds a"
+                         " record this hook wrote")
+
+    def test_a_hook_file_nobody_could_read_is_still_unsettled_without_a_record(self):
+        """SUPPORT, not evidence. The direction the fix must not break: with no record, an
+        unreadable hook file establishes nothing and the cause stays unsettled rather than
+        becoming the terminal answer."""
+        found = firing.decide({"registrationReadable": False, "adapterRegistrations": 0,
+                               "registrationReadHere": True, "unregisteredRecords": 0,
+                               "namedJournals": [], "namedSettings": []})
+        self.assertEqual(found["value"], firing.CAUSE_UNREADABLE)
+
+    def test_one_settings_file_named_twice_is_read_once(self):
+        """Two spellings of ONE settings file are one file, and one file has one answer.
+
+        _settled removes lexical differences and deliberately does not resolve a symlink, so
+        two absolute aliases of one file missed the cache and were read separately. The
+        installer rewrites settings atomically, so a rewrite landing between those two reads
+        reported the old journalRoot in one entry and the new one in another -- about one file,
+        in one answer -- and recorded_on_another_path read that as two journals disagreeing on
+        a host that has one.
+        """
+        reads = []
+        real = completion.read_configuration
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            named = temporary / "settings.json"
+            first, second = temporary / "journal-one", temporary / "journal-two"
+            first.mkdir()
+            second.mkdir()
+            named.write_text(json.dumps(self._document(first)), encoding="utf-8")
+            alias = temporary / "an-alias-of-the-settings.json"
+            alias.symlink_to(named)
+
+            def rewritten_between_the_reads(path):
+                reads.append(str(path))
+                if len(reads) == 2:
+                    replacement = temporary / "settings.written"
+                    replacement.write_text(json.dumps(self._document(second)),
+                                           encoding="utf-8")
+                    os.replace(replacement, named)
+                return real(path)
+
+            with mock.patch.object(completion, "read_configuration",
+                                   side_effect=rewritten_between_the_reads):
+                found = completion.journals_named([
+                    {"registration": "through-its-own-name", "settings": str(named),
+                     "startable": True},
+                    {"registration": "through-an-alias", "settings": str(alias),
+                     "startable": True}])
+
+        self.assertEqual(len({entry["journalRoot"] for entry in found}), 1,
+                         "one settings file was read twice and the two readings disagreed"
+                         " about which journal it names")
+
+    def test_two_different_settings_files_keep_their_own_readings(self):
+        """SUPPORT, not evidence. The negative control for the case above: sharing a reading is
+        keyed on what the kernel says the file is, so two genuinely different files are still
+        read separately and keep their own journals."""
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            first_settings = temporary / "one.json"
+            second_settings = temporary / "two.json"
+            first, second = temporary / "journal-one", temporary / "journal-two"
+            first.mkdir()
+            second.mkdir()
+            first_settings.write_text(json.dumps(self._document(first)), encoding="utf-8")
+            second_settings.write_text(json.dumps(self._document(second)), encoding="utf-8")
+            found = completion.journals_named([
+                {"registration": "one", "settings": str(first_settings), "startable": True},
+                {"registration": "two", "settings": str(second_settings), "startable": True}])
+        self.assertEqual([entry["journalRoot"] for entry in found], [str(first), str(second)])
+
+
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition
     is well formed; none of them would have failed on the behaviour CRW-100 reports."""
