@@ -1023,14 +1023,25 @@ class TheFourthRoundFoundTheseToo(LinkageTestCase):
         self.assertIn("reopens", refusal.detail)
 
     def test_a_successor_for_another_issue_does_not_inherit_the_project(self):
-        """supersedes naming a relationship for a DIFFERENT issue pulled its project across."""
+        """supersedes naming a relationship for a DIFFERENT issue pulled its project across.
+
+        Refusing the registration outright replaces the weaker guarantee this test first
+        pinned - that the successor simply did not inherit the project. Letting it register
+        still archived the predecessor on the way past, so an unrelated live assignment was
+        discarded and a project handover could afterwards report nothing outstanding over work
+        nobody had moved. A successor replaces the assignment for its own issue.
+        """
         rid = self.scoped()
-        other = self.registry.register(
+        self.assertRefused(
+            RefusalReason.RELATIONSHIP_CONFLICT, self.registry.register,
             parent=Endpoint(PARENT, HOST, cwd="/parent"), child=Endpoint("01child-far", HOST),
             issue_key="REL-FAR", artifact_roots=[self.root], allowed_recipients=[PARENT],
             dispatch_request_id="dispatch-far", dispatch_turn_id="turn-far",
             supersedes=rid)
-        self.assertIsNone(self.linkage.attachment(other["relationshipId"]))
+        # The predecessor it tried to borrow is untouched, which is the part that mattered.
+        self.assertEqual(self.registry.get(rid)["status"], "active")
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
+        self.assertEqual(self.linkage.attachment(rid)["projectKey"], PROJECT)
 
     def test_a_downward_walk_survives_a_cyclic_store(self):
         """_reaches was bounded and _descend was not, so a corrupt or hand-edited edge set
@@ -1640,6 +1651,67 @@ class TheEleventhRoundFoundTheseToo(LinkageTestCase):
         self.assertEqual(owner["taskId"], OTHER_PARENT)
         self.assertEqual(owner["cwd"], "/replacement")
         self.assertEqual(owner["_bindings"]["cxcSession"], "cxc-replacement")
+
+
+class TheTwelfthRoundFoundTheseToo(LinkageTestCase):
+    def test_a_former_owner_can_take_a_scope_back_from_a_new_host(self):
+        """The host check ran ahead of the branch that exists to record a new host, so a
+        cross-host handback was refused on its way to the update that would have made it
+        true. Two hosts claiming a LIVE binding is still the contradiction it always was;
+        an archived one is a claim being revalidated from scratch."""
+        self.linkage.bind_scope(
+            role=linkage.PARENT, scope_key=PROJECT,
+            endpoint=Endpoint(PARENT, HOST, cwd="/old-host"))
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[],
+            evidence="handed away", actor="test")
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=OTHER_PARENT,
+            endpoint=Endpoint(PARENT, "host-two", cwd="/new-host"),
+            acknowledged=[], evidence="taken back, from a different machine", actor="test")
+        owner = self.linkage.owner(linkage.PROJECT, PROJECT)
+        self.assertEqual(owner["taskId"], PARENT)
+        self.assertEqual(owner["hostId"], "host-two")
+        self.assertEqual(owner["cwd"], "/new-host")
+        # And the live case is unchanged: the binding is held on host-two right now, so a
+        # third host asserting the same claim is still a conflict.
+        self.assertRefused(
+            RefusalReason.LINK_CONFLICT, self.linkage.bind_scope,
+            role=linkage.PARENT, scope_key=PROJECT,
+            endpoint=Endpoint(PARENT, "host-three"))
+
+    def test_restoring_a_claim_keeps_the_status_the_caller_asked_for(self):
+        """The insert branch has always honoured the status argument and the reactivate branch
+        hard-coded active, so one call disagreed with itself about what the caller asked for
+        and an equivalent paused claim came back live."""
+        first = self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint(CHILD, HOST),
+            status="archived")
+        self.assertEqual(first["status"], "archived")
+        again = self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=ISSUE, endpoint=Endpoint(CHILD, HOST),
+            status="paused")
+        self.assertEqual(again["bindingId"], first["bindingId"])
+        self.assertEqual(again["status"], "paused")
+
+    def test_the_attachment_guard_refuses_a_borrowed_predecessor_on_its_own(self):
+        """The lower-level guard relaxed for any predecessor scoped to this project, without
+        asking whether it was assigned to THIS issue, so a relationship for another issue
+        borrowed one to get past the foreign-parent refusal. It runs before the registration
+        check that now also refuses a cross-issue supersedes, so it has to hold by itself.
+        """
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.assertRefused(
+            RefusalReason.FOREIGN_SCOPE, self.registry.register,
+            parent=self.parent(OTHER_PARENT), child=Endpoint("01child-far", HOST),
+            issue_key="REL-FAR", artifact_roots=[self.root],
+            allowed_recipients=[OTHER_PARENT], dispatch_request_id="dispatch-far",
+            dispatch_turn_id="turn-far", supersedes=rid, project_key=PROJECT)
+        self.assertEqual(self.registry.get(rid)["status"], "active")
 
 if __name__ == "__main__":
     unittest.main()

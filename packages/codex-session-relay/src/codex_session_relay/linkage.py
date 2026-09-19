@@ -230,14 +230,20 @@ class Linkage:
             "SELECT * FROM scope_bindings WHERE binding_id = ?", (bid,)
         ).fetchone()
         if current is not None:
-            if current["host_id"] != endpoint.host_id:
-                return None, _Refusal(
-                    RefusalReason.LINK_CONFLICT,
-                    bid + " is already bound on another host",
-                    scope_kind=scope_kind, scope_key=scope_key,
-                    incumbent=current["task_id"], challenger=endpoint.task_id,
-                )
             if current["status"] in LIVE:
+                # Two hosts claiming one LIVE binding is the contradiction worth refusing:
+                # the scope is held right now, and the record cannot describe both machines.
+                # An ARCHIVED binding is a different question - the task has since moved, and
+                # the reactivation below revalidates the claim from scratch and writes the
+                # endpoint it is given. Refusing there made a cross-host handback unreachable
+                # while the branch that exists to record the new host sat just past it.
+                if current["host_id"] != endpoint.host_id:
+                    return None, _Refusal(
+                        RefusalReason.LINK_CONFLICT,
+                        bid + " is already bound on another host",
+                        scope_kind=scope_kind, scope_key=scope_key,
+                        incumbent=current["task_id"], challenger=endpoint.task_id,
+                    )
                 return (bid, "present", role, scope_kind, scope_key, endpoint), None
             # Reactivating is a claim on a scope somebody else may hold by now, and a task
             # that has since taken another role must not get one back this way. So an
@@ -269,7 +275,10 @@ class Linkage:
             db.execute(
                 "UPDATE scope_bindings SET status = ?, updated_at = ?, host_id = ?,"
                 "  cwd = ?, cxc_session = ? WHERE binding_id = ?",
-                (ACTIVE, at, endpoint.host_id, endpoint.cwd, endpoint.cxc_session, bid),
+                # The requested status, not ACTIVE. The insert branch has always honoured it,
+                # so restoring an equivalent paused claim quietly activated it instead - the
+                # two branches of one call disagreeing about what the caller asked for.
+                (status, at, endpoint.host_id, endpoint.cwd, endpoint.cxc_session, bid),
             )
             self.store.journal("scope_rebound", bid, {"scopeKey": scope_key}, at=at)
         return bid
@@ -709,14 +718,18 @@ class Linkage:
                 "cannot be attached to it yet",
                 scope_kind=PROJECT, scope_key=project_key, challenger=parent_task)
         # Relaxed ONLY for a genuine successor: this relationship must supersede one that was
-        # itself scoped to this project. Accepting any assignment whose issue merely has
-        # project history let an unrelated registration under a foreign parent repoint the
-        # issue edge away from the project's live owner, which is the guard's whole job.
+        # itself scoped to this project AND assigned to this same issue. Accepting any
+        # assignment whose issue merely has project history let an unrelated registration
+        # under a foreign parent repoint the issue edge away from the project's live owner,
+        # which is the guard's whole job; checking the project alone then still allowed a
+        # relationship for issue B to borrow a predecessor belonging to issue A.
         predecessor = relationship_row["supersedes"] if "supersedes" in \
             relationship_row.keys() else None
         moving_within = db.execute(
-            "SELECT 1 FROM relationship_scope WHERE relationship_id = ? AND project_key = ?",
-            (predecessor, project_key),
+            "SELECT 1 FROM relationship_scope s"
+            "  JOIN relationships r ON r.relationship_id = s.relationship_id"
+            " WHERE s.relationship_id = ? AND s.project_key = ? AND r.issue_key = ?",
+            (predecessor, project_key, issue_key),
         ).fetchone() if predecessor else None
         if holder["task_id"] != parent_task and moving_within is None:
             # The issue has never belonged to this project, so this is a foreign attachment.

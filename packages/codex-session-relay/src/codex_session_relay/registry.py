@@ -238,6 +238,27 @@ class Registry:
             # Re-decided inside THIS transaction rather than carried in: the pre-check ran in
             # its own, and between them the predecessor can have been cancelled and its issue
             # claimed directly.
+            if supersedes:
+                # A successor replaces the assignment for its OWN issue. Naming one that
+                # belongs to a different issue archived that unrelated live assignment on its
+                # way past and attached this issue under the prospective parent, so a project
+                # handover could then report nothing outstanding over work nobody had moved.
+                named = db.execute(
+                    "SELECT issue_key FROM relationships WHERE relationship_id = ?",
+                    (supersedes,),
+                ).fetchone()
+                if named is None:
+                    raise RegistrationError(
+                        RefusalReason.UNREGISTERED_RELATIONSHIP,
+                        f"supersedes names {supersedes!r}, which is not registered",
+                    )
+                if named["issue_key"] != issue_key:
+                    raise RegistrationError(
+                        RefusalReason.RELATIONSHIP_CONFLICT,
+                        f"supersedes names {supersedes!r}, which is assigned to issue "
+                        f"{named['issue_key']!r}, not {issue_key!r}; a successor replaces the "
+                        "assignment for its own issue",
+                    )
             outgoing = self.linkage.replaceable_child_in(db, supersedes)
             # One issue, one responsible child, decided in the SAME transaction as the insert.
             # Checked beforehand, two connections could both see no rival and then insert
