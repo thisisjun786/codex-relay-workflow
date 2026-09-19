@@ -1056,11 +1056,13 @@ def process_started_at(pid):
     try:
         with open("/proc/" + str(int(pid)) + "/stat", encoding="utf-8") as handle:
             after = handle.read().rsplit(")", 1)[1].split()
-        with open("/proc/stat", encoding="utf-8") as handle:
-            boot = next(int(line.split()[1]) for line in handle
-                        if line.startswith("btime "))
+        # The boot epoch to the same precision as the ticks it is added to. /proc/stat's btime is
+        # a whole second, so adding precise ticks to it moves the fraction the second dropped
+        # into the process's age: a supervisor could satisfy a sub-second minimum up to a second
+        # early. CLOCK_BOOTTIME carries the fraction, so the two halves agree.
+        boot = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
         return boot + int(after[19]) / os.sysconf("SC_CLK_TCK")
-    except (OSError, TypeError, ValueError, IndexError, StopIteration):
+    except (OSError, TypeError, ValueError, IndexError, AttributeError):
         return None
 
 
@@ -1474,6 +1476,18 @@ def reading_store(record, relay):
                                   + str(shown(reach)) + ". A store comparison is decided on the"
                                   " database and says nothing about the socket the delivery will"
                                   " use")))
+
+    # OPS-3.5: write access is required for every relay command, not only the ones that reach the
+    # App Server, because each opens the store on construction. A participant without it cannot
+    # run its leg of the trial at all, however well its store identity agrees.
+    writable = field(payload, "actorReachability", "stateDirectoryWritable")
+    cells.append(graded("stateWritable", writable, writable is True, probe=probe,
+                        provenance=EXECUTED,
+                        unreadable="doctor did not report whether the state directory is writable",
+                        evidence=("the acting process can write the state directory: "
+                                  + str(shown(writable)) + ". Every relay command opens the store"
+                                  " on construction, so a reader that cannot write it cannot run"
+                                  " one")))
     if not isinstance(configured, bool):
         # Whether the ledger sits beside the store is only answerable once doctor says a ledger
         # is configured at all. A payload carrying split without configured graded as placed,
@@ -1527,9 +1541,14 @@ def reading_store(record, relay):
         agrees = (same(field(peer, "store", "storeId"), store.get("storeId"))
                   and same(field(peer, "store", "device"), store.get("device"))
                   and same(field(peer, "store", "inode"), store.get("inode")))
+        # The same OPS-3.5 requirement, per peer: a participant that cannot write the state
+        # directory cannot run even a read-only-looking relay command, so proving it holds the
+        # same store says nothing about whether it can use it.
+        peer_writable = field(peer, "actorReachability", "stateDirectoryWritable")
         # Every field the verdict reads, not only the verdict: a doctor payload naming a store
         # and no device never said which inode it was, and a disagreement would say it did.
         answered = MISSING if (peer_same is MISSING or asked is MISSING
+                               or peer_writable is MISSING
                                or field(peer, "store", "storeId") is MISSING
                                or field(peer, "store", "device") is MISSING
                                or field(peer, "store", "inode") is MISSING) else peer_same
@@ -1541,14 +1560,18 @@ def reading_store(record, relay):
                       and json.dumps(t["payload"], sort_keys=True)
                       == json.dumps(peer, sort_keys=True))(capture(record, "peerDoctor", other)[0])]
         cells.append(graded("peer:" + name, answered,
-                            peer_same == "proven" and agrees and nonce_agrees,
+                            peer_same == "proven" and agrees and nonce_agrees
+                            and peer_writable is True,
                             provenance=CAPTURED, measured_at=found["capturedAt"],
                             unreadable="this peer's doctor payload carries no same-store verdict"
-                                       " and the challenge it was asked about",
+                                       " and the challenge it was asked about, or does not say"
+                                       " whether it can write the state directory",
                             evidence=("this peer reports " + str(shown(peer_same)) + " and its own"
                                       " store identity "
                                       + ("agrees with" if agrees else "disagrees with")
                                       + " the record, for challenge " + str(shown(asked))
+                                      + ", and its state directory is writable: "
+                                      + str(shown(peer_writable))
                                       + ". A verdict speaks only for the nonce it was given"
                                       + (", and this payload is identical to " + ", ".join(alike)
                                          + ", which doctor cannot tell apart because it does not"

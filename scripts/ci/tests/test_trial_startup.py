@@ -270,7 +270,7 @@ class World:
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
                           "createdAt": "2020-01-01T00:00:00Z"},
                 "ledger": {"configured": True, "split": False},
-                "actorReachability": {"socketConnect": "ok"},
+                "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
                 "nonce": {"nonce": self.NONCE, "found": True, "readable": True},
             }},
             "service status": {"payload": {
@@ -341,6 +341,9 @@ class World:
         for task in (self.PARENT_A, self.CHILD_A, self.PARENT_B, self.CHILD_B):
             self.captures["doctor-" + task + ".json"] = {
                 "sameStore": "proven",
+                # OPS-3.5: every relay command opens the store, so a peer that cannot write the
+                # state directory cannot run one. A real peer's doctor reports both.
+                "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE},
                 "nonce": {"nonce": self.NONCE, "found": True, "readable": True,
                           "device": self.DEVICE, "inode": self.INODE},
@@ -720,6 +723,7 @@ class StoreIdentity(TrialCase):
     def test_a_peer_reporting_proven_about_another_store_fails(self):
         self.world.captures["doctor-" + World.CHILD_A + ".json"] = {
             "sameStore": "proven",
+            "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
             "store": {"storeId": "another-store", "device": 1, "inode": 2},
             "nonce": {"nonce": World.NONCE, "found": True, "readable": True}}
         self.world.flush()
@@ -1108,7 +1112,7 @@ class PayloadContract(TrialCase):
         ("cli.py", "cmd_criteria_show"): ("setDigest", "sourceRef", "criteria"),
         ("cli.py", "cmd_settings_show"): ("task", "usable", "missing", "settings"),
         ("cli.py", "cmd_doctor"): ("ledger", "nonce", "actorReachability"),
-        ("cli.py", "_reachability"): ("socketConnect",),
+        ("cli.py", "_reachability"): ("socketConnect", "stateDirectoryWritable"),
         ("cli.py", "_ledger_location"): ("configured", "split"),
         ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode"),
         ("store.py", "compare_store"): ("sameStore",),
@@ -3566,6 +3570,67 @@ class ThirtySeventhHostedRound(TrialCase):
     def test_an_unreadable_process_is_unknown_rather_than_a_time(self):
         self.assertIsNone(startup.process_started_at(0))
         self.assertIsNone(startup.process_started_at("not a pid"))
+
+
+class ThirtyEighthHostedRound(TrialCase):
+    """Write access per participant, and a boot epoch carried to the precision it is added to."""
+
+    def test_a_peer_that_cannot_write_the_state_directory_refuses_the_start(self):
+        # OPS-3.5: every relay command opens the store on construction, so a participant without
+        # write access cannot run even a read-only-looking one. Proving it holds the same store
+        # says nothing about whether it can use it.
+        capture = self.world.captures["doctor-" + World.CHILD_A + ".json"]
+        capture["actorReachability"]["stateDirectoryWritable"] = False
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a participant that cannot run a relay command was dispatched to")
+        cell = cells_of(document, "storeIdentity")["peer:" + World.CHILD_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("writable", cell["evidence"])
+
+    def test_the_acting_process_needs_write_access_too(self):
+        self.world.payloads["doctor"]["payload"]["actorReachability"][
+            "stateDirectoryWritable"] = False
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"])
+        self.assertEqual(cells_of(document, "storeIdentity")["stateWritable"]["value"],
+                         NOT_VERIFIED)
+
+    def test_a_peer_that_does_not_say_is_unknown_rather_than_writable(self):
+        capture = self.world.captures["doctor-" + World.CHILD_A + ".json"]
+        capture["actorReachability"].pop("stateDirectoryWritable")
+        self.world.flush()
+        cell = cells_of(self.world.preflight(), "storeIdentity")["peer:" + World.CHILD_A]
+        self.assertEqual(cell["value"], UNKNOWN)
+        self.assertFalse(cell["met"])
+
+    def test_the_relay_is_what_reports_write_access(self):
+        # Support, and the reason the key is this one: doctor's own reachability payload.
+        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
+                  / "cli.py").read_text(encoding="utf-8")
+        self.assertIn('"stateDirectoryWritable": access["directoryWritable"]', source)
+
+    def test_a_process_is_not_older_than_it_is_by_the_boot_seconds_fraction(self):
+        # /proc/stat's btime is a whole second, so adding precise ticks to it moves the dropped
+        # fraction into the age. A sub-second minimum could then be met early. The reconstructed
+        # start must not sit before the moment the child was actually created.
+        before = time.time()
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.terminate)
+        time.sleep(0.4)
+        started = startup.process_started_at(child.pid)
+        self.assertIsNotNone(started)
+        # A tight bound on purpose: the fraction btime drops is whatever this host booted at,
+        # 0.04s here and up to a second elsewhere, so a loose margin would pass on the hosts
+        # where the error happens to be small and prove nothing.
+        self.assertGreaterEqual(started, before - 0.01,
+                                "the process was reconstructed as starting before it existed")
+        self.assertLessEqual(started, time.time())
 
 
 if __name__ == "__main__":                                           # pragma: no cover
