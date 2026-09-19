@@ -69,6 +69,14 @@ costs a window in which the old registration runs against settings that are no l
 it answers by releasing in silence, and costs no window in which two adapters run, because the
 plugin-owned settings are not installed until step 3.
 
+A settings path a registration names and that is not on disk when the run reads the host is kept as
+a watched path rather than dropped, because a supported installer can create it inside that same
+window. The standdown holds the lock on every watched path while it asks whether anything arrived
+there, and refuses the removal if something did: a document written back after the retire is one
+the plugin install will not overwrite, and removing the registration in front of it would leave no
+completion hook at all. The retire carries those paths on every answer it gives, including the ones
+where it found nothing to archive and where every document it did find already names the plugin.
+
 Every step decides from the host as it stands at that step, not from the snapshot the run opened
 with. The bridge surface is re-read inside the ownership lock, the hook file is re-read and its
 registrations re-proved inside the hook lock, the bridge table's span and its proof are re-derived
@@ -158,6 +166,14 @@ What is compared, and why each part is there:
 - the whole set, counted: a document declaring our launcher twice fires two adapters on every Stop,
   and an `mcp.json` carrying the expected entry plus another name starting the same launcher loads
   two bridges. Addition defeats a one-owner handoff as surely as substitution does;
+- both event maps rather than the events this checkout declares, because a cached document can keep
+  the expected `Stop` entry and add another event running the same adapter, and a walk of our own
+  events never asks about an event only the cache has. The adapter and its guard would then run on
+  turns this repository never declared a hook for;
+- every field of a server entry beyond the command and its arguments, serialised rather than
+  enumerated, because `required` moving from false to true turns a bridge that may fail to start
+  into one whose failure ends the session, and `cwd` decides what the relative launcher path in
+  `args` resolves against. Enumerating the fields that matter today would miss the next one;
 - a declaration whose shape cannot be read is counted as exactly that rather than skipped, because
   a skipped declaration is one Codex still runs and this comparison cannot see.
 
