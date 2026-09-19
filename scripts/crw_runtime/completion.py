@@ -1557,6 +1557,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         relay = _cell(NOT_READ, "no usable configuration names a runtime")
         offers = _cell(NOT_READ, "no usable configuration names a runtime")
         marker = _cell(NOT_READ, "no usable configuration names a marker root")
+        adapter = _cell(NOT_READ, "no usable configuration names an adapter")
         # Asked separately from the cell below, because settings that could not be read and
         # settings that deliberately configure no journal are different answers. Reporting the
         # first as an empty journal would say this hook has recorded nothing, when what
@@ -1569,6 +1570,17 @@ def status(codex_home=None, environ=None, event=EVENT):
                          isolationAssertedBy=config.get("isolationAssertedBy"))
         executable = Path(config["relayExecutable"])
         relay = presence(executable, "the configured runtime")
+        # The launcher a plugin-owned registration runs has to release the turn in silence
+        # when this file is gone, because a hook that reports its own faults to the host costs
+        # turns. Silence is right there and wrong here, so the question is asked once, out of
+        # band, where an operator can see it: the entry point lives in a checkout this command
+        # does not own, and a checkout that moved or was deleted leaves a registration that
+        # still looks correct and a Stop that is never judged.
+        adapter = (presence(config["adapterEntryPoint"], "the recorded adapter entry point")
+                   if config.get("adapterEntryPoint")
+                   else _cell(NOT_READ, "these settings record no adapter entry point, which is"
+                                        " the " + OWNER_USER + " owner's shape: its registered"
+                                        " command line carries the adapter instead"))
         offers = (_offers_guard(executable, config.get("timeoutSeconds")
                                 or DEFAULT_TIMEOUT_SECONDS)
                   if relay["value"] == reading.PRESENT
@@ -1593,6 +1605,7 @@ def status(codex_home=None, environ=None, event=EVENT):
             if config else
             _cell(NOT_READ, "the settings were not read, so the owner was not established")),
         "registration": registration,
+        "adapterEntryPoint": adapter,
         "registeredCommandTarget": target,
         "registeredInterpreter": interpreter,
         "hostTrust": _cell(NOT_READ, "whether the host loads and trusts these identities is"

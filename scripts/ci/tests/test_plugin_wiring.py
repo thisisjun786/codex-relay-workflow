@@ -264,7 +264,7 @@ class BridgeRecordTest(unittest.TestCase):
         self.assertNotEqual(status, 0, output)
         self.assertFalse(self.record.exists(), "a refused run writes nothing: " + output)
         if TOML_READER:
-            self.assertIn("already registers", emitted["detail"], output)
+            self.assertIn("already starts this bridge", emitted["detail"], output)
         else:
             # Without the reader the question was not answered, and an unanswered question
             # refuses rather than defaulting. That is the same guarantee, stated as itself.
@@ -302,6 +302,44 @@ class BridgeRecordTest(unittest.TestCase):
         self.assertNotEqual(status, 0, output)
         self.assertIn("alias", emitted["detail"], output)
         self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "reading the configuration needs Python 3.11")
+    def test_a_legacy_alias_is_found_by_what_it_starts(self):
+        """A registration made before the record existed carries no owner anywhere.
+
+        The configuration is its only evidence and --name chose the table it sits under, so
+        checking the declared name alone looks straight past it and the plugin record is
+        written beside a bridge that is already registered.
+        """
+        self.configuration().write_text(
+            "[mcp_servers.team-bridge]\ncommand = " + json.dumps(str(self.bridge))
+            + "\nargs = []\n", encoding="utf-8")
+        before = self.configuration().read_bytes()
+        status, emitted, output = self.register("--owner", "plugin", "--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertIn("team-bridge", emitted["detail"], output)
+        self.assertFalse(self.record.exists(), "a refused run writes nothing: " + output)
+        self.assertEqual(self.configuration().read_bytes(), before, output)
+
+    @unittest.skipUnless(TOML_READER, "reading the configuration needs Python 3.11")
+    def test_a_legacy_alias_under_another_destination_is_found_too(self):
+        """Two destinations are still two bridges, so the console script name is enough."""
+        self.configuration().write_text(
+            "[mcp_servers.team-bridge]\n"
+            "command = \"/somewhere/else/current/bin/codex-thread-bridge\"\nargs = []\n",
+            encoding="utf-8")
+        status, emitted, output = self.register("--owner", "plugin", "--apply")
+        self.assertNotEqual(status, 0, output)
+        self.assertFalse(self.record.exists(), output)
+
+    @unittest.skipUnless(TOML_READER, "reading the configuration needs Python 3.11")
+    def test_an_unrelated_server_does_not_block_the_plugin_owner(self):
+        """The positive control: this must recognise a bridge, not every registration."""
+        self.configuration().write_text(
+            "[mcp_servers.unrelated]\ncommand = \"/bin/true\"\nargs = []\n", encoding="utf-8")
+        status, emitted, output = self.register("--owner", "plugin", "--apply")
+        self.assertEqual(status, 0, output)
+        self.assertTrue(self.record.exists(), output)
 
     # ------------------------------------------------------------ the record decides first
 

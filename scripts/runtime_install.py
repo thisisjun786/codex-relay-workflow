@@ -3949,6 +3949,21 @@ def cmd_measure(args):
 
 # ------------------------------------------------------------------------- register-mcp
 
+def _starts_this_bridge(command, executable):
+    """Whether a registration starts the bridge, whatever table name it was given.
+
+    --name is the operator's to choose, so a registration made before the ownership record
+    existed can sit under any name at all and carries no owner anywhere. Its table name
+    therefore answers nothing, and the command it starts answers everything: the exact path
+    this run was handed, or any path whose final component is the bridge's own console script.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return False
+    if executable and command == str(executable):
+        return True
+    return Path(command).name == BRIDGE
+
+
 def _mcp_ownership(record_path, owner, configuration, name, wanted):
     """Why this owner may not register the bridge, given what this host already holds.
 
@@ -4010,6 +4025,21 @@ def _mcp_ownership(record_path, owner, configuration, name, wanted):
     if not view.readable:
         return ("the Codex configuration could not be read, so whether this server is already"
                 " registered was not established")
+    aliased = sorted(table for table, entry in view.servers.items()
+                     if _starts_this_bridge(entry.get("command"),
+                                            (wanted or {}).get("bridgeExecutable")))
+    if aliased:
+        # Found by what it starts rather than by what it is called. A host that registered
+        # this bridge before the ownership record existed has the configuration as its only
+        # evidence, and checking one name would look straight past a registration sitting
+        # under any other.
+        return ("the Codex configuration already starts this bridge as "
+                + ", ".join(repr(table) for table in aliased) + ", which is a "
+                + bridgerecord.OWNER_USER + "-owned registration carrying no ownership record;"
+                " a plugin declaration beside it would run a second bridge. It is recognised by"
+                " the command it starts, because --name is free to choose the table it sits"
+                " under. Remove that entry, or migrate it with --owner " + bridgerecord.OWNER_USER
+                + " first")
     if name in view.servers:
         return ("the Codex configuration already registers " + repr(name) + ", which is the "
                 + bridgerecord.OWNER_USER + "-owned registration; a plugin declaration beside"
