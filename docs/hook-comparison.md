@@ -163,6 +163,17 @@ subprocess started.
 | `unexpectedExecutions` | a process that starts the expected interpreter and then becomes something else. Any later `execve` by the root process is unexpected even at the same image |
 | `writesOutsideRoot` | a write to a path the run never named |
 
+A write is recorded by the call that made it, and what that call DID is a third reading beside it,
+because two answers were wrong in both directions in turn. `changedTheFile` says `changed` for
+`O_TRUNC`, `O_TMPFILE`, `O_CREAT` with `O_EXCL` and for every call that changes a path outright;
+`only_able_to_change` for a writable open carrying none of them; and `may_have_changed` for a plain
+`O_CREAT`, which created the file if it was absent and changed nothing if it was there. One trace line
+cannot tell those apart - the two `openat` lines are identical down to the flags, the mode and the
+returned descriptor - so it reports that it does not know rather than picking. The path stays in the
+writes either way: the cell that judges asks where the process wrote, not how certain anyone is.
+Each path reported outside the root carries its own answer, and `changedAFile` and
+`mayHaveChangedAFile` count the two determined and undetermined kinds separately.
+
 The two path readings compare the **raw strings the kernel recorded** against `sys.executable` and this
 checkout's entry point. They are not resolved first, and that is deliberate: a resolution taken after the
 run answers about the filesystem as it is afterwards, so a symlink standing where the entry point belongs,

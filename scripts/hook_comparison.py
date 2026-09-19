@@ -1176,8 +1176,9 @@ OPEN_FLAGS = {"open": 1, "openat": 2, "openat2": 2}
 # file at open time would miss every write into a file that already existed outside the root,
 # which is a false clean bill. Counting the capability reports a write that may not have
 # happened, which is a false alarm somebody can explain. Only one of those two errors is the
-# kind this file exists to refuse. Which one an entry is sits beside it as changedTheFile, so
-# the difference is data rather than a silence.
+# kind this file exists to refuse. What an entry actually was sits beside it as
+# changedTheFile, which answers three ways and not two, so the difference is data rather
+# than a silence and the undetermined case is neither of the determined ones.
 WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND", "O_TMPFILE")
 
 # What an open DID, which is three answers and not two. Calling it a boolean was wrong in both
