@@ -1562,6 +1562,24 @@ def _startable_from(halves):
     return None
 
 
+def _script_cell(named, label):
+    """A script some program has to READ to run, probed for what that requires.
+
+    Presence is not the question here either, one step down from the interpreter: the
+    interpreter opens this file, and a regular file it cannot open is a file it cannot run. A
+    target with no read permission answered PRESENT and the registration read as startable,
+    while every Stop died before the adapter's first line.
+
+    Readability is the whole of what is establishable about a script from here -- it is not a
+    program this command can ask anything of -- so the cell claims that and no more.
+    """
+    probe = presence(named, label)
+    if probe["value"] == reading.PRESENT and not os.access(str(named), os.R_OK):
+        return _cell(reading.UNREADABLE, label + " cannot be read, so the interpreter"
+                     " registered to run it cannot open it", path=str(named))
+    return probe
+
+
 def _python_said(said):
     """The version a Python reported, as a pair, or None when that is not what it said.
 
@@ -2214,7 +2232,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         for entry in firm:
             key = resource_key(entry["target"])
             if key not in by_target:
-                by_target[key] = presence(entry["target"], "the adapter script")
+                by_target[key] = _script_cell(entry["target"], "the adapter script")
         adapter_probes = {entry["identity"]: by_target[resource_key(entry["target"])]
                           for entry in firm}
         probes = [adapter_probes[entry["identity"]] for entry in firm]
@@ -2315,7 +2333,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # band, where an operator can see it: the entry point lives in a checkout this command
         # does not own, and a checkout that moved or was deleted leaves a registration that
         # still looks correct and a Stop that is never judged.
-        adapter = (presence(config["adapterEntryPoint"], "the recorded adapter entry point")
+        adapter = (_script_cell(config["adapterEntryPoint"], "the recorded adapter entry point")
                    if config.get("adapterEntryPoint")
                    else _cell(NOT_READ, "these settings record no adapter entry point, which is"
                                         " the " + OWNER_USER + " owner's shape: its registered"
@@ -2425,7 +2443,7 @@ def status(codex_home=None, environ=None, event=EVENT):
         # half that cannot start establishes it whatever the other says.
         if probed == NOT_READ:
             probed = _stated_path_cell(recorded_launcher.get("adapterEntryPoint"),
-                                       "the recorded adapter entry point", presence)
+                                       "the recorded adapter entry point", _script_cell)
         if probed_interpreter == NOT_READ:
             probed_interpreter = _stated_path_cell(
                 recorded_launcher.get("adapterInterpreter"),

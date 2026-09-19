@@ -3986,6 +3986,38 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          "a program that echoed the question back was read as having answered"
                          " it, so a registration that cannot run read as startable")
 
+    def test_an_adapter_script_that_cannot_be_read_is_not_startable(self):
+        """One step down from the interpreter, and the same sentence.
+
+        The interpreter OPENS this file to run it, so a regular file it cannot open is a file
+        it cannot run. Presence answered PRESENT for a target with no read permission and the
+        registration read as startable, while every Stop died before the adapter's first line.
+        Readability is the whole of what is establishable about a script from here, and it is
+        now established rather than assumed.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            # Same basename, because the registration is recognised by the adapter it names.
+            unreadable = Path(temporary) / "unreadable"
+            unreadable.mkdir()
+            target = unreadable / ENTRY_POINT.name
+            target.write_text("", encoding="utf-8")
+            target.chmod(0)
+            hook_file = Path(temporary) / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(str(ENTRY_POINT), str(target), 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            try:
+                cell = why_no_record(temporary)
+            finally:
+                target.chmod(0o644)
+        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                         firing.ESTABLISHED,
+                         "an adapter script the interpreter cannot open was read as startable"
+                         " because a regular file exists at its path")
+
     def test_a_python_below_the_floor_is_not_a_startable_interpreter(self):
         """Being a Python is not the whole question, and the installer already knew that.
 
