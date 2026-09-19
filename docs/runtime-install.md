@@ -600,7 +600,13 @@ So `install` has three exit statuses rather than two:
 | --- | --- | --- | --- |
 | `0` | in service | written | the update finished |
 | `3` | in service | not written | the host reaches this runtime; only the bookkeeping is missing |
-| `1` | untouched | unchanged | the previous runtime is selected and reachable |
+| `1` | untouched by this run | not written | this run replaced nothing and recorded nothing; whatever the host selected and reached before it, it still does |
+
+Exit 1 says what this run did, not that the host is consistent. A resume refuses with it when
+the owned pointer is unreadable or names something this record does not account for, and in
+that case a previous run had already committed the new selection before it died -- so the
+record names the new environment while the pointer still names the old one. The run changed
+nothing; the disagreement it found was already there, and the result names it.
 
 **Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of
 what it means everywhere else in this command: the candidate was promoted, it is selected, the

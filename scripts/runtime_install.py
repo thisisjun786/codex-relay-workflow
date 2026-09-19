@@ -2993,9 +2993,10 @@ def cmd_install(args):
             "promoted": True,
             # What a consumer must not destroy, reported under the same name the resume exit
             # uses. 'promoted' says this run replaced a runtime; this says the record selects
-            # this environment and the owned pointer names it, which is the fact that makes
-            # releasing the destination wrong. Both promoted statuses carry it.
-            "inService": True,
+            # this environment and the owned pointer names it, read after the promotion rather
+            # than asserted -- a competing install can supersede this one between the lock
+            # releasing and this emit, and a constant here would deny it.
+            "inService": settled["inService"],
             # Two answers, never one. 'promoted' is the replacement -- the selection is
             # committed and the pointer resolves into this environment -- and 'claimSettled' is
             # the record of it. They are written at different moments and they can differ, and a
@@ -3121,6 +3122,7 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
     """
     path = staging.claim_path(environment)
     contended = False
+    raised = None
     try:
         staging.write_claim(environment, state, issue=issue, run=run)
     except hostrecord.Busy as error:
@@ -3128,12 +3130,6 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
         raised = type(error).__name__ + ": " + error.__str__()
     except OSError as error:
         raised = type(error).__name__ + ": " + error.__str__()
-    else:
-        # No reading was made here, and none is reported. A cell carrying a reading its own
-        # question never produced is the habit the rest of this module is written against.
-        return {"path": str(path), "settled": True, "released": True, "wanted": state,
-                "detail": None, "readBack": None, "residualPaths": [],
-                "recoveryRequires": None}
 
     # Still read back, contended or not. The run this one lost the lock to may be the run that
     # finished this very promotion, and a claim it already settled is settled.
@@ -3199,6 +3195,13 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
         snapshot_detail = None
 
     absent = current is not None and current.state == reading.ABSENT
+
+    # Whether this environment is the one a host reaches, DECIDED by the snapshot rather than
+    # asserted. Both promoted exits report it and a consumer keys "do not release this" on it,
+    # so writing True without reading would be the habit this whole function exists to remove.
+    # A promotion another run superseded between the lock releasing and this line is exactly
+    # the case that makes it false, and a snapshot nobody could take makes it unknown.
+    in_service = None if (selected is None or names is None) else bool(selected and names)
 
     # Ordered as staging.decide() orders it, because that is whose behaviour this describes:
     # an unreadable claim is answered before the state is consulted at all, and only then does
@@ -3297,10 +3300,12 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
         " Nothing has to be done about it by hand in any case -- the next claim write at this"
         " path waits on it and clears it once it is older than "
         + str(hostrecord.STALE_LOCK_SECONDS) + " seconds.")
-    return {"path": str(path), "settled": settled, "released": False, "wanted": state,
+    return {"path": str(path), "settled": settled, "released": raised is None, "wanted": state,
             "detail": raised,
             "readBack": {"state": left.state, "saying": says, "detail": left.detail},
             "residualPaths": residual,
+            # What a consumer must not destroy, from the snapshot above and never a constant.
+            "inService": in_service,
             # The snapshot the advice was derived from, reported as its own cell so a reader
             # can see WHICH reading produced it. It is a snapshot and not a guarantee: nothing
             # holds the promotion lock until somebody acts on this.
@@ -3443,11 +3448,11 @@ def _finish_promotion(record_path, data, environment, pointer_path, standing, *,
               # What a consumer must not destroy, and it is not 'promoted'. This function
               # serves two decisions: RESUME finishes a promotion, and RECORDED adopts
               # bookkeeping for an installation this run replaced NOTHING to obtain -- so
-              # 'promoted' is the caller's to state and travels in 'reported'. What is true on
-              # both paths, and is what the non-zero exit needs a reader to know, is that the
-              # record selects this environment and the owned pointer now names it: both were
-              # established above before anything was written.
-              inService=True,
+              # 'promoted' is the caller's to state and travels in 'reported'. This is the
+              # other question, and it is read rather than asserted: the snapshot taken after
+              # the claim write says whether the record still selects this environment and the
+              # owned pointer still names it.
+              inService=settled["inService"],
               pointer={"path": str(pointer_path), "previousTarget": before.get("target"),
                        "target": str(environment)},
               claimSettled=settled["settled"], claim=settled,

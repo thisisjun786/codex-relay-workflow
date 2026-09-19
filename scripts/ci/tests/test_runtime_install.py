@@ -6505,6 +6505,27 @@ class SettledRecordTests(unittest.TestCase):
         self.assertTrue(claim.get("recoveryRequires"),
                         "with what to do instead: wait for the run that holds it")
 
+    def test_in_service_is_read_after_the_promotion_and_not_asserted(self):
+        """A consumer keys "do not release this destination" on it, so it cannot be a constant.
+
+        A competing install can promote its own environment between this run releasing the
+        promotion lock and the result being emitted. Hard-coded true, the result then tells a
+        wrapper that a superseded environment is the one the host reaches.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            superseded = UpdateRecoveryTests()._run(
+                _Host(temporary),
+                breaking="settle the staging claim after the selection moves on")[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            ours = UpdateRecoveryTests()._run(
+                _Host(temporary), breaking="settle the staging claim")[1]
+
+        self.assertIs(ours.get("inService"), True,
+                      "this environment is selected and the pointer names it")
+        self.assertIs(superseded.get("inService"), False,
+                      "and one a later promotion superseded is not, whatever this run did: "
+                      + json.dumps(superseded.get("claim") or {})[:400])
+
     def test_a_pointer_that_does_not_agree_is_not_a_bookkeeping_only_retry(self):
         """The selection alone does not make a rerun bookkeeping.
 
