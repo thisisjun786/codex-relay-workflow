@@ -2125,11 +2125,114 @@ RESOLVES_LIKE_PYTHON = {
          ("def helper(open):",
           "    return open(HERE).read()",
           "",
+         "def consumer():",
+         "    return helper()"),
+        "consumer", False,
+        "deciding once per module that open is the builtin misses the scope that binds it"
+        " itself, and what a caller's open answers with is not this module's source."),
+    "a name an inner parameter binds under an enclosing global":
+        (REFUSAL,
+         ("def outer():",
+          "    global CHANGED",
+          "    CHANGED = reading.UNREADABLE",
+          "    def consumer(CHANGED):",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", False,
+         "the global declaration belongs to outer, and a parameter of the function inside it"
+         " binds the name again. Reading the outermost declaration first hands the inner scope"
+         " a constant its own signature has already taken."),
+    "a name only the enclosing global binds":
+        (REFUSAL,
+         ("def outer():",
+          "    global CHANGED",
+          "    CHANGED = reading.UNREADABLE",
+          "    def consumer():",
+          "        return CHANGED",
+          "    return consumer"),
+         "outer.consumer", True,
+         "its pair: with nothing inner binding the name, the closure really does read what the"
+         " declaration made the module's, so resolving innermost-first must not have stopped the"
+         " lookup from reaching outward at all."),
+    "a constructor qualified by a class written here":
+        (REFUSAL,
+         ("class Outer:",
+          "    class Holder:",
+          "        unread = reading.UNREADABLE",
+          "",
+          "def consumer():",
+          "    holder = Outer.Holder()",
+          "    return holder.unread"),
+         "consumer", True,
+         "the instance side of the qualified owner the attribute side already resolved. Reduced"
+         " to its terminal name the call looks up a key the class table does not have, and the"
+         " name it binds stops answering to the class it was built from."),
+    "the opener imported under another name":
+        (TEXT,
+         ("from builtins import open as fopen",
+          "",
+          "def helper():",
+          "    stream = fopen(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "open is a name and an import can rebind it. Matching the word rather than the object"
+         " leaves the call unrecognised, so the handle is never derived and the helper stops"
+         " counting as one that hands its caller source text."),
+    "the opener reached through a module that holds it":
+        (TEXT,
+         ("import io",
+          "",
+          "def helper():",
+          "    return io.open(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "io.open IS builtins.open, one function under a second name. Requiring the qualifier to"
+         " be a handle is right for a file object's own open method and wrong for the module"
+         " that simply holds the builtin."),
+    "a module-level name bound to the opener":
+        (TEXT,
+         ("fopen = open",
+          "",
+          "def helper():",
+          "    return fopen(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the same rebinding written as an assignment rather than as an import. A derivation"
+         " that follows one and not the other sees the file opened in one module and misses it"
+         " in the module beside it."),
+    "an opener name imported from a module whose open is a different function":
+        (TEXT,
+         ("from os import open as fopen",
+          "",
+          "def helper():",
+          "    return fopen(HERE).read()",
+          "",
           "def consumer():",
           "    return helper()"),
          "consumer", False,
-         "deciding once per module that open is the builtin misses the scope that binds it"
-         " itself, and what a caller's open answers with is not this module's source."),
+         "the pair the alias fix must not break: os.open answers with a descriptor and has no"
+         " read of its own, so Python reaches no source text here either. The owner is asked"
+         " whether what it exports IS the builtin, rather than whether it is spelled open."),
+    "an open reached through a module that holds a different one":
+        (TEXT,
+         ("import os",
+          "",
+          "def helper():",
+          "    return os.open(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", False,
+         "its qualified pair. Accepting any module attribute spelled open would make the"
+         " descriptor call a source read, which is the direct-import case over again on the"
+         " qualified side."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3084,22 +3187,29 @@ def _class_named(by_spelling, spelled_as, scope):
     return by_spelling.get(MODULE_LEVEL, {}).get(spelled_as, spelled_as)
 
 
-def _base_key(by_spelling, known_keys, alias_of, spelled_as, scope):
+def _base_key(by_spelling, known_keys, alias_of, spelled_as, scope, terminal=True):
     """The scoped class key a base expression names, qualified spellings included.
 
     Second.Base is that class and not whichever Base is found first: stripping the owner sends
     the line to a different class of the same terminal name, and the inheritance below it with
     that.
+
+    Whether an unresolved qualified spelling may fall back to its terminal name is the caller's
+    to say. A base written Second.Base is still a base when Second is not read here, but
+    innocent.Holder() builds that module's Holder, and answering with the Holder written beside
+    it would hand the call a class it never names.
     """
     if spelled_as in known_keys:
         return spelled_as
     parts = [part for part in (spelled_as or "").split(".") if part]
     if not parts:
-        return spelled_as
+        return spelled_as if terminal else None
     key = _class_named(by_spelling, _base_named(alias_of, parts[0], scope), scope)
     for part in parts[1:]:
         key = key + "." + part
-    return key if key in known_keys else parts[-1]
+    if key in known_keys:
+        return key
+    return parts[-1] if terminal else None
 
 
 def _class_spellings(tree, places):
@@ -3189,7 +3299,12 @@ def _instance_classes(tree):
                     # whatever its last part is spelled.
                     builds = (_class_named(by_spelling,
                                            _base_named(alias_of, value.func.id, scope), scope)
-                              if isinstance(value.func, ast.Name) else None)
+                              if isinstance(value.func, ast.Name)
+                              # Outer.Holder() is a class written here; innocent.Holder() is
+                              # not, and only the key decides which.
+                              else _base_key(by_spelling, classes, alias_of,
+                                             _dotted(value.func) or "", scope,
+                                             terminal=False))
                 else:
                     builds = held_in(made, scope, _dotted(value) or "")
                 bound = _dotted(target)
@@ -3262,7 +3377,10 @@ def _shadowing_names(tree):
             if id(node) in in_a_class_body:
                 continue
             for named in _binds_locally(node):
-                taken.setdefault(where, set()).add(named)
+                # A scope that declares the name global does not bind it locally: the
+                # assignment under that declaration is the module's.
+                if named not in said_global.get(where, ()):
+                    taken.setdefault(where, set()).add(named)
     shadowed = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Name):
@@ -3273,17 +3391,17 @@ def _shadowing_names(tree):
         # Every scope from the module's children down to this one: a closure reads the name the
         # function around it bound, so a local of an enclosing scope shadows just as its own
         # does. The module itself is not shadowing -- there the binding IS the constant.
-        reach, hidden = [], False
-        for part in where.split("."):
-            reach.append(part)
+        # Innermost first: the nearest scope that either binds the name or declares it the
+        # module's is the one that decides, and an inner binding beats an enclosing global.
+        reach, hidden = where.split("."), False
+        while reach:
             here = ".".join(reach)
-            if node.id in said_global.get(here, ()):
-                # That scope said the name is the module's, so what it binds is the module's
-                # and every scope inside it reads that rather than a local.
-                hidden = False
-                break
             if node.id in taken.get(here, ()):
                 hidden = True
+                break
+            if node.id in said_global.get(here, ()):
+                break
+            reach.pop()
         if hidden:
             shadowed.add(id(node))
     return frozenset(shadowed)
@@ -4212,10 +4330,18 @@ def _hands_on(tree, spelled):
             the chain that names this one.
             """
             chain = [] if function == MODULE_LEVEL else function.split(".")
-            seen, scope = set(bound.get(MODULE_LEVEL, ())), []
+            scope, scopes = [], [MODULE_LEVEL]
             for part in chain:
                 scope.append(part)
-                seen |= set(bound.get(".".join(scope), ()))
+                scopes.append(".".join(scope))
+            seen = set()
+            for here in scopes:
+                for name in bound.get(here, ()):
+                    # A scope that binds the name itself reads its own, not the one the scope
+                    # around it holds: an inner parameter beats an enclosing local.
+                    if here != function and name in taken_names.get(function, set()):
+                        continue
+                    seen.add(name)
             return seen
 
         def reaching(function, klass):
@@ -4569,7 +4695,74 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
     return spelled
 
 
-def _handle_names(tree, handles, shadowed=(), opens_a_file=True):
+def _opener_spellings(tree):
+    """Every spelling this source can call the builtin opener by, derived from its own imports.
+
+    open is a name like any other, and a name can be rebound. `from builtins import open as
+    fopen`, `import io` followed by `io.open`, and a module-level `fopen = open` each leave a
+    call that opens a file under a spelling that is not the word open, and a check that matches
+    the word sees none of them. Which modules hand back the builtin itself is read off the
+    objects rather than listed here: io.open IS builtins.open, one function under a second
+    name, while os.open is a different function answering with a descriptor.
+
+    The bare names and the dotted spellings come back apart because they are not the same
+    claim. A bare name is the opener outright. A dotted one is either a module holding it,
+    whose arguments are the whole of what it was handed, or a file object's own open method,
+    whose receiver has to be a handle before the call says anything about this module's file.
+
+    Blind spot, said plainly because it is one: a module this process never imported is not in
+    the set, so an opener re-exported by an unimported module is not seen. Nothing readable
+    from here says what an unimported name holds, and a guess would be worse than the gap.
+    """
+    named = builtins.open.__name__
+    holders = set()
+    for module_name, module in list(sys.modules.items()):
+        if module is None:
+            continue
+        try:
+            held = getattr(module, named, None)
+        except Exception:
+            continue
+        if held is builtins.open:
+            holders.add(module_name)
+    bare, dotted = {named}, set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if not node.level and node.module in holders:
+                for alias in node.names:
+                    if alias.name == named:
+                        bare.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in holders:
+                    dotted.add((alias.asname or alias.name) + "." + named)
+    # fopen = open is the same rebinding written as an assignment, and b = fopen is one more
+    # step of it, so the module's own statements are followed until they stop adding names.
+    growing = True
+    while growing:
+        growing = False
+        for statement in getattr(tree, "body", ()):
+            if not isinstance(statement, ast.Assign):
+                continue
+            spelling = _dotted(statement.value)
+            if spelling is None or (spelling not in bare and spelling not in dotted):
+                continue
+            for target in statement.targets:
+                if isinstance(target, ast.Name) and target.id not in bare:
+                    bare.add(target.id)
+                    growing = True
+    return frozenset(bare), frozenset(dotted)
+
+
+def _opener_call(func, bare, dotted):
+    """Whether this callee spells a call that opens a file, under any of the three spellings."""
+    if isinstance(func, ast.Name):
+        return func.id in bare
+    spelling = _dotted(func) or ""
+    return spelling in dotted or spelling.rpartition(".")[2] == builtins.open.__name__
+
+
+def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
     """Every name that reaches a source file, the module's own and the local ones bound to them.
 
     path = HERE is an ordinary line, and a read taken on path reaches the same file.
@@ -4580,6 +4773,7 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True):
     """
     places, known, where_from, growing = _places(tree), set(handles), {}, True
     declared = frozenset(handles)
+    bare, dotted = openers or _opener_spellings(tree)
 
     def seen_in(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
@@ -4596,21 +4790,26 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True):
             if isinstance(expression, ast.BoolOp):
                 return any(reaches(value, scope) for value in expression.values)
             if (isinstance(expression, ast.Call)
-                    and (_dotted(expression.func) or "").rpartition(".")[2] == "open"):
-                opener = expression.func
+                    and _opener_call(expression.func, bare, dotted)):
+                opener, receiver = expression.func, []
                 if isinstance(opener, ast.Name):
                     # A scope that binds open itself, or a module that defines one, has
                     # shadowed the builtin: what that call answers with is not this file.
                     if not opens_a_file or id(opener) in shadowed:
                         return False
+                elif (_dotted(opener) or "") in dotted:
+                    # io.open is the builtin under its module's name rather than an object's
+                    # own method, so the module is not one of the things handed to it.
+                    pass
                 elif not (isinstance(opener, ast.Attribute)
                           and reaches(opener.value, scope)):
                     # innocent.open is that object's own method. Only a handle's own open --
                     # HERE.open() -- opens the file this module is asking about.
                     return False
+                else:
+                    receiver = [opener.value]
                 return any(reaches(given, scope) for given in list(expression.args)
-                           + [given.value for given in expression.keywords]
-                           + ([opener.value] if isinstance(opener, ast.Attribute) else []))
+                           + [given.value for given in expression.keywords] + receiver)
             named = _dotted(expression)
             if named is None or named not in known:
                 return False
@@ -4640,8 +4839,10 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True):
 
 
 def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), declared=(),
-                    astray=(), built=(), opens_a_file=True):
+                    astray=(), built=(), opens_a_file=True, openers=None):
     """The matcher: which node reaches the text of a source file, spelled any of the derived ways."""
+    bare, dotted = openers or (frozenset({builtins.open.__name__}), frozenset())
+
     def spelled(node, klass):
         if isinstance(node, ast.Name):
             # Unless the scope binds that name itself: a parameter called HERE is not the
@@ -4703,25 +4904,28 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             if (isinstance(node.func, ast.Attribute) and node.func.attr.startswith("read")
                     and isinstance(node.func.value, ast.Call)
                     and opens_a_file
-                    and (_dotted(node.func.value.func) or "").rpartition(".")[2] == "open"):
-                if (isinstance(node.func.value.func, ast.Name)
-                        and id(node.func.value.func) in shadowed):
-                    # The scope binds open itself, so what it answers with is the caller's.
-                    return None
+                    and _opener_call(node.func.value.func, bare, dotted)):
                 # HERE.open().read() names the handle as the receiver of open rather than as
                 # its argument, and it is the same read either way.
-                opener = node.func.value.func
+                opener, receiver = node.func.value.func, []
                 if isinstance(opener, ast.Name):
                     if id(opener) in shadowed:
+                        # The scope binds the opener itself, so what it answers with is
+                        # the caller's file rather than this module's.
                         return None
+                elif (_dotted(opener) or "") in dotted:
+                    # io.open is the builtin under its module's name: the module is not a
+                    # handle, and what it was handed is all in the arguments.
+                    pass
                 elif not (isinstance(opener, ast.Attribute)
                           and spelled(opener.value, klass)):
                     # Only a handle's own open opens the file this module asks about.
                     return None
+                else:
+                    receiver = [opener.value]
                 for argument in (list(node.func.value.args)
                                  + [given.value for given in node.func.value.keywords]
-                                 + ([opener.value] if isinstance(opener, ast.Attribute)
-                                    else [])):
+                                 + receiver):
                     opened = spelled(argument, klass)
                     if opened:
                         return opened + "." + node.func.attr
@@ -4846,7 +5050,8 @@ def source_text_reached(source):
             and any(inner.id == "open" for target in statement.targets
                     for inner in ast.walk(target) if isinstance(inner, ast.Name)))
         for statement in getattr(tree, "body", ()))
-    handles, where_from = _handle_names(tree, handles, shadowed, opens_a_file)
+    openers = _opener_spellings(tree)
+    handles, where_from = _handle_names(tree, handles, shadowed, opens_a_file, openers)
     _classes, as_class, built = _instance_classes(tree)
     places = _places(tree)
 
@@ -4865,13 +5070,13 @@ def source_text_reached(source):
     while growing:
         wider = _held_by_class(
             tree, _source_spelled(handles, hands_source, held, as_class, shadowed, declared,
-                                  astray, built, opens_a_file),
+                                  astray, built, opens_a_file, openers),
             held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _source_spelled(handles, hands_source, held, as_class,
                                                shadowed, declared, astray, built,
-                                               opens_a_file)),
+                                               opens_a_file, openers)),
             {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
 
 
@@ -5411,15 +5616,17 @@ class SevenReadingsTests(unittest.TestCase):
     def test_each_name_this_reader_resolves_lands_where_python_lands(self):
         """A name reaches what Python reaches, through classes as much as through scopes.
 
-        Eight forms here are places this reader got wrong and review found: it lost a class-body
-        name a never-running loop appeared to shadow, a property reached through a class alias or
-        through super(), and source text handed on from a file object opened in the same
-        expression; and it invented a call for a subclass standing over an inherited property or
-        method, and for a staticmethod decorated through an alias.
+        Every form here is one review found this reader got wrong, or the pair that form's fix
+        must not break, and the two are kept together deliberately: most of the errors below
+        were introduced by the fix above them. A shadow that stops a lookup is correct when the
+        binding really happens, and the fix for a loop that never runs sits one line from
+        disabling shadowing altogether.
 
-        The other three are the forms each fix must not break. They are why the answers are kept
-        as data: a shadow that stops the lookup is correct when the binding really happens, and
-        the fix for a loop that never runs sits one line from disabling shadowing altogether.
+        How many there are is not written down here, because a count in a sentence is the thing
+        this module keeps getting wrong: it was last true at eleven entries and stayed on the
+        page long after. The table is the statement. Each entry carries the sample, the place,
+        the answer Python gives and why, and adding a form means adding its pair rather than
+        editing a number.
         """
         for form, (which, lines, place, reaches, why) in sorted(RESOLVES_LIKE_PYTHON.items()):
             with self.subTest(form):
@@ -6196,6 +6403,8 @@ HANDED = {
     "_refusal_spelled": NOTHING,
     "_source_spelled": NOTHING,
     "_handle_names": NOTHING,
+    "_opener_spellings": NOTHING,
+    "_opener_call": NOTHING,
     "refusal_spellings": NOTHING,
     "source_spellings": NOTHING,
     "refusals_reached": NOTHING,
