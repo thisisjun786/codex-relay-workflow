@@ -62,7 +62,13 @@ the role rather than converting whatever task the designation arrives in, so rea
 current binding before binding anything. A task already bound as some project's parent does not
 become the supervisor by being handed a designation: its project would lose its parent and its
 children their owner. The supervision belongs in a task of its own, or in the existing supervisor
-where there is one, and the designation is routed there. A user who does want that task to stop
+where there is one, and the designation is routed there: to an existing supervisor by the delivery
+in the reuse order below, and otherwise to a task created for it the way this workflow creates any
+independent task, under
+[Independent implementation tasks](../SKILL.md#independent-implementation-tasks) for creation
+authority and capability, carrying the designation itself as its first prompt. Where creation is
+not authorized, or no creation path is available, say exactly that and bind nothing: a designation
+reported unbound is better than a parent quietly repurposed. A user who does want that task to stop
 being a parent is making an ownership change, recorded and completed first rather than produced as
 a side effect of binding. Where an
 installation records these relationships, one live scope per task per role is the rule it enforces,

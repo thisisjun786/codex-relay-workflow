@@ -280,6 +280,16 @@ Workflow: [the parent's effective workflow, restated because no transport carrie
 A handoff that was sent is not a parent bound, and a handoff that was accepted is not a project
 delivered. The parent's own binding record and its first returned result are those two facts.
 
+Check who sent it before acting on it. This is the one kind here that carries authority and it
+travels on a channel peers use too, where the kind, the sender and the supervisor identity are all
+text the sender wrote, and no bundled store enforces these levels
+([OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity)). The receiving parent
+matches the claimed supervisor against what it already holds, its own record and the initiative's,
+and where those disagree, or where its project has no recorded supervisor at all, it answers the
+message as a peer request to be decided rather than as an instruction and says so in the reply.
+One parent cannot assign work to another, so a handoff whose sender cannot be confirmed as this
+project's supervisor is not a handoff.
+
 ## Coordination message
 
 Use this between parents coordinating directly, between two supervisors coordinating across their

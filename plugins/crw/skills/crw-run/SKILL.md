@@ -11,8 +11,9 @@ as its coordinator: one parent per project, one child per issue. Follow the shar
 including standalone issues and explicit current-task work. Where the initiative above this
 project has an execution supervisor, it verifies this parent's reported outcome and instructs this
 task, never this task's children; where it has none, nothing changes. An explicit designation
-naming an initiative binds this task at that level instead, through
-[Initiative supervision](references/initiative-supervision.md). Each child owns its
+naming an initiative is handled one level up, through
+[Initiative supervision](references/initiative-supervision.md), which decides where that binding
+belongs rather than assuming it belongs here. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
@@ -53,8 +54,10 @@ another goal. Existing scope and authorization survive skill routing.
 An initiative link by itself is not a target. Where a request merely cites one, resolve the
 project actually being executed under the shared target rules: the link is context and it rebinds
 no existing parent. Where the request is an explicit designation to execute that initiative's
-agreed projects, this task binds as its supervisor and runs them through those projects' own
-parents, under [Initiative supervision](references/initiative-supervision.md). Planning, a status
+agreed projects, that initiative runs through its projects' own parents under
+[Initiative supervision](references/initiative-supervision.md), which also settles which task
+holds the supervisor binding: this one where it is free to take it, and not this one where it is
+already some project's parent. Planning, a status
 read and a citation are the three requests that are not that designation.
 
 Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
@@ -187,7 +190,7 @@ them. Higher-priority host/tool restrictions still apply.
 | Invocation context | Action |
 |---|---|
 | Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, without creating a parent goal; host restrictions still apply |
-| Submitted execution designation naming a Linear initiative | Bind this task as that initiative's supervisor, fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief; do not plan or dispatch another parent's issues |
+| Submitted execution designation naming a Linear initiative | Resolve where the supervisor binding belongs under [Initiative supervision](references/initiative-supervision.md), never rebinding a task that is already a project's parent; then fix the approved project set and completion boundary, reuse the existing parents and their children, and hand each parent its project brief. Do not plan or dispatch another parent's issues |
 | Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
 | Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings; refresh ownership and prerequisites, then continue the remaining in-scope obligations, including successors. Preserve an explicitly batch-limited assignment; do not repeat approval already covering the scope |
