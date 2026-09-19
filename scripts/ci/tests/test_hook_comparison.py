@@ -37,6 +37,16 @@ from crw_runtime import completion, hooks  # noqa: E402
 # that interpreter the harness refuses and this module checks the refusal.
 HAVE_RELAY = sys.version_info >= (3, 11)
 
+
+def state_of(value):
+    """Which of the four answers a reading gives, asked without comparing a value to a non-value.
+
+    Written against the shape rather than against a class so the cases that use it read the same
+    before and after the representation changed: where the answer was one sentinel string for
+    both of them, this returns that one string and the case fails on the collapse itself.
+    """
+    return getattr(value, "state", value)
+
 ARMS = ("off", "on")
 
 SCENARIOS = ("receipt_missing", "managed_unregistered", "undeclared_turn_end",
@@ -667,6 +677,36 @@ class ReadingTests(unittest.TestCase):
                         "a reading that could not be asked at all filled the cell as though it"
                         " were an answer")
         self.assertIn("could not be reached", found["detail"])
+        self.assertEqual(state_of(found["value"]), harness.reading.ACCESS_ERROR,
+                         "the door every cell goes through rebuilt an access error as a shape"
+                         " nobody could read, which collapses two of the four answers")
+
+    def test_a_producer_that_could_not_ask_keeps_that_answer_through_the_door(self):
+        """The same partition, carried from a real producer rather than from a spelled payload.
+
+        Review found this: read() is the one door every cell goes through, and it rebuilt the
+        reading it was handed with the default state, so a permission error on a marker file
+        came out the other side as a shape nobody could read. The two are different facts about
+        the run and reading.py keeps them apart on purpose.
+        """
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-state-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        loop = root / "loop"
+        os.symlink(str(loop), str(loop))
+        produced = harness._there(loop, "resolved", "not_published")
+        self.assertEqual(state_of(produced), harness.reading.ACCESS_ERROR,
+                         "a file that could not be looked at is answered as a shape nobody"
+                         " could read, so the two answers are the same answer")
+        every = self.payloads()
+        every["marker-root"] = {"source": "marker-root", "observationFile": produced,
+                                "heldFile": "reserved"}
+        found = harness.read("observationFile", every)
+        self.assertEqual(state_of(found["value"]), harness.reading.ACCESS_ERROR,
+                         "the state a producer established was replaced at the door")
+        self.assertEqual(harness.render(found["value"])["notRead"],
+                         harness.reading.ACCESS_ERROR,
+                         "the written document reports an access failure as a malformed"
+                         " reading")
 
     def test_the_environment_handed_to_a_subprocess_writes_nothing_into_the_checkout(self):
         """Asked of the function that builds it, because the promise is about what it hands over.
@@ -1592,6 +1632,38 @@ class AReadFailureCannotBeUsedAsAValueTests(unittest.TestCase):
             with harness.reading.region("here", "a record"):
                 raise type(raised)("a consumer used a reading that was not taken as a value")
 
+    def test_the_refusal_names_the_site_that_consumed_it_and_not_the_one_that_raised(self):
+        """A refusal without a usable location is reported as a data problem, not as a defect.
+
+        Review found this one. reading.where() answers with the DEEPEST frame of a traceback,
+        and the deepest frame here is always the single raise inside the type - so every refusal
+        would name that one line and the consumption site the location exists to preserve would
+        be gone. The frame wanted is the comparison, the truthiness check or the formatting that
+        used the reading.
+        """
+        value = unread()
+
+        def a_careless_consumer():
+            return value == "resolved"
+
+        raised = None
+        try:
+            a_careless_consumer()
+        except BaseException as error:
+            raised = error
+        self.assertIsNotNone(raised,
+                             "consuming a reading that was not taken raised nothing, so there"
+                             " is no site to name")
+        at = getattr(raised, "at", None)
+        self.assertIsNotNone(at, "the refusal carries no location at all")
+        consumed = str(a_careless_consumer.__code__.co_firstlineno + 1)
+        self.assertTrue(at.endswith(":" + consumed),
+                        "the refusal names " + str(at) + " rather than the line that consumed"
+                        " the reading, which is this file at line " + consumed)
+        self.assertNotEqual(at, harness.reading.where(raised),
+                            "the refusal names the line it was raised on, which is the same"
+                            " line for every refusal and says nothing about the site")
+
     def test_a_new_consumption_site_that_treats_it_as_a_value_is_revealed(self):
         """A new site, written here the careless way, and driven. Measured rather than claimed.
 
@@ -1955,19 +2027,23 @@ class TheSweepDrivesTheRefusalRatherThanWatchingForItTests(unittest.TestCase):
 # Support, not evidence for a criterion. These are drift guards: they keep the inventories above
 # honest as the file changes, and none of them measures the behaviour the issue is about.
 
-# Every function that hands over a reading that was not taken, derived below and compared with
-# this. A new producer fails here until it is written down, and writing it down is the moment to
-# ask whether the sweep reaches it.
+# Every function that hands over a reading that was not taken, with the state each one gives it,
+# derived below and compared with this. The state is here and not just the count because the two
+# states are not interchangeable: an access error means the question could not be asked at all and
+# an unreadable one means it was asked and the answer could not be read, and review found this
+# change collapsing the first into the second at the one door every cell goes through. A producer
+# that is added, or that starts answering with the other state, fails here until somebody says so.
+CARRIED = "carried from the reading it rebuilds"
 UNREADABLE_PRODUCERS = {
-    "_unreadable": 1,
-    "_install": 2,
-    "journal_payload": 1,
-    "_faulted": 1,
-    "_there": 1,
-    "source_identity": 1,
-    "_digest": 2,
-    "repository_commit": 2,
-    "owned": 1,
+    "_unreadable": (CARRIED,),
+    "_install": ("UNREADABLE", "ACCESS_ERROR"),
+    "journal_payload": ("UNREADABLE",),
+    "_faulted": (CARRIED,),
+    "_there": ("ACCESS_ERROR",),
+    "source_identity": ("ACCESS_ERROR", "UNREADABLE"),
+    "_digest": ("UNREADABLE", "ACCESS_ERROR"),
+    "repository_commit": ("ACCESS_ERROR", "UNREADABLE"),
+    "owned": ("ACCESS_ERROR",),
 }
 
 # Every function that consumes a cell's value, derived below and compared with this.
@@ -1986,6 +2062,16 @@ DERIVATION_BLIND_SPOTS = (
 
 def _harness_tree():
     return ast.parse((ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8"))
+
+
+def _state_named(call):
+    """Which of the four answers this producer gives, read off the call rather than assumed."""
+    for keyword in call.keywords:
+        if keyword.arg == "state":
+            if isinstance(keyword.value, ast.Attribute):
+                return keyword.value.attr
+            return CARRIED
+    return "UNREADABLE"
 
 
 def _owners(tree):
@@ -2015,11 +2101,16 @@ class TheReadFailureInventoriesAreDerivedTests(unittest.TestCase):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                     and node.func.id == "Unreadable"):
                 where = owner.get(node, "<module>")
-                found[where] = found.get(where, 0) + 1
-        self.assertEqual(found, dict(UNREADABLE_PRODUCERS),
+                found.setdefault(where, []).append((node.lineno, _state_named(node)))
+        # By line, because ast.walk is breadth first and the order it yields siblings in is not
+        # the order they are written in, which would make this table describe nothing.
+        self.assertEqual(dict((name, tuple(state for _line, state in sorted(states)))
+                              for name, states in found.items()),
+                         dict(UNREADABLE_PRODUCERS),
                          "the places that hand over a reading that was not taken and the places"
-                         " written down disagree. Declare the new one, and say whether the sweep"
-                         " reaches it.")
+                         " written down disagree, in which function or in which state. Declare"
+                         " the new one, say which of the two answers it gives, and say whether"
+                         " the sweep reaches it.")
         self.assertTrue(DERIVATION_BLIND_SPOTS,
                         "a derivation that declares no blind spot is claiming completeness")
 

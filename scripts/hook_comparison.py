@@ -224,8 +224,10 @@ class Unreadable(object):
         return {"notRead": self.state, "why": self.why}
 
     def _refuse(self, how):
-        raise NotAValue("a reading that was not taken was " + how + ", which is something only"
-                        " a value can be: " + str(self.why))
+        refusal = NotAValue("a reading that was not taken was " + how + ", which is something"
+                            " only a value can be: " + str(self.why))
+        refusal.at = consumed_at()
+        raise refusal
 
     def __eq__(self, other):
         self._refuse("compared for equality")
@@ -271,6 +273,28 @@ def not_read(value):
     against is the answer that is not a value.
     """
     return isinstance(value, Unreadable)
+
+
+# The code objects of the type's own refusals, taken from the class rather than listed. The frame
+# that matters is the one that USED the reading, and reading.where() answers with the deepest
+# frame of a traceback - which here is always the single raise inside the class, so every refusal
+# would name that one line and the consumption site would be gone. Derived rather than written
+# down because a refusal added later has to be skipped too.
+_REFUSALS = frozenset(value.__code__ for value in vars(Unreadable).values()
+                      if hasattr(value, "__code__"))
+
+
+def consumed_at():
+    """Where a reading that was not taken was used, which is never where the refusal is raised.
+
+    Walked outward from the refusal to the first frame that is not one of the type's own, so the
+    answer is the comparison, the truthiness check or the formatting that consumed it."""
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_code in _REFUSALS:
+        frame = frame.f_back
+    if frame is None:
+        return None
+    return os.path.basename(frame.f_code.co_filename) + ":" + str(frame.f_lineno)
 
 
 def _answered(value, wanted):
@@ -494,7 +518,7 @@ def _cell(cell, source, path, value, readable, detail=None):
     return answer
 
 
-def _unreadable(cell, source, path, detail):
+def _unreadable(cell, source, path, detail, state=reading.UNREADABLE):
     """A cell whose reading could not be made.
 
     A distinct answer, not a negative one. Returning False here, or falling through to whatever
@@ -502,8 +526,12 @@ def _unreadable(cell, source, path, detail):
 
     Distinct by TYPE since CRW-103, so a consumer that treats it as the value it sits beside
     breaks at that consumer rather than being let through by it.
+
+    The state travels with it. An access error and a shape nobody could read are two of the four
+    answers reading.py keeps apart on purpose, and rebuilding one as the other here would collapse
+    that partition at the one door every cell goes through.
     """
-    return _cell(cell, source, path, Unreadable(detail), False, detail)
+    return _cell(cell, source, path, Unreadable(detail, state=state), False, detail)
 
 
 def _absent(cell, source, path, detail):
@@ -557,7 +585,8 @@ def read(cell, payloads):
         return _unreadable(declared_cell, source, path,
                            str(payload.get("detail")
                                or (found.why if not_read(found)
-                                   else "the reading reported itself unreadable")))
+                                   else "the reading reported itself unreadable")),
+                           state=found.state if not_read(found) else found)
     return _cell(declared_cell, source, path, found, True)
 
 
@@ -919,9 +948,14 @@ def fire(arm, built, stop_hook_active):
             capture_output=True, timeout=300, env=arm.environment)
     except subprocess.TimeoutExpired:
         return {"faulted": "the registered command did not finish within its timeout",
+                # It was asked and it did not answer, which is not the same as not having been
+                # able to ask at all. Those are two of the four answers reading.py keeps apart,
+                # and the reading each firing cell reports has to be the right one of them.
+                "faultedState": reading.UNREADABLE,
                 "argv": shlex.split(command)}
     except OSError as error:
         return {"faulted": "the registered command could not be started: " + str(error),
+                "faultedState": reading.ACCESS_ERROR,
                 "argv": shlex.split(command)}
     wall = int((time.monotonic() - started) * 1000)
     return {"stdout": done.stdout.decode("utf-8", "replace"),
@@ -1011,7 +1045,7 @@ def _faulted(source, fired, keys):
     """A firing that never completed. Its readings could not be taken, and say so."""
     payload = {"source": source, "detail": fired["faulted"]}
     for key in keys:
-        payload[key] = Unreadable(fired["faulted"])
+        payload[key] = Unreadable(fired["faulted"], state=fired["faultedState"])
     return payload
 
 
@@ -1403,13 +1437,20 @@ def source_identity():
     which identifies them whether or not anything is committed.
     """
     identity = {"repositoryCommit": repository_commit(),
-                "workingTree": Unreadable("whether the working tree was clean could not be"
-                                          " established")}
+                "workingTree": Unreadable("git status could not be run, so whether the working"
+                                          " tree was clean is not established",
+                                          state=reading.ACCESS_ERROR)}
     try:
         done = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
                               capture_output=True, text=True, timeout=60)
         if done.returncode == 0:
             identity["workingTree"] = "dirty" if done.stdout.strip() else "clean"
+        else:
+            # Asked, and answered with a failure. That is a different answer from never having
+            # been able to ask, and the two are not interchangeable.
+            identity["workingTree"] = Unreadable("git status exited " + str(done.returncode)
+                                                 + ", so whether the working tree was clean is"
+                                                 " not established")
     except (OSError, subprocess.TimeoutExpired):
         # Left unreadable rather than guessed at: a tree nobody could look at is not a clean one.
         pass
@@ -1720,7 +1761,7 @@ def main(argv=None):
         # reading that was not taken as though it were a value; the type refused, and the refusal
         # names the site rather than leaving the run to be read as a data problem.
         answer = refusal("a consumption site used a reading that was not taken as a value: "
-                         + str(error)[:400], at=reading.where(error),
+                         + str(error)[:400], at=getattr(error, "at", None),
                          defect="this is a defect in this harness, not a problem with what it"
                                 " read. The reading that was not taken is a distinct type, and"
                                 " the site that consumed it asked it a question only a value can"
