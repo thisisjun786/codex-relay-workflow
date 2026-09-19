@@ -304,6 +304,28 @@ class Linkage:
                 scope_kind=scope_kind, scope_key=scope_key,
                 incumbent=confused["scope_key"], challenger=endpoint.task_id,
             )
+        # One task, ONE scope at that role. Each level is one Codex task bound to one Linear
+        # level by stable id - a supervisor to an initiative, a parent to a project, a child to
+        # an issue - so several ready projects mean several parents, not one parent holding
+        # several projects. Told apart from the refusal above because they are different
+        # mistakes: that one is a task wearing two hats, this one is a task wearing the same
+        # hat twice.
+        held = db.execute(
+            "SELECT scope_kind, scope_key FROM scope_bindings"
+            "  WHERE task_id = ? AND role = ? AND scope_key != ?"
+            "    AND status IN ('active','paused') AND superseded_by IS NULL",
+            (endpoint.task_id, role, scope_key),
+        ).fetchone()
+        if held is not None:
+            return _Refusal(
+                RefusalReason.ROLE_ALREADY_BOUND,
+                "task " + repr(endpoint.task_id) + " is already the " + role + " of "
+                + held["scope_kind"] + " " + repr(held["scope_key"])
+                + "; one task is bound to one Linear level, so a second "
+                + scope_kind + " needs its own " + role,
+                scope_kind=scope_kind, scope_key=scope_key,
+                incumbent=held["scope_key"], challenger=endpoint.task_id,
+            )
         return None
 
     def _insert_binding(self, db, bid, role, scope_kind, scope_key, endpoint, status,
@@ -471,6 +493,18 @@ class Linkage:
                 + repr(parent.task_id) + " would clone its execution parent",
                 scope_kind=PROJECT, scope_key=project_key,
                 incumbent=owning["lower_task_id"], challenger=parent.task_id,
+            )
+        if link_kind == REFERENCE and owning is None:
+            # A reference points at an outcome that already has an owner. Allowed to go first,
+            # it would BIND the nominated task as the project's parent - which is the one
+            # thing a secondary initiative must not be able to do, since it would choose the
+            # execution parent by referencing rather than by supervising.
+            return _Refusal(
+                RefusalReason.UNREGISTERED_SCOPE,
+                "project " + repr(project_key) + " has no execution supervisor yet, so there "
+                "is no outcome to reference. Register its execution supervision first",
+                scope_kind=PROJECT, scope_key=project_key,
+                incumbent="", challenger=initiative_key,
             )
         return None
 
@@ -817,7 +851,7 @@ class Linkage:
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=str(link_id_value), challenger=from_task_id,
                 )
-            elif edge["link_kind"] not in SUPERVISION_KINDS \
+            elif edge["link_kind"] != EXECUTION \
                     or edge["upper_key"] != from_scope_key \
                     or edge["lower_key"] != scope_key \
                     or edge["lower_kind"] != scope_kind:
@@ -825,7 +859,9 @@ class Linkage:
                     RefusalReason.UNREGISTERED_SCOPE,
                     "link " + repr(link_id_value) + " does not join " + repr(from_scope_key)
                     + " down to " + scope_kind + " " + repr(scope_key)
-                    + " by execution or reference",
+                    + " by execution. A reference carries no authority to instruct: a "
+                    "secondary initiative references a project's outcome instead of issuing "
+                    "it work",
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=str(link_id_value), challenger=from_scope_key,
                 )
@@ -904,9 +940,10 @@ class Linkage:
         """
         open_ones = [d for d in self.directives(scope_kind, scope_key)
                      if d["disposition"] is None]
-        digests = {d["digest"] for d in open_ones}
-        origins = {d["fromScopeKey"] for d in open_ones}
-        if len(digests) > 1 and len(origins) > 1:
+        # Decided on the digest alone. Only the execution supervisor can instruct, so two
+        # conflicting instructions are usually ITS successive ones rather than two origins;
+        # requiring two origins meant the ordinary conflict was never reported.
+        if len({d["digest"] for d in open_ones}) > 1:
             return open_ones
         return []
 
@@ -1425,6 +1462,22 @@ class Linkage:
                         "the outstanding work restated by this handover is " + repr(claimed)
                         + " but the store says it is " + repr(sorted(set(unfinished)))
                         + "; a replacement owner confirms the unfinished work it takes on",
+                        scope_kind=scope_kind, scope_key=scope_key,
+                        incumbent=expect_task_id, challenger=endpoint.task_id)
+                elif unfinished:
+                    # Refuse, and say what it could not move. An assignment's identity is
+                    # sha256(parentTaskId|childTaskId|issueKey) and its queued deliveries name
+                    # the parent's thread, so a handover cannot carry the endpoint across: it
+                    # would leave a replacement parent that cannot receive the work it just
+                    # accepted. Each of these is moved by registering its successor with
+                    # supersedes, which mints a correct new identity and repoints the edge.
+                    refusal = _Refusal(
+                        RefusalReason.HANDOVER_WOULD_STRAND,
+                        scope_kind + " " + repr(scope_key) + " still has unfinished work that "
+                        "this handover cannot move: " + repr(sorted(set(unfinished)))
+                        + ". An assignment's identity and its queued deliveries name its "
+                        "parent, so each one is moved by registering its successor with "
+                        "supersedes before the scope changes hands",
                         scope_kind=scope_kind, scope_key=scope_key,
                         incumbent=expect_task_id, challenger=endpoint.task_id)
             if refusal is None:

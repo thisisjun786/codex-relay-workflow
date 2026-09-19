@@ -193,10 +193,18 @@ class AssignmentView:
             from .linkage import Linkage, PARENT as PARENT_ROLE, PROJECT as PROJECT_SCOPE
 
             holder = Linkage(self.store, self.clock).owner(PROJECT_SCOPE, scoped["project_key"])
+            parent_task = owning[0]["parentTaskId"]
             return {
                 "projectKey": scoped["project_key"],
                 "projectParentTaskId": holder["taskId"] if holder else None,
                 "scopeState": "scoped",
+                # A parent handover moves the SCOPE and not the assignments under it, so these
+                # two can legitimately disagree. Surfaced here rather than left to be noticed,
+                # because this view is what a coordinator reads before acting on an issue: the
+                # assignment still answers to the parent named on its own row, and the project
+                # is owned by somebody else.
+                "parentOwnsProject": (holder is not None
+                                      and holder["taskId"] == parent_task),
             }
         except sqlite3.Error:
             return {"projectKey": None, "projectParentTaskId": None,

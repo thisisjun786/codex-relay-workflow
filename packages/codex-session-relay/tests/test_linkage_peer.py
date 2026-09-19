@@ -33,8 +33,7 @@ class PeerLinks(LinkageTestCase):
         super().setUp()
         # One supervisor, two projects, two parents. The shape OPS-7.4 describes.
         self.supervise()
-        self.supervise(project=OTHER_PROJECT, parent=self.parent(OTHER_PARENT),
-                       kind=linkage.REFERENCE)
+        self.supervise(project=OTHER_PROJECT, parent=self.parent(OTHER_PARENT))
 
     def peer(self):
         return self.linkage.register_peer(
@@ -128,8 +127,7 @@ class WhatAMessageCanEstablish(LinkageTestCase):
     def setUp(self):
         super().setUp()
         self.supervise()
-        self.supervise(project=OTHER_PROJECT, parent=self.parent(OTHER_PARENT),
-                       kind=linkage.REFERENCE)
+        self.supervise(project=OTHER_PROJECT, parent=self.parent(OTHER_PARENT))
         self.peer_link = self.linkage.register_peer(
             left_project=PROJECT, left_parent=self.parent(),
             right_project=OTHER_PROJECT, right_parent=self.parent(OTHER_PARENT),

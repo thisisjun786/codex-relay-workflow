@@ -340,6 +340,9 @@ class Directives(LinkageTestCase):
     def setUp(self):
         super().setUp()
         self.execution = self.supervise()
+        # A second initiative may only REFERENCE a project that already has an execution
+        # supervisor, and a reference carries no authority to instruct. Both halves are
+        # asserted below rather than assumed.
         self.reference = self.supervise(
             initiative=OTHER_INITIATIVE, supervisor=self.supervisor(OTHER_SUPERVISOR),
             kind=linkage.REFERENCE,
@@ -351,19 +354,35 @@ class Directives(LinkageTestCase):
             from_scope_key=origin, link_id_value=link, digest=digest,
         )
 
-    def test_a_directive_records_whether_it_came_by_execution_or_reference(self):
+    def test_only_the_execution_supervisor_may_instruct(self):
+        """A secondary initiative references a project's outcome instead of issuing it work,
+        so a directive arriving through a reference edge carries no authority."""
         first = self.record(origin=INITIATIVE, task=SUPERVISOR_TASK,
                             link=self.execution["linkId"], digest="d-one")
-        second = self.record(origin=OTHER_INITIATIVE, task=OTHER_SUPERVISOR,
-                             link=self.reference["linkId"], digest="d-two")
         self.assertEqual(first["linkKind"], linkage.EXECUTION)
-        self.assertEqual(second["linkKind"], linkage.REFERENCE)
+        self.assertRefused(
+            RefusalReason.UNREGISTERED_SCOPE, self.record,
+            origin=OTHER_INITIATIVE, task=OTHER_SUPERVISOR,
+            link=self.reference["linkId"], digest="d-two")
+
+    def test_a_reference_cannot_be_the_first_link_to_a_project(self):
+        """Allowed to go first it would BIND its nominated task as the project's parent, which
+        is choosing the execution parent by referencing rather than by supervising."""
+        self.assertRefused(
+            RefusalReason.UNREGISTERED_SCOPE, self.supervise,
+            initiative="INIT-3", project="PROJ-3",
+            supervisor=self.supervisor("01supervisor-three"),
+            parent=self.parent("01parent-three"), kind=linkage.REFERENCE)
+        self.assertIsNone(self.linkage.owner(linkage.PROJECT, "PROJ-3"))
 
     def test_two_instructions_for_one_project_are_both_kept_and_reported(self):
+        # Two successive instructions from the one supervisor that may issue them. Requiring
+        # two ORIGINS meant the ordinary conflict was never reported, now that only the
+        # execution supervisor can instruct at all.
         self.record(origin=INITIATIVE, task=SUPERVISOR_TASK,
                     link=self.execution["linkId"], digest="d-one")
-        self.record(origin=OTHER_INITIATIVE, task=OTHER_SUPERVISOR,
-                    link=self.reference["linkId"], digest="d-two")
+        self.record(origin=INITIATIVE, task=SUPERVISOR_TASK,
+                    link=self.execution["linkId"], digest="d-two")
         contested = self.linkage.contested_directives(linkage.PROJECT, PROJECT)
         self.assertEqual(len(contested), 2)
         self.assertEqual({d["digest"] for d in contested}, {"d-one", "d-two"})
@@ -371,8 +390,8 @@ class Directives(LinkageTestCase):
     def test_a_settled_instruction_leaves_the_loser_readable(self):
         first = self.record(origin=INITIATIVE, task=SUPERVISOR_TASK,
                             link=self.execution["linkId"], digest="d-one")
-        second = self.record(origin=OTHER_INITIATIVE, task=OTHER_SUPERVISOR,
-                             link=self.reference["linkId"], digest="d-two")
+        second = self.record(origin=INITIATIVE, task=SUPERVISOR_TASK,
+                             link=self.execution["linkId"], digest="d-two")
         self.linkage.settle_directive(first["directiveId"], "chosen", decided_by="parent")
         self.linkage.settle_directive(second["directiveId"], "superseded",
                                       decided_by="parent", reason="the initiative deferred")
@@ -432,20 +451,38 @@ class Handover(LinkageTestCase):
             evidence="   ", actor="test",
         )
 
-    def test_a_handover_that_restates_the_outstanding_work_succeeds(self):
+    def test_a_handover_is_refused_while_the_scope_still_has_work_it_cannot_move(self):
+        """Refuse, and say what it could not move.
+
+        An assignment's identity is sha256(parentTaskId|childTaskId|issueKey) and its queued
+        deliveries name the parent's thread, so a handover cannot carry the endpoint across.
+        Letting it proceed produced a replacement parent that could not receive the work it had
+        just accepted, which three reviewers reported from three directions.
+        """
         self.supervise()
         relationship = self.register()
         rid = relationship["relationshipId"]
         self.linkage.attach_issue(rid, PROJECT)
+        refusal = self.assertRefused(
+            RefusalReason.HANDOVER_WOULD_STRAND,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=PARENT, endpoint=self.parent(OTHER_PARENT), acknowledged=[rid],
+            evidence="the outgoing parent listed its unfinished issues", actor="test")
+        self.assertIn(rid, refusal.detail)
+        self.assertIn("supersedes", refusal.detail)
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], PARENT)
+
+    def test_a_handover_of_a_settled_scope_succeeds(self):
+        self.supervise()
         replacement = self.linkage.handover(
             role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
-            endpoint=self.parent(OTHER_PARENT), acknowledged=[rid],
-            evidence="the outgoing parent listed its unfinished issues", actor="test",
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[],
+            evidence="the project has no unfinished issues left", actor="test",
         )
         self.assertEqual(replacement["taskId"], OTHER_PARENT)
         self.assertEqual(replacement["revision"], 2)
         self.assertEqual(replacement["handoverNote"],
-                         "the outgoing parent listed its unfinished issues")
+                         "the project has no unfinished issues left")
         old = self.linkage.binding(
             binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, PARENT))
         self.assertEqual(old["status"], "archived")
@@ -597,8 +634,9 @@ class ReviewFoundTheseByReproducingThem(LinkageTestCase):
             scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
             from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-one")
         self.linkage.record_directive(
-            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=OTHER_SUPERVISOR,
-            from_scope_key="INIT-2", link_id_value=reference["linkId"], digest="d-two")
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-two")
+        self.assertEqual(reference["kind"], linkage.REFERENCE)
         downward = self.linkage.down(linkage.PROJECT, PROJECT)
         upward = self.linkage.up(task_id=PARENT)
         self.assertEqual(
@@ -676,38 +714,36 @@ class TheHostedReviewFoundTheseOnTheOpenPullRequest(LinkageTestCase):
             acknowledged=[], evidence="trying to move a child sideways", actor="test")
         self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
 
-    def test_a_parent_owning_two_projects_is_answered_about_the_right_one(self):
-        """_any_binding picked one scope per task by revision alone.
+    def test_a_parent_cannot_hold_a_second_project(self):
+        """The contract rule, which is what dissolves the disambiguation problem.
 
-        With parent P owning projects A and B and the child under B, the lookup could answer
-        about A and report unregistered_link despite a live B to issue edge.
+        Each level is one task bound to one Linear level by stable id, so several ready
+        projects mean several parents rather than one parent holding several projects. An
+        earlier draft of this suite assumed the opposite and built a lookup that had to choose
+        between a task's scopes; the coordinator settled it against that reading, so the second
+        binding is refused and the lookup never faces the choice.
         """
         self.supervise()
-        self.supervise(initiative="INIT-2", project=OTHER_PROJECT, parent=self.parent(),
-                       supervisor=self.supervisor(OTHER_SUPERVISOR), kind=linkage.REFERENCE)
-        relationship = self.register()
-        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
-        answer = self.linkage.counterpart(PARENT, CHILD)
-        self.assertEqual(answer["state"], "linked")
-        self.assertEqual(answer["counterpart"]["scopeKey"], ISSUE)
-        self.assertNotIn("unregistered_link", answer["findings"])
+        self.assertRefused(
+            RefusalReason.ROLE_ALREADY_BOUND, self.supervise,
+            project=OTHER_PROJECT, parent=self.parent())
+        self.assertIsNone(self.linkage.owner(linkage.PROJECT, OTHER_PROJECT))
 
-    def test_a_quoted_scope_selects_the_binding_instead_of_being_checked_against_one(self):
-        """A child holding two issues was answered about whichever binding sorted first, so a
-        correctly routed message was told foreign_scope about a scope nobody named."""
+    def test_a_child_cannot_hold_a_second_issue(self):
+        """The same rule one level down: a ready batch is several children, not one child on
+        several issues. Attaching the second issue to the same child is refused."""
         self.supervise()
         first = self.register()
         self.linkage.attach_issue(first["relationshipId"], PROJECT)
-        second = self.registry.register(
+        self.registry.register(
             parent=Endpoint(PARENT, HOST, cwd="/parent"), child=Endpoint(CHILD, HOST),
             issue_key="REL-2", artifact_roots=[self.root], allowed_recipients=[PARENT],
-            dispatch_request_id="dispatch-2", dispatch_turn_id="turn-2",
-            project_key=PROJECT)
-        self.assertEqual(second["issueKey"], "REL-2")
-        for issue in (ISSUE, "REL-2"):
-            answer = self.linkage.counterpart(PARENT, CHILD, quoted_scope=issue)
-            self.assertEqual(answer["counterpart"]["scopeKey"], issue)
-            self.assertNotIn("foreign_scope", answer["findings"], issue)
+            dispatch_request_id="dispatch-2", dispatch_turn_id="turn-2")
+        second = self.store.one(
+            "SELECT relationship_id FROM relationships WHERE issue_key = ?", ("REL-2",))
+        self.assertRefused(
+            RefusalReason.ROLE_ALREADY_BOUND,
+            self.linkage.attach_issue, second["relationship_id"], PROJECT)
 
     def test_a_revision_that_does_not_exist_yet_is_not_current_either(self):
         self.supervise()
@@ -751,12 +787,9 @@ class TheSecondReviewRoundFoundTheseToo(LinkageTestCase):
         scoped while this one is not, which the per-relationship rule cannot see.
         """
         self.supervise()
-        # One parent owning both projects, which the role contract allows. Without it the
-        # attempt is refused a step earlier, for belonging to another parent's project, and
-        # this case would pass without ever reaching the rule it is named for.
         self.supervise(initiative="INIT-2", project=OTHER_PROJECT,
                        supervisor=self.supervisor(OTHER_SUPERVISOR),
-                       parent=self.parent(), kind=linkage.REFERENCE)
+                       parent=self.parent(OTHER_PARENT))
         first = self.register()
         self.linkage.attach_issue(first["relationshipId"], PROJECT)
         second = self.registry.register(
@@ -768,7 +801,9 @@ class TheSecondReviewRoundFoundTheseToo(LinkageTestCase):
         refusal = self.assertRefused(
             RefusalReason.FOREIGN_SCOPE,
             self.linkage.attach_issue, second["relationshipId"], OTHER_PROJECT)
-        self.assertIn(PROJECT, refusal.detail)
+        # Refused for belonging to another parent's project, which is the rule that fires
+        # first now that one parent cannot hold both. The invariant it protects is the same.
+        self.assertIn(OTHER_PROJECT, refusal.detail)
         edges = self.store.all(
             "SELECT link_id FROM scope_links WHERE lower_kind = ? AND lower_key = ?"
             "  AND status IN ('active','paused')",
@@ -792,51 +827,33 @@ class TheSecondReviewRoundFoundTheseToo(LinkageTestCase):
             self.linkage.attachment(replacement["relationshipId"])["projectKey"], PROJECT)
         self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], "01child-two")
 
-    def test_a_second_handover_still_sees_the_projects_unfinished_work(self):
-        """outstanding filtered by the parent task, so after one handover the replacement
-        appeared to owe nothing and a second replacement could take the project free."""
-        self.supervise()
-        relationship = self.register()
-        rid = relationship["relationshipId"]
-        self.linkage.attach_issue(rid, PROJECT)
-        self.linkage.handover(
-            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
-            endpoint=self.parent(OTHER_PARENT), acknowledged=[rid],
-            evidence="the first handover", actor="test")
-        self.assertEqual(self.linkage.outstanding(PROJECT), [rid])
-        self.assertRefused(
-            RefusalReason.HANDOVER_UNCONFIRMED,
-            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
-            expect_task_id=OTHER_PARENT, endpoint=self.parent("01parent-three"),
-            acknowledged=[], evidence="a second handover owing nothing", actor="test")
+    def test_outstanding_follows_the_project_rather_than_one_parent(self):
+        """It filtered by the parent task, so work under a previous parent became invisible.
 
-    def test_a_parent_handover_moves_the_assignments_it_acknowledged(self):
-        """A parent handover does NOT reparent its assignments, and that is deliberate.
-
-        An earlier attempt here rewrote relationships.parent_task_id in place, and review
-        caught what that costs: relationship_id is sha256(parent|child|issue), so the row's
-        stored identity would no longer derive from its own columns, and queued deliveries
-        still name the old parent's thread. It was reverted rather than patched, because
-        moving an assignment to a new parent is supersession - a new relationship with a new
-        identity - and that is a larger change than this issue owns.
-
-        What holds today: the scope moves, the assignments do not, and the mismatch is
-        visible rather than silent. counterpart reports owner_drift, so a message about one of
-        these assignments is told the recorded owner and the live one disagree.
+        Now that a handover is refused outright while the scope has unfinished work, this is
+        what makes that refusal reachable at all: the set is the PROJECT's, whoever parents
+        each row.
         """
         self.supervise()
         relationship = self.register()
         rid = relationship["relationshipId"]
         self.linkage.attach_issue(rid, PROJECT)
+        self.assertEqual(self.linkage.outstanding(PROJECT), [rid])
+        self.assertEqual(self.linkage.outstanding(PROJECT, task_id="01nobody"), [])
+
+    def test_a_settled_project_changes_hands_cleanly(self):
+        """The whole point of refusing a stranding handover: once the work is gone, the scope
+        moves and nothing is left answering to the parent that stepped down."""
+        self.supervise()
         self.linkage.handover(
             role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
-            endpoint=self.parent(OTHER_PARENT), acknowledged=[rid],
-            evidence="taking on the unfinished issue", actor="test")
-        kept = self.registry.get(rid)
-        self.assertEqual(kept["parent"]["taskId"], PARENT,
-                         "the assignment's identity columns were rewritten under it")
-        self.assertEqual(kept["relationshipId"], rid)
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[],
+            evidence="a settled project", actor="test")
         self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], OTHER_PARENT)
+        edge = self.linkage.link(link_id(linkage.EXECUTION, linkage.INITIATIVE, INITIATIVE,
+                                         linkage.PROJECT, PROJECT))
+        self.assertEqual(edge["lower"]["taskId"], OTHER_PARENT)
+
 
 class TheObservationsFromTheSameRound(LinkageTestCase):
     def test_a_sender_scope_the_sender_does_not_own_is_reported(self):
@@ -848,34 +865,43 @@ class TheObservationsFromTheSameRound(LinkageTestCase):
         answer = self.linkage.counterpart(PARENT, CHILD, from_scope="PROJ-NOT-MINE")
         self.assertIn("foreign_sender_scope", answer["findings"])
 
-    def test_an_upward_walk_from_a_task_owning_several_scopes_says_so(self):
-        """owner_of_task chose one with LIMIT 1, dropping the other hierarchies silently."""
+    def stage_a_second_scope(self):
+        """Write a state the write paths now refuse, to exercise the reader's defence.
+
+        One task holding two live scopes of one role is not reachable through bind_scope any
+        more. It is staged directly here because the reader still has to answer safely if a
+        store somehow contains it - an older writer, a hand edit, a future bug - and the rule
+        is to report the ambiguity rather than pick a row.
+        """
         self.supervise()
-        self.supervise(initiative="INIT-2", project=OTHER_PROJECT, parent=self.parent(),
-                       supervisor=self.supervisor(OTHER_SUPERVISOR), kind=linkage.REFERENCE)
+        self.store.db.execute(
+            "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id,"
+            " host_id, cwd, cxc_session, status, revision, supersedes, superseded_by,"
+            " handover_note, created_at, updated_at)"
+            " VALUES ('bnd-staged-second','parent','project',?,?,?,NULL,NULL,'active',1,"
+            "         NULL,NULL,NULL,?,?)",
+            (OTHER_PROJECT, PARENT, HOST, self.clock.iso(), self.clock.iso()))
+
+    def test_an_upward_walk_from_an_ambiguous_store_reports_it_rather_than_picking(self):
+        self.stage_a_second_scope()
         answer = self.linkage.up(task_id=PARENT)
         self.assertEqual(answer["state"], "ambiguous")
         self.assertEqual(answer["levels"], [])
         self.assertEqual(
             sorted(answer["contention"][0]["candidates"]), sorted([PROJECT, OTHER_PROJECT]))
-        # Naming the scope answers it.
         named = self.linkage.up(task_id=PARENT, scope_key=OTHER_PROJECT)
         self.assertEqual(named["state"], "resolved")
         self.assertEqual(named["levels"][0]["scopeKey"], OTHER_PROJECT)
 
     def test_an_explicit_selector_is_not_overridden_by_the_ambiguity(self):
-        """The ambiguity fired whenever a task was named, even alongside an issue or a
-        relationship, so a caller that had already said which hierarchy it meant was answered
-        with a question instead."""
-        self.supervise()
-        self.supervise(initiative="INIT-2", project=OTHER_PROJECT, parent=self.parent(),
-                       supervisor=self.supervisor(OTHER_SUPERVISOR), kind=linkage.REFERENCE)
+        """A caller that also named an issue or a relationship has already said which
+        hierarchy it means, so answering with a question would ignore the selector it gave."""
+        self.stage_a_second_scope()
         relationship = self.register()
         self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
         answer = self.linkage.up(task_id=PARENT, issue_key=ISSUE)
         self.assertEqual(answer["state"], "resolved")
         self.assertEqual(answer["levels"][0]["scopeKey"], ISSUE)
-
     def test_an_unreadable_answer_keeps_the_fault_that_caused_it(self):
         """Every sqlite3.Error collapsed into one word, so corruption, schema drift and a
         query fault were indistinguishable to whoever had to act on them."""

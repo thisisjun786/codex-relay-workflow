@@ -142,6 +142,30 @@ read the outstanding work cannot produce the list, which is the point.
 
 `linkage-outstanding` prints exactly the set `--acknowledge` has to equal.
 
+### What a handover refuses to do
+
+It moves the scope. It refuses outright while the scope still has unfinished work, and says
+which assignments it could not move.
+
+An assignment's identity is \`sha256(parentTaskId|childTaskId|issueKey)\` and its queued
+deliveries name the parent's thread. So a handover cannot carry that endpoint across: rewriting
+\`parent_task_id\` in place would leave a row whose stored identity no longer derives from its
+own columns, and a replacement parent that cannot receive the work it just accepted. Both were
+tried and both were wrong.
+
+Each assignment is moved by registering its successor with \`supersedes\`, which mints a correct
+new identity, carries the new parent's host and cwd, and repoints the project-to-issue edge.
+Once the project has no unfinished work, the scope changes hands and nothing is left answering
+to the parent that stepped down.
+
+\`linkage-outstanding --project\` prints the set that has to be empty, and it is the PROJECT's
+set rather than one parent's, so work inherited from a previous parent still counts.
+
+The acknowledgement is still required and still means what the acceptance criterion asks: the
+incoming owner restates the outgoing owner and the exact unfinished set, so nothing is taken
+over silently. It is now a check the caller passes on the way to a refusal that explains the
+rest, rather than a licence to proceed.
+
 ## Reading
 
 `up()`, `down()` and `counterpart()` return a record and never raise for an absence, and they

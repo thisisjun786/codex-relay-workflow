@@ -105,6 +105,13 @@ class RefusalReason(str, Enum):
     HANDOVER_UNCONFIRMED = "handover_unconfirmed"
     LINK_CONFLICT = "link_conflict"
     LINK_NOT_ACTIVE = "link_not_active"
+    # One task is bound to ONE Linear level by stable id. A second live binding of the same
+    # role for the same task is its own refusal, told apart from a second OWNER of one scope.
+    ROLE_ALREADY_BOUND = "role_already_bound"
+    # A handover that would leave work behind it cannot move. Distinct from an unconfirmed
+    # one: the caller restated the outstanding set correctly and the operation is still
+    # refused, because the endpoint it would have to move is part of an assignment's identity.
+    HANDOVER_WOULD_STRAND = "handover_would_strand"
 
 
 class RelayError(Exception):

@@ -122,9 +122,13 @@ class ContentionIsVisible(LinkageTestCase):
         self.linkage.record_directive(
             scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
             from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-one")
+        # Only the execution supervisor may instruct, so a conflict is its successive
+        # instructions rather than two origins. The reference is registered anyway, to show it
+        # is present and still carries no authority.
         self.linkage.record_directive(
-            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id="01supervisor-two",
-            from_scope_key="INIT-2", link_id_value=reference["linkId"], digest="d-two")
+            scope_kind=linkage.PROJECT, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-two")
+        self.assertEqual(reference["kind"], linkage.REFERENCE)
         answer = self.linkage.down(linkage.PROJECT, PROJECT)
         kinds = [row.get("contention") for row in answer["contention"]]
         self.assertIn("instruction_conflict", kinds)
