@@ -39,6 +39,10 @@ INBOX_ONLY = "inbox_only"
 QUEUED = "queued"
 ACKNOWLEDGED = "acknowledged"
 SUPERSEDED = "superseded"
+# A claim has frozen this attempt's bytes and the transport has not answered yet. It lives
+# here with its siblings because more than one module has to reason about what a delivery in
+# this state can still do, and two copies of the literal would eventually disagree.
+SENDING = "sending"
 
 
 @dataclass(frozen=True)
