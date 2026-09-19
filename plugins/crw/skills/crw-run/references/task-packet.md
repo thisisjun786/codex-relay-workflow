@@ -302,8 +302,11 @@ only what the sender wrote. Identity is half of it, because a handoff naming the
 can still carry the wrong scope, by forgery, by mistake, or by arriving after the scope moved. The
 same read settles the rest: that the initiative named is the one whose record this is, that this
 parent's own project is in that initiative's approved set, and that the two values this handoff
-states it was written from, that membership, this project's contribution to the finish condition, the completion boundary, and
-the designation's limits and exclusions, are the ones the record carries now. The limits are compared for the same reason as the rest: a handoff that
+states it was written from, that membership, the completion boundary, and the designation's limits and exclusions, are the ones
+the record carries now. The contribution is corroborated against the project record the handoff
+names rather than against the initiative, because the initiative body may leave project-specific
+detail in that linked record: comparing it upward would refuse a legitimate handoff wherever the
+initiative only summarises, and accept a stale summary wherever it does. The limits are compared for the same reason as the rest: a handoff that
 omits a narrowing the designation made, by forgery, mistake or age, reads as ordinary authority to
 a parent that already holds it, and the later refusal only catches authority being widened. For the
 same reason the handoff's two statements of those limits are compared with each other: Authority
@@ -316,7 +319,10 @@ states and the record does not carry is unconfirmed, and work depending on it do
 message's word. One the record carries and the handoff omits matters more, since omission is how a
 stale or altered handoff removes a blocker: the comparison is against the complete set the record
 holds for this project rather than against what the message happened to include, and a handoff
-missing any of it is out of date and is raised. The handoff states both, with the revision it read them at, so the receiver has each
+missing any of it is out of date and is raised. The peer parents and shared surfaces named in the
+same field are read the same way, because that field asks this parent to open contact: a peer it
+cannot corroborate from a record it read itself is a proposal rather than an instruction, and it
+raises that instead of writing project context to a task outside its scope. The handoff states both, with the revision it read them at, so the receiver has each
 side of the comparison; the test is those values and not revision equality: an authorized edit elsewhere in the initiative moves the revision
 without moving them, and refusing a handoff over that would turn ordinary record-keeping into a
 stall. Where those values have moved, the handoff is out of date, and what it needs is the scope
