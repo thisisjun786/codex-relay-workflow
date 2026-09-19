@@ -3687,6 +3687,114 @@ RESOLVES_LIKE_PYTHON = {
          " values through fewer forms than the vocabulary, and the guard failed until it read"
          " the whole of it. Widening was correct here and a declared gap would not have been,"
          " because a conditional binding really does hand one of the two over."),
+    "a nonlocal owner that binds the name with a loop target":
+        (REFUSAL,
+         ("def outer():",
+          "    for answer in ():",
+          "        pass",
+          "",
+          "    def middle():",
+          "        def setter():",
+          "            nonlocal answer",
+          "            answer = reading.UNREADABLE",
+          "        return setter",
+          "",
+          "    def consumer():",
+          "        return answer",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the residual the round before this one wrote down, come back as a finding, which is"
+         " what a residual is for. The outward walk read assignments and parameters only, so a"
+         " scope that owns the name through a loop target was walked straight past and the"
+         " carrier was filed one scope too deep. A Store is a Store however it is spelled."),
+    "a nonlocal owner that binds the name with an import":
+        (REFUSAL,
+         ("def outer():",
+          "    import json as answer",
+          "",
+          "    def middle():",
+          "        def setter():",
+          "            nonlocal answer",
+          "            answer = reading.UNREADABLE",
+          "        return setter",
+          "",
+          "    def consumer():",
+          "        return answer",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the same gap through a binding form that is not a Store node at all, which is why it"
+         " is its own case rather than assumed to follow from the one above."),
+    "a nonlocal owner that binds the name with a def":
+        (REFUSAL,
+         ("def outer():",
+          "    def answer():",
+          "        return None",
+          "",
+          "    def middle():",
+          "        def setter():",
+          "            nonlocal answer",
+          "            answer = reading.UNREADABLE",
+          "        return setter",
+          "",
+          "    def consumer():",
+          "        return answer",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the third form, and the one that needed the scope read the other way round: a def is"
+         " labelled with the scope it OPENS and binds its name in the one around it, so reading"
+         " its own label would have registered the binding inside the function it names."),
+    "an alias a named expression binds":
+        (REFUSAL,
+         ("alias = (answers := reading)",
+          "",
+          "def consumer():",
+          "    return answers.UNREADABLE"),
+         "consumer", True,
+         "the shared helper every alias table is built on answered None for a walrus, so the"
+         " refusal owners, the class aliases and the opener aliases all lost the same spelling"
+         " at once, while _bindings beside it had always read one. One helper, one answer."),
+    "an alias an ordinary assignment binds":
+        (REFUSAL,
+         ("answers = reading",
+          "",
+          "def consumer():",
+          "    return answers.UNREADABLE"),
+         "consumer", True,
+         "its pair, and green before the fix above: reading a named expression must not have"
+         " changed what a plain assignment answers."),
+    "a conditional property getter whose earlier arm carries":
+        (REFUSAL,
+         ("class Holder:",
+          "    getter = (",
+          "        (lambda self: reading.UNREADABLE)",
+          "        if flag",
+          "        else (lambda self: \"fine\")",
+          "    )",
+          "    carrier = property(getter)",
+          "",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "a getter bound by a conditional is still a getter, and reading only a bare Lambda"
+         " registered neither arm as a method, so the property resolved to nothing and the"
+         " method that reads it went unaccounted for."),
+    "a conditional property getter whose later arm carries":
+        (REFUSAL,
+         ("class Holder:",
+          "    getter = (",
+          "        (lambda self: \"fine\")",
+          "        if flag",
+          "        else (lambda self: reading.UNREADABLE)",
+          "    )",
+          "    carrier = property(getter)",
+          "",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "the case that decided the shape, and it is why keeping the FIRST arm was not enough:"
+         " with the carrier in the other arm, a single-valued answer resolved the property to"
+         " the getter that does not carry and dropped the method again. The method and property"
+         " tables hold every arm now, the way the alias table beside them already did."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4765,10 +4873,29 @@ def _declared_owner(tree, places):
     binds = {}
     for node in ast.walk(tree):
         at = places.get(id(node), (MODULE_LEVEL, None))[0]
-        for named, _value in _bindings(node):
-            if isinstance(named, ast.Name):
-                binds.setdefault(at, set()).add(named.id)
+        # A nonlocal names whatever the enclosing scope binds, however it binds it. Reading
+        # assignments and parameters alone walked straight past a scope that owns the name
+        # through a loop target or an import, and filed the carrier one scope too deep.
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            # Assignments, loop targets, with targets, walrus and augmented writes all spell
+            # the bound name as a Store, so one test covers the lot.
+            binds.setdefault(at, set()).add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for imported in node.names:
+                binds.setdefault(at, set()).add(
+                    (imported.asname or imported.name).partition(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            binds.setdefault(at, set()).add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            # _places labels a class with the scope it is WRITTEN in, which is the scope its
+            # name is bound in.
+            binds.setdefault(at, set()).add(node.name)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            if not isinstance(node, ast.Lambda):
+                # A def is labelled with the scope it OPENS, but binds its name in the one
+                # around it.
+                binds.setdefault(at.rpartition(".")[0] or MODULE_LEVEL,
+                                 set()).add(node.name)
             # A parameter binds its name in the scope the definition opens.
             args = node.args
             for arg in (args.posonlyargs + args.args + args.kwonlyargs
@@ -4944,10 +5071,17 @@ def _assigned(node):
 
     An annotation with no value binds nothing: `carrier: property` declares a type and leaves
     the name unbound, which is not the same as binding it to something this reader cannot read.
+
+    A named expression binds too: (answers := reading) gives the name the module exactly as the
+    bare assignment does. Answering None for it left every table built on this helper -- refusal
+    owners, class aliases, opener aliases -- unable to see an alias spelled that way, while
+    _bindings beside it had always read one.
     """
     if isinstance(node, ast.Assign):
         return node.targets, node.value
     if isinstance(node, ast.AnnAssign) and node.value is not None:
+        return [node.target], node.value
+    if isinstance(node, ast.NamedExpr):
         return [node.target], node.value
     return None
 
@@ -5744,10 +5878,10 @@ def _hands_on(tree, spelled):
         # Which class a method belongs to, because self.name reaches a method of THIS class and
         # not a module-level function or another class's method that happens to share the name.
         if id(node) in is_method:
-            methods.setdefault((klass, where.rpartition(".")[2]), where)
+            methods.setdefault((klass, where.rpartition(".")[2]), set()).add(where)
             # A property is called by being read, so an attribute access naming one is a call.
             if decorated_by(node, ("property", "cached_property"), klass, where):
-                properties.setdefault((klass, where.rpartition(".")[2]), where)
+                properties.setdefault((klass, where.rpartition(".")[2]), set()).add(where)
     # Lambda methods FIRST, because the property scan below looks a getter up by name and
     # getter = lambda self: ... is registered here. Reading them in the other order makes the
     # answer depend on which loop this module happens to write first, which is a fact about
@@ -5757,7 +5891,11 @@ def _hands_on(tree, spelled):
         # lambda's own place is what a call through it reaches.
         if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
             continue
-        if not isinstance(node.value, ast.Lambda):
+        # Through the pass-through vocabulary rather than off a bare Lambda: a getter bound by
+        # a conditional is still a getter, and reading only the direct spelling registered
+        # neither arm, which left the method that reads the property unaccounted for.
+        made = list(_lambda_named(node.value))
+        if not made:
             continue
         where, klass = places.get(id(node), (MODULE_LEVEL, None))
         if klass is None or not any(around == where
@@ -5765,13 +5903,17 @@ def _hands_on(tree, spelled):
             # Bound in a class BODY, not merely somewhere under a class: a lambda made inside a
             # method is that method's local and never answers self.name().
             continue
-        seat = places.get(id(node.value), (MODULE_LEVEL, None))[0]
-        first = (node.value.args.posonlyargs + node.value.args.args)[:1]
-        for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
-            if isinstance(target, ast.Name):
-                methods[(klass, target.id)] = seat
-                if first:
-                    receivers[seat] = first[0].arg
+        for written in made:
+            seat = places.get(id(written), (MODULE_LEVEL, None))[0]
+            first = (written.args.posonlyargs + written.args.args)[:1]
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                if isinstance(target, ast.Name):
+                    # EVERY arm, not the first: when a conditional binds two getters and only
+                    # the later one carries, keeping the first answered that the property does
+                    # not reach and dropped the method that reads it.
+                    methods.setdefault((klass, target.id), set()).add(seat)
+                    if first:
+                        receivers[seat] = first[0].arg
 
     # A descriptor made by calling property() rather than by decorating. alias = property(carrier)
     # in a class body is the same getter under a second name, and reading self.alias runs it.
@@ -5801,10 +5943,10 @@ def _hands_on(tree, spelled):
                         if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
                             properties.setdefault(
                                 (places.get(id(node), (MODULE_LEVEL, None))[1], inner.id),
-                                reached)
+                                set()).update(reached)
     # The places that ARE getters, so a class alias naming one can be recognised as naming a
     # property rather than an ordinary method.
-    property_places = set(properties.values())
+    property_places = {seat for seats in properties.values() for seat in seats}
     # What a class body binds, and where. A def binds its own name there as surely as an
     # assignment does, and a binding written after a default has not happened yet when that
     # default runs, so the line is part of the answer.
@@ -5970,7 +6112,7 @@ def _hands_on(tree, spelled):
             return set()
         for reached_in in list(mro.get(klass, (klass,)))[1 if after else 0:]:
             if (reached_in, named) in methods:
-                return {methods[(reached_in, named)]}
+                return set(methods[(reached_in, named)])
             for scope, _around in class_scope.get(reached_in, ()):
                 held_alias = (aliases or {}).get(scope, {}).get(named)
                 if held_alias:
@@ -6060,7 +6202,7 @@ def _hands_on(tree, spelled):
         if written is not None and inside and (at is None or written < at):
             reached = methods.get((klass, named))
             if reached:
-                return {reached}
+                return set(reached)
             for scope in inside:
                 if aliases and named in aliases.get(scope, {}):
                     return set(aliases[scope][named])
@@ -6195,23 +6337,27 @@ def _hands_on(tree, spelled):
         """The property this class reaches by that name, its own or one it inherits.
 
         With after, the rest of this class's own line, which is where super() looks.
+
+        Every getter the name may run rather than one of them: a conditional binding installs
+        whichever arm the run picks, and answering with the first loses the carrier whenever it
+        is the other.
         """
         if klass is None:
-            return None
+            return set()
         for reached_in in list(mro.get(klass, (klass,)))[1 if after else 0:]:
             if (reached_in, named) in properties:
-                return properties[(reached_in, named)]
+                return set(properties[(reached_in, named)])
             for scope, _around in class_scope.get(reached_in, ()):
                 # alias = carrier in the class body is a second name for the same getter, and
                 # reading self.alias runs it exactly as reading self.carrier does.
                 for reached in sorted((aliases or {}).get(scope, {}).get(named) or ()):
                     if reached in property_places:
-                        return reached
+                        return {reached}
             if named in class_bound.get(reached_in, {}):
                 # A method or a binding of the same name stands in front of the descriptor, so
                 # the getter never runs and the classes after it are not reached.
-                return None
-        return None
+                return set()
+        return set()
 
     def read_as_a_call(node, function):
         """A property read: self.carrier with no parentheses still runs carrier.
@@ -6230,10 +6376,10 @@ def _hands_on(tree, spelled):
         if (_dotted(node.value) is None and isinstance(node.value, ast.Call)
                 and _dotted(node.value.func) == "super"):
             reached = a_property(klass, node.attr, after=True)
-            return {reached} if reached else set()
+            return set(reached)
         if _dotted(node.value) in instance(function):
             reached = a_property(klass, node.attr)
-            return {reached} if reached else set()
+            return set(reached)
         if (isinstance(node.value, ast.Name) and id(node.value) in holds_an
                 and its_own(node.value, function)):
             # holder = Holder() and then holder.carrier: the name's class is already known, and
@@ -6241,7 +6387,7 @@ def _hands_on(tree, spelled):
             # receiver table holds only the spellings a method was given, so without this the
             # constructed instance is the one case where a property read is not a call.
             reached = a_property(holds_an[id(node.value)], node.attr)
-            return {reached} if reached else set()
+            return set(reached)
         return set()
 
     def called(node, function):
