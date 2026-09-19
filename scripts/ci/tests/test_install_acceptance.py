@@ -183,6 +183,10 @@ TEXT_EVIDENCE = {
         "which branch guards a binding is a property of how bound_in is written, and the module"
         " object cannot be asked: a yield that checks certainty and one that does not are the"
         " same generator to it. Reading the file is the only way to sweep the rule.",
+    "test_every_owner_deciding_site_here_measures_how_near_the_binding_is":
+        "which branch guards a binding is a property of how bound_in is written, and the module"
+        " object cannot be asked: a yield that checks certainty and one that does not are the"
+        " same generator to it. Reading the file is the only way to sweep the rule.",
     "test_no_reader_here_sees_only_the_unannotated_binding":
         "which form a reader here accepts is a property of how it is written, and the module"
         " object cannot be asked: a function that tests ast.Assign and one that tests both are"
@@ -366,6 +370,32 @@ DECORATOR_ALIAS_CONTROLS = {
 # exists to hold. So each binding yielded in bound_in has to ASK, and one that does not is
 # declared here with the reason it may. Derived from bound_in's own text and keyed by the node
 # kinds its branch tests, so a new unguarded branch fails here instead of arriving as a finding.
+# Every place that decides WHICH binding a name refers to, derived from this file's own text.
+#
+# EXTRACTION PREDICATE, written down because a derived list is only as complete as its
+# predicate, and treating "it is derived" as completeness is this module's own defect one level
+# up. A site is recognised when it calls _bound_around -- which asks WHETHER some enclosing
+# scope binds the name -- or _nearest, which asks HOW NEAR the nearest binding is. Those two
+# are the only helpers through which this reader consults a scope-keyed binding map by name.
+#
+# OBSERVABLE BOUNDARIES, as data rather than as a sentence. Recognising calls to two names and
+# nothing else, the predicate does NOT see a site that walks the scope chain inline, one that
+# reads a scope-keyed map directly the way _visible_from does, or one written in another
+# module. The control below plants the second of those and requires it to be absent, so the
+# boundary is a measured fact rather than a caveat.
+#
+# COVERAGE IS NOT CORRECTNESS. This says every site asks the question; the paired cases in
+# RESOLVES_LIKE_PYTHON say the answers match Python. Neither claim substitutes for the other.
+DECIDES_AN_OWNER_WITHOUT_DISTANCE = {
+    "_hands_on":
+        "its two sites ask only whether an enclosing scope binds the name -- the instance"
+        " table's its_own, and the receiver-alias walk. Both err towards NOT claiming: finding"
+        " a binding makes them answer with nothing, so existence alone can cost a place and"
+        " cannot invent one. They decide a receiver or an instance class rather than a handle"
+        " or an opener, which is what the distance rule was written for, and the distance"
+        " question for them is open rather than settled.",
+}
+
 BINDS_WITHOUT_ASKING_IF_IT_HAPPENED = {
     "AsyncFunctionDef, FunctionDef":
         "a def under a branch is still a method: the method index answers for it either way and"
@@ -3177,9 +3207,87 @@ RESOLVES_LIKE_PYTHON = {
           "    import crw_runtime.reading as r",
           "    def consumer():",
           "        return r.UNREADABLE",
-          "    return consumer"),
-         "outer.consumer", True,
-         "and its pair, for the same reason."),
+         "    return consumer"),
+        "outer.consumer", True,
+        "and its pair, for the same reason."),
+    "a derived handle an inner parameter takes back":
+        (TEXT,
+         ("stream = open(HERE)",
+          "",
+          "def helper(stream):",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper(None)"),
+         "consumer", False,
+         "a derived handle is a fact about the scope that derived it, and a parameter written"
+         " nearer the read holds whatever its caller passed. The exemption that lets a derived"
+         " handle be read where it was made was bypassing the shadow check entirely, so the"
+         " helper and every caller below it were inventoried for a file none of them opens."),
+    "a derived handle nothing nearer takes":
+        (TEXT,
+         ("stream = open(HERE)",
+          "",
+          "def helper():",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "its pair: the module's handle really is what the helper reads when nothing takes the"
+         " name, so measuring distance must not have stopped a derived handle being read at"
+         " all."),
+    "an opener alias an inner parameter takes back":
+        (TEXT,
+         ("def outer():",
+          "    fopen = open",
+          "    def helper(fopen):",
+          "        stream = fopen(HERE)",
+          "        return stream.read()",
+          "    def reader():",
+          "        return helper(None)",
+          "    return reader"),
+         "outer.reader", False,
+         "the same rule on the opener side: the alias belongs to the scope that wrote it, and"
+         " a call through a parameter of that name opens whatever the caller handed over. The"
+         " helper still names HERE and is still reported; what must not propagate is the read"
+         " to its caller."),
+    "an opener alias nothing nearer takes":
+        (TEXT,
+         ("def outer():",
+          "    fopen = open",
+          "    def helper():",
+          "        stream = fopen(HERE)",
+          "        return stream.read()",
+          "    def reader():",
+          "        return helper()",
+          "    return reader"),
+         "outer.reader", True,
+         "its pair: with nothing taking the name the alias really is the opener, and the read"
+         " does reach the caller."),
+    "a handle a parameter default holds, left to the default":
+        (TEXT,
+         ("def helper(path=HERE):",
+          "    return path.read_text()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the call omits the argument, so the default binds the parameter and the text really"
+         " does reach the caller. The propagation read assignment-like statements only, so the"
+         " name was never a handle and the consumer went unreported."),
+    "a handle a parameter default holds, overridden by the call":
+        (TEXT,
+         ("def helper(path=HERE):",
+          "    return path.read_text()",
+          "",
+          "def consumer(other):",
+          "    return helper(other)"),
+         "consumer", False,
+         "the pair that decides whether the fix above is a fix or a flood. Recording every"
+         " default as a handle unconditionally taints the supplied argument too and turns one"
+         " missing consumer into a crowd of invented ones, so a default every call overrides"
+         " binds nothing here."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4215,6 +4323,44 @@ def _defaults(node):
                if default is not None]
     return [(ast.copy_location(ast.Name(id=arg.arg, ctx=ast.Store()), arg), default)
             for arg, default in paired]
+
+
+def _default_applies(tree):
+    """Which parameter defaults any call in this source actually leaves to the default.
+
+    A default binds the parameter only when the caller omits the argument. Recording every
+    default as a handle unconditionally taints the ordinary supplied argument too, which turns
+    one missing consumer into a crowd of invented ones -- so a default every call overrides is
+    not a binding here at all.
+
+    Answered per (function, parameter) over the whole source rather than per call site: if ANY
+    call omits it the default really does apply somewhere, and this reader errs towards
+    reporting. Observable boundary, stated because it is one: a call through a name this text
+    does not resolve to the definition is not counted, so a function only ever called that way
+    is read as never taking its default.
+    """
+    supplied, defined = {}, {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            spelled = node.args.posonlyargs + node.args.args
+            given = list(node.args.defaults)
+            for index, argument in enumerate(spelled[len(spelled) - len(given):]
+                                             if given else []):
+                defined[(node.name, argument.arg)] = len(spelled) - len(given) + index
+            for argument, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
+                if default is not None:
+                    defined[(node.name, argument.arg)] = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        called = (_dotted(node.func) or "").rpartition(".")[2]
+        for (owner, argument), where in defined.items():
+            if owner != called:
+                continue
+            handed = (where is not None and len(node.args) > where) or any(
+                word.arg == argument for word in node.keywords)
+            supplied.setdefault((owner, argument), set()).add(handed)
+    return {pair for pair, seen in supplied.items() if False in seen}
 
 
 def _passed_through(value):
@@ -6096,7 +6242,7 @@ def _opener_call(func, bare, dotted):
     return spelling in dotted or spelling.rpartition(".")[2] == builtins.open.__name__
 
 
-def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
+def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None, taken_at=None):
     """Every name that reaches a source file, the module's own and the local ones bound to them.
 
     path = HERE is an ordinary line, and a read taken on path reaches the same file.
@@ -6108,6 +6254,9 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
     places, known, where_from, growing = _places(tree), set(handles), {}, True
     declared = frozenset(handles)
     bare, dotted, rebound = openers or _opener_spellings(tree, places)
+    taken_at = taken_at or {}
+    # Once, not per node: which defaults any call actually leaves to the default.
+    left_to_the_default = _default_applies(tree)
 
     def seen_in(scope, made):
         """Whether a use in this scope sees a handle derived in one of those."""
@@ -6132,7 +6281,8 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
                     # Unless the binding IS the opener: fopen = open written in a function
                     # binds the name there, and what it holds is still this file's opener.
                     if not opens_a_file or (id(opener) in shadowed
-                                            and not _bound_around(rebound, scope, opener.id)):
+                                            and _nearest(rebound, scope, opener.id)
+                                            < _nearest(taken_at, scope, opener.id)):
                         return False
                 elif (_dotted(opener) or "") in dotted:
                     # io.open is the builtin under its module's name rather than an object's
@@ -6159,7 +6309,12 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
 
         for node in ast.walk(tree):
             scope, _klass = places.get(id(node), (MODULE_LEVEL, None))
-            for target, value in _bindings(node):
+            # A default is a binding here too: def helper(path=HERE) makes path hold the
+            # handle whenever the caller omits the argument, and the read taken on it reaches
+            # the same file.
+            for target, value in list(_bindings(node)) + [
+                    (named, default) for named, default in _defaults(node)
+                    if (getattr(node, "name", None), named.id) in left_to_the_default]:
                 if not reaches(value, scope):
                     continue
                 named = _dotted(target)
@@ -6177,11 +6332,12 @@ def _handle_names(tree, handles, shadowed=(), opens_a_file=True, openers=None):
 
 def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), declared=(),
                     astray=(), built=(), opens_a_file=True, openers=None, places=None,
-                    reader_at=None, taken_at=None):
+                    reader_at=None, taken_at=None, derived_at=None):
     """The matcher: which node reaches the text of a source file, spelled any of the derived ways."""
     bare, dotted, rebound = openers or (frozenset({builtins.open.__name__}), frozenset(), {})
     places = places or {}
     reader_at, taken_at = reader_at or {}, taken_at or {}
+    derived_at = derived_at or {}
 
     def spelled(node, klass):
         if isinstance(node, ast.Name):
@@ -6189,7 +6345,14 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             # module's handle, and which file it holds is a fact about the caller. Only the
             # handles the MODULE declares can be shadowed that way -- stream = open(HERE) is a
             # local binding too, and it is a handle BECAUSE of it.
-            if node.id in handles and id(node) not in astray and not (
+            at = places.get(id(node), (MODULE_LEVEL, None))[0]
+            # And unless something NEARER binds it: a derived handle is a fact about the scope
+            # that derived it, and a parameter written closer to the read holds whatever its
+            # caller passed.
+            taken_back = (id(node) in shadowed
+                          and _nearest(derived_at, at, node.id)
+                          < _nearest(taken_at, at, node.id))
+            if node.id in handles and id(node) not in astray and not taken_back and not (
                     node.id in declared and id(node) in shadowed):
                 return node.id
             return None
@@ -6244,7 +6407,14 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             taken = node.func.value if isinstance(node.func, ast.Attribute) else None
             if isinstance(taken, ast.Name) and (
                     id(taken) in astray
-                    or (taken.id in declared and id(taken) in shadowed)):
+                    or (taken.id in declared and id(taken) in shadowed)
+                    or (id(taken) in shadowed
+                        and _nearest(derived_at,
+                                     places.get(id(taken), (MODULE_LEVEL, None))[0],
+                                     taken.id)
+                        < _nearest(taken_at,
+                                   places.get(id(taken), (MODULE_LEVEL, None))[0],
+                                   taken.id))):
                 # A scope that binds the handle's name reads its own, so a read taken on it
                 # says nothing about the file the module's handle names.
                 on_a_handle = False
@@ -6264,10 +6434,12 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                 opener, receiver = node.func.value.func, []
                 if isinstance(opener, ast.Name):
                     if (id(opener) in shadowed
-                            and not _bound_around(rebound,
-                                                  places.get(id(opener),
-                                                             (MODULE_LEVEL, None))[0],
-                                                  opener.id)):
+                            and _nearest(rebound,
+                                         places.get(id(opener), (MODULE_LEVEL, None))[0],
+                                         opener.id)
+                            < _nearest(taken_at,
+                                       places.get(id(opener), (MODULE_LEVEL, None))[0],
+                                       opener.id)):
                         # The scope binds the opener itself, so what it answers with is
                         # the caller's file rather than this module's.
                         return None
@@ -6466,7 +6638,15 @@ def source_text_reached(source):
     _classes, as_class, built = _instance_classes(tree)
     places = _places(tree)
     openers = _opener_spellings(tree, places)
-    handles, where_from = _handle_names(tree, handles, shadowed, opens_a_file, openers)
+    handles, where_from = _handle_names(tree, handles, shadowed, opens_a_file, openers,
+                                        taken_at)
+    # Which scope derived each handle, so a name bound nearer the read can take it back. The
+    # propagation records WHERE a handle came from; this is the same fact keyed the way the
+    # distance rule reads it.
+    derived_at = {}
+    for named, made_in in where_from.items():
+        for at in made_in:
+            derived_at.setdefault(at, set()).add(named)
     # Which scope gives a name to something that hands source back. reader = ast.parse binds
     # the name in the scope that wrote it, so that scope is not shadowing the reader it just
     # named -- the same rule the opener alias already follows.
@@ -6503,14 +6683,14 @@ def source_text_reached(source):
         wider = _held_by_class(
             tree, _source_spelled(handles, hands_source, held, as_class, shadowed, declared,
                                   astray, built, opens_a_file, openers, places, reader_at,
-                                  taken_at),
+                                  taken_at, derived_at),
             held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _source_spelled(handles, hands_source, held, as_class,
                                                shadowed, declared, astray, built,
                                                opens_a_file, openers, places, reader_at,
-                                               taken_at)),
+                                               taken_at, derived_at)),
             {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
 
 
@@ -7103,6 +7283,66 @@ class SevenReadingsTests(unittest.TestCase):
                                  form + ": this reader and Python disagree about whether the"
                                  " decorator installed a descriptor, so the alias was resolved"
                                  " in a scope that cannot reach the use site")
+
+    def test_every_owner_deciding_site_here_measures_how_near_the_binding_is(self):
+        """Support: coverage over the sites that decide which binding a name refers to.
+
+        Five findings in a row were one rule applied at some of those sites and not others, so
+        the set is swept rather than the instances. The predicate is stated in
+        DECIDES_AN_OWNER_WITHOUT_DISTANCE and read off this file: a site is recognised by
+        calling _bound_around or _nearest, which are the only helpers that consult a
+        scope-keyed binding map by name.
+
+        This establishes COVERAGE, not correctness. That every site asks the question is a
+        different claim from the answers being right, and the answers are held by the paired
+        cases in RESOLVES_LIKE_PYTHON whose expectations come from Python rather than from this
+        reader. A derived inventory that was allowed to stand for both would be this module's
+        own defect wearing the tooling's clothes.
+
+        The boundary is measured too: _visible_from decides an owner by reading a scope-keyed
+        map directly, and the predicate does not recognise it. That absence is asserted, so the
+        list cannot quietly claim to see every shape.
+        """
+        source = HERE.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        owner = {}
+        for top in parsed.body:
+            if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                for inner in ast.walk(top):
+                    owner[id(inner)] = top.name
+        asks, measures = {}, set()
+        for node in ast.walk(parsed):
+            if not isinstance(node, ast.Call):
+                continue
+            named = getattr(node.func, "id", None)
+            if named == "_bound_around":
+                asks.setdefault(owner.get(id(node), MODULE_LEVEL), []).append(node.lineno)
+            if named == "_nearest":
+                measures.add(owner.get(id(node), MODULE_LEVEL))
+        self.assertTrue(asks or measures,
+                        "no owner-deciding site was recognised at all, so this check would pass"
+                        " by sweeping nothing rather than by finding nothing")
+        # The comparison itself, shown rather than asserted away.
+        without = sorted(set(asks) - measures)
+        undeclared = sorted(set(without) - set(DECIDES_AN_OWNER_WITHOUT_DISTANCE))
+        self.assertEqual(undeclared, [],
+                         "a site decides which binding a name refers to by asking only whether"
+                         " one exists outward, and nobody wrote down why that is safe there: "
+                         + json.dumps({name: asks[name] for name in undeclared}))
+        stale = sorted(set(DECIDES_AN_OWNER_WITHOUT_DISTANCE) - set(without))
+        self.assertEqual(stale, [],
+                         "declared as deciding without distance, but it measures now, so delete"
+                         " the entry: " + json.dumps(stale))
+        for name, why in sorted(DECIDES_AN_OWNER_WITHOUT_DISTANCE.items()):
+            with self.subTest(name):
+                self.assertTrue(why.strip(), name + " is declared without a reason")
+        # The boundary, exercised: a site that decides an owner by reading a map directly is
+        # NOT recognised by this predicate, and saying so is the whole point of writing the
+        # predicate down.
+        self.assertNotIn("_visible_from", set(asks) | measures,
+                         "_visible_from decides an owner without calling either helper, so the"
+                         " predicate should not see it -- if it does, the boundary written"
+                         " above is no longer true and the wording has to change")
 
     def test_no_class_body_binding_shadows_without_asking_whether_it_happened(self):
         """The certainty rule, swept over every place that decides it rather than one branch.
@@ -8092,10 +8332,12 @@ HANDED = {
     "_visible_from": NOTHING,
     "_passed_through": NOTHING,
     "_defaults": NOTHING,
+    "_default_applies": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
     "test_a_decorator_alias_resolves_in_the_scope_that_imported_it": NOTHING,
     "test_no_class_body_binding_shadows_without_asking_whether_it_happened": NOTHING,
+    "test_every_owner_deciding_site_here_measures_how_near_the_binding_is": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
     "_class_spellings": NOTHING,
