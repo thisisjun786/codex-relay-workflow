@@ -1559,6 +1559,60 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", True,
          "its pair: the read prefix still recognises a read, so naming the one question that"
          " is not one must not have narrowed the rule to a list of blessed spellings."),
+    "a decorator another object owns":
+        (REFUSAL,
+         ("class Decorators:",
+          "    @staticmethod",
+          "    def staticmethod(fn):",
+          "        return fn",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @Decorators.staticmethod",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "a qualified decorator belongs to whatever owns it. Reducing every dotted name to its"
+         " last part reads this as the builtin and takes away a receiver the method has."),
+    "a receiver alias made by the scope around a nested one":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def outer(self):",
+          "        that = self",
+          "        def consumer():",
+          "            return that.carrier()",
+          "        return consumer()"),
+         "outer.consumer", True,
+         "the closure reads the alias the method around it made, so the aliases have to be"
+         " gathered from every scope between the receiver and the use, not from the innermost"
+         " one alone."),
+    "a parameter spelled like an instance bound at module level":
+        (REFUSAL,
+         ("class Holder:",
+          "    unread = reading.UNREADABLE",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer(holder):",
+          "    return holder.unread"),
+         "consumer", False,
+         "the shadow has to be consulted BEFORE the instance table, or resolving the spelling"
+         " to its class answers with a refusal the caller's object never held."),
+    "a handle name another scope derived":
+        (TEXT,
+         ("def helper():",
+          "    stream = open(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer(stream):",
+          "    return stream.read()"),
+         "consumer", False,
+         "a derived handle is one in the scope that derived it and the scopes inside that."
+         " Read file-wide, an unrelated parameter of the same spelling reads as this module's"
+         " source and owes a declaration for a file it never opens."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2762,8 +2816,18 @@ def _hands_on(tree, spelled):
 
     def decorated_by(node, seed, within=None):
         """Whether any decorator on this definition reaches one of these builtins."""
-        return any(means((_dotted(mark) or "").rpartition(".")[2], seed, mark.lineno, within)
-                   for mark in getattr(node, "decorator_list", []))
+        def reaches(mark):
+            spelled_as = _dotted(mark) or ""
+            owner, _, last = spelled_as.rpartition(".")
+            # A qualified decorator belongs to whatever owns it. Decorators.staticmethod is
+            # that class's, and reducing every dotted name to its last part reads it as the
+            # builtin, which removes a receiver the method really has.
+            if owner and (owner.rpartition(".")[2] in parents
+                          or any(bound == owner.rpartition(".")[2]
+                                 for _line, bound, _value in module_bindings)):
+                return False
+            return means(last, seed, mark.lineno, within)
+        return any(reaches(mark) for mark in getattr(node, "decorator_list", []))
 
     def names_class(name, at, followed=0):
         """The class this name reaches at that line: its own name, or one bound to it.
@@ -2928,7 +2992,14 @@ def _hands_on(tree, spelled):
                 while growing:
                     growing = False
                     for name in sorted(found):
-                        gained = receiver_alias.get(function, {}).get(name, set()) - found
+                        # Every scope from the one holding the receiver down to this one: a
+                        # nested function reads the alias the method around it made.
+                        gained = set()
+                        chain, reach = function.split(".") if function != MODULE_LEVEL else [], []
+                        for part in chain:
+                            reach.append(part)
+                            gained |= receiver_alias.get(".".join(reach), {}).get(name, set())
+                        gained -= found
                         if gained:
                             found |= gained
                             growing = True
@@ -3575,16 +3646,16 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=()):
             through = _dotted(node.value)
             reader = (klass if through in ("self", "cls")
                       else (through or "").rpartition(".")[2] or None)
+            if (through not in ("self", "cls") and isinstance(node.value, ast.Name)
+                    and id(node.value) in shadowed):
+                # The scope binds that qualifier itself, so neither an imported module nor an
+                # instance bound at module level under the same spelling is what this reads.
+                return None
             # A name holding an instance answers to its class: what innocent.NOT_READ reads is
             # what Innocent binds, and what holder.unread reads is what Holder binds.
             reader = (as_class or {}).get(reader, reader)
             if reader is not None and node.attr in held.get(reader, ()):
                 return (through or "") + "." + node.attr
-            if (through not in ("self", "cls") and isinstance(node.value, ast.Name)
-                    and id(node.value) in shadowed):
-                # The scope binds that qualifier itself, so an imported module spelled the same
-                # way is not what this reads, and what the object holds is the caller's fact.
-                return None
             if reader in classes:
                 # A class written here is asked through the table above, which knows what it
                 # binds. Falling through would match on the attribute name alone, and then any
@@ -3610,7 +3681,7 @@ def _handle_names(tree, handles):
     and a read taken on it reaches that file. The call is recognised rather than followed, since
     what open answers with is the file it was given and that is the whole of what is needed here.
     """
-    known, growing = set(handles), True
+    places, known, where_from, growing = _places(tree), set(handles), {}, True
     while growing:
         growing = False
         def reaches(expression):
@@ -3630,17 +3701,25 @@ def _handle_names(tree, handles):
             return _dotted(expression) in known
 
         for node in ast.walk(tree):
+            scope, _klass = places.get(id(node), (MODULE_LEVEL, None))
             for target, value in _bindings(node):
                 if not reaches(value):
                     continue
                 named = _dotted(target)
-                if named and named not in known:
+                if not named:
+                    continue
+                if named not in known:
                     known.add(named)
                     growing = True
-    return frozenset(known)
+                # Where the name was made a handle. A name the MODULE declares is a handle
+                # everywhere; one derived from a binding is one in that scope and the scopes
+                # inside it, and an unrelated function's parameter of the same spelling is not.
+                where_from.setdefault(named, set()).add(scope)
+    return frozenset(known), where_from
 
 
-def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), declared=()):
+def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), declared=(),
+                    astray=()):
     """The matcher: which node reaches the text of a source file, spelled any of the derived ways."""
     def spelled(node, klass):
         if isinstance(node, ast.Name):
@@ -3648,7 +3727,8 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             # module's handle, and which file it holds is a fact about the caller. Only the
             # handles the MODULE declares can be shadowed that way -- stream = open(HERE) is a
             # local binding too, and it is a handle BECAUSE of it.
-            if node.id in handles and not (node.id in declared and id(node) in shadowed):
+            if node.id in handles and id(node) not in astray and not (
+                    node.id in declared and id(node) in shadowed):
                 return node.id
             return None
         if isinstance(node, ast.Attribute):
@@ -3680,7 +3760,9 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
             on_a_handle = head in handles or (reader is not None
                                               and last in held.get(reader, ()))
             taken = node.func.value if isinstance(node.func, ast.Attribute) else None
-            if isinstance(taken, ast.Name) and taken.id in declared and id(taken) in shadowed:
+            if isinstance(taken, ast.Name) and (
+                    id(taken) in astray
+                    or (taken.id in declared and id(taken) in shadowed)):
                 # A scope that binds the handle's name reads its own, so a read taken on it
                 # says nothing about the file the module's handle names.
                 on_a_handle = False
@@ -3790,18 +3872,32 @@ def source_text_reached(source):
     tree = ast.parse(source)
     handles, hands_source, undecided, called = source_spellings(tree)
     declared = frozenset(handles)
-    handles = _handle_names(tree, handles)
+    handles, where_from = _handle_names(tree, handles)
     _classes, as_class = _instance_classes(tree)
+    places = _places(tree)
+
+    def inside(scope, made):
+        """Whether a use in this scope sees a handle derived in one of those."""
+        return any(scope == owner or scope.startswith(owner + ".") for owner in made)
+
+    # A derived handle read in a scope that did not derive it is a different object wearing the
+    # same name, so it is treated as a shadow rather than as this module's source.
+    astray = {id(node) for node in ast.walk(tree)
+              if isinstance(node, ast.Name) and node.id in where_from
+              and node.id not in declared
+              and not inside(places.get(id(node), (MODULE_LEVEL, None))[0],
+                             where_from[node.id])}
     shadowed = _shadowing_names(tree)
     held, growing = {}, True
     while growing:
         wider = _held_by_class(
-            tree, _source_spelled(handles, hands_source, held, as_class, shadowed, declared),
+            tree, _source_spelled(handles, hands_source, held, as_class, shadowed, declared,
+                                  astray),
             held)
         growing = wider != held
         held = wider
     return (_occurrences(tree, _source_spelled(handles, hands_source, held, as_class,
-                                               shadowed, declared)),
+                                               shadowed, declared, astray)),
             {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
 
 
