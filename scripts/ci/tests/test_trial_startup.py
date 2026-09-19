@@ -385,6 +385,10 @@ class World:
                           "inode": self.INODE,
                           "observedAccess": {"read": True, "write": True,
                                              "directoryWritable": True}},
+                # OPS-3.3, which doctor answers for every acting process it runs in: the report
+                # carries this whether or not a ledger is configured, so a peer payload without
+                # it is one nothing wrote.
+                "ledger": {"configured": True, "split": False},
                 "nonce": {"nonce": self.NONCE, "found": True, "readable": True,
                           "device": self.DEVICE, "inode": self.INODE},
             }
@@ -837,6 +841,7 @@ class StoreIdentity(TrialCase):
             "store": {"storeId": "another-store", "device": 1, "inode": 2,
                       "observedAccess": {"read": True, "write": True,
                                          "directoryWritable": True}},
+            "ledger": {"configured": True, "split": False},
             "nonce": {"nonce": World.NONCE, "found": True, "readable": True}}
         self.world.flush()
         document = self.world.preflight()
@@ -5051,6 +5056,37 @@ class FortyFifthHostedRound(TrialCase):
         self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
                          NOT_VERIFIED)
 
+    def test_a_peer_whose_transport_ledger_is_split_is_not_verified(self):
+        # OPS-3.3: the flag moves the store and the environment moves the adapter's ledger, so a
+        # participant that sets one of them without the other keeps the record which suppresses
+        # duplicate delivery away from the store it has just proved it shares. This was read from
+        # the boundary this process runs in and from no other, so every peer beside it could
+        # carry a split ledger behind a verified cell.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["doctor-" + task + ".json"]["ledger"] = {"configured": True,
+                                                                        "split": True}
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a peer keeping its transport ledger elsewhere was read as ready")
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
+                         NOT_VERIFIED)
+
+    def test_a_peer_that_never_said_where_its_ledger_lives_is_unread(self):
+        # Support for the case above, and the bound reading's own rule applied per peer: doctor
+        # reports this whether or not a ledger is configured, so a payload without it did not
+        # answer the question rather than answering it well.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["doctor-" + task + ".json"].pop("ledger")
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
+                         UNKNOWN)
+        self.assertFalse(document["readyToStart"],
+                         "a peer that never said where its ledger lives was read as ready")
+
     def test_a_receipt_asking_for_something_no_creation_can_ask_for_is_not_one(self):
         # The contract builds both collections out of its own fixed fields, so a receipt naming
         # anything else is not one it wrote. Added to both sides they compare equal, and every
@@ -5086,66 +5122,82 @@ class FortyFifthHostedRound(TrialCase):
             cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
             NOT_VERIFIED)
 
-    def test_a_counter_that_stops_during_the_last_probe_is_caught(self):
-        # The last probe can take as long as its timeout allows, and a supervisor that stops
-        # advancing during it stays alive and in a running state. The advance seen before that
-        # probe says nothing about the interval that has passed since.
+    def a_counter_this_case_controls(self, declared):
+        """A supervisor that stays alive, detached and in a running state throughout, with its
+        witness counter under the case's own control rather than a real poller's.
+
+        The counter moves once between the reading the recheck is anchored on and the gate's own
+        reading, so that reading sees a real advance however long the pass took to reach it.
+        Leaving that to a sleeper call made a case depend on the run being fast enough that the
+        declared interval had not already elapsed, which is a property of the machine rather than
+        of the thing being tested, and it is why one of these was red on CI and green here.
+        """
         if process_state_of(os.getpid()) is None:
             raise unittest.SkipTest("this host does not report a process state to read")
         witness = self.world.trial / "supervisor.jsonl"
-        # Alive, detached and in a running state throughout, which is the arrangement this is
-        # about: the counter stops, the process does not.
         quiet = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
                                  start_new_session=True,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(quiet.wait)
         self.addCleanup(quiet.terminate)
+        counter = {"progress": 1, "frozen": False, "pauses": 0, "pid": quiet.pid}
 
-        def advance(progress):
-            witness.write_text("".join(json.dumps({"pid": quiet.pid, "progress": n}) + "\n"
+        def write(progress, pid=None):
+            witness.write_text("".join(json.dumps({"pid": pid or quiet.pid, "progress": n}) + "\n"
                                        for n in range(1, progress + 1)), encoding="utf-8")
 
-        advance(1)
+        def move():
+            counter["progress"] += 1
+            write(counter["progress"])
+
+        counter["write"], counter["move"] = write, move
+        write(1)
         self.world.record["supervisor"]["pid"] = quiet.pid
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.2
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = declared
         self.world.record["supervisor"]["minimumAliveSeconds"] = 0.05
         self.world.flush()
-        counter = {"progress": 1, "frozen": False}
-
-        def move(seconds=None):
-            counter["progress"] += 1
-            advance(counter["progress"])
-
-        def pause(seconds):
-            # The counter moves while the reading this gate anchors on waits out its interval,
-            # and stops once that reading is behind us. Freezing it from the start would fail
-            # the anchored reading instead, which is a different case.
-            if not counter["frozen"]:
-                move()
-
-        # One move between the anchored reading and the gate's own, so the gate sees a real
-        # advance however long the pass took to reach it, and nothing after that. Leaving the
-        # gate's advance to a sleeper call made the case depend on the run being fast enough
-        # that the declared interval had not already elapsed, which is a property of the machine
-        # rather than of the thing under test, and it is why this failed on CI and not here.
         gate = startup.order_gate
 
-        def advance_the_counter_before_the_gate_reads_it(*args, **named):
+        def advance_the_counter_before_the_gate_reads_it(*args, **given):
             move()
             counter["frozen"] = True
-            return gate(*args, **named)
+            return gate(*args, **given)
 
         startup.order_gate = advance_the_counter_before_the_gate_reads_it
         self.addCleanup(setattr, startup, "order_gate", gate)
+        return counter
+
+    def a_last_probe_that(self, action):
+        """The last relay command this run makes, with something of the case's happening inside
+        it. What a case puts here is what the recheck after it has to notice."""
         original = startup.store_still_the_same
 
-        def take_longer_than_the_counters_interval(record, relay):
+        def probe(record, relay):
             answer = original(record, relay)
-            time.sleep(0.4)
+            action()
             return answer
 
-        startup.store_still_the_same = take_longer_than_the_counters_interval
+        startup.store_still_the_same = probe
         self.addCleanup(setattr, startup, "store_still_the_same", original)
+
+    def test_a_counter_that_stops_during_the_last_probe_is_caught(self):
+        # The last probe can take as long as its timeout allows, and a supervisor that stops
+        # advancing during it stays alive and in a running state. The advance seen before that
+        # probe says nothing about the interval that has passed since. Nothing here lengthens
+        # that probe: the recheck waits out whatever of the declared interval the pass did not
+        # use, so the case holds whether the probe was slow or instant.
+        counter = self.a_counter_this_case_controls(0.2)
+
+        def pause(seconds):
+            # The counter moves while the reading this is anchored on waits out its interval,
+            # and stops once that reading is behind us. Freezing it from the start would fail
+            # that reading instead, which is a different case.
+            counter["pauses"] += 1
+            if counter["frozen"]:
+                time.sleep(seconds)
+            else:
+                counter["move"]()
+
         document = self.world.preflight_with(pause)
         answer = document["supervisorStillRunning"]
         self.assertFalse(document["readyToStart"],
@@ -5154,9 +5206,50 @@ class FortyFifthHostedRound(TrialCase):
                         "the gate's own reading did not see the advance this case needs")
         self.assertTrue(answer["aliveAfterTheLastProbe"],
                         "this case is about a process that stays, not one that leaves")
+
+    def test_a_witness_taken_over_during_a_short_last_probe_is_caught(self):
+        # The other end of the same statement. A probe shorter than the declared interval is a
+        # reason to wait for the counter, never a reason not to read the witness: a supervisor
+        # replaced during it leaves a witness under another pid, and the declared process can
+        # still be alive and detached beside it.
+        counter = self.a_counter_this_case_controls(5)
+
+        def pause(seconds):
+            counter["pauses"] += 1
+            counter["move"]()
+
+        # Ahead of the counter this run has read, so nothing here passes for want of an advance.
+        self.a_last_probe_that(lambda: counter["write"](9, pid=999999))
+        document = self.world.preflight_with(pause)
+        answer = document["supervisorStillRunning"]
+        self.assertFalse(document["readyToStart"],
+                         "a witness taken over during a short last probe was never read again")
+        self.assertTrue(answer["aliveAfterTheLastProbe"],
+                        "this case is about a witness that changes, not a process that leaves")
+        self.assertFalse(answer["witnessNamesTheSamePidAfterTheLastProbe"],
+                         "the witness this run ended on still named the declared supervisor")
+
+    def test_a_counter_that_missed_its_interval_is_not_given_another(self):
+        # And the waiting stops where the declared interval ends. A last probe that outlasts that
+        # interval leaves none of it to wait, so a counter that moves after it is a counter that
+        # did not move across the interval it was given.
+        counter = self.a_counter_this_case_controls(0.5)
+
+        def pause(seconds):
+            # Whenever anything waits, the counter moves. The point is that nothing waits here.
+            counter["pauses"] += 1
+            counter["move"]()
+
+        self.a_last_probe_that(lambda: time.sleep(0.6))
+        document = self.world.preflight_with(pause)
+        answer = document["supervisorStillRunning"]
+        self.assertFalse(document["readyToStart"],
+                         "a counter that missed its declared interval was given another one")
         self.assertGreaterEqual(answer["secondsSinceTheGatesOwnReading"],
                                 answer["declaredAdvanceSeconds"],
                                 "the last probe did not outlast the counter's own interval")
+        self.assertTrue(answer["advanced"],
+                        "the gate's own reading did not see the advance this case needs")
 
     def test_a_ledger_line_cannot_write_a_verdict_into_the_report(self):
         # These four fields are the operator's own words and they are copied into the report. A

@@ -2113,12 +2113,30 @@ def reading_store(record, relay):
         # trip however completely its store identity agrees, and the store comparison is decided
         # on the database and says nothing about the socket the delivery uses.
         peer_socket = field(peer, "actorReachability", "socketConnect")
+        # OPS-3.3, asked of every participant rather than only of the boundary this process runs
+        # in. The flag moves the store and the environment moves the adapter's ledger, so a peer
+        # that sets one without the other keeps the record which suppresses duplicate delivery
+        # away from the store it has just proved it shares. Reading these two from the bound
+        # payload alone let every other participant carry a split ledger behind a verified cell,
+        # which is the same shape as a required field read from only the boundary that owns it.
+        peer_ledger = field(peer, "ledger", "configured")
+        peer_split = field(peer, "ledger", "split")
+        # Answerable on the terms the bound reading uses: without configured there is no question
+        # about placement, and a payload carrying split without it never said there is a ledger
+        # to place, so it is unread rather than placed.
+        ledger_unread = (not isinstance(peer_ledger, bool)
+                         or (peer_ledger is True and not isinstance(peer_split, bool)))
+        ledger_beside = peer_ledger is False or peer_split is False
+        ledger_said = ("has no transport ledger configured" if peer_ledger is False
+                       else "keeps its transport ledger beside that store" if peer_split is False
+                       else "keeps its transport ledger split from that store")
         # Every field the verdict reads, not only the verdict: a doctor payload naming a store
         # and no device never said which inode it was, and a disagreement would say it did.
         answered = MISSING if (peer_same is MISSING or asked is MISSING
                                or peer_writable is MISSING
                                or peer_db is MISSING
                                or peer_socket is MISSING
+                               or ledger_unread
                                or field(peer, "store", "storeId") is MISSING
                                or field(peer, "store", "device") is MISSING
                                or field(peer, "store", "inode") is MISSING) else peer_same
@@ -2132,12 +2150,13 @@ def reading_store(record, relay):
         cells.append(graded("peer:" + name, answered,
                             peer_same == "proven" and agrees and nonce_agrees
                             and peer_writable is True and peer_db is True
-                            and peer_socket == "ok",
+                            and peer_socket == "ok" and ledger_beside,
                             provenance=CAPTURED, measured_at=found["capturedAt"],
                             unreadable="this peer's doctor payload carries no same-store verdict"
                                        " and the challenge it was asked about, or does not say"
                                        " whether it can write the state directory or reach the"
-                                       " socket its delivery would use",
+                                       " socket its delivery would use, or where its transport"
+                                       " ledger lives",
                             evidence=("this peer reports " + str(shown(peer_same)) + " and its own"
                                       " store identity "
                                       + ("agrees with" if agrees else "disagrees with")
@@ -2147,6 +2166,7 @@ def reading_store(record, relay):
                                       + str(shown(peer_writable))
                                       + " with its database openable for writing: "
                                       + str(shown(peer_db))
+                                      + ". It " + ledger_said
                                       + ". A verdict speaks only for the nonce it was given"
                                       + (", and this payload is identical to " + ", ".join(alike)
                                          + ", which doctor cannot tell apart because it does not"
@@ -3077,34 +3097,47 @@ def supervisor_still_alive(record, answer, sleeper=time.sleep):
 
     The counter is read again for the same reason liveness is. A supervisor that stops advancing
     during a long final probe stays alive and in a running state, and the advance observed before
-    that probe says nothing about the interval that has passed since. Where that interval is at
-    least the one the record declares, the counter has to have moved again; where it is shorter,
-    the poller has not been given its interval and is not asked for one.
+    that probe says nothing about the interval that has passed since.
+
+    One statement governs both ends of that reading, and everything here follows from it:
+    witnessAdvanceSeconds is the interval across which the counter has to move, measured from
+    the reading being rechecked. So the witness is read again in every case -- a probe shorter
+    than the interval is a reason to wait, never a reason not to look, and a replaced pid or a
+    counter going backwards is visible the moment it is read. And the waiting stops at that
+    reading's own moment plus the declared interval: a counter that failed to move across the
+    interval it was given is not given another one, however long the probes in between took.
     """
     anchor = record.get("_supervisor") or {}
     pid = anchor.get("pid")
     if not anchor or not answer.get("passed"):
         return {k: v for k, v in answer.items() if not k.startswith("_")}
-    still, theirs = alive(pid), session_of(pid)
-    detached = theirs is not None and theirs != os.getsid(0)
     seen = witness_counter(answer.get("progressAfter"))
     declared = witness_counter(anchor.get("advanceSeconds"))
-    since = time.monotonic() - answer.get("_readAt", time.monotonic())
-    held, moved_again = seen, True
-    if seen is not None and declared is not None and since >= declared:
-        deadline = time.monotonic() + max(declared - (since - declared), 0)
+    taken = answer.get("_readAt", time.monotonic())
+    since = time.monotonic() - taken
+    # The deadline is that reading's own moment plus the declared interval, whatever the probes
+    # between cost. A short probe leaves some of the interval still to wait; a long one leaves
+    # none of it, and neither leaves twice as much.
+    deadline = taken + (declared or 0)
+    found = read_witness(anchor.get("witness"))
+    held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
+    named = isinstance(found, dict) and same(found.get("pid"), pid)
+    # Waiting only while there is still something to wait for. A witness under another pid or a
+    # counter below the one already read is what a replaced supervisor leaves behind, and no
+    # amount of further waiting makes either of them the poller this record declared.
+    while (named and seen is not None and held == seen and time.monotonic() < deadline):
+        sleeper(min(WITNESS_POLL, max(deadline - time.monotonic(), 0)))
         found = read_witness(anchor.get("witness"))
         held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
-        while not (held is not None and held > seen) and time.monotonic() < deadline:
-            sleeper(min(WITNESS_POLL, max(deadline - time.monotonic(), 0)))
-            found = read_witness(anchor.get("witness"))
-            held = witness_counter(found.get("progress") if isinstance(found, dict) else None)
-        moved_again = held is not None and held > seen
-        still, theirs = alive(pid), session_of(pid)
-        detached = theirs is not None and theirs != os.getsid(0)
-    answered = dict(answer, passed=still is True and detached and moved_again,
+        named = isinstance(found, dict) and same(found.get("pid"), pid)
+    # Liveness last of all, after the counter it is read beside and after any wait above.
+    still, theirs = alive(pid), session_of(pid)
+    detached = theirs is not None and theirs != os.getsid(0)
+    moved_again = seen is not None and held is not None and held > seen
+    answered = dict(answer, passed=still is True and detached and named and moved_again,
                     aliveAfterTheLastProbe=still, detachedAfterTheLastProbe=detached,
                     progressAfterTheLastProbe=shown(held),
+                    witnessNamesTheSamePidAfterTheLastProbe=named,
                     secondsSinceTheGatesOwnReading=round(since, 3))
     return {k: v for k, v in answered.items() if not k.startswith("_")}
 
