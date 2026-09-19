@@ -2750,6 +2750,72 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          " OLD target, because identity was re-derived from the spelling after"
                          " the link had moved")
 
+    def test_a_link_retargeted_under_the_listing_is_not_published_as_an_alias(self):
+        """One identity read cannot describe the other side of a read it did not take part in.
+        A link retargeted between the stat and the scandir filed the NEW target's listing under
+        the OLD target's identity, so a later registration that really names the old directory
+        was handed a count belonging to one it never mentioned.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            read_as = Path(temporary) / "the-identity-that-was-read"
+            listed = Path(temporary) / "the-directory-actually-listed"
+            read_as.mkdir()
+            listed.mkdir()
+            alias = Path(temporary) / "retargeted-under-the-listing"
+            alias.symlink_to(read_as)
+            amend_settings(temporary, journalRoot=str(alias))
+            document = json.loads(second.read_text(encoding="utf-8"))
+            # The second registration really names the directory the identity was read from.
+            document["journalRoot"] = str(read_as)
+            second.write_text(json.dumps(document), encoding="utf-8")
+
+            real, calls = completion._journal_cell, []
+
+            def listing(config):
+                calls.append(config.get("journalRoot"))
+                if len(calls) == 1:
+                    # After the identity was taken, before the directory is listed.
+                    alias.unlink()
+                    alias.symlink_to(listed)
+                return real(config)
+
+            with mock.patch.object(completion, "_journal_cell", side_effect=listing):
+                found = completion.status(codex_home=temporary, environ={})
+            self.assertEqual(calls[0], str(alias),
+                             "the fixture did not list the link first: " + repr(calls))
+        named = found["configuration"]["namedSettings"]
+        self.assertEqual([entry.get("journalRoot") for entry in named],
+                         [str(alias), str(read_as)],
+                         "a listing taken from the directory the link moved TO was published"
+                         " under the identity it had moved FROM, and the registration that"
+                         " really names that identity inherited it")
+
+    def test_a_plugin_owner_survives_settings_this_reader_rejects(self):
+        """A document that reads back fine and fails some other check still records who owns
+        the registration. Taking the default there established an absence on a host whose
+        plugin package may be registering the hook perfectly well -- and suppressed
+        settings_unusable, which is the cause that would have named the real repair.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable,
+                     adapterEntryPoint=str(ENTRY_POINT), mode="not-a-mode-this-reader-knows")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.CONFIG_MALFORMED,
+                         "the fixture did not build the readable-but-rejected settings this"
+                         " case is about")
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertNotEqual(standings.get(firing.NOT_REGISTERED), firing.ESTABLISHED,
+                            "settings this reader rejects took the owner default with them,"
+                            " and an absence was established for a plugin-owned host")
+
     def test_records_already_written_survive_the_registration_being_removed(self):
         """An empty hook file establishes the PRESENT. A registration removed after the hook
         had fired leaves its journal exactly where it was, and this answer used to say no

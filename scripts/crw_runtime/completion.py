@@ -1659,9 +1659,9 @@ def journals_named(registrations, already_read=None):
         # Taken BEFORE the listing rather than after it. An identity captured afterwards can
         # already be one the link acquired while the listing ran, which is the substitution
         # this exists to prevent rather than a narrower version of it.
-        mine = reading.path_identity(configured) if configured else None
-        if mine is not None and root not in scanned:
-            alias = next((key for key, taken in aliases.items() if taken == mine), None)
+        before = reading.path_identity(configured) if configured else None
+        if before is not None and root not in scanned:
+            alias = next((key for key, taken in aliases.items() if taken == before), None)
             if alias is not None:
                 root = alias
         if root in scanned:
@@ -1672,12 +1672,17 @@ def journals_named(registrations, already_read=None):
         else:
             cell = _journal_cell(config)
             scanned[root] = cell
-            if mine is not None:
-                # The answer taken above, stored rather than the spelling that produced it:
-                # comparing a stored spelling again asks the filesystem a fresh question, and a
-                # link retargeted between two registrations would then match its new target and
-                # hand back the listing taken from the old one.
-                aliases[root] = mine
+            # Published for OTHER spellings to share only where the directory did not move
+            # under the listing. One identity read cannot describe the other side of a read it
+            # did not take part in: a link retargeted between the stat and the scandir would
+            # file the NEW target's listing under the OLD target's identity, and a later
+            # registration that really names the old one would be handed a count belonging to
+            # a directory it never mentioned. Disagreement withholds the sharing rather than
+            # the reading -- this registration still gets its own cell under its own spelling,
+            # and nobody else inherits it.
+            after = reading.path_identity(configured) if configured else None
+            if before is not None and after == before:
+                aliases[root] = before
         value = cell["value"]
         entry["journal"] = cell
         entry["journalRoot"] = cell.get("journalRoot")
@@ -1933,7 +1938,16 @@ def status(codex_home=None, environ=None, event=EVENT):
         # registers through its package manifest, which this command does not read, so on a
         # correctly plugin-owned host an empty hook file is exactly what a working installation
         # looks like and establishes nothing at all about registration.
-        "registrationReadHere": owner_of(config) != OWNER_PLUGIN,
+        #
+        # Read from the DOCUMENT and not from the validated configuration. A settings file that
+        # reads back fine and fails some other check still records who owns the registration,
+        # and taking the default there established an absence on a host whose plugin package
+        # may be registering the hook perfectly well -- and suppressed settings_unusable, which
+        # is the cause that would have named the real repair.
+        "registrationReadHere": owner_of(
+            config if config is not None
+            else (found.value if found is not None and found.usable
+                  and isinstance(found.value, dict) else None)) != OWNER_PLUGIN,
         "relativeSettings": bool(relative),
         "silentRegistrations": silent,
         "namedJournals": named_journals,
