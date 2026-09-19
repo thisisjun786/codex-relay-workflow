@@ -264,10 +264,12 @@ Criteria: [the project record revision read, and this project's contribution to 
 Prerequisites: [cross-project prerequisites by relation, each with where its verification will
   appear; and the peer parents this project shares a surface with, to settle with directly]
 Authority: [the designation and its date, the limits in force, child-creation authority, and the
-  exact delivery, integration, release and deployment scope this designation carries to this
-  parent. Restate what the designation actually says rather than the standing default: an
-  explicit no-merge or review-only limit arrives as that limit, and an authority the designation
-  does not carry is not granted here]
+  effective delivery, integration, release and deployment scope for this parent: the standing
+  defaults, narrowed by every explicit limit, computed once here rather than left for the parent
+  to derive. A designation silent about merging leaves the standing integration default in place,
+  so that parent merges its own project's pull requests; an explicit no-merge or review-only
+  designation arrives as that limit; release and deployment stay the user's unless this
+  designation carries them]
 Current state: [locators only: the project's coordination record, its live children, its open
   pull requests, and any outcome already verified]
 Report back: [a result or blocked coordination message carrying the outcome, the evidence per
@@ -339,9 +341,10 @@ facts, and none of them follows from this reply.
 
 ## Restoration block
 
-Every message into a task that is already running carries this block: a needs-changes
+Every message into a task whose context the sender cannot see carries this block: a needs-changes
 correction, a review fix, a resume the coordinator publishes after handling something
-on the task's behalf, and a restart after that task was compacted. The first work
+on the task's behalf, a restart after that task was compacted, and a project handoff into an
+existing parent, running or idle. The first work
 prompt stated the assignment once. Ten turns, one compaction and three review rounds
 later, none of it is reliably still in the task's context, and a correction that
 assumes otherwise is answered from whatever the task still happens to remember.

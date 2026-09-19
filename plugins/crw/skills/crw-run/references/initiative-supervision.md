@@ -214,17 +214,30 @@ ask. Meanwhile continue any part of the work whose ownership is not ambiguous. N
 by folder or by whichever record was read last.
 Preserved: no supervision created on a guess, and no existing parent rebound by accident.
 
-### C6 Read-only, report-only or no-create scope
+### C6 Read-only or report-only scope
 
-Observed: the request names the initiative, and the scope forbids creating tasks, writing records
-or both.
+Observed: the request names the initiative, and the scope forbids sending work, writing records or
+both.
 Clauses: [OPS-7.3](operations.md#ops-73-isolation-between-parents); worked as S31.
 Action: resolve the binding, read the projects and their parents, and return the brief each parent
-would receive, the reuse order and the gaps, without creating a task or writing a record. Name the
-one missing permission rather than substituting a narrower action and calling it done.
+would receive, the reuse order and the gaps, without sending a handoff, creating a task or writing
+a record. Name the one missing permission rather than substituting a narrower action and calling
+it done.
 Preserved: the limit, and a result the user can act on without repeating the investigation.
 
-### C7 Part of the set is already finished
+### C7 No-create scope where parents already exist
+
+Observed: the designation authorizes execution but forbids creating tasks, and some projects
+already have parents while others do not.
+Clauses: [OPS-7.3](operations.md#ops-73-isolation-between-parents).
+Action: hand each existing parent its project and keep going through it. No-create removes
+creation authority, not the execution the designation already carries, and reusing a verified
+existing owner is what the project level does already when a creation path is unavailable. Report
+only the projects that would need a parent created, naming that one missing permission.
+Preserved: the creation limit, and every project whose owner already exists still moving rather
+than collapsed into a report nobody asked for.
+
+### C8 Part of the set is already finished
 
 Observed: two projects in the approved set are complete, with their pull requests merged and their
 outcomes verified.
