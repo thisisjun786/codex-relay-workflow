@@ -159,13 +159,48 @@ class AssignmentView:
             a for a in assignments
             if a["relationshipStatus"] in ("active", "paused") and a["state"] != CLOSED
         ]
-        return {
+        record = {
             "issueKey": issue_key,
             "assignments": assignments,
             # The one to reuse, if there is one. A paused assignment is still the owner.
             "responsibleChild": owning[0]["childTaskId"] if owning else None,
             "responsibleRelationship": owning[0]["relationshipId"] if owning else None,
         }
+        record.update(self._project_context(owning))
+        return record
+
+    def _project_context(self, owning) -> dict:
+        """Which project owns this issue, additively.
+
+        scopeState tells the three answers apart. scoped means the store named a project,
+        unscoped means it answered that there is none - which is every assignment registered
+        before the three-level linkage existed, and a normal answer rather than an error - and
+        unreadable means the store did not answer at all. A caller can distinguish them, and
+        none of them is completion.
+        """
+        import sqlite3
+
+        blank = {"projectKey": None, "projectParentTaskId": None, "scopeState": "unscoped"}
+        if not owning:
+            return blank
+        try:
+            scoped = self.store.one(
+                "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+                (owning[0]["relationshipId"],),
+            )
+            if scoped is None:
+                return blank
+            from .linkage import Linkage, PARENT as PARENT_ROLE, PROJECT as PROJECT_SCOPE
+
+            holder = Linkage(self.store, self.clock).owner(PROJECT_SCOPE, scoped["project_key"])
+            return {
+                "projectKey": scoped["project_key"],
+                "projectParentTaskId": holder["taskId"] if holder else None,
+                "scopeState": "scoped",
+            }
+        except sqlite3.Error:
+            return {"projectKey": None, "projectParentTaskId": None,
+                    "scopeState": "unreadable"}
 
     # ------------------------------------------------------------------- write
 

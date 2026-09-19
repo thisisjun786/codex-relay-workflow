@@ -42,6 +42,21 @@ class Registry:
     def __init__(self, store, clock):
         self.store = store
         self.clock = clock
+        self._linkage = None
+
+    @property
+    def linkage(self):
+        """The three-level linkage, built on demand.
+
+        Lazy because linkage imports assignment, which imports criteria, and registry is
+        constructed by almost everything. Nothing here changes unless a caller supplies a
+        project.
+        """
+        if self._linkage is None:
+            from .linkage import Linkage
+
+            self._linkage = Linkage(self.store, self.clock)
+        return self._linkage
 
     # ---------------------------------------------------------------- reading
 
@@ -91,12 +106,18 @@ class Registry:
         scope_ref: str | None = None,
         dispatch_turn_id: str | None = None,
         supersedes: str | None = None,
+        project_key: str | None = None,
     ) -> dict:
         """Deterministic and idempotent.
 
         Re-registering the same pair with the same scope returns the existing record and
         opens no new generation, so an uncertain response can simply be repeated. Re-using
         the identity with a DIFFERENT scope is a conflict, not a silent overwrite.
+
+        project_key is optional and additive. Supplied, the transaction that inserts the
+        relationship also writes its whole lower level through linkage.attach_in, so an
+        assignment and the project it belongs to are one atomic fact rather than two that can
+        disagree after a crash. Omitted, every byte of this method's behaviour is what it was.
         """
         roots = [str(r) for r in artifact_roots]
         recipients = [str(r) for r in allowed_recipients]
@@ -121,7 +142,28 @@ class Registry:
                     RefusalReason.RELATIONSHIP_CONFLICT,
                     f"{rid!r} already exists with a different scope or hosts",
                 )
-            return record
+            if project_key is None:
+                return record
+            # An existing relationship never reaches the inserts below: they are
+            # unconditional, so falling through would collide on its own primary key. It gets
+            # its own path, and attach_in decides for itself which of its three facts are
+            # missing - so a fully attached relationship writes nothing and a partially
+            # attached one is completed rather than reported as already done.
+            recorded = self.store.one(
+                "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", (rid,)
+            )
+            if recorded is not None and recorded["project_key"] != project_key:
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"{rid!r} is already scoped to project "
+                    f"{recorded['project_key']!r}, not {project_key!r}",
+                )
+            refusal = None
+            with self.store.transaction() as db:
+                refusal = self.linkage.attach_in(db, existing, project_key)
+            if refusal is not None:
+                raise refusal.error()
+            return self.get(rid)
         now = self.clock.iso()
         with self.store.transaction() as db:
             # One issue, one responsible child, decided in the SAME transaction as the insert.
@@ -177,7 +219,18 @@ class Registry:
                     " updated_at = ? WHERE relationship_id = ?",
                     (rid, now, supersedes),
                 )
+                # The replacement's lower level is attached AFTER the old assignment releases
+                # its issue scope, so the project -> issue edge is repointed rather than
+                # fought over.
+                self.linkage.apply_relationship_status_in(db, supersedes, "archived")
             self.store.journal("relationship_registered", rid, {"issueKey": issue_key}, at=now)
+            if project_key is not None:
+                fresh = db.execute(
+                    "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
+                ).fetchone()
+                refusal = self.linkage.attach_in(db, fresh, project_key, at=now)
+                if refusal is not None:
+                    raise refusal.error()
         return self.get(rid)
 
     def open_generation(
@@ -392,6 +445,10 @@ class Registry:
                 "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?",
                 (status, now, rid),
             )
+            # The lower level moves with the assignment, in the same transaction. A no-op for
+            # a relationship with no recorded project, which is every relationship registered
+            # without one.
+            self.linkage.apply_relationship_status_in(db, rid, status)
             self.store.journal("status_changed", rid, {"status": status, "actor": actor}, at=now)
         return self.get(rid)
 
@@ -473,6 +530,7 @@ class Registry:
                 "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?",
                 (ACTIVE, now, rid),
             )
+            self.linkage.apply_relationship_status_in(db, rid, ACTIVE)
             self.store.journal(
                 "status_changed", rid, {"status": ACTIVE, "actor": actor}, at=now
             )
@@ -487,6 +545,7 @@ class Registry:
                 " WHERE relationship_id = ?",
                 (new_relationship_id, now, old_rid),
             )
+            self.linkage.apply_relationship_status_in(db, old_rid, "archived")
             self.store.journal("superseded", old_rid, {"by": new_relationship_id}, at=now)
 
     # ---------------------------------------------------------------- records

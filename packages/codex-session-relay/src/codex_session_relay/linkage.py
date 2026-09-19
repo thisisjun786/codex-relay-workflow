@@ -53,6 +53,9 @@ LIVE = (ACTIVE, PAUSED)
 FINISHED_STATES = ("merged", "closed", "abandoned")
 
 CHOSEN = "chosen"
+# What the absence of an owner is called at each level, so a gap names the role that is
+# missing rather than repeating the scope back at the reader.
+ROLE_SCOPE_OWNER = {INITIATIVE: "supervisor", PROJECT: "parent", ISSUE: "child"}
 SUPERSEDED = "superseded"
 DISPOSITIONS = (CHOSEN, SUPERSEDED)
 
@@ -203,12 +206,15 @@ class Linkage:
             raise refusal.error()
         return self.binding(bid)
 
-    def bind_scope_in(self, db, *, role, scope_key, endpoint, status=ACTIVE, at):
-        """The same claim inside a caller's transaction, returning a refusal instead of raising.
+    def binding_plan(self, db, *, role, scope_key, endpoint):
+        """Decide a binding WITHOUT writing it. Returns (plan, refusal).
 
-        Exists so that binding two scopes and the edge between them is one rollback-safe
-        operation. A caller that bound the scopes in one transaction and linked them in another
-        could leave two owners with nothing joining them.
+        Split from the write deliberately. An operation that binds two scopes and then links
+        them has to be able to refuse on the SECOND scope without having already written the
+        first: with validation and mutation folded together, a refused supervision committed
+        its supervisor binding alongside the conflict row, which is the exact failure the
+        transaction protocol exists to prevent. Measured, not theorised - it leaked until this
+        split, and test_a_refused_supervision_leaves_neither_binding_behind pins it.
         """
         scope_kind = ROLE_SCOPE[role]
         bid = binding_id(role, scope_kind, scope_key, endpoint.task_id)
@@ -223,19 +229,26 @@ class Linkage:
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=current["task_id"], challenger=endpoint.task_id,
                 )
-            if current["status"] not in LIVE:
-                db.execute(
-                    "UPDATE scope_bindings SET status = ?, updated_at = ?"
-                    "  WHERE binding_id = ?",
-                    (ACTIVE, at, bid),
-                )
-            return bid, None
+            action = "present" if current["status"] in LIVE else "reactivate"
+            return (bid, action, role, scope_kind, scope_key, endpoint), None
         refusal = self._binding_refusal(db, role, scope_kind, scope_key, endpoint)
         if refusal is not None:
             return None, refusal
-        self._insert_binding(db, bid, role, scope_kind, scope_key, endpoint, status,
-                             revision=1, at=at)
-        return bid, None
+        return (bid, "insert", role, scope_kind, scope_key, endpoint), None
+
+    def apply_binding_plan(self, db, plan, *, status=ACTIVE, at):
+        """Perform a decision taken earlier. Every refusal is already behind us."""
+        bid, action, role, scope_kind, scope_key, endpoint = plan
+        if action == "insert":
+            self._insert_binding(db, bid, role, scope_kind, scope_key, endpoint, status,
+                                 revision=1, at=at)
+        elif action == "reactivate":
+            db.execute(
+                "UPDATE scope_bindings SET status = ?, updated_at = ? WHERE binding_id = ?",
+                (ACTIVE, at, bid),
+            )
+            self.store.journal("scope_rebound", bid, {"scopeKey": scope_key}, at=at)
+        return bid
 
     def _binding_refusal(self, db, role, scope_kind, scope_key, endpoint):
         """Every competition and role read, before anything is written."""
@@ -348,13 +361,17 @@ class Linkage:
             refusal = self._supervision_refusal(
                 db, lid, initiative_key, project_key, supervisor, parent, link_kind, replay,
             )
+            supervisor_plan = parent_plan = None
             if refusal is None:
-                _bid, refusal = self.bind_scope_in(
-                    db, role=SUPERVISOR, scope_key=initiative_key, endpoint=supervisor, at=now)
+                supervisor_plan, refusal = self.binding_plan(
+                    db, role=SUPERVISOR, scope_key=initiative_key, endpoint=supervisor)
             if refusal is None:
-                _bid, refusal = self.bind_scope_in(
-                    db, role=PARENT, scope_key=project_key, endpoint=parent, at=now)
+                parent_plan, refusal = self.binding_plan(
+                    db, role=PARENT, scope_key=project_key, endpoint=parent)
             if refusal is None:
+                # Both decisions are made; only now does anything get written.
+                self.apply_binding_plan(db, supervisor_plan, at=now)
+                self.apply_binding_plan(db, parent_plan, at=now)
                 self._insert_link(
                     db, lid, link_kind, (INITIATIVE, initiative_key, supervisor.task_id),
                     (PROJECT, project_key, parent.task_id), at=now)
@@ -564,15 +581,15 @@ class Linkage:
             )
         from .models import Endpoint
 
-        _bid, refusal = self.bind_scope_in(
+        plan, refusal = self.binding_plan(
             db, role=CHILD, scope_key=issue_key,
             endpoint=Endpoint(child_task, relationship_row["child_host_id"],
                               cwd=relationship_row["child_cwd"],
                               cxc_session=relationship_row["child_cxc_session"]),
-            at=at,
         )
         if refusal is not None:
             return refusal
+        self.apply_binding_plan(db, plan, at=at)
         if recorded is None:
             db.execute(
                 "INSERT INTO relationship_scope (relationship_id, project_key, recorded_at)"
@@ -779,6 +796,301 @@ class Linkage:
         if len(digests) > 1 and len(origins) > 1:
             return open_ones
         return []
+
+    # ------------------------------------------------------------------- peer
+
+    def register_peer(self, *, left_project, left_parent, right_project, right_parent):
+        """Two project parents collaborating. Symmetric, and not hierarchy.
+
+        A peer relation confers nothing: no receipt, no acknowledgement, no verdict, no
+        instruction. It is recorded so a message can ask who the real counterpart is and
+        whether the relationship it quotes is current. Every walk filters
+        link_kind = 'execution', so this row can neither lengthen a chain nor produce a second
+        execution owner.
+        """
+        _exact(left_project, "a project key")
+        _exact(right_project, "a project key")
+        if left_project == right_project:
+            raise LinkageError(
+                RefusalReason.SCOPE_CYCLE,
+                "project " + repr(left_project) + " is not its own peer",
+            )
+        lid = link_id(PEER, PROJECT, left_project, PROJECT, right_project)
+        now = self.clock.iso()
+        refusal = None
+        with self.store.transaction() as db:
+            sides = sorted(
+                ((left_project, left_parent), (right_project, right_parent)),
+                key=lambda side: side[0],
+            )
+            replay = db.execute(
+                "SELECT * FROM scope_links WHERE link_id = ?", (lid,)
+            ).fetchone()
+            for scope_key, endpoint in sides:
+                holder = db.execute(
+                    "SELECT task_id FROM scope_bindings"
+                    "  WHERE scope_kind = ? AND scope_key = ? AND role = ?"
+                    "    AND status IN ('active','paused') AND superseded_by IS NULL",
+                    (PROJECT, scope_key, PARENT),
+                ).fetchone()
+                if holder is None or holder["task_id"] != endpoint.task_id:
+                    refusal = _Refusal(
+                        RefusalReason.SCOPE_ROLE_MISMATCH,
+                        "task " + repr(endpoint.task_id) + " is not the registered parent of "
+                        "project " + repr(scope_key)
+                        + (", which is held by " + repr(holder["task_id"]) if holder
+                           else ", which has no registered parent")
+                        + "; a peer link joins two project parents",
+                        scope_kind=PROJECT, scope_key=scope_key,
+                        incumbent=holder["task_id"] if holder else "",
+                        challenger=endpoint.task_id,
+                    )
+                    break
+            if refusal is None and replay is not None:
+                return self._link_record(replay)
+            if refusal is None:
+                self._insert_link(
+                    db, lid, PEER,
+                    (PROJECT, sides[0][0], sides[0][1].task_id),
+                    (PROJECT, sides[1][0], sides[1][1].task_id), at=now)
+            else:
+                self._record_conflict_in(db, refusal, at=now)
+        if refusal is not None:
+            raise refusal.error()
+        return self.link(lid)
+
+    def counterpart(self, from_task, to_task, *, quoted_revision=None, quoted_scope=None):
+        """What a message can establish about whom it is addressing.
+
+        Returns a record and never raises for an absence, and never reports a failure to READ
+        as an absence: an empty answer with readable True means the store said there is nothing,
+        and one with readable False means the store did not answer. This is the shape
+        intent.dispatch_generation_state uses, which separates stale from absent for the same
+        reason.
+        """
+        import sqlite3
+
+        blank = {
+            "state": "unreadable", "readable": False, "link": None,
+            "from": None, "counterpart": None, "currentOwner": None, "findings": [],
+        }
+        try:
+            sender = self._any_binding(from_task)
+            recipient = self._any_binding(to_task)
+            findings = []
+            current = None
+            if recipient is not None and (recipient["status"] not in LIVE
+                                          or recipient["supersededBy"]):
+                findings.append("stale_owner")
+                current = self.owner(recipient["scopeKind"], recipient["scopeKey"])
+            if sender is None or recipient is None:
+                if recipient is None:
+                    findings.append("unregistered_link")
+                return {
+                    "state": "unlinked", "readable": True, "link": None,
+                    "from": sender, "counterpart": recipient, "currentOwner": current,
+                    "findings": sorted(set(findings)),
+                }
+            if quoted_scope is not None and quoted_scope != recipient["scopeKey"]:
+                findings.append("foreign_scope")
+            edge = self._joining_link(sender, recipient)
+            if edge is None:
+                findings.append("unregistered_link")
+                if self._role_pair_is_wrong(sender, recipient):
+                    findings.append("wrong_role")
+                return {
+                    "state": "unlinked", "readable": True, "link": None,
+                    "from": sender, "counterpart": recipient, "currentOwner": current,
+                    "findings": sorted(set(findings)),
+                }
+            if self._role_pair_is_wrong(sender, recipient):
+                findings.append("wrong_role")
+            if quoted_revision is not None and quoted_revision < edge["revision"]:
+                findings.append("stale_revision")
+            for side in ("upper", "lower"):
+                live = self.owner(edge[side]["scopeKind"], edge[side]["scopeKey"])
+                if live is not None and live["taskId"] != edge[side]["taskId"]:
+                    findings.append("owner_drift")
+            if self.contested_directives(recipient["scopeKind"], recipient["scopeKey"]):
+                findings.append("instruction_conflict")
+            return {
+                "state": "linked", "readable": True,
+                "link": {"linkId": edge["linkId"], "kind": edge["kind"],
+                         "revision": edge["revision"], "status": edge["status"]},
+                "from": sender, "counterpart": recipient, "currentOwner": current,
+                "findings": sorted(set(findings)),
+            }
+        except sqlite3.Error:
+            return blank
+
+    def _any_binding(self, task_id):
+        """The most recent binding for a task, live or not.
+
+        Deliberately not filtered to live rows: a message naming a replaced owner has to be
+        told that it did, and the only way to say so is to find the archived binding.
+        """
+        row = self.store.one(
+            "SELECT * FROM scope_bindings WHERE task_id = ?"
+            "  ORDER BY CASE WHEN status IN ('active','paused') THEN 0 ELSE 1 END,"
+            "           revision DESC LIMIT 1",
+            (task_id,),
+        )
+        return self._binding_record(row) if row else None
+
+    def _joining_link(self, sender, recipient):
+        row = self.store.one(
+            "SELECT * FROM scope_links"
+            "  WHERE status IN ('active','paused') AND superseded_by IS NULL"
+            "    AND ((upper_key = ? AND lower_key = ?) OR (upper_key = ? AND lower_key = ?))"
+            "  ORDER BY revision DESC LIMIT 1",
+            (sender["scopeKey"], recipient["scopeKey"],
+             recipient["scopeKey"], sender["scopeKey"]),
+        )
+        return self._link_record(row) if row else None
+
+    @staticmethod
+    def _role_pair_is_wrong(sender, recipient):
+        """Which role pairs may address each other at all.
+
+        A supervisor instructs the parents of its projects and a parent instructs its own
+        children, so a supervisor addressing a child directly skips the owner that is supposed
+        to decide. Two parents may address each other, and that is what a peer link is for.
+        """
+        pair = (sender["role"], recipient["role"])
+        return pair not in (
+            (SUPERVISOR, PARENT), (PARENT, SUPERVISOR),
+            (PARENT, CHILD), (CHILD, PARENT),
+            (PARENT, PARENT),
+        )
+
+    # ---------------------------------------------------------------- queries
+
+    def down(self, scope_kind, scope_key):
+        """Initiative to projects to issues, with what is missing and what is contended.
+
+        A level is never omitted for being incomplete: a project with no parent is a gap that
+        says so. An empty answer with readable True means the store said there is nothing; an
+        empty answer with readable False means the store did not answer. Neither is completion.
+        """
+        import sqlite3
+
+        try:
+            levels, gaps, contention = [], [], []
+            self._descend(scope_kind, scope_key, levels, gaps, contention, depth=0)
+            if not levels:
+                return {"state": "unregistered", "readable": True,
+                        "levels": [], "gaps": gaps, "contention": contention}
+            return {"state": "resolved", "readable": True,
+                    "levels": levels, "gaps": gaps, "contention": contention}
+        except sqlite3.Error:
+            return {"state": "unreadable", "readable": False,
+                    "levels": [], "gaps": [], "contention": []}
+
+    def _descend(self, scope_kind, scope_key, levels, gaps, contention, *, depth):
+        owner = self.owner(scope_kind, scope_key)
+        levels.append({"scopeKind": scope_kind, "scopeKey": scope_key, "owner": owner,
+                       "depth": depth})
+        if owner is None:
+            gaps.append({"gap": scope_kind + "_without_" + ROLE_SCOPE_OWNER[scope_kind],
+                         "scopeKind": scope_kind, "scopeKey": scope_key})
+        contention.extend(self.conflicts(scope_kind, scope_key))
+        for directive in self.contested_directives(scope_kind, scope_key):
+            contention.append({"contention": "instruction_conflict",
+                               "scopeKind": scope_kind, "scopeKey": scope_key,
+                               "directiveId": directive["directiveId"],
+                               "fromScopeKey": directive["fromScopeKey"],
+                               "digest": directive["digest"]})
+        for row in self.store.all(
+            "SELECT * FROM scope_links"
+            "  WHERE upper_kind = ? AND upper_key = ? AND link_kind = 'execution'"
+            "    AND status IN ('active','paused') AND superseded_by IS NULL"
+            "  ORDER BY lower_key",
+            (scope_kind, scope_key),
+        ):
+            edge = self._link_record(row)
+            live = self.owner(edge["lower"]["scopeKind"], edge["lower"]["scopeKey"])
+            if live is not None and live["taskId"] != edge["lower"]["taskId"]:
+                contention.append({"contention": "owner_drift", "linkId": edge["linkId"],
+                                   "recorded": edge["lower"]["taskId"],
+                                   "live": live["taskId"]})
+            self._descend(edge["lower"]["scopeKind"], edge["lower"]["scopeKey"],
+                          levels, gaps, contention, depth=depth + 1)
+
+    def up(self, *, task_id=None, issue_key=None, relationship_id=None):
+        """Child to parent to supervisor, reporting a missing upper level as a gap."""
+        import sqlite3
+
+        try:
+            start = self._starting_scope(task_id, issue_key, relationship_id)
+            if start is None:
+                return {"state": "unregistered", "readable": True, "levels": [],
+                        "gaps": [{"gap": "unscoped_assignment", "relationshipId":
+                                  relationship_id, "issueKey": issue_key,
+                                  "taskId": task_id}],
+                        "contention": []}
+            levels, gaps, contention = [], [], []
+            scope_kind, scope_key = start
+            seen = set()
+            while (scope_kind, scope_key) not in seen:
+                seen.add((scope_kind, scope_key))
+                owner = self.owner(scope_kind, scope_key)
+                levels.append({"scopeKind": scope_kind, "scopeKey": scope_key,
+                               "owner": owner, "depth": len(levels)})
+                if owner is None:
+                    gaps.append({"gap": scope_kind + "_without_"
+                                 + ROLE_SCOPE_OWNER[scope_kind],
+                                 "scopeKind": scope_kind, "scopeKey": scope_key})
+                contention.extend(self.conflicts(scope_kind, scope_key))
+                row = self.store.one(
+                    "SELECT * FROM scope_links"
+                    "  WHERE lower_kind = ? AND lower_key = ? AND link_kind = 'execution'"
+                    "    AND status IN ('active','paused') AND superseded_by IS NULL"
+                    "  ORDER BY revision DESC LIMIT 1",
+                    (scope_kind, scope_key),
+                )
+                if row is None:
+                    if scope_kind == PROJECT:
+                        gaps.append({"gap": "no_supervisor", "scopeKind": PROJECT,
+                                     "scopeKey": scope_key})
+                    break
+                scope_kind, scope_key = row["upper_kind"], row["upper_key"]
+            return {"state": "resolved", "readable": True, "levels": levels,
+                    "gaps": gaps, "contention": contention}
+        except sqlite3.Error:
+            return {"state": "unreadable", "readable": False, "levels": [], "gaps": [],
+                    "contention": []}
+
+    def _starting_scope(self, task_id, issue_key, relationship_id):
+        if relationship_id is not None:
+            row = self.store.one(
+                "SELECT issue_key FROM relationships WHERE relationship_id = ?",
+                (relationship_id,))
+            if row is None:
+                return None
+            scoped = self.store.one(
+                "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+                (relationship_id,))
+            if scoped is None:
+                return None
+            return (ISSUE, row["issue_key"])
+        if issue_key is not None:
+            if self.owner(ISSUE, issue_key) is None:
+                return None
+            return (ISSUE, issue_key)
+        if task_id is not None:
+            binding = self.owner_of_task(task_id)
+            if binding is None:
+                return None
+            return (binding["scopeKind"], binding["scopeKey"])
+        return None
+
+    def owner_of_task(self, task_id):
+        row = self.store.one(
+            "SELECT * FROM scope_bindings WHERE task_id = ? AND status IN ('active','paused')"
+            "  AND superseded_by IS NULL ORDER BY revision DESC LIMIT 1",
+            (task_id,),
+        )
+        return self._binding_record(row) if row else None
 
     # ---------------------------------------------------------------- handover
 
