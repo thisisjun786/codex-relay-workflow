@@ -176,6 +176,32 @@ def _startable(probe):
     return _halves(probe) == {reading.PRESENT}
 
 
+def _settled_settings(observed):
+    """The settings this command settled on, where they are the only ones in scope.
+
+    A registration in the hook file names its own settings and namedJournals carries those. A
+    plugin-owned host registers through a package manifest, so nothing in the hook file names
+    one and namedJournals is empty -- and the settings causes then had nothing to read on
+    exactly the host whose repair they exist to name. This is that host's entry.
+
+    Only where the registration is POSITIVELY established to live somewhere else. "Not here"
+    is not that: it is also the answer when nobody could read who owns the registration at all,
+    and a host whose registration names a settings path this command cannot resolve reached
+    exactly that state -- so the settled reading, which is about a different file entirely, was
+    handed to the settings causes and they named a repair for a path nothing here can read.
+    The support case guarding that direction is what caught it.
+
+    And where the hook file IS where the registration lives while nothing is registered there,
+    a missing settings file is not a cause of anything, because registering the hook writes it.
+    """
+    if observed.get("namedJournals"):
+        return None
+    if not observed.get("registrationElsewhere"):
+        return None
+    entry = observed.get("settledSettings")
+    return entry if isinstance(entry, dict) and entry.get("settings") else None
+
+
 def _settings_absent(observed):
     """ANY registration whose settings are gone, not every one of them.
 
@@ -185,6 +211,9 @@ def _settings_absent(observed):
     never that a second registration releases every invocation until its settings come back.
     """
     entries = observed.get("namedJournals") or []
+    settled = _settled_settings(observed)
+    if settled is not None:
+        entries = [settled]
     if not entries:
         # Not "could not tell": no registration named a file for this question to be about.
         # record_path_unidentified owns that state, and answering NOT_RULED_OUT here would put
@@ -193,9 +222,9 @@ def _settings_absent(observed):
     gone = [entry["settings"] for entry in entries
             if entry.get("settingsState") == reading.ABSENT]
     if gone:
-        return ESTABLISHED, ("these settings files the registrations name are established"
-                             " absent, so those registrations are told nothing about where to"
-                             " record and keep no journal: " + ", ".join(gone))
+        return ESTABLISHED, ("these settings files are established absent, so whatever reads"
+                             " them is told nothing about where to record and keeps no"
+                             " journal: " + ", ".join(gone))
     if any(entry.get("settingsState") == reading.ACCESS_ERROR for entry in entries):
         # A permission failure HERE says nothing about what the hook can open in a session.
         return NOT_RULED_OUT, ("a settings file could not be reached from here, which does not"
@@ -212,6 +241,9 @@ def _settings_unusable(observed):
     is not evidence that the rejected one works.
     """
     entries = observed.get("namedJournals") or []
+    settled = _settled_settings(observed)
+    if settled is not None:
+        entries = [settled]
     if not entries:
         return NOT_EVALUATED, "no registration named a settings file this command could read"
     unusable = [entry["settings"] for entry in entries
@@ -219,8 +251,8 @@ def _settings_unusable(observed):
                 and not entry.get("usable")]
     if unusable:
         return ESTABLISHED, ("these settings files are ones this hook's own reader rejects ("
-                             + ", ".join(unusable) + "), so every invocation of those"
-                             " registrations releases without recording")
+                             + ", ".join(unusable) + "), so every invocation that reads them"
+                             " releases without recording")
     if any(entry.get("settingsState") == reading.ACCESS_ERROR for entry in entries):
         # No bytes were read, so nothing establishes that the hook's own reader rejects it.
         # Calling that unusable would recommend repairing a file this process merely could not
@@ -427,8 +459,10 @@ CAUSE_RULES = {
     RECORD_PATH_UNIDENTIFIED: (("relativeSettings", "silentRegistrations"),
                                _record_path_unidentified),
     ADAPTER_CANNOT_RUN: (("startProbes",), _adapter_cannot_run),
-    SETTINGS_ABSENT: (("namedJournals",), _settings_absent),
-    SETTINGS_UNUSABLE: (("namedJournals",), _settings_unusable),
+    SETTINGS_ABSENT: (("namedJournals", "settledSettings", "registrationElsewhere"),
+                      _settings_absent),
+    SETTINGS_UNUSABLE: (("namedJournals", "settledSettings", "registrationElsewhere"),
+                        _settings_unusable),
     RECORDS_FOUND: (("namedJournals",), _records_found),
     RECORDED_ON_ANOTHER_PATH: (("namedJournals",), _recorded_on_another_path),
     JOURNALLING_OFF: (("namedJournals",), _journalling_off),
@@ -455,8 +489,15 @@ CAUSE_REQUIRES = {
     # could name, so the scoping is already in the data and does not belong here too. Where
     # nothing was named at all they answer NOT_EVALUATED rather than putting an unsupported
     # candidate on the table.
-    SETTINGS_ABSENT: (NOT_REGISTERED,),
-    SETTINGS_UNUSABLE: (NOT_REGISTERED,),
+    # The settings causes no longer require NOT_REGISTERED either, for the reason the paragraph
+    # above gives about RECORD_PATH_UNIDENTIFIED: the scoping is in the data. Requiring it
+    # blanked them out on the one host whose repair they name -- a plugin-owned host, where
+    # NOT_REGISTERED is unsettled because the registration lives in a manifest this command does
+    # not read, and the settings it settled on are rejected and say so. The rules answer
+    # NOT_EVALUATED by themselves where the hook file IS where the registration lives and
+    # nothing is registered there, so a user-owned host reads exactly as before.
+    SETTINGS_ABSENT: (),
+    SETTINGS_UNUSABLE: (),
     # The journal causes do NOT require the settings causes to be ruled out. Both sides are now
     # per-registration, so one registration with missing settings must not suppress what
     # another registration's journal says: the journal rules read only the entries whose

@@ -2016,6 +2016,23 @@ def status(codex_home=None, environ=None, event=EVENT):
         "registrationReadable": ours is not None,
         "adapterRegistrations": len(ours or []),
         "registrationReadHere": registration_read_here,
+        # Whether the registration is POSITIVELY established to live somewhere this command
+        # does not read. Narrower than the negation above on purpose: that one is also false
+        # when nobody could read who owns the registration, and the settings causes may only
+        # answer from the settled reading where the owner was actually read as the plugin's.
+        "registrationElsewhere": (found is not None and found.usable
+                                  and isinstance(found.value, dict)
+                                  and found.value.get("owner") == OWNER_PLUGIN),
+        # The settings this command SETTLED on, described the way a registration's own entry is
+        # so the rules read one shape. Built from the reading already taken above rather than
+        # from a second one, so this and the configuration cell cannot disagree. A plugin-owned
+        # host names no settings in the hook file, and without this the settings causes had
+        # nothing to read on exactly the host whose repair they exist to name.
+        "settledSettings": {"settings": str(path),
+                            "settingsState": None if found is None else found.state,
+                            "usable": config is not None,
+                            "refusedAs": failed,
+                            "detail": detail},
         "relativeSettings": bool(relative),
         "silentRegistrations": silent,
         "namedJournals": named_journals,

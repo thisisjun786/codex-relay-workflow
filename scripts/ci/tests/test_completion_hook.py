@@ -2922,6 +2922,60 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                             "an owner nobody recognises was read as the user owner, and an"
                             " absence was established on its strength")
 
+    def test_a_plugin_owned_host_names_the_settings_repair_it_can_read(self):
+        """A cause this command CAN distinguish and did not.
+
+        A plugin-owned host registers through a manifest nobody here reads, so nothing in the
+        hook file names a settings file and the settings causes had no entry to read -- on
+        exactly the host whose repair they exist to name. The answer stopped at
+        cause_unreadable while the payload's own configuration cell already said the settings
+        this command settled on are rejected.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable,
+                     adapterEntryPoint=str(ENTRY_POINT), mode="not-a-mode-this-reader-knows")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.CONFIG_MALFORMED,
+                         "the fixture did not build the rejected plugin settings this case is"
+                         " about")
+        self.assertEqual(found["configuration"]["namedSettings"], [],
+                         "the fixture registered something in the hook file, so this is not the"
+                         " host the case is about")
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertEqual(standings.get(firing.SETTINGS_UNUSABLE), firing.ESTABLISHED,
+                         "the repair the payload's own configuration cell names was left out of"
+                         " the answer that exists to name repairs")
+        self.assertIn(firing.SETTINGS_UNUSABLE,
+                      [one["cause"] for one in cell.get("candidates") or []],
+                      "an established cause that the answer does not carry is a repair the"
+                      " operator never sees")
+
+    def test_a_user_owned_host_that_registers_nothing_gains_no_settings_cause(self):
+        """SUPPORT, not evidence of the defect: this passes before the change too. It holds the
+        direction the change must not break. Where the hook file IS where the registration
+        lives and nothing is registered there, a missing settings file is not a cause of
+        anything -- registering the hook writes it -- and the settled reading must not become a
+        second repair beside not_registered.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary)
+            completion.configuration_path(Path(temporary)).unlink()
+            found = completion.status(codex_home=temporary, environ={})
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertEqual(cell.get("value"), firing.NOT_REGISTERED,
+                         "a settings cause was invented beside the one repair this host needs")
+        self.assertEqual(standings.get(firing.SETTINGS_ABSENT), firing.NOT_EVALUATED,
+                         "the settled reading answered a question this host does not have")
+
     def test_an_open_that_yielded_no_descriptor_publishes_no_identity(self):
         """An open that failed established nothing about WHICH directory refused it. Taking the
         identity from the spelling afterwards answered about whatever it named by then, so a
