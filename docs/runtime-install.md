@@ -615,11 +615,16 @@ record names the new environment while the pointer still names the old one. The 
 nothing; the disagreement it found was already there, and the result names it.
 
 **Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of
-what it means everywhere else in this command: the run's change to the host landed, the
-environment is the one the record selects and the owned pointer names, and a process may be
-running out of it. A wrapper that reads every non-zero install status as "nothing changed"
-would report the old runtime as selected, or clean up an environment that is still in service.
-Only exit 1 releases a candidate.
+what it means everywhere else in this command: what the run changed on the host landed, and a
+process may be running out of the environment it changed. A wrapper that reads every non-zero
+install status as "nothing changed" would report the old runtime as selected, or clean up an
+environment that is still in service. This command releases a candidate only on exit 1.
+
+It does not follow that an exit-3 environment is still the one the host reaches. A competing
+install can supersede it during the claim write, and then the same result carries
+`selection.selects: false`, `selection.pointerNames: false` and `inService: false`. The status
+says the run's change landed; `inService` says whether the destination must be kept. Read the
+second for any cleanup decision.
 
 The status says what this run did; it does not promise what is true when you read it. A
 competing install can supersede this environment between the promotion and the result, and

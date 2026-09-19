@@ -6586,6 +6586,29 @@ class SettledRecordTests(unittest.TestCase):
                       "and one a later promotion superseded is not, whatever this run did: "
                       + json.dumps(superseded.get("claim") or {})[:400])
 
+    def test_unreadable_claim_advice_accounts_for_supersession(self):
+        """What the prescribed repair leads to depends on the selection it must consult.
+
+        decide() keeps a directory whose claim it cannot read either way, but rewriting that
+        claim as STAGING over a selection that has moved on makes the NEXT run read an
+        abandoned staging and rebuild, and removing it leaves a populated claimless directory
+        that reads as somebody else's for ever. Prescribing the repair without the selection
+        walks an operator into one of those.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            superseded = _advice(UpdateRecoveryTests()._run(
+                host, breaking="supersede after the claim becomes unreadable")[1], host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            ours = _advice(UpdateRecoveryTests()._run(
+                other, breaking="settle the staging claim unreadably")[1], other)
+
+        self.assertTrue(ours, "the contrast needs the other case to say something")
+        self.assertNotEqual(superseded, ours,
+                            "an unreadable claim over a superseded environment must not be"
+                            " told what one still selected is told: " + superseded[:300])
+
     def test_the_keep_guard_is_decides_own_answer(self):
         """Every case this cell got wrong was the rule restated instead of consulted.
 

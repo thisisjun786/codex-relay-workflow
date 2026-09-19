@@ -3234,6 +3234,22 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
     # as anywhere else, and the lock this call lost is said alongside rather than instead.
     if settled:
         record_requires = None
+    elif not left.usable and selected is not True:
+        # An unreadable claim AND a selection that has moved on. decide() keeps this directory
+        # either way -- a claim it cannot read is not one it may act on -- but the repair the
+        # arm below prescribes is wrong here, because what follows from it depends on the
+        # selection it never consulted. Rewriting the claim as STAGING over a selection that
+        # has moved makes the next run read an abandoned staging and rebuild; removing it
+        # leaves a populated directory with no claim, which reads as somebody else's for ever.
+        record_requires = (
+            "leave the claim at " + str(path) + " alone. It cannot be read, so this command"
+            " will not act on it: the next run keeps this directory and reports it. And the"
+            " host record no longer selects this environment, so there is no promotion here"
+            " left to finish and nothing this claim would usefully record. Repairing it does"
+            " not change that -- rewritten as STAGING over a selection that has moved on it"
+            " reads as an abandoned staging and the next run would remove and rebuild the"
+            " directory -- and removing it leaves a populated directory carrying no claim,"
+            " which reads as somebody else's and is refused from then on.")
     elif not left.usable:
         record_requires = (
             "make the claim at " + str(path) + " readable or remove it, then run install"
