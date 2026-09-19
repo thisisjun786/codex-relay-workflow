@@ -1241,6 +1241,61 @@ RESOLVES_LIKE_PYTHON = {
          "the same read as open(HERE).read(), written in two steps. The helper was accounted"
          " either way because HERE is named in it; what the two-step form lost is the onward"
          " step, and with it every caller downstream."),
+    "a method bound from super() rather than called there":
+        (REFUSAL,
+         ("class A:",
+          "    def carrier(self):",
+          "        return \"fine\"",
+          "",
+          "class B(A):",
+          "    pass",
+          "",
+          "def helper():",
+          "    return reading.UNREADABLE",
+          "",
+          "class C(A):",
+          "    carrier = helper",
+          "",
+          "class D(B, C):",
+          "    def consumer(self):",
+          "        alias = super().carrier",
+          "        return alias()"),
+         "consumer", True,
+         "binding what super() finds and calling it later is the same lookup as calling it"
+         " there, so it takes the rest of this class's line too. The call form was corrected"
+         " first and this one was left behind it, which is why both are written down."),
+    "a decorator imported under another name":
+        (REFUSAL,
+         ("from builtins import property as prop",
+          "",
+          "class Holder:",
+          "    @prop",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def consumer(self):",
+          "        return self.carrier"),
+         "consumer", True,
+         "an import binds the decorator as surely as an assignment does, and the descriptor it"
+         " makes is the same one. Reading only assignments indexed the getter as an ordinary"
+         " method and lost the reader."),
+    "a decorator alias another class bound":
+        (REFUSAL,
+         ("def sm(fn):",
+          "    return fn",
+          "",
+          "class Other:",
+          "    sm = staticmethod",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @sm",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "a class body binds for itself. Letting one class's sm = staticmethod decide what @sm"
+         " means in the next suppresses a receiver that class never gave up, and the name Holder"
+         " actually reaches is the module-level one."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2287,23 +2342,30 @@ def _hands_on(tree, spelled):
     # has already bound, so sm = staticmethod beside the methods it decorates is a real alias
     # wherever that class is written. A name bound inside a FUNCTION is that function's, and
     # treating one as the decorator everywhere would suppress a receiver a method really has.
-    in_a_class_body = {id(statement) for node in ast.walk(tree)
-                       if isinstance(node, ast.ClassDef) for statement in node.body}
-    module_bindings = []
+    # A class body's bindings stay in that class. Merging them into one table lets one class's
+    # sm = staticmethod decide what @sm means in the next class, which is a name that body never
+    # bound. An import binds the decorator as surely as an assignment does, so both are read.
+    owns_a_body = {id(statement): node.name for node in ast.walk(tree)
+                   if isinstance(node, ast.ClassDef) for statement in node.body}
+    module_bindings, class_bindings = [], {}
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound = [(node.lineno, alias.asname or alias.name.split(".")[0],
+                      alias.name.rpartition(".")[2]) for alias in node.names]
+        elif isinstance(node, ast.Assign):
+            spelling = (_dotted(node.value) or "").rpartition(".")[2]
+            bound = [(node.lineno, inner.id, spelling) for target in node.targets
+                     for inner in ast.walk(target)
+                     if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store)]
+        else:
             continue
-        if (places.get(id(node), (MODULE_LEVEL, None))[0] != MODULE_LEVEL
-                and id(node) not in in_a_class_body):
-            continue
-        spelling = (_dotted(node.value) or "").rpartition(".")[2]
-        for target in node.targets:
-            module_bindings += [(node.lineno, inner.id, spelling)
-                                for inner in ast.walk(target)
-                                if isinstance(inner, ast.Name)
-                                and isinstance(inner.ctx, ast.Store)]
+        owner = owns_a_body.get(id(node))
+        if owner is not None:
+            class_bindings.setdefault(owner, []).extend(bound)
+        elif places.get(id(node), (MODULE_LEVEL, None))[0] == MODULE_LEVEL:
+            module_bindings += bound
 
-    def means(name, seed, at, followed=0):
+    def means(name, seed, at, within=None, followed=0):
         """Whether this decorator name reaches one of these builtins at that line.
 
         A static method has no receiver, so reading its first parameter as the instance credits
@@ -2313,18 +2375,19 @@ def _hands_on(tree, spelled):
         """
         if name in seed:
             return True
-        if followed > len(module_bindings):
+        visible = class_bindings.get(within, []) + module_bindings
+        if followed > len(visible):
             return False
-        above = sorted((line, value) for line, bound, value in module_bindings
+        above = sorted((line, value) for line, bound, value in visible
                        if bound == name and line < at)
         if not above:
             return False
         line, value = above[-1]
-        return means(value, seed, line, followed + 1)
+        return means(value, seed, line, within, followed + 1)
 
-    def decorated_by(node, seed):
+    def decorated_by(node, seed, within=None):
         """Whether any decorator on this definition reaches one of these builtins."""
-        return any(means((_dotted(mark) or "").rpartition(".")[2], seed, mark.lineno)
+        return any(means((_dotted(mark) or "").rpartition(".")[2], seed, mark.lineno, within)
                    for mark in getattr(node, "decorator_list", []))
 
     def names_class(name, at, followed=0):
@@ -2357,7 +2420,7 @@ def _hands_on(tree, spelled):
         # And the instance is whatever the first parameter is called: self is a convention.
         args = node.args
         first = (args.posonlyargs + args.args)[:1]
-        standalone = decorated_by(node, ("staticmethod",))
+        standalone = decorated_by(node, ("staticmethod",), klass)
         if id(node) in is_method and first and not standalone:
             receivers[where] = first[0].arg
         # Which class a method belongs to, because self.name reaches a method of THIS class and
@@ -2365,7 +2428,7 @@ def _hands_on(tree, spelled):
         if id(node) in is_method:
             methods.setdefault((klass, where.rpartition(".")[2]), where)
             # A property is called by being read, so an attribute access naming one is a call.
-            if decorated_by(node, ("property", "cached_property")):
+            if decorated_by(node, ("property", "cached_property"), klass):
                 properties.setdefault((klass, where.rpartition(".")[2]), where)
     # The places that ARE getters, so a class alias naming one can be recognised as naming a
     # property rather than an ordinary method.
@@ -2662,13 +2725,13 @@ def _hands_on(tree, spelled):
                     _where, klass = places.get(id(node), (MODULE_LEVEL, None))
                     if (through is None and isinstance(expression.value, ast.Call)
                             and _dotted(expression.value.func) == "super"):
-                        for base in parents.get(klass, ()):
-                            reached = inherited(base, expression.attr, (), aliases)
-                            if reached:
-                                return reached
-                        return set()
-                    return inherited(klass if through in instance(function)
-                                     else (through or "").rpartition(".")[2] or None,
+                        # alias = super().carrier binds what super().carrier() would call, so
+                        # it searches the rest of THIS class's line, not each base's in turn.
+                        return inherited(klass, expression.attr, (), aliases, after=True)
+                    qualifier = (through or "").rpartition(".")[2] or None
+                    if qualifier is not None:
+                        qualifier = names_class(qualifier, expression.lineno) or qualifier
+                    return inherited(klass if through in instance(function) else qualifier,
                                      expression.attr, (), aliases)
                 return set()
 
