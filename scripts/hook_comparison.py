@@ -1120,16 +1120,20 @@ def _there(path, present, missing):
     be taken must not be presented as the answer that there is nothing there, and catching around
     is_file() does not do it because the error never escapes. Only a missing entry is an absence;
     every other failure is unreadable.
+
+    WHICH kind of failure is asked of reading.observe rather than decided here, which is the same
+    rule stdout_payload follows about the adapter's own validator: a second copy of a partition
+    agrees with the original only until one of them changes, and this one already disagreed. A
+    symlink that loops is a link that exists whose shape cannot be read, and this file called it a
+    question that could not be asked. A directory sitting where a marker file belongs was worse:
+    it read as nothing having been published.
     """
-    try:
-        found = path.stat()
-    except FileNotFoundError:
+    settled = reading.observe(path, "whether a marker file is there")
+    if settled is None:
+        return present
+    if settled.state == reading.ABSENT:
         return missing
-    except OSError as error:
-        return Unreadable("whether a file is at " + str(path) + " could not be established: "
-                          + type(error).__name__ + ": " + str(error),
-                          state=reading.ACCESS_ERROR)
-    return present if stat.S_ISREG(found.st_mode) else missing
+    return Unreadable(settled.detail, state=settled.state)
 
 
 def harness_payload(fired):

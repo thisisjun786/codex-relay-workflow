@@ -685,18 +685,18 @@ class ReadingTests(unittest.TestCase):
         """The same partition, carried from a real producer rather than from a spelled payload.
 
         Review found this: read() is the one door every cell goes through, and it rebuilt the
-        reading it was handed with the default state, so a permission error on a marker file
-        came out the other side as a shape nobody could read. The two are different facts about
-        the run and reading.py keeps them apart on purpose.
+        reading it was handed with the default state, so a question that could not be asked came
+        out the other side as an answer nobody could read. The two are different facts about the
+        run and reading.py keeps them apart on purpose.
         """
-        root = Path(tempfile.mkdtemp(prefix="hook-comparison-state-"))
-        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
-        loop = root / "loop"
-        os.symlink(str(loop), str(loop))
-        produced = harness._there(loop, "resolved", "not_published")
+        def unrunnable(*_args, **_kwargs):
+            raise OSError("no git on this host")
+
+        with mock.patch.object(harness.subprocess, "run", unrunnable):
+            produced = harness.repository_commit()
         self.assertEqual(state_of(produced), harness.reading.ACCESS_ERROR,
-                         "a file that could not be looked at is answered as a shape nobody"
-                         " could read, so the two answers are the same answer")
+                         "a command that could not be started is answered as one that ran and"
+                         " could not be read, so the two answers are the same answer")
         every = self.payloads()
         every["marker-root"] = {"source": "marker-root", "observationFile": produced,
                                 "heldFile": "reserved"}
@@ -705,8 +705,38 @@ class ReadingTests(unittest.TestCase):
                          "the state a producer established was replaced at the door")
         self.assertEqual(harness.render(found["value"])["notRead"],
                          harness.reading.ACCESS_ERROR,
-                         "the written document reports an access failure as a malformed"
-                         " reading")
+                         "the written document reports a question that could not be asked as an"
+                         " answer nobody could read")
+
+    def test_the_marker_reading_answers_what_the_repository_partition_answers(self):
+        """One partition, not a second copy of it. Review found the copy already disagreeing.
+
+        reading.observe is where this repository decides what is at a path: a link that loops is
+        a link that EXISTS whose shape cannot be read, and this file answered that the question
+        could not be asked. A directory sitting where a marker file belongs was worse - it read
+        as nothing having been published. Driven against the filesystem rather than a patched
+        call, because the defect this replaces was one the copy made on real paths.
+        """
+        root = Path(tempfile.mkdtemp(prefix="hook-comparison-partition-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(root), ignore_errors=True))
+        loop = root / "loop"
+        os.symlink(str(loop), str(loop))
+        (root / "a-directory").mkdir()
+        (root / "a-file").write_text("x", encoding="utf-8")
+        for name in ("loop", "a-directory", "a-file", "nothing-here"):
+            path = root / name
+            with self.subTest(path=name):
+                answered = harness._there(path, "resolved", "not_published")
+                settled = harness.reading.observe(path, "whether a marker file is there")
+                if settled is None:
+                    self.assertEqual(answered, "resolved")
+                elif settled.state == harness.reading.ABSENT:
+                    self.assertEqual(answered, "not_published")
+                else:
+                    self.assertEqual(state_of(answered), settled.state,
+                                     "this file answers " + str(state_of(answered)) + " where"
+                                     " the partition every other reading uses answers "
+                                     + settled.state)
 
     def test_the_environment_handed_to_a_subprocess_writes_nothing_into_the_checkout(self):
         """Asked of the function that builds it, because the promise is about what it hands over.
@@ -2067,7 +2097,7 @@ UNREADABLE_PRODUCERS = {
     "_install": ("UNREADABLE", "ACCESS_ERROR"),
     "journal_payload": ("UNREADABLE",),
     "_faulted": (CARRIED,),
-    "_there": ("ACCESS_ERROR",),
+    "_there": (CARRIED,),
     "working_tree": ("UNREADABLE", "ACCESS_ERROR", "UNREADABLE"),
     "_digest": ("UNREADABLE", "ACCESS_ERROR"),
     "repository_commit": ("UNREADABLE", "ACCESS_ERROR", "UNREADABLE"),
@@ -2096,8 +2126,13 @@ def _state_named(call):
     """Which of the four answers this producer gives, read off the call rather than assumed."""
     for keyword in call.keywords:
         if keyword.arg == "state":
-            if isinstance(keyword.value, ast.Attribute):
-                return keyword.value.attr
+            # Only a state named on the reading module is a state this reader can name. An
+            # attribute of anything else is a value carried from elsewhere, and reporting its
+            # attribute name would put a local variable's name into the declared table.
+            named = keyword.value
+            if (isinstance(named, ast.Attribute) and isinstance(named.value, ast.Name)
+                    and named.value.id == "reading"):
+                return named.attr
             return CARRIED
     return "UNREADABLE"
 
