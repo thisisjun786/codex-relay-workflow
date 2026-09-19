@@ -1757,6 +1757,14 @@ def reading_capability(record, relay):
                 requested = field(found["payload"], "settings", "requested")
                 if not isinstance(requested, dict):
                     requested = MISSING
+                # And both collections hold only settings a creation can ask for. The contract
+                # builds them from its own fixed fields, so a receipt carrying a name outside
+                # them is not one it wrote: two sides agreeing on a key nothing can request
+                # compared equal and every declared setting still agreed beside it.
+                beyond = sorted({key for key in (() if requested is MISSING else requested)
+                                 if key not in REQUESTABLE_SETTINGS}
+                                | {key for key in (() if verified is MISSING else verified)
+                                   if key not in REQUESTABLE_SETTINGS})
                 inconsistent = (verified is not MISSING and requested is not MISSING
                                 and sorted(verified) != sorted(requested))
                 unrequested = [] if requested is MISSING else sorted(
@@ -1770,7 +1778,7 @@ def reading_capability(record, relay):
                 added = [] if actual is MISSING else sorted(
                     {key + "." + name for key, value in expect.items()
                      for name in beyond_declaration(value, field(actual, key))})
-                ok = (names and not disagreed and not unasked and not unrequested
+                ok = (names and not disagreed and not unasked and not unrequested and not beyond
                       and not inconsistent and requested is not MISSING
                       and isinstance(findings, list) and not findings
                       and actual is not MISSING and verified is not MISSING)
@@ -2084,11 +2092,17 @@ def reading_store(record, relay):
         # same store says nothing about whether it can use it.
         peer_writable = field(peer, "actorReachability", "stateDirectoryWritable")
         peer_db = field(peer, "store", "observedAccess", "write")
+        # OPS-2.3: a participant is connected when doctor from its own acting process reports
+        # socketConnect ok. One that cannot reach its App Server cannot run its leg of the round
+        # trip however completely its store identity agrees, and the store comparison is decided
+        # on the database and says nothing about the socket the delivery uses.
+        peer_socket = field(peer, "actorReachability", "socketConnect")
         # Every field the verdict reads, not only the verdict: a doctor payload naming a store
         # and no device never said which inode it was, and a disagreement would say it did.
         answered = MISSING if (peer_same is MISSING or asked is MISSING
                                or peer_writable is MISSING
                                or peer_db is MISSING
+                               or peer_socket is MISSING
                                or field(peer, "store", "storeId") is MISSING
                                or field(peer, "store", "device") is MISSING
                                or field(peer, "store", "inode") is MISSING) else peer_same
@@ -2101,15 +2115,18 @@ def reading_store(record, relay):
                       == json.dumps(peer, sort_keys=True))(capture(record, "peerDoctor", other)[0])]
         cells.append(graded("peer:" + name, answered,
                             peer_same == "proven" and agrees and nonce_agrees
-                            and peer_writable is True and peer_db is True,
+                            and peer_writable is True and peer_db is True
+                            and peer_socket == "ok",
                             provenance=CAPTURED, measured_at=found["capturedAt"],
                             unreadable="this peer's doctor payload carries no same-store verdict"
                                        " and the challenge it was asked about, or does not say"
-                                       " whether it can write the state directory",
+                                       " whether it can write the state directory or reach the"
+                                       " socket its delivery would use",
                             evidence=("this peer reports " + str(shown(peer_same)) + " and its own"
                                       " store identity "
                                       + ("agrees with" if agrees else "disagrees with")
                                       + " the record, for challenge " + str(shown(asked))
+                                      + ", reaching its socket: " + str(shown(peer_socket))
                                       + ", and its state directory is writable: "
                                       + str(shown(peer_writable))
                                       + " with its database openable for writing: "

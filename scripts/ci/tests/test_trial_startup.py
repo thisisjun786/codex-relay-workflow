@@ -5035,6 +5035,39 @@ class FortyFifthHostedRound(TrialCase):
         cell = {c["cell"]: c for c in payload["readings"]["capability"]["cells"]}
         self.assertEqual(cell["receiptEcho:" + World.PARENT_A]["value"], UNKNOWN)
 
+    def test_a_peer_that_cannot_reach_its_socket_is_not_a_peer_that_can_run(self):
+        # OPS-2.3 makes a participant connected when doctor from its own acting process reports
+        # socketConnect ok. The store comparison is decided on the database and says nothing
+        # about the socket, so a peer whose identity agrees completely can still be one that
+        # cannot run its leg of the round trip.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["doctor-" + task + ".json"]["actorReachability"][
+                "socketConnect"] = "refused"
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a peer that cannot reach its App Server was read as able to run")
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
+                         NOT_VERIFIED)
+
+    def test_a_receipt_asking_for_something_no_creation_can_ask_for_is_not_one(self):
+        # The contract builds both collections out of its own fixed fields, so a receipt naming
+        # anything else is not one it wrote. Added to both sides they compare equal, and every
+        # declared setting still agrees beside them.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            settings = self.world.captures["receipt-" + task + ".json"]["settings"]
+            settings["requested"] = dict(settings["requested"], futureSetting="x")
+            settings["verified"] = sorted(settings["requested"])
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt asking for a setting no creation can ask for was accepted")
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
     def test_a_root_is_judged_as_the_bytes_the_relay_receives(self):
         # The bound on that refusal: a root that is absolute without anything being taken off it
         # is still a root, trailing characters and all, because the relay compares it the same
