@@ -45,7 +45,13 @@ def emit(document):
 
 
 def host_of(args):
-    home = Path(args.codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    # Resolved here for the same reason --dest is, and for one more. Every path in the snapshot is
+    # derived from this one, and the settings candidate is ALSO spelled by completion, which
+    # resolves what it is given: a relative home left as it was produced two spellings of one
+    # file, the de-duplication is lexical, and an applied run then took the same lock twice and
+    # waited itself out -- every transition on a relative home answering busy at the first step.
+    home = Path(args.codex_home or os.environ.get("CODEX_HOME")
+                or Path.home() / ".codex").expanduser().resolve()
     named = getattr(args, "event", None)
     if named and named != completion_event():
         # The package declares one event. Transitioning another would remove a registration on it

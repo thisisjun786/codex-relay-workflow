@@ -3189,6 +3189,36 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("could not be listed", answer["detail"])
         self.assertIsNone(answer["markerHistory"])
 
+    @needs_reader
+    def test_a_relative_codex_home_is_settled_before_anything_is_derived(self):
+        """Two spellings of one file take one lock twice, and the run waits itself out."""
+        import tempfile
+        # Both spellings, because the home arrives by either and one resolution answers both.
+        for how in ("--codex-home", "CODEX_HOME"):
+            with self.subTest(how=how):
+                # Its own host per case: a transition changes the host it runs on.
+                host = Host(Path(tempfile.mkdtemp(dir=self.directory, prefix="relative-")))
+                host.manual_install()
+                host.install_plugin()
+                before = host.hooks_document()
+                # Relative on purpose, resolved against the working directory this run is given.
+                argv = [CLI, "--dest", "dest", "transition", "--apply", "--accept-hook-trust-gap"]
+                keywords = {"cwd": host.root}
+                if how == "--codex-home":
+                    argv[1:1] = ["--codex-home", "home"]
+                else:
+                    keywords["env"] = {**os.environ, "CODEX_HOME": "home"}
+                done = run(argv, **keywords)
+                answer = json.loads(done.stdout)
+                self.assertEqual(done.returncode, 0,
+                                 json.dumps(answer["results"], indent=2)[:1500])
+                outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
+                self.assertNotIn("busy", outcomes.values(), json.dumps(answer["results"])[:900])
+                self.assertEqual(outcomes["settings retire"], "settled")
+                self.assertEqual(outcomes["hook standdown"], "settled")
+                self.assertNotEqual(host.hooks_document(), before)
+                self.assertEqual(host.settings()["owner"], "plugin")
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
