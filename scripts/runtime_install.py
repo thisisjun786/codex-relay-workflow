@@ -3047,10 +3047,15 @@ def _settle_claim(environment, state, *, issue, run):
     the same repair. Either way the destination is not stuck and the runtime is not at risk,
     which is the opposite of what the update failure said.
 
-    OSError is the whole of what is caught, and hostrecord.Busy is an OSError: a lock this run
-    could not take and a file it could not write are the same answer here. Anything else is a
-    defect in this command rather than a record that would not write, and a defect reported as
-    a settled-looking outcome is how one stops being found.
+    A LOCK THIS RUN NEVER TOOK IS NOT A LOCK IT STRANDED, and the two arrive as the same type.
+    hostrecord.Busy is an OSError, so catching the broad type alone read a COMPETING writer's
+    live lock file as this run's leftover and told an operator to delete it -- and because
+    Locked excludes by O_EXCL on that filename, deleting it admits a second writer into a
+    read-modify-write that is still running. So Busy is caught first and answered as what it
+    is: nothing was written here, the file belongs to somebody else, and the next action is to
+    wait rather than to remove anything. Anything else is a defect in this command rather than
+    a record that would not write, and a defect reported as a settled-looking outcome is how
+    one stops being found.
 
     AND THE RECORD HAS THE SAME SPLIT THE RESULT DOES, so it gets the same treatment rather
     than a branch. Writing the claim is two steps: the bytes are replaced under
@@ -3078,8 +3083,12 @@ def _settle_claim(environment, state, *, issue, run):
     derived from the reading rather than written once for every failure.
     """
     path = staging.claim_path(environment)
+    contended = False
     try:
         staging.write_claim(environment, state, issue=issue, run=run)
+    except hostrecord.Busy as error:
+        contended = True
+        raised = type(error).__name__ + ": " + error.__str__()
     except OSError as error:
         raised = type(error).__name__ + ": " + error.__str__()
     else:
@@ -3089,16 +3098,28 @@ def _settle_claim(environment, state, *, issue, run):
                 "detail": None, "readBack": None, "residualPaths": [],
                 "recoveryRequires": None}
 
+    # Still read back, contended or not. The run this one lost the lock to may be the run that
+    # finished this very promotion, and a claim it already settled is settled.
     left = staging.read_claim(environment)
     says = (left.value or {}).get("state") if left.ok else None
     settled = says == state
-    # Read on the filesystem rather than inferred from the exception. Which step raised is not
-    # knowable from here, and whether the lock outlived it is a fact about the directory.
-    stranded = Path(str(path) + hostrecord.LOCK_SUFFIX)
-    residual = [str(stranded)] if stranded.exists() else []
+    lock = Path(str(path) + hostrecord.LOCK_SUFFIX)
+    # This run's leftover only where this run could have taken the lock at all. Busy says it
+    # did not, so whatever is at that path is somebody else's and reporting it as residue
+    # would be this command naming another run's live working file for deletion.
+    residual = [] if contended else ([str(lock)] if lock.exists() else [])
 
     if settled:
         record_requires = None
+    elif contended:
+        record_requires = (
+            "wait for the run that holds " + str(lock) + " and then run install again against"
+            " the same destination. This call never took that lock, so it wrote nothing and"
+            " changed nothing: the replacement itself finished, this environment is selected"
+            " and the owned pointer names it, and what is missing is only the claim that"
+            " records it. The other run may be writing that very claim. Nothing here is this"
+            " run's to remove -- that lock file is a live writer's, and taking it away would"
+            " let a second writer into a read-modify-write that is still running.")
     elif left.usable:
         record_requires = (
             "clear whatever stopped the write at " + str(path) + " -- the error is in"
@@ -3120,10 +3141,13 @@ def _settle_claim(environment, state, *, issue, run):
             " the directory and leaves it exactly as it stands rather than finishing the"
             " promotion.")
     residue_requires = None if not residual else (
-        "remove " + str(stranded) + " by hand. The lock taken to write this claim outlived the"
-        " call that took it, so the next claim write at this path waits on that file and then"
-        " refuses, until it is gone or older than " + str(hostrecord.STALE_LOCK_SECONDS)
-        + " seconds. It holds no runtime and removing it destroys nothing.")
+        "look at " + str(lock) + " before anything else touches it. A lock file is there and"
+        " whether it outlived the call that took it or belongs to a run still writing could"
+        " not be established here, so it is reported rather than removed: deleting a live"
+        " writer's lock admits a second writer into a read-modify-write that is still running."
+        " Nothing has to be done about it by hand in any case -- the next claim write at this"
+        " path waits on it and clears it once it is older than "
+        + str(hostrecord.STALE_LOCK_SECONDS) + " seconds.")
     return {"path": str(path), "settled": settled, "released": False, "wanted": state,
             "detail": raised,
             "readBack": {"state": left.state, "saying": says, "detail": left.detail},

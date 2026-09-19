@@ -5963,6 +5963,23 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=write_then_strand))
+        if breaking == "settle the staging claim while another run holds it":
+            # A COMPETING writer, as hostrecord.Locked leaves the world when it gives up: the
+            # lock file is there, it is somebody else's, and this run never took it. The file
+            # has to be real, because the whole question is what this command says about it.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def busy_instead_of_settling(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    Path(str(staging.claim_path(environment))
+                         + hostrecord.LOCK_SUFFIX).write_text("a rival", encoding="utf-8")
+                    raise hostrecord.Busy("another run holds "
+                                          + str(staging.claim_path(environment))
+                                          + hostrecord.LOCK_SUFFIX)
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=busy_instead_of_settling))
         if breaking == "settle the staging claim unreadably":
             # The third shape: the claim at that path can no longer be read at all. Absence and
             # unreadability are not one answer here, because the next run repairs one and
@@ -6310,6 +6327,41 @@ class SettledRecordTests(unittest.TestCase):
                             ordinary["claim"]["recoveryRequires"],
                             "so it must not be given the advice that fits the case a rerun"
                             " does repair")
+
+    def test_a_competing_writers_lock_is_never_called_this_runs_residue(self):
+        """A lock this run never took is not a lock it stranded.
+
+        hostrecord.Busy is an OSError, so a handler that catches only the broad type reads a
+        live writer's lock file as leftover and tells an operator to delete it. Locked excludes
+        by O_EXCL on that filename, so deleting it admits a second writer into a
+        read-modify-write that is still running -- the result would be advising the accident.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim while another run holds it")
+            lock = str(staging.claim_path(host.candidate)) + hostrecord.LOCK_SUFFIX
+            lock_survived = Path(lock).exists()
+        with tempfile.TemporaryDirectory() as temporary:
+            # The same lock file, in the case where this run really could have stranded it.
+            leftover = UpdateRecoveryTests()._run(
+                _Host(temporary), breaking="settle the staging claim after it lands")[1]
+
+        claim = payload.get("claim") or {}
+        self.assertEqual(claim.get("residualPaths"), [],
+                         "a lock this run never took is not this run's leftover: "
+                         + json.dumps(claim)[:500])
+        self.assertTrue(leftover["claim"]["residualPaths"],
+                        "the contrast only means something if the other case does report one")
+        self.assertNotEqual(claim.get("recoveryRequires"),
+                            leftover["claim"]["recoveryRequires"],
+                            "and the two are told different things, because one lock may be"
+                            " cleared and the other belongs to a writer that is still running")
+        self.assertTrue(lock_survived, "nothing here removed it either")
+        self.assertIs(payload.get("claimSettled"), False,
+                      "the record still did not land, which is reported as itself")
+        self.assertTrue(claim.get("recoveryRequires"),
+                        "with what to do instead: wait for the run that holds it")
 
     def test_rerunning_while_the_write_still_fails_loses_nothing(self):
         """The advice names a precondition, and the case where it is not met is safe.
