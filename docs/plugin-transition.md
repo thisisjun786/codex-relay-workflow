@@ -156,7 +156,9 @@ What is compared, and why each part is there:
   use, because Codex loads what the manifest declares and ignores everything else in the package;
 - the interpreter and the script together, as one pair, because half a launcher is not a launcher:
   a versioned name this checkout does not ship is a valid spelling of a Python that need not exist
-  on the host;
+  on the host. The interpreter is compared whole, directory included: reduced to a basename, an
+  absolute path to a Python that is not on this host reads as the bare `python3` this package
+  declares, and that declaration starts nothing;
 - the script positionally, the way an interpreter resolves it -- the first non-option argument, with
   only the options that leave the next word alone skipped -- because `-c` takes source text and
   `-m` takes a module name, and a command that merely mentions the launcher does not run it;

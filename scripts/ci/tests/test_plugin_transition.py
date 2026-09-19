@@ -2885,6 +2885,24 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("The replacement has to be that same map", answer["results"][0]["detail"])
         self.assertEqual(host.config(), before)
 
+    def test_an_interpreter_somewhere_else_is_not_the_one_this_package_declares(self):
+        """An absolute Python that is not on the host starts nothing and reads as our python3."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].replace("python3 ", "/definitely/missing/python3 ", 1)
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("/definitely/missing/python3 wiring/crw_stop_hook.py",
+                      answer["results"][0]["detail"])
+        self.assertIn("this checkout declares python3 wiring/crw_stop_hook.py",
+                      answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):

@@ -356,11 +356,18 @@ def _shape(words):
     not ship -- python3.999999 -- is a valid spelling of a Python that need not exist on the host,
     and the only thing that makes a cached declaration the replacement is that it is the same
     declaration this checkout ships.
+
+    The interpreter is kept whole, directory and all. Reduced to its basename, an absolute
+    /definitely/missing/python3 compared equal to the bare python3 this package declares: it
+    passes every structural check, starts nothing, and the run that removed the working
+    registration would report success over a hook that releases every Stop in silence. The script
+    beside it is normalised instead, because the package declares it against PLUGIN_ROOT and that
+    is the same file on both sides however it is spelled.
     """
     script = _script(words)
     if script is None:
         return None
-    return Path(str(words[0]).strip("\"'")).name + " " + script
+    return str(words[0]).strip("\"'") + " " + script
 
 
 def _plugin_checker(repo_root):
