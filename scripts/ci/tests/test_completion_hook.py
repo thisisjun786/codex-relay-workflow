@@ -2661,23 +2661,33 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
             self._host(temporary)
             register(temporary)
             _first, second = second_registration(temporary, "journal-two")
-            # A regular file where the journal should be: neither spelling can be listed, so
-            # both counts are unestablished and only their identity decides this cause.
-            blocked = Path(temporary) / "not-a-journal"
-            blocked.write_text("", encoding="utf-8")
-            alias = Path(temporary) / "alias-of-not-a-journal"
-            alias.symlink_to(blocked)
-            amend_settings(temporary, journalRoot=str(blocked))
+            # One real journal, named by two spellings. Listed twice it is two readings of one
+            # directory, and a Stop landing between them gives one alias a count the other does
+            # not have -- which this answer set reads as two journals disagreeing.
+            one = Path(temporary) / "one-journal"
+            one.mkdir()
+            alias = Path(temporary) / "an-alias-of-one-journal"
+            alias.symlink_to(one)
+            amend_settings(temporary, journalRoot=str(one))
             document = json.loads(second.read_text(encoding="utf-8"))
             document["journalRoot"] = str(alias)
             second.write_text(json.dumps(document), encoding="utf-8")
-            self.assertTrue(os.path.samefile(str(alias), str(blocked)),
+            self.assertTrue(os.path.samefile(str(alias), str(one)),
                             "the fixture did not build one directory under two spellings")
-            cell = why_no_record(temporary)
-        self.assertNotIn(firing.RECORDED_ON_ANOTHER_PATH,
-                         [one["cause"] for one in cell.get("candidates") or []],
-                         "one directory named through an alias was counted as two journals"
-                         " that might disagree")
+            real, listed = completion._journal_cell, []
+
+            def listing(config):
+                listed.append(config.get("journalRoot"))
+                return real(config)
+
+            with mock.patch.object(completion, "_journal_cell", side_effect=listing):
+                found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(listed, [str(one)],
+                         "one directory was listed twice, once per spelling: " + repr(listed))
+        named = found["configuration"]["namedSettings"]
+        self.assertEqual([entry.get("journalRoot") for entry in named], [str(one), str(one)],
+                         "the second spelling was answered by its own reading of the directory"
+                         " the first had already read")
 
     def test_a_plugin_owned_registration_is_not_an_absent_one(self):
         """The hook file is deliberately empty on a plugin-owned host: that registration lives
@@ -2889,6 +2899,76 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                             "settings nobody could read were answered with the default owner,"
                             " and an absence was established from a hook file that may not be"
                             " where this host's registration lives at all")
+
+    def test_an_owner_this_reader_does_not_know_is_not_the_default_owner(self):
+        """An OMITTED owner is the legacy user document owner_of is written for. An owner this
+        reader does not know is the opposite: somebody wrote something there, and reading it as
+        the default established an absence from a hook file that may not be where this host's
+        registration lives -- while suppressing settings_unusable, the cause that would have
+        named the actual repair.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            settings(temporary, owner="an-owner-this-reader-does-not-know")
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["configuration"]["value"], completion.CONFIG_MALFORMED,
+                         "the fixture did not build the rejected-owner settings this case is"
+                         " about: " + repr(found["configuration"]["value"]))
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertNotEqual(standings.get(firing.NOT_REGISTERED), firing.ESTABLISHED,
+                            "an owner nobody recognises was read as the user owner, and an"
+                            " absence was established on its strength")
+
+    def test_an_open_that_yielded_no_descriptor_publishes_no_identity(self):
+        """An open that failed established nothing about WHICH directory refused it. Taking the
+        identity from the spelling afterwards answered about whatever it named by then, so a
+        link retargeted in between published the refusal under a readable directory's identity
+        -- and the next registration naming that directory inherited a failure belonging to
+        something else instead of listing it.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            refuses = Path(temporary) / "a-regular-file-that-refuses-the-open"
+            refuses.write_text("", encoding="utf-8")
+            readable = Path(temporary) / "a-readable-journal"
+            readable.mkdir()
+            alias = Path(temporary) / "a-link-retargeted-after-the-failed-open"
+            alias.symlink_to(refuses)
+            amend_settings(temporary, journalRoot=str(alias))
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["journalRoot"] = str(readable)
+            second.write_text(json.dumps(document), encoding="utf-8")
+
+            real_open = completion.os.open
+
+            def opening(path, *args, **kwargs):
+                try:
+                    return real_open(path, *args, **kwargs)
+                except OSError:
+                    # Exactly the window: the open has failed and nothing has looked the
+                    # spelling up yet.
+                    if str(path) == str(alias):
+                        alias.unlink()
+                        alias.symlink_to(readable)
+                    raise
+
+            with mock.patch.object(completion.os, "open", side_effect=opening):
+                found = completion.status(codex_home=temporary, environ={})
+            self.assertTrue(os.path.samefile(str(alias), str(readable)),
+                            "the fixture did not retarget the link after the failed open")
+        named = found["configuration"]["namedSettings"]
+        self.assertEqual(named[0]["recordsAnswer"], firing.UNESTABLISHED,
+                         "the fixture did not make the first open fail")
+        self.assertEqual(named[1].get("journalRoot"), str(readable),
+                         "a readable journal inherited a refusal that came from somewhere"
+                         " else, because the failed open published an identity taken after it")
+        self.assertEqual(named[1]["recordsAnswer"], firing.COUNTED,
+                         "the second registration's own directory was never listed")
 
     def test_records_already_written_survive_the_registration_being_removed(self):
         """An empty hook file establishes the PRESENT. A registration removed after the hook

@@ -1568,12 +1568,14 @@ def _journal_cell(config):
         # NUL cannot name a path at all, so scandir raises it. A settings document that
         # reads back fine must still produce a journal reading rather than a traceback.
         return _cell(reading.ACCESS_ERROR, "the journal could not be opened: " + str(error),
-                     journalRoot=str(directory), journalPolicy=policy,
-                     # A path lookup is enough HERE and nowhere else: no listing was taken, so
-                     # there is no count that could be attributed to the wrong directory. All
-                     # another spelling can inherit is "nobody could read this", which is what
-                     # two spellings of one unreadable thing should both say.
-                     journalIdentity=reading.path_identity(directory))
+                     # No identity at all. An open that yielded no descriptor established
+                     # nothing about WHICH directory refused it, and a lookup taken afterwards
+                     # answers about whatever the spelling names by then: a link retargeted in
+                     # between would publish this refusal under a readable directory's
+                     # identity, and the next registration naming that directory would inherit
+                     # a failure belonging to something else instead of listing it. An
+                     # identity nobody established may not be published.
+                     journalRoot=str(directory), journalPolicy=policy)
     try:
         # The identity of what was actually opened, reported beside the count so a caller can
         # tell two spellings apart by what they REACHED rather than by how they were written.
@@ -1983,12 +1985,25 @@ def status(codex_home=None, environ=None, event=EVENT):
     # settings_unusable, the cause that would have named the actual repair. An ABSENT document
     # is neither: owner_of answers that as the user owner on purpose, because the plugin writes
     # a document when it takes the registration.
-    if found is None or not found.usable:
+    if found is None or not found.usable or found.state == reading.ABSENT:
+        # Nothing read, or nothing there. An absent document is the one case owner_of answers
+        # as the user owner on purpose, and status() has no registration to explain then
+        # either, so both roads lead to the same place and neither invents an owner.
+        registration_read_here = found is not None and found.state == reading.ABSENT
+    elif config is not None:
+        registration_read_here = owner_of(config) != OWNER_PLUGIN
+    elif not isinstance(found.value, dict):
+        # Valid JSON that is not an object records no owner at all, and that is not the same
+        # as a document written before the key existed.
         registration_read_here = False
     else:
-        recorded = found.value if isinstance(found.value, dict) else None
-        registration_read_here = (
-            owner_of(config if config is not None else recorded) != OWNER_PLUGIN)
+        stated = found.value.get("owner")
+        # An OMITTED owner is the legacy user document owner_of is written for. An owner this
+        # reader does not know is the opposite: somebody wrote something here, and reading it
+        # as the default would establish an absence from a hook file that may not be where
+        # this host's registration lives.
+        registration_read_here = (True if stated is None
+                                  else (stated in OWNERS and stated != OWNER_PLUGIN))
     absence = firing.decide({
         "registrationReadable": ours is not None,
         "adapterRegistrations": len(ours or []),
