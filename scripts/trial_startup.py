@@ -644,14 +644,37 @@ def declared_agrees(declared, found):
     Beyond a policy, a declared object stays a requirement: every key it names has to agree,
     including a key the payload does not carry, and what the payload added beyond it is named in
     the cell's evidence.
+
+    A scalar is compared with its type, unlike same_value elsewhere. This is the settings
+    comparison and its consumer is type-sensitive: SettingsContract refuses a model that is not a
+    string before it makes any call, and findings() compares the request against the response with
+    ordinary equality. So a receipt answering the number 1 where the record wrote "1" is not one
+    the bridge could have produced, and reading them as equal accepted a creation nothing made.
+    Where a payload legitimately answers a number for a written string -- a device, an inode, a
+    pid -- the comparison is same() and stays textual.
     """
     if isinstance(declared, dict) and isinstance(found, dict):
         # Both sides, the way the relay normalises both sides before comparing. Filling only the
         # declaration made a payload that omits a default disagree with a record that names one.
         wanted, carried = with_policy_defaults(declared), with_policy_defaults(found)
-        return all(same_value(carried.get(key, MISSING), value)
+        return all(same_typed_value(carried.get(key, MISSING), value)
                    for key, value in wanted.items())
-    return same_value(declared, found)
+    return same_typed_value(declared, found)
+
+
+def same_typed_value(left, right):
+    """same_value, with a scalar's type part of what it is.
+
+    Structure is compared as structure, exactly as before; what changes is that a string and the
+    number that prints the same way are no longer one value.
+    """
+    if left is MISSING or right is MISSING or left is None or right is None:
+        return False
+    if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
+        return same_value(left, right)
+    if isinstance(left, bool) or isinstance(right, bool):
+        return left is right
+    return type(left) is type(right) and left == right
 
 
 def with_policy_defaults(declared):

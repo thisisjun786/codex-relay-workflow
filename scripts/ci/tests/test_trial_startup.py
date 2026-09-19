@@ -5330,6 +5330,38 @@ class FortyFifthHostedRound(TrialCase):
         self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
                          NOT_VERIFIED)
 
+    def test_a_setting_answered_with_the_wrong_json_type_is_not_an_agreement(self):
+        # The settings comparison coerced scalars through str(), so the number 1 and the string
+        # "1" were one value. Its consumer is type-sensitive: SettingsContract refuses a model
+        # that is not a string before it makes any call, and findings() compares the request
+        # against the response with ordinary equality, so a receipt carrying the number is not
+        # one the bridge could have written.
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["model"] = "1"
+        self.world.payloads["settings-show"]["payload"]["settings"]["model"] = "1"
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            settings = self.world.captures["receipt-" + task + ".json"]["settings"]
+            settings["requested"]["model"] = 1
+            settings["actual"]["model"] = 1
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt answering a number where the record wrote a string passed")
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_a_reading_that_legitimately_answers_a_number_still_agrees(self):
+        # Support, and the bound on that: where a payload answers a number for a written string --
+        # a device, an inode, a pid -- the comparison is same() and stays textual. This is the
+        # ordinary run, which carries exactly those.
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
     def test_one_file_cannot_be_two_kinds_of_evidence(self):
         # This procedure is explicit that a creation receipt never establishes lifecycle. Pointing
         # both captures at one file let a receipt carrying a status answer a question nothing ever
