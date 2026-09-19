@@ -1564,6 +1564,17 @@ def _journal_cell(config):
         # identity of a directory it never came from. A descriptor cannot be retargeted.
         handle = os.open(str(directory), os.O_RDONLY | _DIRECTORY)
     except FileNotFoundError:
+        if os.path.islink(str(directory)):
+            # A link whose target is gone is NOT an established absence. Nothing could be read
+            # through it, and the hook cannot create its dated directory through it either, so
+            # reporting "the directory does not exist" settled a count of zero for a host whose
+            # journal path is broken -- an unreadable path answered as an empty journal, which
+            # is the substitution this whole answer set exists to remove.
+            return _cell(reading.ACCESS_ERROR,
+                         "the journal path is a link whose target is not there, so nothing"
+                         " could be read through it and the hook cannot create its own"
+                         " directory through it: no count was established",
+                         journalRoot=str(directory), journalPolicy=policy)
         return _cell(reading.ABSENT, "the journal directory does not exist, so this hook has"
                                      " recorded no invocation into it",
                      journalRoot=str(directory), journalPolicy=policy)
@@ -1976,14 +1987,22 @@ def status(codex_home=None, environ=None, event=EVENT):
         # retargeted in between -- the single source was never established, and reporting the
         # reading as it would describe one file while two registrations run. Said as the
         # unsettled reading it is rather than presented as settled.
-        was = judged.get(str(path))
-        if (collapsed and was is not None and found is not None
-                and found.identity is not None and found.identity != was):
+        # EVERY spelling the merge judged, not only the one that was read. A discarded alias
+        # retargeted before this read is the same broken judgement seen from the other side:
+        # the two registrations were reported as one source on a finding that no longer holds,
+        # and checking only the retained spelling caught half of it.
+        moved = [spelling for spelling, was in judged.items()
+                 if reading.path_identity(spelling) != was]
+        read_elsewhere = (found is not None and found.identity is not None
+                          and judged.get(str(path)) is not None
+                          and found.identity != judged[str(path)])
+        if collapsed and (moved or read_elsewhere):
             reading.release(found)
             config, failed, found = None, REGISTRATION_AMBIGUOUS, None
             detail = ("the registrations' settings spellings were read as one file and the"
-                      " file at " + str(path) + " changed before it could be read, so no"
-                      " single source was established and none was read")
+                      " file at " + ", ".join(sorted(moved) or [str(path)]) + " changed"
+                      " before it could be read, so no single source was established and none"
+                      " was read")
 
     target = _cell(NOT_READ, "no registration for this adapter was found to check")
     interpreter = _cell(NOT_READ, "no registration for this adapter was found to check")
@@ -2205,11 +2224,30 @@ def status(codex_home=None, environ=None, event=EVENT):
     # The launcher those settings record, as a probe of what is there NOW. Both halves are
     # already read for the cells this payload publishes, so this carries a present reading
     # rather than re-deriving one -- and an old journal record can never stand in for it.
+    recorded_launcher = (found.value if (found is not None and found.usable
+                                         and isinstance(found.value, dict)) else {})
+    probed, probed_interpreter = adapter["value"], adapter_interpreter["value"]
+    if registration_elsewhere and NOT_READ in (probed, probed_interpreter):
+        # The document was READ; some OTHER field failed validation -- a mode this reader does
+        # not know, say. The launcher paths it records are present readings whatever that
+        # field says, and taking the validated cells' NOT_READ as the answer dropped the probe
+        # entirely: a deleted entry point then hid behind an unrelated complaint, on the one
+        # host whose repair this probe exists to name. Read here only because the branch above
+        # had no reading to carry, and only for paths the document states absolutely.
+        named_entry = recorded_launcher.get("adapterEntryPoint")
+        named_interpreter = recorded_launcher.get("adapterInterpreter")
+        if (isinstance(named_entry, str) and os.path.isabs(os.path.expanduser(named_entry))
+                and isinstance(named_interpreter, str)
+                and os.path.isabs(os.path.expanduser(named_interpreter))):
+            probed = presence(named_entry, "the recorded adapter entry point")["value"]
+            probed_interpreter = (_recorded_program_cell(named_interpreter,
+                                                         "the recorded adapter interpreter")
+                                  or _cell(NOT_READ, "no interpreter was recorded"))["value"]
     launcher_probe = ([{"registration": "the launcher these settings record",
-                        "adapter": adapter["value"],
-                        "interpreter": adapter_interpreter["value"]}]
+                        "adapter": probed,
+                        "interpreter": probed_interpreter}]
                       if registration_elsewhere
-                      and NOT_READ not in (adapter["value"], adapter_interpreter["value"])
+                      and NOT_READ not in (probed, probed_interpreter)
                       else [])
     absence = firing.decide({
         "registrationReadable": ours is not None,

@@ -3604,6 +3604,69 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
                          "two registrations were reported as one source on a judgement about a"
                          " file that is no longer the one read")
 
+    def test_a_discarded_spelling_that_moved_unsettles_the_merge_too(self):
+        """The other half of the same broken judgement.
+
+        The merge collapses two spellings into one source. Checking only the spelling that was
+        RETAINED caught the case where that one moved, and missed the case where the discarded
+        alias moved instead -- the same finding no longer holding, seen from the other side,
+        and the same two registrations reported as one source because of it.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = Path(temporary)
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            register(temporary)
+            named = completion.configuration_path(host)
+            alias = host / "z-an-alias-of-the-settings.json"
+            alias.symlink_to(named)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = dict(written["hooks"][completion.EVENT][0]["hooks"][0])
+            entry["command"] = entry["command"].replace(str(named), str(alias))
+            written["hooks"][completion.EVENT][0]["hooks"].append(entry)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+
+            elsewhere = host / "a-different-settings-file.json"
+            elsewhere.write_text(named.read_text(encoding="utf-8"), encoding="utf-8")
+            real = completion._one_source_each
+
+            def the_discarded_alias_moves(spellings):
+                answer = real(spellings)
+                # The DISCARDED spelling is retargeted; the retained one is untouched.
+                alias.unlink()
+                alias.symlink_to(elsewhere)
+                return answer
+
+            with mock.patch.object(completion, "_one_source_each",
+                                   side_effect=the_discarded_alias_moves):
+                found = completion.status(codex_home=temporary, environ={})
+
+        self.assertEqual(found["configuration"]["value"], completion.REGISTRATION_AMBIGUOUS,
+                         "only the retained spelling was revalidated, so a merge whose"
+                         " discarded side had moved was still reported as one source")
+
+    def test_a_record_that_will_not_parse_still_says_what_it_came_from(self):
+        """An unreadable file was the one reading nothing could key on.
+
+        The holder and the identity were taken after the parse, so a file that fails to parse
+        returned neither -- and two registrations naming that file through aliases could read
+        it twice and disagree about it, which is the very split the identity work closes for
+        every other state.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "not-json.json"
+            path.write_text("{ this will not parse", encoding="utf-8")
+            found = reading.read_json(path, "a record", hold=True)
+            identity, holder = found.identity, found.holder
+            reading.release(found)
+        self.assertFalse(found.usable, "the fixture did not build an unreadable record")
+        self.assertIsNotNone(identity,
+                             "a record that failed to parse reported no identity, so nothing"
+                             " could tell two spellings of it apart from two files")
+        self.assertIsNotNone(holder,
+                             "a record that failed to parse held nothing, so its identity was"
+                             " not usable as a key")
+
 
 class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
     """Review of PR #52 head 000b83f. Two more answers this branch owns were being withheld
@@ -3638,6 +3701,47 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
             cell = why_no_record(temporary)
         self.assertEqual(self._standings(cell).get(firing.JOURNALLING_OFF), firing.ESTABLISHED,
                          "the host states it keeps no journal and the answer did not say so")
+
+    def test_a_journal_path_that_leads_nowhere_counts_nothing(self):
+        """A dangling link is not an empty journal.
+
+        Opening the directory raises FileNotFoundError either way, and answering ABSENT for
+        both settled a count of zero for a host whose journal PATH is broken. Nothing could be
+        read through the link, and the hook cannot create its dated directory through it
+        either, so "this hook has recorded no invocation" claims something no reading here
+        established -- an unreadable path answered as an empty journal.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            nowhere = host / "a-journal-link-to-nothing"
+            nowhere.symlink_to(host / "a-target-that-is-not-there")
+            settings(temporary, journalRoot=str(nowhere))
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertNotEqual(found["firingJournal"]["value"], reading.ABSENT,
+                            "a journal path whose link leads nowhere was reported as an"
+                            " established absence, which is a count of zero")
+
+    def test_rejected_settings_still_probe_the_launcher_they_record(self):
+        """A document that was READ answers with every field that IS readable.
+
+        Where plugin-owned settings fail an unrelated validation -- a mode this reader does not
+        know -- the configuration cells become not_read, and taking that as the answer dropped
+        the launcher probe entirely. The entry point and interpreter those settings record are
+        present readings whatever the mode says, so a deleted entry point hid behind an
+        unrelated complaint on exactly the host whose repair the probe exists to name.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            gone = host / "an-entry-point-that-was-deleted.py"
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable,
+                     adapterEntryPoint=str(gone),
+                     mode="not-a-mode-this-reader-knows")
+            cell = why_no_record(temporary)
+        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                         firing.ESTABLISHED,
+                         "the recorded entry point is gone and the answer never probed it,"
+                         " because an unrelated field of the same document failed validation")
 
     def test_a_user_owned_host_with_nothing_named_still_evaluates_nothing(self):
         """SUPPORT, not evidence. The direction the requirement change must not break: where no

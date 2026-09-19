@@ -339,6 +339,7 @@ def read_json(path, what, *, absent=None, shape=None, hold=False):
             settled.value = absent() if callable(absent) else absent
         return settled
     holder = None
+    identity = None
     try:
         with region(path, what):
             # Opened ONCE, and the identity taken from that descriptor. Reading the bytes and
@@ -353,19 +354,29 @@ def read_json(path, what, *, absent=None, shape=None, hold=False):
             # the line and column a malformed one reports are part of what an operator reads.
             with open(str(path), "r", encoding="utf-8") as opened:
                 identity = descriptor_identity(opened)
-                value = json.loads(opened.read())
-                # Taken last, inside the open, so nothing that raises above it can leave a
-                # descriptor behind for a reading this call never returns.
+                # Taken BEFORE the parse, because a record that fails to parse is still a
+                # record that was read from an object, and a caller keying on identity needs
+                # the unreadable ones too: two spellings of one unparseable file read twice
+                # could otherwise disagree about it. Every exit below either hands it over or
+                # closes it.
                 holder = _held(opened) if hold else None
+                value = json.loads(opened.read())
             if shape is not None:
                 shape(value)
     except Refused as refused:
-        if holder is not None:
+        # The refusal is about this object, so it carries the object's identity and, where one
+        # was asked for, the descriptor holding it. Losing them here meant an unreadable file
+        # was the one kind of reading nothing could key on.
+        found = refused.reading
+        if getattr(found, "identity", None) is None:
+            found.identity = identity
+            found.holder = holder
+        elif holder is not None:
             try:
                 os.close(holder)
             except OSError:
                 pass
-        return refused.reading
+        return found
     return Reading(value=value, state=PRESENT, source=path, identity=identity, holder=holder)
 
 
