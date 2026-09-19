@@ -4075,6 +4075,44 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          "an adapter script the interpreter cannot open was read as startable"
                          " because a regular file exists at its path")
 
+    def test_one_interpreter_is_probed_once_however_it_is_spelled(self):
+        """One executable is one probe, and resource_key cannot see that.
+
+        This cache exists because probing per registration attached time-separated results to
+        commands sharing one executable. Its key was lexical, so two registrations naming one
+        interpreter through a real path and a symlink missed each other: it was executed twice,
+        and an interpreter replaced between those two moments hands the same host two different
+        startability answers. The identity is asked of the kernel and held while the probes
+        run.
+        """
+        runs = []
+        real = completion._answers_as_an_interpreter
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            alias = host / "an-alias-of-the-interpreter"
+            alias.symlink_to(sys.executable)
+            register(temporary)
+            second_registration(temporary, "journal-two")
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entries = written["hooks"][completion.EVENT][0]["hooks"]
+            entries[1]["command"] = entries[1]["command"].replace(
+                sys.executable, str(alias), 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+
+            def counting(resolved, *passed, **keywords):
+                runs.append(str(resolved))
+                return real(resolved, *passed, **keywords)
+
+            with mock.patch.object(completion, "_answers_as_an_interpreter",
+                                   side_effect=counting):
+                completion.status(codex_home=temporary, environ={})
+
+        self.assertEqual(len(runs), 1,
+                         "one interpreter named through two spellings was executed once per"
+                         " spelling, so two registrations carry readings taken at two"
+                         " moments: " + repr(runs))
+
     def test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status(self):
         """Only a program that RAN the source can produce this nonce.
 
