@@ -12,7 +12,7 @@ from codex_session_relay.store import (
     SCHEMA_VERSION, Store, compare_store, nonce_lookup, probe, resolve_state_dir, state_dir,
 )
 
-from .support import RelayTestCase
+from .support import RelayTestCase, WorkerKilled, killed_before_commit
 
 EXPECTED_TABLES = {
     "acks", "attempts", "deliveries", "events", "generations", "journal", "observations",
@@ -77,10 +77,20 @@ class Atomicity(RelayTestCase):
         self.assertEqual(self.store.one("SELECT COUNT(*) AS c FROM journal")["c"], 0)
 
     def test_a_failed_registration_is_not_a_registration(self):
-        self.store.fault_hook = lambda: (_ for _ in ()).throw(RuntimeError("disk full"))
-        with self.assertRaises(RuntimeError):
-            self.register()
-        self.store.fault_hook = None
+        """Killed inside the registration, not merely inside whichever write came first.
+
+        register() runs three transactions and this name held only because the relationship
+        write happens to be in the first one. Naming the table is what makes that a property
+        of the case rather than of the order.
+        """
+        with self.assertRaises(WorkerKilled):
+            with killed_before_commit(self.store, writing="relationships") as kill:
+                self.register()
+        self.assertIn(
+            "generations", kill.killed,
+            "the relationship and its first generation are no longer written in one"
+            f" transaction, so this case no longer measures what its name says: {kill.killed}",
+        )
         self.assertEqual(self.store.one("SELECT COUNT(*) AS c FROM relationships")["c"], 0)
         self.assertEqual(self.store.one("SELECT COUNT(*) AS c FROM generations")["c"], 0)
 
