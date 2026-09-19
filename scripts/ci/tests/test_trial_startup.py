@@ -4027,6 +4027,43 @@ class FortyThirdHostedRound(TrialCase):
         span = float(cell["evidence"].split("in sequence over ")[1].split(" seconds")[0])
         self.assertGreaterEqual(span, 0)
 
+    def test_a_workspace_root_that_is_not_a_path_refuses_the_start(self):
+        # A list of the wrong things is still a list. The creation path refuses a root that is
+        # not an absolute string, so a receipt carrying one cannot be genuine and the resume
+        # parameters built from it are invalid.
+        for roots in ([7], ["relative/path"], ["/ok", 7]):
+            with self.subTest(roots=roots):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                world.payloads["settings-show"]["payload"]["settings"][
+                    "runtimeWorkspaceRoots"] = roots
+                for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+                    capture = world.captures["receipt-" + task + ".json"]
+                    for half in ("requested", "actual"):
+                        capture["settings"][half]["runtimeWorkspaceRoots"] = roots
+                world.start_supervisor()
+                world.flush()
+                document = world.preflight()
+                self.assertFalse(document["readyToStart"],
+                                 "a root the creation path refuses was certified")
+                cell = cells_of(document,
+                                "capability")["deliverableSettings:" + World.PARENT_A]
+                self.assertEqual(cell["value"], NOT_VERIFIED)
+                self.assertIn("not a list of absolute paths", cell["evidence"])
+
+    def test_real_absolute_roots_are_still_accepted(self):
+        # Support: a root list that is what it should be keeps working.
+        self.world.payloads["settings-show"]["payload"]["settings"][
+            "runtimeWorkspaceRoots"] = [str(self.world.repos["A"])]
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            for half in ("requested", "actual"):
+                capture["settings"][half]["runtimeWorkspaceRoots"] = [str(self.world.repos["A"])]
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
 
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

@@ -574,6 +574,17 @@ def readable_policy(policy):
     return merged
 
 
+def absolute_roots(value):
+    """Whether this is a list of absolute paths, which is what a root list has to be.
+
+    The creation path refuses any root that is not an absolute string, so a receipt carrying one
+    cannot be genuine, and resume parameters built from it are invalid. A list of the wrong
+    things is still a list, which is what checking the outer type alone kept missing.
+    """
+    return isinstance(value, list) and all(
+        isinstance(one, str) and one.startswith("/") for one in value)
+
+
 def normalised_environments(value):
     """Each environment selection the way the relay reads it, MISSING where it could not.
 
@@ -591,10 +602,11 @@ def normalised_environments(value):
         if not isinstance(entry, dict) or "environmentId" not in entry or "cwd" not in entry:
             return MISSING
         roots = entry.get("runtimeWorkspaceRoots")
-        if roots is not None and not isinstance(roots, list):
+        if roots is not None and not absolute_roots(roots):
             # list(7) raises, and a helper the capability reading calls before it can report
             # anything would have turned a row delivery cannot consume into this run raising
-            # rather than into a cell saying so.
+            # rather than into a cell saying so. The elements matter too: a root that is not an
+            # absolute string is one the creation path refuses.
             return MISSING
         out.append({"environmentId": entry["environmentId"], "cwd": entry["cwd"],
                     "runtimeWorkspaceRoots": list(roots) if roots is not None
@@ -623,9 +635,9 @@ def undeliverable_settings(settings):
     else:
         for name in untransmittable_policy_fields(policy):
             problems.append("sandbox." + name + " is not something a resume can carry")
-    if not isinstance(settings.get("runtimeWorkspaceRoots"), list):
-        problems.append("runtimeWorkspaceRoots is not a list, and resume parameters are built"
-                        " from it")
+    if not absolute_roots(settings.get("runtimeWorkspaceRoots")):
+        problems.append("runtimeWorkspaceRoots is not a list of absolute paths, and resume"
+                        " parameters are built from it")
     if normalised_environments(settings.get("environments", None)) is MISSING:
         problems.append("environments is not a list of selections carrying an id and a cwd")
     if settings.get("approvalPolicy") != AUTHORIZED_APPROVAL_POLICY:
