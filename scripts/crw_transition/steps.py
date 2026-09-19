@@ -1230,13 +1230,27 @@ def mcp_table_standdown(host, options, *, apply=False):
         hostrecord.atomic_write(path, stripped)
         back = reading.read_text(path, "the Codex configuration")
     view = codexconfig.scan(back.value) if back.usable else None
-    present = view and codexconfig.registration_of(view, inventory.SERVER_NAME)[0]
+    if view is None or not view.readable:
+        # The write landed and nothing here can say what it landed on. Answering settled from an
+        # unreadable read-back reported a removal this step never verified, and every step after
+        # it would then act on a configuration nobody could read -- the plugin record installed
+        # over a table that may still be registered. The write is reported as written and
+        # unverified instead, which is what it is.
+        return _answer("mcp table standdown", REFUSED,
+                       "the table was removed and the configuration could not be read back"
+                       " afterwards ("
+                       + (str(back.detail) if not back.usable
+                          else "what is there now does not scan as a configuration")
+                       + "), so the removal is written but unverified. Rerun once the"
+                       " configuration reads again, which will decide from what is there then",
+                       applied=True, wrote=True)
+    present = codexconfig.registration_of(view, inventory.SERVER_NAME)[0]
     if present:
         return _answer("mcp table standdown", REFUSED, "the table is still registered after the"
                        " write", applied=True, wrote=True)
     return _answer("mcp table standdown", SETTLED, "removed the table and left every other byte",
                    applied=True, wrote=True,
-                   otherTablesPreserved=bool(view and view.readable))
+                   otherTablesPreserved=True)
 
 
 def mcp_record_install(host, options, *, apply=False):

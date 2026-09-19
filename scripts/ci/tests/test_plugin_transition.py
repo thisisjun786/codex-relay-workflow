@@ -2951,6 +2951,47 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(sorted(home.glob("crw-completion-hook.json.superseded-*")), [],
                          "a refused retirement left an archive a later recovery would take")
 
+    @needs_reader
+    def test_a_table_removal_that_cannot_be_read_back_is_not_reported_as_removed(self):
+        """The write landed and nothing can say what it landed on, which is not a removal."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord, reading
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        config = host.home / "config.toml"
+        genuine = reading.read_text
+        genuine_write = hostrecord.atomic_write
+        written = []
+
+        def writing(path, text, *arguments, **keywords):
+            """The removal itself, which is what makes the next read the read-back."""
+            found = genuine_write(path, text, *arguments, **keywords)
+            if Path(str(path)) == config:
+                written.append(str(path))
+            return found
+
+        def failing(path, what, **keywords):
+            if written and Path(str(path)) == config:
+                # Only after the write: the reads this step takes to prove the span are real.
+                return reading.Reading(state=reading.ACCESS_ERROR,
+                                       detail="the configuration could not be read back")
+            return genuine(path, what, **keywords)
+
+        reading.read_text, hostrecord.atomic_write = failing, writing
+        self.addCleanup(setattr, reading, "read_text", genuine)
+        self.addCleanup(setattr, hostrecord, "atomic_write", genuine_write)
+        answer = steps.mcp_table_standdown(snapshot, {}, apply=True)
+        reading.read_text, hostrecord.atomic_write = genuine, genuine_write
+        self.assertTrue(written, "the removal never wrote, so this proved nothing")
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertIn("written but unverified", answer["detail"])
+        self.assertTrue(answer.get("wrote"))
+        # The write really did land, which is why this is reported rather than retried silently.
+        self.assertNotIn("[mcp_servers." + inventory.SERVER_NAME + "]", host.config())
+
 
 @needs_reader
 class InterruptionAfterEveryStepConverges(TransitionCase):
