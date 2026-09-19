@@ -4064,6 +4064,38 @@ class FortyThirdHostedRound(TrialCase):
         document = self.world.preflight()
         self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
 
+    def test_a_model_or_effort_that_is_not_a_word_is_refused(self):
+        # The creation path requires each of these to be a non-empty string, so a record naming
+        # anything else describes a receipt that could never have been produced. A presence check
+        # read 7 as a model because str() makes it a word, and "" because two blanks agree.
+        for field, value in (("model", 7), ("model", ""), ("model", "   "),
+                             ("reasoningEffort", ""), ("reasoningEffort", False)):
+            with self.subTest(field=field, value=value):
+                world = World(self.base)
+                self.addCleanup(world.stop)
+                for boundary in world.record["boundaries"]:
+                    for participant in boundary["participants"]:
+                        participant["expect"][field] = value
+                world.flush()
+                refused = world.refusal()
+                self.assertIsNotNone(refused, repr(value) + " was accepted as a " + field)
+                self.assertIn("non-empty strings", refused.reason)
+                self.assertIn(field, refused.detail["fields"])
+
+    def test_a_stored_row_with_a_blank_setting_refuses_the_start(self):
+        self.world.payloads["settings-show"]["payload"]["settings"]["model"] = ""
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            for half in ("requested", "actual"):
+                capture["settings"][half]["model"] = ""
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a row the creation path could not have produced was certified")
+        cell = cells_of(document, "capability")["deliverableSettings:" + World.PARENT_A]
+        self.assertIn("model is not a non-empty string", cell["evidence"])
+
 
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

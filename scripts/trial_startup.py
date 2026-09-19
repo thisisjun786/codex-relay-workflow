@@ -118,6 +118,20 @@ POLICY_PROTOCOL_FIELDS = {
 }
 POLICY_FLAGS = ("networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp")
 
+# Settings the creation path requires to be non-empty strings when they are supplied at all. A
+# record naming a blank or non-string one describes a receipt the bridge refuses before it calls,
+# so nothing could have produced the evidence the record claims to be comparing.
+NON_EMPTY_SETTINGS = ("cwd", "model", "reasoningEffort")
+
+
+def blank_settings(values):
+    """Which of those settings are present and are not a non-empty string, in a stable order."""
+    if not isinstance(values, dict):
+        return []
+    return sorted(name for name in NON_EMPTY_SETTINGS
+                  if name in values
+                  and (not isinstance(values[name], str) or not values[name].strip()))
+
 # The defaults the pinned SandboxPolicy declares, copied from the relay's own settings module so
 # an omitted default and an explicit one are not read as a difference. This is a second copy of
 # another lane's contract and it is held here only because the relay is not importable from a
@@ -638,6 +652,8 @@ def undeliverable_settings(settings):
     if not absolute_roots(settings.get("runtimeWorkspaceRoots")):
         problems.append("runtimeWorkspaceRoots is not a list of absolute paths, and resume"
                         " parameters are built from it")
+    for name in blank_settings(settings):
+        problems.append(name + " is not a non-empty string, which the creation path requires")
     if normalised_environments(settings.get("environments", None)) is MISSING:
         problems.append("environments is not a list of selections carrying an id and a cwd")
     if settings.get("approvalPolicy") != AUTHORIZED_APPROVAL_POLICY:
@@ -950,6 +966,15 @@ def load_start(path, *, environment=None, mode="preflight"):
                               " relay records, carrying its mode at \"type\"",
                               boundary=boundary.get("name"), taskId=participant.get("taskId"),
                               sandbox=shown(sandbox))
+            blank = blank_settings(expect)
+            if blank:
+                # A presence check read 7 and "" as a model: str() makes one of them a word and
+                # the other agrees with an equally blank payload, so a record could name a
+                # receipt the creation path would never have produced.
+                raise Refused("these settings have to be non-empty strings, and the creation path"
+                              " refuses a record naming anything else",
+                              boundary=boundary.get("name"), taskId=participant.get("taskId"),
+                              fields=blank)
             if sandbox.get("type") not in RESUME_SANDBOX_TYPES:
                 # The relay refuses a row whose type has no ThreadResumeParams mode, so a trial
                 # declared under one cannot deliver its own correction however healthy the
