@@ -154,12 +154,16 @@ over. A parent settles that change the way it settled the first handoff, from th
 than from the message: finding the initiative record now naming a supervisor other than the one its
 own record holds, it reads that owner's scope before it writes anything, because two designations
 need not describe the same execution and the new owner's approved set may not contain this project
-at all. Where it does contain it, the parent takes the recorded owner, updates its own record, and
-carries on: its children, results and pull requests are untouched, since the supervision changed
-and the project's work did not. Where the winning set excludes this project, or narrows the limits
-the work was started under, the parent records no supervisor it is not in fact supervised by:
-it preserves the work already done, stops what now falls outside, and raises both, because a
-recorded ownership nobody authorized would route every later message to the wrong owner. A withdrawal, or a replacement handoff from the other side, is what prompts that
+at all. Where it does contain it, the parent compares the rest of what that record says about this
+project, its contribution, the completion boundary, the limits, the prerequisites and any
+shared-target order, against what its work was actually started under. It takes the owner, updates
+its own record and carries on untouched only where those agree, since the supervision changed and
+the project's work did not. Where the winning set excludes this project, the parent records no
+supervisor it is not in fact supervised by: it preserves the work already done, stops it and raises
+both, because a recorded ownership nobody authorized would route every later message to the wrong
+owner. Where the project is included but any of those values differs, the work is being delivered
+against criteria nobody now holds, so the parent takes the owner, records the difference, holds the
+affected work and raises it rather than finishing against a designation that lost. A withdrawal, or a replacement handoff from the other side, is what prompts that
 read; neither is what settles it, which is also why forging either achieves nothing.
 
 A withdrawal also cannot always be delivered, since a parent that is paused, cancelled or archived
