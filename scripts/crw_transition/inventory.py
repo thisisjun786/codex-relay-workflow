@@ -381,6 +381,38 @@ def newest_retired(codex_home):
     return None, None
 
 
+# The fields a transition must not change without being asked: where the work is recorded and which
+# store it is recorded in. Two registrations naming documents that disagree about these are two
+# installations, and choosing between them by hook order picks one silently.
+OPERATIONAL = ("markerRoot", "dbPath", "journalRoot", "relayExecutable")
+
+
+def registered_document(hook, settings, codex_home):
+    """The settings the registration actually reads, where they came from, and any disagreement.
+
+    A manual hook records its settings path permanently, so a valid document at the fixed path is
+    not necessarily the one in use -- and everything downstream, including which destination this
+    host runs, has to follow the registered one rather than whichever file is easiest to find.
+    """
+    documents = []
+    for entry in hook.get("entries") or []:
+        named = entry.get("settings")
+        if not named or not entry.get("proven"):
+            continue
+        document, _outcome, _detail, _found = completion.read_configuration(Path(named))
+        if document is not None:
+            documents.append((named, document))
+    distinct = {tuple(document.get(field) for field in OPERATIONAL)
+                for _named, document in documents}
+    if len(distinct) > 1:
+        return None, None, [named for named, _document in documents]
+    if documents:
+        return documents[0][1], "the settings the registration names, " + documents[0][0], []
+    if settings.get("document") is not None:
+        return settings["document"], "the settings at " + str(settings["path"]), []
+    retired, name = newest_retired(codex_home)
+    return retired, ("the retired document " + name) if name else None, []
+
 def read_settings(codex_home):
     """This hook's settings, and who owns the registration they belong to."""
     path = completion.configuration_path(codex_home)
@@ -529,14 +561,21 @@ def read_in_flight(document):
 def snapshot(codex_home, *, repo_root, destination=None, event=None):
     """One reading of everything, taken once so every later decision sees the same host."""
     settings = read_settings(codex_home)
-    document = settings.get("document")
-    if document is None:
+    # The hook is read before the destination is derived, because the destination has to come from
+    # the document the registration reads. Deriving it from whatever sits at the fixed path
+    # rewrote the plugin settings to run the relay and the adapter from another installation, and
+    # reported success doing it. The second read carries the destination for the detector.
+    first = read_hook(codex_home, event, repo_root=repo_root)
+    document, carried, conflict = registered_document(first, settings, codex_home)
+    if document is None and not conflict:
         # A host that has been disabled, or interrupted after the retire step, has no live
         # document at all. The destination and the operational locations are still recorded in the
         # file that was retired, so they are read from there rather than asked for again.
         retired, name = newest_retired(codex_home)
         settings["retiredFrom"] = name
         document = retired
+    settings["carriedFrom"] = carried
+    settings["conflictingRegistrations"] = conflict
     derived = destination_from(document)
     dest = destination or derived
     return {
@@ -548,6 +587,7 @@ def snapshot(codex_home, *, repo_root, destination=None, event=None):
         "plugin": read_plugin(codex_home),
         "skills": read_skill_links(codex_home, repo_root),
         "hook": read_hook(codex_home, event, destination=dest, repo_root=repo_root),
+        "registered": {"document": document, "from": carried, "conflict": conflict},
         "settings": settings,
         "mcp": read_mcp(codex_home),
         "pointer": read_pointer(dest),

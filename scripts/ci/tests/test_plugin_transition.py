@@ -1018,6 +1018,70 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("[mcp_servers.codex-thread-bridge]", host.config())
         self.assertEqual(host.config(), before)
 
+    def test_the_destination_comes_from_the_registered_settings(self):
+        """Deriving it from the fixed file silently moved the host onto another installation."""
+        host = self.host
+        other = host.root / "other-destination"
+        (other / "versions" / "v1" / "bin").mkdir(parents=True)
+        (other / "current").symlink_to(other / "versions" / "v1")
+        for program in ("python3", "codex-session-relay", "codex-thread-bridge",
+                        "crw-completion-hook"):
+            path = other / "versions" / "v1" / "bin" / program
+            path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            path.chmod(0o755)
+        custom, fixed = self.registered_at(host, "registered.json")
+        moved = json.loads(fixed.read_text(encoding="utf-8"))
+        moved["relayExecutable"] = str(other / "current" / "bin" / "codex-session-relay")
+        fixed.write_text(json.dumps(moved), encoding="utf-8")
+        host.install_plugin()
+
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 0, json.dumps(answer["results"], indent=2)[:1500])
+        self.assertEqual(answer["destination"], str(host.destination))
+        self.assertTrue(host.settings()["adapterEntryPoint"].startswith(str(host.destination)))
+        self.assertNotIn(str(other), json.dumps(host.settings()))
+
+    def test_registrations_naming_documents_that_disagree_are_refused(self):
+        """Two installations, and choosing by hook order configures one of them silently."""
+        host = self.host
+        custom, fixed = self.registered_at(host, "first.json",
+                                           markerRoot=str(self.host.marker / "first"))
+        second = json.loads(custom.read_text(encoding="utf-8"))
+        second["markerRoot"] = str(host.marker / "second")
+        other = host.root / "second.json"
+        other.write_text(json.dumps(second), encoding="utf-8")
+        document = host.hooks_document()
+        entry = dict(document["hooks"]["Stop"][0]["hooks"][0])
+        entry["command"] = entry["command"].rsplit(" ", 1)[0] + " " + str(other)
+        document["hooks"]["Stop"][0]["hooks"].append(entry)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        host.install_plugin()
+
+        code, answer = host.transition("--apply", "--accept-hook-renumbering")
+        self.assertEqual(code, 1)
+        self.assertIn("disagree about", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), document)
+        self.assertTrue(custom.is_file())
+        self.assertTrue(other.is_file())
+
+    def test_another_events_hooks_never_block_a_stop_standdown(self):
+        """shifted_identities compares numbers, so its inventory has to be one event."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        document = host.hooks_document()
+        document["hooks"]["SessionStart"] = [
+            {"hooks": [{"type": "command", "command": "/bin/true"},
+                       {"type": "command", "command": "/bin/false"}]}]
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        answer = steps.hook_standdown(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "settled", json.dumps(answer)[:400])
+        self.assertEqual(host.hooks_document()["hooks"]["SessionStart"],
+                         document["hooks"]["SessionStart"])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

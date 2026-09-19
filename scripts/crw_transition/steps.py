@@ -191,13 +191,9 @@ def registered_settings(host):
     root, the database and the journal the registration was using, and reports success doing it.
     What the registration names wins.
     """
-    for entry in host["hook"]["entries"]:
-        named = entry.get("settings")
-        if not named or not entry.get("proven"):
-            continue
-        document, _outcome, _detail, _found = completion.read_configuration(Path(named))
-        if document is not None:
-            return document, "the settings the registration names, " + str(named)
+    registered = host.get("registered") or {}
+    if registered.get("document") is not None or registered.get("conflict"):
+        return registered.get("document"), registered.get("from")
     document = host["settings"].get("document")
     if document is not None:
         return document, "the settings at " + str(host["settings"]["path"])
@@ -287,6 +283,15 @@ def preflight(host, options):
     # no completion hook and an explanation. A populated override also passes every other reading,
     # so nothing else here catches it.
     refusals.extend(completion.override_complaints(completion.OWNER_PLUGIN))
+
+    conflict = (host.get("registered") or {}).get("conflict") or []
+    if conflict:
+        # Two registrations reading documents that disagree about where work is recorded and which
+        # store it goes to are two installations. Taking the first by hook order removes both
+        # registrations, archives both documents and configures one of them, and reports success.
+        refusals.append("these registrations name settings that disagree about "
+                        + ", ".join(inventory.OPERATIONAL) + ": " + ", ".join(conflict)
+                        + ". This command does not choose which installation this host keeps")
 
     # The document registered_settings() will carry, because that is the one whose budget and
     # journal policy have to be expressible as a plugin-owned document. Validating the fixed file
@@ -427,7 +432,10 @@ def hook_standdown(host, options, *, apply=False):
         # snapshot carried was computed before anything was locked, so a foreign hook that landed
         # in the same group since then would have its index moved, and its recorded trust detached,
         # without anyone having agreed to it.
-        shifted_now = inventory.shifted_identities(hooks.inventory(again.value), current)
+        # Restricted to the event being modified: identities carry an event as well as two numbers,
+        # shifted_identities compares only the numbers, and removing a Stop hook cannot renumber
+        # another event's positions.
+        shifted_now = inventory.shifted_identities(hooks.inventory(again.value, event), current)
         if shifted_now and not options.get("accept_hook_renumbering"):
             return _answer("hook standdown", REFUSED,
                            "removing " + ", ".join(item["identity"] for item in current)
@@ -524,7 +532,9 @@ def settings_install(host, options, *, apply=False, previous=None):
     """
     interpreter, adapter = adapter_paths(host)
     source = previous if previous is not None else host["settings"]["document"]
-    carried = "the settings being replaced"
+    # The label travels with the document rather than being guessed at here, so a receipt names
+    # which file the operational locations actually came from.
+    carried = (host.get("registered") or {}).get("from") or "the settings being replaced"
     if source is None:
         source, carried = _newest_retired(host)
     if source is None:
