@@ -127,6 +127,13 @@ existing parent gets it as a [Coordination message](task-packet.md#coordination-
 project handoff, carrying the [restoration block](task-packet.md#restoration-block) whether that
 parent is running or idle.
 
+Both carriers contact another task, so both are gated on the limits in force. Where the
+designation forbids contact, or forbids the creation a project without a parent would need, the
+brief is prepared and returned unsent, and named as unsent rather than delivered quietly. That is
+the same rule the read-only and no-create cases below apply to a whole run, and it holds for each
+project separately: a limit that blocks one handoff does not hold back the projects it does not
+touch.
+
 A handoff sent is not a parent bound. The transport accepting it, the parent binding the project,
 and the parent returning a result are three facts recorded separately, and the first does not
 establish the second.
