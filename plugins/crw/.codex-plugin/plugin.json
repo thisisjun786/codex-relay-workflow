@@ -1,6 +1,6 @@
 {
   "name": "crw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Linear-driven workflow skills for Codex: define an initiative, plan projects and issues, run delivery, and check the result against its canonical criteria.",
   "author": {
     "name": "thisisjun786",
@@ -17,14 +17,19 @@
     "delivery"
   ],
   "skills": "./skills/",
+  "hooks": [
+    "./wiring/hooks/stop-recording-completion.json"
+  ],
+  "mcpServers": "./wiring/mcp.json",
   "interface": {
     "displayName": "CRW",
     "shortDescription": "Linear-driven planning and delivery workflow skills.",
-    "longDescription": "CRW turns a Linear product record into executable work. Define explores intent and fixes an initiative goal, Plan decomposes it into projects and one-PR issues, Run and Loop execute one project through independent tasks, and Check and Logic verify delivery and internal consistency against the canonical criteria. The skills share one integration guide and keep product decisions in Linear. The plugin ships instructions only; the task bridge, session relay and completion hook stay with their own installer.",
+    "longDescription": "CRW turns a Linear product record into executable work. Define explores intent and fixes an initiative goal, Plan decomposes it into projects and one-PR issues, Run and Loop execute one project through independent tasks, and Check and Logic verify delivery and internal consistency against the canonical criteria. The skills share one integration guide and keep product decisions in Linear. The package also declares the task-bridge MCP server and the completion Stop hook, and ships the small launchers that start them. It carries no runtime: the bridge, the session relay and the Python environment are installed separately, and the launchers read a record naming that installation. A declared hook does not run until it is trusted.",
     "developerName": "thisisjun786",
     "category": "Developer Tools",
     "capabilities": [
       "Skills",
+      "Hooks",
       "Workflow"
     ],
     "defaultPrompt": [

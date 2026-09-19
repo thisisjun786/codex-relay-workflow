@@ -67,10 +67,17 @@ def unframed(payload):
              for name, (mode, data) in sorted(payload.items())]
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
+INTERFACE = (
+    "interface:\n"
+    '  display_name: "A skill"\n'
+    '  short_description: "What it does"\n'
+    '  default_prompt: "$%s do the thing"\n'
+)
+
 GOOD = {
     ".codex-plugin/plugin.json": json.dumps(manifest()),
     "skills/crw-run/SKILL.md": SKILL,
-    "skills/crw-run/agents/openai.yaml": "interface:\n",
+    "skills/crw-run/agents/openai.yaml": INTERFACE % "crw-run",
     "LICENSE": "MIT",
 }
 
@@ -130,13 +137,18 @@ class ManifestTests(unittest.TestCase):
         errors = plugin.manifest_errors(broken, "crw", "t")
         self.assertTrue(any("interface.defaultPrompt" in e for e in errors), errors)
 
-    def test_undeclared_components_stay_undeclared(self):
-        # Declaring a component replaces default discovery, so an accidental
-        # hooks or mcpServers field would change what loads without saying so.
-        for field in ("hooks", "mcpServers", "apps"):
+    def test_a_declared_component_has_to_be_shipped(self):
+        # A declaration replaces default discovery, so a component the manifest names and the
+        # package does not carry loads nothing and reports nothing.
+        for field in ("hooks", "mcpServers"):
             with self.subTest(field=field):
-                errors = plugin.manifest_errors(manifest(**{field: "./x.json"}), "crw", "t")
-                self.assertTrue(any(field in e for e in errors), errors)
+                errors = plugin.manifest_errors(manifest(**{field: "./x.json"}), "crw", "t",
+                                                payload(GOOD))
+                self.assertTrue(any("does not ship" in e for e in errors), errors)
+
+    def test_apps_stays_undeclared(self):
+        errors = plugin.manifest_errors(manifest(apps="./x.json"), "crw", "t")
+        self.assertTrue(any("apps" in e for e in errors), errors)
 
     def test_unsupported_keys_are_refused(self):
         # The bundled ingestion validator rejects keys it does not know, so a manifest
@@ -201,7 +213,7 @@ class ManifestTests(unittest.TestCase):
         for name in ("skills/id_ed25519", "skills/id_ecdsa", "skills/.netrc",
                      "skills/.npmrc", "skills/authorized_keys"):
             with self.subTest(name=name):
-                errors = plugin.hygiene(payload({**GOOD, name: "x"}), "t")
+                errors = plugin.hygiene(payload({**GOOD, name: "x"}), manifest(), "t")
                 self.assertTrue(any("may not ship" in e for e in errors), errors)
 
     def test_declared_path_may_not_leave_the_plugin_root(self):
@@ -258,17 +270,17 @@ class MarketplaceTests(unittest.TestCase):
 
 class HygieneTests(unittest.TestCase):
     def test_clean_payload_passes(self):
-        self.assertEqual(plugin.hygiene(payload(GOOD), "t"), [])
+        self.assertEqual(plugin.hygiene(payload(GOOD), manifest(), "t"), [])
 
     def test_required_files_must_ship(self):
         for missing in (".codex-plugin/plugin.json", "LICENSE"):
             with self.subTest(missing=missing):
                 files = {k: v for k, v in GOOD.items() if k != missing}
-                errors = plugin.hygiene(payload(files), "t")
+                errors = plugin.hygiene(payload(files), manifest(), "t")
                 self.assertTrue(any(missing in e for e in errors), errors)
 
     def test_top_level_allowlist(self):
-        errors = plugin.hygiene(payload({**GOOD, "packages/relay.py": "x"}), "t")
+        errors = plugin.hygiene(payload({**GOOD, "packages/relay.py": "x"}), manifest(), "t")
         self.assertTrue(any("may ship in the package" in e for e in errors), errors)
 
     def test_operational_state_and_credentials(self):
@@ -277,7 +289,7 @@ class HygieneTests(unittest.TestCase):
                      "skills/client.key", "skills/crw-run/client-secrets.json",
                      "skills/secret.yaml", "skills/service-credential.json"):
             with self.subTest(name=name):
-                errors = plugin.hygiene(payload({**GOOD, name: "x"}), "t")
+                errors = plugin.hygiene(payload({**GOOD, name: "x"}), manifest(), "t")
                 self.assertTrue(any("may not ship" in e for e in errors), errors)
 
     def test_ordinary_words_are_not_mistaken_for_credentials(self):
@@ -285,14 +297,16 @@ class HygieneTests(unittest.TestCase):
         for name in ("skills/crw-run/secretary.md", "skills/crw-run/credentialing.md",
                      "skills/crw-run/keyboard.md", "skills/crw-run/database.md"):
             with self.subTest(name=name):
-                self.assertEqual(plugin.hygiene(payload({**GOOD, name: "x"}), "t"), [])
+                self.assertEqual(plugin.hygiene(payload({**GOOD, name: "x"}), manifest(), "t"), [])
 
     def test_personal_paths_are_refused_and_placeholders_are_not(self):
         bad = plugin.hygiene(payload({**GOOD, "skills/crw-run/SKILL.md":
-                                      "put it in /home/someone/code/x"}), "t")
+                                      "put it in /home/someone/code/x"}),
+                             manifest(), "t")
         self.assertTrue(any("personal path" in e for e in bad), bad)
         placeholder = plugin.hygiene(payload({**GOOD, "skills/crw-run/SKILL.md":
-                                              "use <worktree-root>/<project> or /example/home/x"}), "t")
+                                              "use <worktree-root>/<project> or"
+                                              " /example/home/x"}), manifest(), "t")
         self.assertEqual(placeholder, [])
 
 
@@ -306,7 +320,7 @@ class SkillSetTests(unittest.TestCase):
         # declared_skills_path accepts a nested path, so the skill set must follow it.
         files = {".codex-plugin/plugin.json": json.dumps(manifest(skills="./skills/current/")),
                  "skills/current/crw-run/SKILL.md": SKILL,
-                 "skills/current/crw-run/agents/openai.yaml": "interface:\n",
+                 "skills/current/crw-run/agents/openai.yaml": INTERFACE % "crw-run",
                  "LICENSE": "MIT"}
         errors, found = plugin.skills(payload(files), manifest(skills="./skills/current/"), "t")
         self.assertEqual(errors, [])
@@ -317,11 +331,11 @@ class SkillSetTests(unittest.TestCase):
         # without ever being validated.
         files = {".codex-plugin/plugin.json": json.dumps(manifest(skills="./skills/current/")),
                  "skills/current/crw-run/SKILL.md": SKILL,
-                 "skills/current/crw-run/agents/openai.yaml": "interface:\n",
+                 "skills/current/crw-run/agents/openai.yaml": INTERFACE % "crw-run",
                  "skills/old/crw-check/SKILL.md": SKILL,
                  "LICENSE": "MIT"}
         errors, _ = plugin.skills(payload(files), manifest(skills="./skills/current/"), "t")
-        self.assertTrue(any("ships outside the declared skills path" in e for e in errors), errors)
+        self.assertTrue(any("ships outside every declared component path" in e for e in errors), errors)
 
     def test_interface_metadata_is_required_per_skill(self):
         files = {k: v for k, v in GOOD.items() if not k.endswith("openai.yaml")}
@@ -448,7 +462,7 @@ class SyntheticRepositoryTests(unittest.TestCase):
     def test_working_tree_must_ship_the_committed_skill_set(self):
         files = dict(GOOD)
         files["skills/crw-plan/SKILL.md"] = "---\nname: crw-plan\ndescription: d\n---\n"
-        files["skills/crw-plan/agents/openai.yaml"] = "interface:\n"
+        files["skills/crw-plan/agents/openai.yaml"] = INTERFACE % "crw-plan"
         with tempfile.TemporaryDirectory() as folder:
             root = self.build(folder, files)
             shutil.rmtree(root / "plugins/crw/skills/crw-plan")
