@@ -596,11 +596,17 @@ rather than folded into one.
 
 So `install` has three exit statuses rather than two:
 
-| Status | The runtime | The record | What it means |
+| Status | What this run changed | The record | What it means |
 | --- | --- | --- | --- |
-| `0` | changed by this run | written | the update finished |
-| `3` | changed by this run | not written | this run's change to the host landed and the record of it did not |
-| `1` | untouched by this run | not written | this run replaced nothing and recorded nothing; whatever the host selected and reached before it, it still does |
+| `0` | it landed | written | the run finished |
+| `3` | it landed | not written | what this run changed on the host landed and the record of it did not |
+| `1` | nothing | not written | this run changed nothing and recorded nothing; whatever the host selected and reached before it, it still does |
+
+"What this run changed" is not always a replacement. Promoting a candidate replaces the
+selected runtime; finishing an interrupted promotion places the pointer a dead run never
+wrote; adopting an installation older than claims changes only its bookkeeping and replaces
+nothing at all. All three reach `0` or `3` on the same rule -- whether the claim settled --
+and `promoted` is what distinguishes them.
 
 Exit 1 says what this run did, not that the host is consistent. A resume refuses with it when
 the owned pointer is unreadable or names something this record does not account for, and in
@@ -609,10 +615,11 @@ record names the new environment while the pointer still names the old one. The 
 nothing; the disagreement it found was already there, and the result names it.
 
 **Exit 3 is not a refusal and must not be read as one.** Non-zero here means the opposite of
-what it means everywhere else in this command: the candidate was promoted, it is selected, the
-owned pointer names it, and a host is running out of it. A wrapper that reads every non-zero
-install status as "nothing changed" would report the old runtime as selected, or clean up an
-environment that is still in service. Only exit 1 releases a candidate.
+what it means everywhere else in this command: the run's change to the host landed, the
+environment is the one the record selects and the owned pointer names, and a process may be
+running out of it. A wrapper that reads every non-zero install status as "nothing changed"
+would report the old runtime as selected, or clean up an environment that is still in service.
+Only exit 1 releases a candidate.
 
 The status says what this run did; it does not promise what is true when you read it. A
 competing install can supersede this environment between the promotion and the result, and
