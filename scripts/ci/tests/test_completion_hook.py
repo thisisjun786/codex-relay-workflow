@@ -2390,6 +2390,34 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
         self.assertIn(firing.ADAPTER_CANNOT_RUN,
                       [entry["cause"] for entry in cell.get("candidates") or []])
 
+    def test_an_unjudged_peer_never_unmakes_what_was_observed(self):
+        """The guard that keeps an unjudged peer visible must run AFTER each rule's own
+        positive evidence. Placed first, it downgraded established causes -- a registration
+        configured never to record, and a genuine holding-and-empty divergence -- into
+        uncertainty because an unrelated peer could not be probed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["journalPolicy"] = completion.NO_JOURNAL
+            second.write_text(json.dumps(document), encoding="utf-8")
+            path = Path(temporary) / "hooks.json"
+            hooks_file = json.loads(path.read_text(encoding="utf-8"))
+            entries = hooks_file["hooks"][completion.EVENT][0]["hooks"]
+            third = dict(entries[0])
+            # A third registration nobody can judge: a relative interpreter resolves per
+            # workspace and is not probed from here.
+            third["command"] = "./python " + entries[0]["command"].split(" ", 1)[1]
+            entries.append(third)
+            path.write_text(json.dumps(hooks_file), encoding="utf-8")
+            cell = why_no_record(temporary)
+        established = [entry["cause"] for entry in cell.get("candidates") or []
+                       if entry["standing"] == firing.ESTABLISHED]
+        self.assertIn(firing.JOURNALLING_OFF, established,
+                      "a registration configured never to record is an established repair"
+                      " whatever an unrelated peer's startability could not be established")
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

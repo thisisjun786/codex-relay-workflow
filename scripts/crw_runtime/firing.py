@@ -264,16 +264,16 @@ def _recorded_on_another_path(observed):
     of the journals these registrations name holds records while another was read and holds
     none, which is exactly the host on which looking at a single journal misleads.
     """
-    unjudged = _unjudged_peer(observed)
-    if unjudged:
-        return NOT_RULED_OUT, ("a registration whose startability was never established names "
-                               + _named(unjudged) + ", so whether its journal counts toward"
-                                 " this question was not settled either")
     holding, empty, _off, unread = _record_answers(observed)
     if holding and empty:
         return ESTABLISHED, ("this hook has recorded into " + _named(holding) + " while "
                              + _named(empty) + " holds nothing, so a reading of the latter"
                              " alone would report an absence for a hook that has fired")
+    unjudged = _unjudged_peer(observed)
+    if unjudged:
+        return NOT_RULED_OUT, ("a registration whose startability was never established names "
+                               + _named(unjudged) + ", so whether its journal counts toward"
+                                 " this question was not settled either")
     if holding and unread:
         return NOT_RULED_OUT, ("records were found under " + _named(holding) + " and another"
                                " named journal could not be listed")
@@ -281,11 +281,6 @@ def _recorded_on_another_path(observed):
 
 
 def _journalling_off(observed):
-    unjudged = _unjudged_peer(observed)
-    if unjudged:
-        return NOT_RULED_OUT, ("a registration whose startability was never established names "
-                               + _named(unjudged) + ", so whether its journal counts toward"
-                                 " this question was not settled either")
     # Read over every registration whose settings are usable, startable or not. Unlike an
     # empty journal, a disabled policy is NOT explained by the adapter being unstartable:
     # repairing the adapter still produces no firing evidence until journalling is switched
@@ -301,6 +296,11 @@ def _journalling_off(observed):
         return ESTABLISHED, ("these registrations keep no journal, so they record nothing about"
                              " their own invocations by configuration and their absence says"
                              " nothing about firing: " + _named(off))
+    unjudged = _unjudged_peer(observed)
+    if unjudged:
+        return NOT_RULED_OUT, ("a registration whose startability was never established names "
+                               + _named(unjudged) + ", so whether its journal counts toward"
+                                 " this question was not settled either")
     return RULED_OUT, "every registration that can start keeps a journal"
 
 
@@ -312,17 +312,17 @@ def _policy_records_only_faults(observed):
     that never fired looks like. One observation, two explanations, and no reading here
     separates them. Reporting either as established would be choosing.
     """
-    unjudged = _unjudged_peer(observed)
-    if unjudged:
-        return NOT_RULED_OUT, ("a registration whose startability was never established names "
-                               + _named(unjudged) + ", so whether its journal counts toward"
-                                 " this question was not settled either")
     _holding, empty, _off, _unread = _record_answers(observed)
     faults = [entry for entry in empty if entry.get("faultsOnly")]
     if faults:
         return NOT_RULED_OUT, ("these settings record only invocations that faulted ("
                                + _named(faults) + "), so an empty journal is equally what a"
                                " hook that fired and never faulted leaves behind")
+    unjudged = _unjudged_peer(observed)
+    if unjudged:
+        return NOT_RULED_OUT, ("a registration whose startability was never established names "
+                               + _named(unjudged) + ", so whether its journal counts toward"
+                                 " this question was not settled either")
     return RULED_OUT, "no named settings record only faults over an empty journal"
 
 
@@ -334,14 +334,14 @@ def _nothing_recorded(observed):
     and every record failed to be written" are one observation here. This value claims only the
     first half of that sentence, and the cell's note says the rest.
     """
+    holding, empty, _off, unread = _record_answers(observed)
+    if holding:
+        return RULED_OUT, "a named journal holds records this hook wrote"
     unjudged = _unjudged_peer(observed)
     if unjudged:
         return NOT_RULED_OUT, ("a registration whose startability was never established names "
                                + _named(unjudged) + ", so whether its journal counts toward"
                                  " this question was not settled either")
-    holding, empty, _off, unread = _record_answers(observed)
-    if holding:
-        return RULED_OUT, "a named journal holds records this hook wrote"
     if unread:
         return NOT_RULED_OUT, "a named journal could not be listed: " + _named(unread)
     if empty and all(entry.get("faultsOnly") for entry in empty):
