@@ -3766,6 +3766,48 @@ class AnIdentityIsOnlyAKeyWhileItIsHeld(unittest.TestCase):
                          "a rewrite landing between the two reads split one settings file into"
                          " two journals, which reads as two sources disagreeing")
 
+    def test_a_pinned_spelling_that_is_unlinked_is_still_read(self):
+        """Asking the PATH again undoes the reason the descriptor was pinned.
+
+        Every spelling is opened and held before any of them is read, and then the read asked
+        the pathname whether anything was there. Unlink one of two aliases in between and that
+        registration reported its settings ABSENT -- and settings_absent established a repair
+        for it -- while the object was held open the whole time and its peer read it perfectly.
+        One file, two answers, from a lookup the pin exists to make unnecessary.
+        """
+        removed = []
+        real = completion.read_configuration
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            first, second = temporary / "journal-one", temporary / "journal-two"
+            first.mkdir()
+            second.mkdir()
+            one = temporary / "a-settings.json"
+            two = temporary / "b-settings.json"
+            one.write_text(json.dumps(self._document(first)), encoding="utf-8")
+            two.write_text(json.dumps(self._document(second)), encoding="utf-8")
+
+            def unlinking_the_second_after_the_first_read(path, *passed, **keywords):
+                answer = real(path, *passed, **keywords)
+                if not removed:
+                    removed.append(str(path))
+                    # The second registration's SPELLING goes away between its pin and its
+                    # read. The object stays, held by the pin.
+                    two.unlink()
+                return answer
+
+            with mock.patch.object(completion, "read_configuration",
+                                   side_effect=unlinking_the_second_after_the_first_read):
+                found = completion.journals_named([
+                    {"registration": "read-first", "settings": str(one), "startable": True},
+                    {"registration": "unlinked-before-its-read", "settings": str(two),
+                     "startable": True}])
+
+        self.assertEqual([entry["settingsState"] for entry in found],
+                         [reading.PRESENT, reading.PRESENT],
+                         "a spelling unlinked after it was pinned reported its settings absent,"
+                         " although the object was held open and read perfectly")
+
 
 class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
     """Review of PR #52 head 000b83f. Two more answers this branch owns were being withheld

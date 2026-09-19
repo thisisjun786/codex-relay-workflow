@@ -322,6 +322,27 @@ def _held(opened):
         return None
 
 
+def _observe_descriptor(descriptor, path, what):
+    """What is on the end of a descriptor the caller holds, asked of the descriptor.
+
+    observe() asks the PATH, which is the right question when the path is what will be opened.
+    It is the wrong one here and it undoes the reason the descriptor was pinned: a spelling
+    unlinked after it was pinned answers ABSENT, although the object is held open and reads
+    perfectly -- so two registrations aliasing one file had one of them report the file gone
+    while the other read it. Held open, the object exists; what is left to establish is that it
+    is a regular file, which is the same thing observe() settles for a path.
+    """
+    try:
+        found = os.fstat(descriptor)
+    except (OSError, ValueError) as error:
+        return failure(error, source=path, what=what,
+                       detail="what this descriptor holds could not be established")
+    if not stat_module.S_ISREG(found.st_mode):
+        return Reading(state=UNREADABLE, source=path,
+                       detail="this descriptor holds a " + _kind(found.st_mode))
+    return None
+
+
 def read_json(path, what, *, absent=None, shape=None, hold=False, descriptor=None):
     """Read one JSON record, returning a Reading rather than a sentinel.
 
@@ -337,7 +358,8 @@ def read_json(path, what, *, absent=None, shape=None, hold=False, descriptor=Non
     that pinned a set of spellings and then compares them has to read through those same pins,
     or the comparison is about one object and the bytes about another.
     """
-    settled = observe(path, what)
+    settled = (observe(path, what) if descriptor is None
+               else _observe_descriptor(descriptor, path, what))
     if settled is not None:
         if settled.state == ABSENT:
             settled.value = absent() if callable(absent) else absent
