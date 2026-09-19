@@ -187,6 +187,11 @@ TEXT_EVIDENCE = {
         "which branch guards a binding is a property of how bound_in is written, and the module"
         " object cannot be asked: a yield that checks certainty and one that does not are the"
         " same generator to it. Reading the file is the only way to sweep the rule.",
+    "test_every_placement_site_here_honours_a_declared_owner":
+        "whether a site honours a global or nonlocal declaration is written in the site and"
+        " nowhere in the object: a table that exempts one and a table that exempts both are the"
+        " same dict once built. Reading the file is the only way to sweep which of them a"
+        " placement site consults.",
     "test_no_reader_here_sees_only_the_unannotated_binding":
         "which form a reader here accepts is a property of how it is written, and the module"
         " object cannot be asked: a function that tests ast.Assign and one that tests both are"
@@ -427,6 +432,20 @@ BINDS_WITHOUT_ASKING_IF_IT_HAPPENED = {
         "a def under a branch is still a method: the method index answers for it either way and"
         " a call through self reaches it whether or not the branch ran. A class is indexed by"
         " nothing of the kind, which is exactly why ClassDef is not in here beside them.",
+}
+
+# Where a site that records which scope binds a name does not honour a global or nonlocal
+# declaration. Three findings in a row were about WHERE a binding lives rather than which
+# binding a name refers to, and they landed on three different sites, so the set is swept.
+PLACES_A_NAME_WITHOUT_ASKING_WHERE_IT_LIVES = {
+    "_held_by_class":
+        "it asks which local of a method holds the thing before that method writes it onto"
+        " self, and a global or nonlocal declaration does not change WHAT the name holds --"
+        " only which scope holds it. Measured rather than assumed: a setUp declaring the name"
+        " global and then binding self.unread to it reports the reading method exactly as the"
+        " plain local does. The direction is towards accounting for the attribute rather than"
+        " missing it, so the question here is open rather than settled, and it is written down"
+        " instead of being read as coverage this sweep does not have.",
 }
 
 # Where a value-following resolver here reads fewer forms than the pass-through vocabulary.
@@ -3936,6 +3955,75 @@ RESOLVES_LIKE_PYTHON = {
          " standing in front of the name and no qualifier in the way, the call really is this"
          " definition's and the default really is overridden. Stopping at a nearer binding must"
          " not have stopped resolution altogether."),
+    "a classmethod reached through its own class":
+        (TEXT,
+         ("class Holder:",
+          "    @classmethod",
+          "    def helper(cls, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "def consumer(other):",
+          "    return Holder.helper(other)"),
+         "consumer", False,
+         "PLACEMENT rather than lookup: the question is where the written argument lands, not"
+         " which binding a name refers to. An ordinary method spelled Holder.helper(obj) writes"
+         " its receiver, so no slot moves -- but a classmethod is bound through the class as"
+         " well, hands cls over unwritten, and the one written argument really does fill path."
+         " Reading the owner as a class and stopping there inventoried a caller on a read that"
+         " cannot happen."),
+    "a classmethod reached through its own class with nothing written":
+        (TEXT,
+         ("class Holder:",
+          "    @classmethod",
+          "    def helper(cls, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "def consumer():",
+          "    return Holder.helper()"),
+         "consumer", True,
+         "SUPPORT, green at the parent, and kept because it is the pair the fix above must not"
+         " break: with nothing written the default really is left alone and the read is real."),
+    "a nonlocal write is not a local shadow":
+        (TEXT,
+         ("path = None",
+          "",
+          "def outer():",
+          "    path = None",
+          "",
+          "    def helper():",
+          "        nonlocal path",
+          "        path = HERE",
+          "        return path.read_text()",
+          "",
+          "    def consumer():",
+          "        return helper()",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the declared-owner rule reached the table that files the handle and not the table"
+         " that decides what shadows it, which exempted global alone. The write under nonlocal"
+         " was read as a nearer local standing over the handle it had just made, so the read"
+         " was hidden and the function returning helper() was dropped. The same declaration,"
+         " asked at both tables."),
+    "a comprehension walrus binds in the scope around it":
+        (REFUSAL,
+         ("def outer():",
+          "    [(answer := item) for item in ()]",
+          "",
+          "    def middle():",
+          "        def setter():",
+          "            nonlocal answer",
+          "            answer = reading.UNREADABLE",
+          "        return setter",
+          "",
+          "    def consumer():",
+          "        return answer",
+          "    return consumer"),
+         "outer.consumer", True,
+         "a walrus inside a comprehension binds in the scope AROUND the comprehension, and the"
+         " NamedExpr was moved there while its target Name was left labelled with the"
+         " comprehension's own scope. Every table keyed off where a name is bound then read the"
+         " binding as the comprehension's, so the outward walk for the nonlocal missed the real"
+         " owner and filed the carrier one scope short."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4630,6 +4718,11 @@ def _places(tree):
                 # the NamedExpr itself moves out and its value stays where it is written.
                 for held in held_walruses:
                     found[id(held)] = outer_place
+                    # The TARGET moves with it. Leaving the Name labelled with the
+                    # comprehension's own scope meant every table keyed off where a name is
+                    # bound read the binding as the comprehension's and missed the real one.
+                    if isinstance(held.target, ast.Name):
+                        found[id(held.target)] = outer_place
             elif isinstance(child, ast.ClassDef):
                 # Qualified by the scope it is written in. Two classes spelled the same in
                 # different functions are two classes, and a table keyed by the bare spelling
@@ -5002,29 +5095,44 @@ def _bound_names(tree, places):
     questions need this -- which scope owns a nonlocal, and whether a nearer binding stands in
     front of a definition a call might otherwise reach -- and they are asked here once rather
     than answered twice, which is how most of the defects in this file have arrived.
+
+    A name the scope declares global or nonlocal is NOT bound here, however plainly the
+    assignment under that declaration is written: the write lands in the scope the declaration
+    names. Answering otherwise makes a declaring scope look like the owner and stops both of
+    the questions above one scope short.
     """
-    binds = {}
+    binds, declared = {}, {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            declared.setdefault(places.get(id(node), (MODULE_LEVEL, None))[0],
+                                set()).update(node.names)
     for node in ast.walk(tree):
         at = places.get(id(node), (MODULE_LEVEL, None))[0]
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             # Assignments, loop targets, with targets, walrus and augmented writes all spell
             # the bound name as a Store, so one test covers the lot.
-            binds.setdefault(at, set()).add(node.id)
+            if node.id not in declared.get(at, ()):
+                binds.setdefault(at, set()).add(node.id)
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for imported in node.names:
-                binds.setdefault(at, set()).add(
-                    (imported.asname or imported.name).partition(".")[0])
+                spelled = (imported.asname or imported.name).partition(".")[0]
+                if spelled not in declared.get(at, ()):
+                    binds.setdefault(at, set()).add(spelled)
         elif isinstance(node, ast.ExceptHandler) and node.name:
-            binds.setdefault(at, set()).add(node.name)
+            if node.name not in declared.get(at, ()):
+                binds.setdefault(at, set()).add(node.name)
         elif isinstance(node, ast.ClassDef):
             # _places labels a class with the scope it is WRITTEN in, which is the scope its
             # name is bound in.
-            binds.setdefault(at, set()).add(node.name)
+            if node.name not in declared.get(at, ()):
+                binds.setdefault(at, set()).add(node.name)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             if not isinstance(node, ast.Lambda):
                 # A def is labelled with the scope it OPENS, but binds its name in the one
                 # around it.
-                binds.setdefault(at.rpartition(".")[0] or MODULE_LEVEL, set()).add(node.name)
+                around = at.rpartition(".")[0] or MODULE_LEVEL
+                if node.name not in declared.get(around, ()):
+                    binds.setdefault(around, set()).add(node.name)
             # A parameter binds its name in the scope the definition opens.
             args = node.args
             for arg in (args.posonlyargs + args.args + args.kwonlyargs
@@ -5098,7 +5206,7 @@ def _default_applies(tree, places):
     function is read as TAKING it -- the reporting direction, which is the one that costs a
     sentence rather than a place.
     """
-    supplied, defined, owned, receives = {}, {}, {}, set()
+    supplied, defined, owned, receives, bound_to_its_class = {}, {}, {}, set(), set()
     by_spelling = _class_spellings(tree, places)
     bound_here = _bound_names(tree, places)
     _classes_here, holds_an, _built_here = _instance_classes(tree)
@@ -5152,6 +5260,11 @@ def _default_applies(tree, places):
                     for dressed in getattr(node, "decorator_list", ())}
             if worn <= {"property", "cached_property", "classmethod", "abstractmethod"}:
                 receives.add(at)
+                if "classmethod" in worn:
+                    # A classmethod is bound through the CLASS as well as through an instance,
+                    # so Holder.helper(x) hands cls over unwritten where an ordinary method
+                    # spelled that way writes its receiver.
+                    bound_to_its_class.add(at)
         given = list(node.args.defaults)
         for index, argument in enumerate(spelled[len(spelled) - len(given):] if given else []):
             defined[(at, argument.arg)] = len(spelled) - len(given) + index
@@ -5245,8 +5358,10 @@ def _default_applies(tree, places):
             owner = node.func.value if isinstance(node.func, ast.Attribute) else None
             spelled_owner = (_dotted(owner) or "").rpartition(".")[2] if owner is not None else ""
             seated = 1 if (place in receives and owner is not None and spelled_owner
-                           and not names_a_class(
-                               places.get(id(node), (MODULE_LEVEL, None))[0], spelled_owner)
+                           and (place in bound_to_its_class
+                                or not names_a_class(
+                                    places.get(id(node), (MODULE_LEVEL, None))[0],
+                                    spelled_owner))
                            ) else 0
             # An unpacking supplies a count this text cannot read: helper(*()) writes one
             # Starred node and supplies no argument at all. Counting the node itself says the
@@ -5573,7 +5688,7 @@ def _shadowing_names(tree):
     reports a place that settles for nothing of the kind. Module level is not shadowing: there
     the binding IS the constant. A scope saying the name is global is not shadowing either.
     """
-    places, taken, said_global = _places(tree), {}, {}
+    places, taken, said_global, said_nonlocal = _places(tree), {}, {}, {}
     # A class body is not the function around it. _places labels its statements with the
     # enclosing scope, but a name bound there creates no local in that function, so reading it
     # as a shadow drops the module constant a nested function really does see.
@@ -5612,13 +5727,19 @@ def _shadowing_names(tree):
                     taken.setdefault(where, set()).add(extra.arg)
         if isinstance(node, ast.Global):
             said_global.setdefault(where, set()).update(node.names)
+        if isinstance(node, ast.Nonlocal):
+            # A scope declaring the name nonlocal does not bind it locally either: the
+            # assignment under that declaration is the enclosing function's. Exempting only
+            # global read such a write as a nearer local and hid what it really wrote.
+            said_nonlocal.setdefault(where, set()).update(node.names)
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             if id(node) in in_a_class_body:
                 continue
             for named in _binds_locally(node):
                 # A scope that declares the name global does not bind it locally: the
                 # assignment under that declaration is the module's.
-                if named not in said_global.get(where, ()):
+                if (named not in said_global.get(where, ())
+                        and named not in said_nonlocal.get(where, ())):
                     taken.setdefault(where, set()).add(named)
     # A def or a class written in a function takes that name IN the function, which is why the
     # loop above leaves definitions to the table that knows which scope writes them.
@@ -8344,6 +8465,78 @@ class SevenReadingsTests(unittest.TestCase):
                          " fourth boundary above has stopped being true and the honest gap this"
                          " list declares has changed shape")
 
+    def test_every_placement_site_here_honours_a_declared_owner(self):
+        """Support: coverage over the sites that decide WHERE a binding lives.
+
+        A different layer from the sweep above. That one is about LOOKUP -- which binding a
+        name refers to from a use site. This one is about PLACEMENT -- which scope a binding
+        lives in at all, which is the question those lookups are then correct about. Three
+        findings in a row were placement, and they landed on three different sites, so the set
+        is swept rather than the instances.
+
+        The predicate is read off this file: a placement site is recognised by calling
+        _binds_locally or _bound_names, the two helpers that answer what a statement or a scope
+        binds. It honours the rule if it consults _bound_names, which applies the declaration
+        itself, or reads BOTH ast.Global and ast.Nonlocal in its own right. Both, because
+        honouring one was exactly the defect: the shadow table exempted global and not nonlocal,
+        and a predicate satisfied by either would have passed that site unchanged.
+
+        COVERAGE, not correctness, and the distinction matters more here than above: that a
+        site consults the declaration says nothing about the declaration being resolved to the
+        right scope. The answers are held by the paired cases in RESOLVES_LIKE_PYTHON, whose
+        expectations come from Python rather than from this reader.
+
+        The boundary is measured: _places decides placement for a comprehension's walrus
+        target without calling either helper, so this predicate does not recognise it. That
+        absence is asserted, because a derived list that cannot say what it misses is the
+        defect this module was opened against.
+        """
+        source = HERE.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        owner = {}
+        for top in parsed.body:
+            if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                for inner in ast.walk(top):
+                    owner[id(inner)] = top.name
+        places_a_name, reads_global, reads_nonlocal = {}, set(), set()
+        for node in ast.walk(parsed):
+            named = getattr(getattr(node, "func", None), "id", None)
+            here = owner.get(id(node), MODULE_LEVEL)
+            if named in ("_binds_locally", "_bound_names"):
+                places_a_name.setdefault(here, []).append(node.lineno)
+            if named == "_bound_names":
+                reads_global.add(here)
+                reads_nonlocal.add(here)
+            if isinstance(node, ast.Attribute) and node.attr == "Global":
+                reads_global.add(here)
+            if isinstance(node, ast.Attribute) and node.attr == "Nonlocal":
+                reads_nonlocal.add(here)
+        asks_where_it_lives = reads_global & reads_nonlocal
+        self.assertTrue(places_a_name,
+                        "no placement site was recognised at all, so this check would pass by"
+                        " sweeping nothing rather than by finding nothing")
+        # The comparison itself, shown rather than asserted away.
+        without = sorted(set(places_a_name) - asks_where_it_lives)
+        undeclared = sorted(set(without) - set(PLACES_A_NAME_WITHOUT_ASKING_WHERE_IT_LIVES))
+        self.assertEqual(undeclared, [],
+                         "a site records which scope binds a name without honouring a global or"
+                         " nonlocal declaration, and nobody wrote down why that is safe there: "
+                         + json.dumps({name: places_a_name[name] for name in undeclared}))
+        stale = sorted(set(PLACES_A_NAME_WITHOUT_ASKING_WHERE_IT_LIVES) - set(without))
+        self.assertEqual(stale, [],
+                         "declared as placing a name without asking where it lives, but it asks"
+                         " now, so delete the entry: " + json.dumps(stale))
+        for name, why in sorted(PLACES_A_NAME_WITHOUT_ASKING_WHERE_IT_LIVES.items()):
+            with self.subTest(name):
+                self.assertTrue(why.strip(), name + " is declared without a reason")
+        # The boundary, exercised. _places moves a comprehension's walrus out to the scope
+        # around it, which is a placement decision, and it reaches neither helper -- so the
+        # predicate cannot see it and this list does not cover it.
+        self.assertNotIn("_places", set(places_a_name),
+                         "_places decides placement without calling either helper, so the"
+                         " predicate should not see it -- if it does, the boundary written"
+                         " above is no longer true and the wording has to change")
+
     def test_no_class_body_binding_shadows_without_asking_whether_it_happened(self):
         """The certainty rule, swept over every place that decides it rather than one branch.
 
@@ -9340,6 +9533,7 @@ HANDED = {
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
     "test_a_decorator_alias_resolves_in_the_scope_that_imported_it": NOTHING,
     "test_no_class_body_binding_shadows_without_asking_whether_it_happened": NOTHING,
+    "test_every_placement_site_here_honours_a_declared_owner": NOTHING,
     "test_every_owner_deciding_site_here_measures_how_near_the_binding_is": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
