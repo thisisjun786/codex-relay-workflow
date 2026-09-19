@@ -241,6 +241,7 @@ SOURCE_UNDECIDED_CALLS = {
     "set": (THE_FLOOR, "a builtin type whose signature 3.11 made readable and 3.10 did not"),
     "frozenset": (THE_FLOOR, "the same, and the pair of them is why this record is a union"),
     "zip": (THE_FLOOR, "a builtin type the floor cannot read either"),
+    "next": (EVERY_INTERPRETER, "a builtin whose signature is not introspectable"),
 }
 
 # What this derivation still cannot see, as data rather than as a sentence. Each form is planted
@@ -1623,9 +1624,19 @@ def _hands_on(tree, spelled):
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
     # Directly in a class body is what makes a def a method: a helper nested inside a method is
     # not one, and a class written inside a function still has methods.
+    def in_body(body):
+        """Every def a class body makes, including ones written under an if or a try."""
+        for statement in body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield statement
+            elif not isinstance(statement, ast.ClassDef):
+                for field, value in ast.iter_fields(statement):
+                    if isinstance(value, list):
+                        yield from in_body([item for item in value
+                                            if isinstance(item, ast.stmt)])
+
     is_method = {id(inner) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
-                 for inner in node.body
-                 if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef))}
+                 for inner in in_body(node.body)}
     defined, methods, plain, receivers = set(), {}, set(), {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -1639,7 +1650,9 @@ def _hands_on(tree, spelled):
         # And the instance is whatever the first parameter is called: self is a convention.
         args = node.args
         first = (args.posonlyargs + args.args)[:1]
-        if id(node) in is_method and first:
+        standalone = any(_dotted(mark) in ("staticmethod",)
+                         for mark in getattr(node, "decorator_list", []))
+        if id(node) in is_method and first and not standalone:
             receivers[where] = first[0].arg
         # Which class a method belongs to, because self.name reaches a method of THIS class and
         # not a module-level function or another class's method that happens to share the name.
@@ -1663,10 +1676,18 @@ def _hands_on(tree, spelled):
     # What a class body binds, and where. A def binds its own name there as surely as an
     # assignment does, and a binding written after a default has not happened yet when that
     # default runs, so the line is part of the answer.
-    class_bound = {}
+    # A class body is a scope of its own, and it is not the module: a class written inside a
+    # function has one too, and two class bodies do not share their names.
+    def body_scope(node):
+        where = places.get(id(node), (MODULE_LEVEL, None))[0]
+        return "<class " + node.name + " in " + where + ">"
+
+    class_scope, class_bound = {}, {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
+        class_scope.setdefault(node.name, []).append(
+            (body_scope(node), places.get(id(node), (MODULE_LEVEL, None))[0]))
         for statement in node.body:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 class_bound.setdefault(node.name, {}).setdefault(statement.name,
@@ -1691,10 +1712,16 @@ def _hands_on(tree, spelled):
                 return {spelled, "cls"}
             # A scope of its own that binds the same name is where the search stops: a nested
             # parameter called self is that function's, not the method's around it.
-            taken_here = taken_names.get(scope, set())
-            outer = receivers.get(".".join(chain[:-1])) if len(chain) > 1 else None
-            if outer and outer in taken_here:
-                return {"cls"}
+            # Any scope between here and the method binding the same name stops the search,
+            # however many there are.
+            below = chain[:-1]
+            while below:
+                outer = receivers.get(".".join(below))
+                if outer:
+                    if outer in taken_names.get(scope, set()):
+                        return {"cls"}
+                    break
+                below.pop()
             chain.pop()
         return {"cls"}
 
@@ -1807,12 +1834,14 @@ def _hands_on(tree, spelled):
         # binding made above it shadows the module the same way a local one does. Only in the
         # class body: a bare name inside a method resolves outside the class, not in it.
         written = class_bound.get(klass, {}).get(named) if klass is not None else None
-        if written is not None and caller == MODULE_LEVEL and (at is None or written < at):
+        inside = [scope for scope, around in class_scope.get(klass, ()) if around == caller]
+        if written is not None and inside and (at is None or written < at):
             reached = methods.get((klass, named))
             if reached:
                 return {reached}
-            if aliases and named in aliases.get(MODULE_LEVEL, {}):
-                return set(aliases[MODULE_LEVEL][named])
+            for scope in inside:
+                if aliases and named in aliases.get(scope, {}):
+                    return set(aliases[scope][named])
             return set()
         if named in declared_global.get(caller, ()):
             # global says the module, not the next scope out that happens to share the name,
@@ -1899,6 +1928,12 @@ def _hands_on(tree, spelled):
                 # global and nonlocal say which scope the name belongs to, so the alias is
                 # recorded there rather than here, where the lookup would never consult it.
                 holder_scope = function
+                if _klass is not None and any(
+                        around == function for _scope, around in class_scope.get(_klass, ())):
+                    # A name bound in a class body belongs to that body, not to the scope the
+                    # class was written in, so two class bodies cannot read each other's.
+                    holder_scope = next(scope for scope, around
+                                        in class_scope[_klass] if around == function)
                 if named.id in declared_global.get(function, ()):
                     holder_scope = MODULE_LEVEL
                 elif named.id in declared_nonlocal.get(function, ()):
