@@ -2032,6 +2032,29 @@ def _trial_payload(name):
 # Check 6 - past the exclusive mkdir, every exit releases what this run created
 # =========================================================================================
 
+# The exits that keep the environment BECAUSE it became the runtime. They are exempt from the
+# release rule for the opposite reason a refusal is not: past the promotion the directory is not
+# a leftover somebody has to clean up, it is the installation a host now reaches, and releasing
+# it would delete what the run just put into service. Two of them, because replacing a runtime
+# and recording that it was replaced are different results with different statuses.
+PROMOTED_EXITS = ("EXIT_OK", "EXIT_INCOMPLETE")
+
+
+def _promotion_exit(value):
+    """Whether a returned value is one of the promoted exits, choice between them included.
+
+    The tail chooses between them on one reading -- whether the claim that RECORDS the
+    replacement was written -- so it is one return site with two answers. Read as two returns it
+    would satisfy the rule below while letting a second, unexamined exit sit beside the one this
+    check was written for.
+    """
+    if isinstance(value, ast.Name):
+        return value.id in PROMOTED_EXITS
+    if isinstance(value, ast.IfExp):
+        return _promotion_exit(value.body) and _promotion_exit(value.orelse)
+    return False
+
+
 def _unreleased_exits(tree):
     """Returns inside cmd_install after the exclusive mkdir that do not go through release.
 
@@ -2060,15 +2083,15 @@ def _unreleased_exits(tree):
                         else getattr(called, "id", None))
                 if name == "_install_failed":
                     continue
-            # The success return is identified by its VALUE, not by its position. The last
+            # The promoted return is identified by its VALUE, not by its position. The last
             # return in this function is an exception handler, so exempting the last one
             # exempted a failure path and flagged the success.
-            if isinstance(value, ast.Name) and value.id == "EXIT_OK":
+            if _promotion_exit(value):
                 successes.append("line " + str(statement.lineno))
                 continue
             offenders.append("line " + str(statement.lineno))
         if len(successes) > 1:
-            offenders.append("more than one success return: " + ", ".join(successes))
+            offenders.append("more than one promoted return: " + ", ".join(successes))
         return offenders
     return ["cmd_install was not found"]
 
@@ -5909,6 +5932,19 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.pointer, "names",
                                              side_effect=flaky_names))
+        if breaking == "settle the staging claim":
+            # The claim that RECORDS a finished replacement, and only that one. The STAGING
+            # claim written before the build has to land or the run never reaches a promotion
+            # to record, and then this injects a different failure than the one it names.
+            real_write = runtime_install.staging.write_claim
+
+            def write_unless_settling(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=write_unless_settling))
         for entered in patches:
             entered.__enter__()
         try:
@@ -6064,6 +6100,140 @@ class UpdateRecoveryTests(unittest.TestCase):
                             "the predecessor survives, which is what keeps a process that is"
                             " already running from it alive")
 
+
+
+class SettledRecordTests(unittest.TestCase):
+    """The record of a replacement is not the replacement.
+
+    The staging claim settles last, after the selection is committed and the owned pointer is
+    placed and read back, so by the time writing it can fail a host already reaches the new
+    runtime through the registered command. Reported as an update failure, that told an
+    operator nothing had been replaced -- about a host that had already moved -- gave them a
+    null pointer for a link that had in fact been swapped, and offered a destination that
+    'cannot be retried until the selection moves' when what was actually needed was to run the
+    very same command again. Every assertion here is about telling the two apart.
+    """
+
+    def test_a_replacement_whose_record_fails_is_not_a_failed_replacement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            before = host.snapshot()
+            code, payload = UpdateRecoveryTests()._run(host, breaking="settle the staging claim")
+            after = host.snapshot()
+            candidate_survived = host.candidate.is_dir()
+            predecessor_survived = host.previous.is_dir()
+
+        self.assertTrue(payload.get("promoted"),
+                        "the selection was committed and the pointer was read back naming this"
+                        " environment, so the replacement happened: "
+                        + json.dumps(payload)[:900])
+        self.assertIs(payload.get("claimSettled"), False,
+                      "and the record of it did not land, which is the other outcome")
+        self.assertTrue(payload.get("applied"),
+                        "a run that replaced the runtime a host reaches applied something")
+        self.assertNotEqual(code, 1,
+                            "a completed replacement is not an update failure, however its"
+                            " bookkeeping ended")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the host really does reach the new runtime")
+        self.assertNotEqual(after["selected"], before["selected"],
+                            "and the new runtime really is the selected one")
+        self.assertTrue(candidate_survived,
+                        "the environment is in service, so nothing releases it")
+        self.assertTrue(predecessor_survived,
+                        "and a promotion removes nothing, this one included")
+
+    def test_the_result_says_what_the_next_run_must_do_when_only_the_record_failed(self):
+        """Read against what the next run actually does, not against its wording.
+
+        An operator left to guess is the defect. A sentence nobody checked against behaviour is
+        the same defect with better prose, so the advice is asserted and then carried out.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(host, breaking="settle the staging claim")
+            # Exactly what the result says to do, with nothing injected this time.
+            again, second = UpdateRecoveryTests()._run(host)
+            left = staging.read_claim(host.candidate)
+            rebuilt = sorted(p.name for p in host.candidate.iterdir())
+            after = host.snapshot()
+
+        claim = payload.get("claim")
+        self.assertIsInstance(claim, dict,
+                              "the record has an outcome of its own to report: "
+                              + json.dumps(payload)[:900])
+        self.assertIs(claim["settled"], False)
+        self.assertTrue(claim["detail"], "naming what would not write")
+        self.assertTrue(payload.get("recoveryRequires"),
+                        "and the result says what the next run must do")
+        self.assertEqual(again, 0, json.dumps(second)[:900])
+        self.assertEqual(second["stagingDecision"], staging.RESUME,
+                         "the next run reads it as the interrupted promotion it is")
+        self.assertTrue(second.get("claimSettled"),
+                        "and settles the record the previous run could not")
+        self.assertEqual((left.value or {}).get("state"), staging.COMPLETE,
+                         "the claim on disk now says the staging finished")
+        self.assertIn("site", rebuilt, "and nothing was rebuilt to get there")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the runtime a host reaches never moved")
+
+    def test_a_resume_whose_record_fails_reports_it_rather_than_raising(self):
+        """The same failure on the path that finishes somebody else's promotion.
+
+        It settles the claim outside its own lock and outside every handler the command has, so
+        the failure did not even reach the misleading report: it escaped cmd_install through a
+        finally with no except, and a repair that had already written the pointer ended as a
+        traceback with no result and no exit status at all.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # The state a kill between the two writes leaves: selected, unreachable, unsettled.
+            host.candidate.mkdir(parents=True)
+            (host.candidate / "site").mkdir()
+            staging.write_claim(host.candidate, staging.STAGING, issue="CRW-49", run="killed")
+            hostrecord.update(host.record_path, host.data["definitionVersion"],
+                              select={c["component"]: str(host.candidate / "site" / c["module"])
+                                      for c in host.data["components"]})
+            try:
+                code, payload = UpdateRecoveryTests()._run(
+                    host, breaking="settle the staging claim")
+            except OSError as error:
+                self.fail("a resume that has already written the pointer must report the"
+                          " record failure rather than raise it out of the command: "
+                          + type(error).__name__ + ": " + str(error))
+            after = host.snapshot()
+
+        self.assertEqual(payload["stagingDecision"], staging.RESUME)
+        self.assertTrue(payload.get("applied"),
+                        "the missing half of the promotion was written")
+        self.assertIs(payload.get("claimSettled"), False,
+                      "and the claim recording it was not")
+        self.assertTrue(payload.get("recoveryRequires"),
+                        "so the result says what is still outstanding")
+        self.assertNotEqual(code, 1, "a repair that landed is not a refusal")
+        self.assertEqual(after["pointerTarget"], str(host.candidate),
+                         "the pointer agrees with the selection, which is the repair itself")
+
+    def test_the_three_outcomes_are_three_exit_statuses(self):
+        """A caller reading only the status still has to be able to tell them apart.
+
+        Collapsed into the refusal status, a completed replacement looked to every script like
+        a run that had changed nothing.
+        """
+        codes = {}
+        for label, breaking in (("settled", None), ("unrecorded", "settle the staging claim"),
+                                ("refused", "install packages")):
+            with tempfile.TemporaryDirectory() as temporary:
+                host = _Host(temporary)
+                codes[label], _payload = UpdateRecoveryTests()._run(host, breaking=breaking)
+
+        self.assertEqual(codes["settled"], 0,
+                         "a replacement whose record landed is a plain success")
+        self.assertEqual(codes["refused"], 1,
+                         "a run that replaced nothing is a refusal")
+        self.assertNotIn(codes["unrecorded"], (codes["settled"], codes["refused"]),
+                         "and a replacement whose record did not land is neither of those,"
+                         " because it is neither: " + json.dumps(codes))
 
 
 class IdempotentRepeatTests(unittest.TestCase):
