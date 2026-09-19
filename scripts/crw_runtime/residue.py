@@ -82,36 +82,27 @@ def _entry(path, **fields):
 
 
 def _same_directory(one, other):
-    """Whether two spellings name the same directory, answered conservatively.
+    """Whether two spellings name the same directory, answered the way the kernel answers it.
 
-    Two spellings of one directory must compare equal -- Path.absolute() keeps '..', so
-    /tmp/detour/../dest and /tmp/dest were two destinations and an owned dangling pointer in
-    the surveyed one was disowned. But lexical cancellation is not sound either: the kernel
-    follows a symlink before applying '..', so /srv/link/../dest is /var/runtime/dest when
-    /srv/link points into /var/runtime, while normpath says /srv/dest.
+    os.path.realpath IS that answer: it resolves each symlink as it walks and applies '..' to
+    what the link pointed at, which is exactly what the kernel does when it opens the path. So
+    /alias/. and /real are one directory when alias links to real, and /srv/link/../dest is
+    /var/runtime/dest rather than /srv/dest.
 
-    So BOTH have to agree. The lexical form catches the spelling difference and the resolved
-    form catches the symlink traversal, and a pair that disagrees is treated as different --
-    which keeps an unverified pointer out of the cleanup list, the direction this whole module
-    fails in on purpose.
+    Two earlier attempts here were wrong in opposite directions and both are worth recording.
+    Comparing raw strings made one directory into two whenever the spelling differed, and an
+    owned dangling pointer in the surveyed destination was disowned. Comparing lexically
+    normalised strings made two directories into one, because normpath cancels 'X/..' without
+    knowing X is a symlink. Requiring both to agree then reintroduced the first failure for any
+    path that combined an alias with '..'. Resolution alone has neither problem.
+
+    realpath answers best-effort and does not raise on a loop; a NUL-bearing string cannot name
+    a path at all and does raise, and nothing being established is answered "different", which
+    keeps an unverified pointer out of the cleanup list.
     """
-    one, other = str(one), str(other)
     try:
-        if os.pardir in (one.split(os.sep) + other.split(os.sep)):
-            # A spelling carrying ".." is the unsound case: the kernel follows a symlink
-            # before applying it, so lexical and resolved forms must BOTH agree before
-            # these are called one directory.
-            return (os.path.normpath(one) == os.path.normpath(other)
-                    and os.path.realpath(one) == os.path.realpath(other))
-        # No "..", so resolved identity is the whole question, and it is the right one:
-        # --dest may be a symlink alias of the directory the recorded pointer sits in,
-        # and those spellings differ lexically while naming one directory.
-        # realpath answers best-effort and does not raise on a loop, but a NUL-bearing
-        # string cannot name a path at all and raises ValueError from either of these.
-        return os.path.realpath(one) == os.path.realpath(other)
+        return os.path.realpath(str(one)) == os.path.realpath(str(other))
     except ValueError:
-        # Nothing was established, and this comparison's conservative answer is
-        # "different", which keeps the pointer out of the cleanup list.
         return False
 
 

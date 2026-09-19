@@ -277,6 +277,13 @@ def _recorded_on_another_path(observed):
     if holding and unread:
         return NOT_RULED_OUT, ("records were found under " + _named(holding) + " and another"
                                " named journal could not be listed")
+    if empty and unread:
+        # The unread journal may hold records, and against a journal that was read and
+        # holds none that is exactly this cause. Ruling it out because the holding side
+        # happens to be the one nobody could list drops a candidate the readings leave
+        # standing.
+        return NOT_RULED_OUT, ("" + _named(unread) + " could not be listed and may hold records, which against "
+                               + _named(empty) + ", read and holding none, would be this cause")
     return RULED_OUT, "no two named journals disagree about holding records"
 
 

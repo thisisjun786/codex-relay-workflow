@@ -2476,6 +2476,28 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          " of answering: " + str(found.get("raised")))
         self.assertEqual(found["firingJournal"]["value"], reading.ACCESS_ERROR)
 
+    def test_an_unlistable_journal_beside_an_empty_one_leaves_divergence_standing(self):
+        """The unread journal may hold records, and against a journal that was read and holds
+        none that is exactly recorded_on_another_path. Ruling it out because the holding side
+        happens to be the one nobody could list drops a candidate the readings leave open."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            document = json.loads(second.read_text(encoding="utf-8"))
+            # A regular file where the second journal should be: it cannot be listed, so its
+            # count is unestablished while the first is read and holds nothing.
+            blocked = Path(temporary) / "not-a-journal"
+            blocked.write_text("", encoding="utf-8")
+            document["journalRoot"] = str(blocked)
+            second.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertIn(firing.RECORDED_ON_ANOTHER_PATH,
+                      [one["cause"] for one in cell.get("candidates") or []],
+                      "one journal read and empty beside one nobody could list leaves this"
+                      " cause standing, and it was ruled out")
+        self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE)
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

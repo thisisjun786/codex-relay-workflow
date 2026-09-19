@@ -9231,6 +9231,40 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
                          "a symlink alias of this very destination read as another one")
         self.assertIn(str(host.pointer_path), found["residualPaths"])
 
+    def test_an_alias_combined_with_a_parent_step_still_names_this_destination(self):
+        """Resolution is the kernel's own answer, so it handles the two cases that broke the
+        earlier attempts at once: an alias of this destination is this destination, and
+        'link/..' resolves to where the link actually pointed rather than cancelling."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            alias = Path(temporary) / "alias"
+            alias.symlink_to(host.destination)
+            # An alias AND a parent step, which the both-forms-must-agree rule rejected.
+            combined = alias / "sub" / ".."
+            (host.destination / "sub").mkdir()
+            found = _diagnose(host, dest=str(combined))
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER,
+                         "an alias combined with a parent step read as another destination")
+        self.assertIn(str(host.pointer_path), found["residualPaths"])
+
+    def test_a_parent_step_through_a_link_is_still_not_this_destination(self):
+        """SUPPORT, not evidence of the defect: this passes before the fix too. It holds the
+        direction the fix must not break -- the kernel follows the link first, so
+        <root>/link/.. is not <root> when link points into a sibling tree."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            elsewhere = Path(temporary) / "elsewhere"
+            (elsewhere / "child").mkdir(parents=True)
+            link = host.destination.parent / "link"
+            link.symlink_to(elsewhere / "child")
+            detour = host.destination.parent / "link" / ".." / host.destination.name
+            found = _diagnose(host, dest=str(detour))
+        self.assertEqual(found["residue"]["pointer"]["finding"],
+                         residue.POINTER_OUTSIDE_DESTINATION)
+        self.assertNotIn(str(host.pointer_path), found["residualPaths"])
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here
