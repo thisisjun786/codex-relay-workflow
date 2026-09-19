@@ -2736,6 +2736,13 @@ def ledger_report(record):
         if not isinstance(entry, dict) or entry.get("kind") not in LEDGER_KINDS:
             raise Refused("a ledger line carries no known kind", line=number,
                           kind=entry.get("kind") if isinstance(entry, dict) else None)
+        # A segment is a name. It is compared against another line's, used as a dictionary key
+        # and written into the report, so a structured value there is a line this cannot run
+        # rather than one it disagrees with: refused here by name, rather than raised out of a
+        # lookup as an internal error about something the operator wrote.
+        if "segment" in entry and not isinstance(entry["segment"], str):
+            raise Refused("a ledger line's segment has to be written as text", line=number,
+                          found=json.dumps(shown(entry.get("segment"))))
         entry["_at"] = moment(entry.get("at"), "a ledger line's at")
         if entry["_at"].timestamp() > time.time():
             # The ledger is appended as things happen, so a line dated after the moment it is

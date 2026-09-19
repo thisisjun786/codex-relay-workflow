@@ -5159,6 +5159,29 @@ class FortyFifthHostedRound(TrialCase):
                       "a ledger line carrying a structured actor was accepted")
         self.assertEqual(code, 2, stderr)
 
+    def test_a_ledger_line_cannot_name_a_segment_with_structure(self):
+        # The same rule over the rest of what a ledger line supplies. A segment name is
+        # compared, used as a dictionary key and written into the report, so a structured value
+        # there is a line the checker cannot run: refused by name at load rather than raised out
+        # of a lookup as an internal error about something the operator wrote.
+        now = time.time()
+        opened, closed = now - 60, now - 5
+        self.world.record["window"] = {"opensAt": startup.stamp(opened),
+                                       "closesAt": startup.stamp(closed)}
+        self.world.flush()
+        self.world.ledger_lines([
+            {"at": startup.stamp(now - 300), "kind": "segment_start",
+             "segment": {"passed": False}},
+            {"at": startup.stamp(now - 200), "kind": "segment_end",
+             "segment": {"passed": False}, "outcome": "failed"},
+            {"at": startup.stamp(opened), "kind": "window_open", "segment": "window-4"},
+            {"at": startup.stamp(closed), "kind": "window_close", "segment": "window-4"},
+        ])
+        code, payload, stderr = self.world.run_cli("ledger")
+        self.assertIn("written as text", json.dumps(payload),
+                      "a ledger line naming a segment with structure was accepted")
+        self.assertEqual(code, 2, stderr)
+
     def test_a_root_is_judged_as_the_bytes_the_relay_receives(self):
         # The bound on that refusal: a root that is absolute without anything being taken off it
         # is still a root, trailing characters and all, because the relay compares it the same
