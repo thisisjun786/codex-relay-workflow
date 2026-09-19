@@ -284,16 +284,19 @@ Check who sent it before acting on it. This is the one kind here that carries au
 travels on a channel peers use too, where the kind, the sender and the supervisor identity are all
 text the sender wrote, and no bundled store enforces these levels
 ([OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity)). The receiving parent
-matches the claimed supervisor against what it already holds, its own record and the initiative's,
-and where those disagree it answers the message as a peer request to be decided rather than as an
-instruction, and says so in the reply. One parent cannot assign work to another, so a handoff whose
+matches the claimed supervisor against what it already holds: its own record, and the initiative's
+record read directly rather than quoted back to it inside the message, since a quotation proves
+only what the sender wrote. Where those disagree it answers the message as a peer request to be
+decided rather than as an instruction, and says so in the reply. One parent cannot assign work to another, so a handoff whose
 sender cannot be confirmed as this project's supervisor is not a handoff.
 
 A project record naming no supervisor is the ordinary state of a project that predates the
 supervision, and it is not a disagreement. The initiative's own record settles that case: it is the
-supervisor's record to write while the project record is the parent's, so a claim the initiative
+supervisor's record to write while the project record is the parent's, so a claim that record
 confirms is accepted as the first handoff, and the parent then records the relationship in its own
-record. A claim the initiative does not confirm stays a peer request.
+record. A claim it does not confirm stays a peer request. Where the parent cannot read that record
+itself, it does not accept a first handoff on the sender's word: it raises it, because the whole
+weight of this case rests on a record the receiver read rather than on text the sender supplied.
 
 That comparison narrows mistakes rather than defeating a forgery, and the difference is worth
 stating. These transports deliver opaque text and carry no authenticated caller identity, so a
@@ -413,6 +416,15 @@ does not define their shape
 Pointing at a record is not defining it; rewriting one is. A coordinator that reconstructs
 a child's plan from its own view has replaced that child's record with a guess, and the
 child will trust the guess over the record it could have re-read.
+
+The bullets above describe a task bound to an issue. A block travelling to a parent or to a
+supervisor carries the same kinds of fact at that level. For a parent: its project, the criteria
+revision in force, the locator of its coordination record, the children and pull requests still
+outstanding, and the one next action. For a supervisor: the initiative, the revision its approved
+set was fixed at, the locator of its supervision record, the handoffs and results still
+outstanding, and the one next action. A sender that does not hold a field at the recipient's level
+omits it and says which it omitted, rather than inventing one; the issue-shaped fields are not
+filled in with a project or an initiative to make the shape match.
 
 The block is context for resuming work already authorized. It requests no new approval,
 asks for no readiness-only turn spent confirming receipt, and re-opens nothing the

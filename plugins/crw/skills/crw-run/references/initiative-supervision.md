@@ -92,7 +92,11 @@ assumes the earlier one was checked:
    continue here. Where it is another task, read its record and status first. Where the limits in
    force permit contacting it, deliver the designation the way a parent is addressed: the ordinary
    message path when it is idle, its verified active turn when one is running, each carrying the
-   [restoration block](task-packet.md#restoration-block). Where those limits forbid contact,
+   [restoration block](task-packet.md#restoration-block). The task receiving it corroborates it
+   the way a parent corroborates a handoff, against its own record and the initiative's read
+   directly: a forwarded designation carries the request and not the authority, and one that would
+   change the approved set or the completion boundary is a scope change its owner decides rather
+   than something a message settles. Where those limits forbid contact,
    return the existing supervisor and the designation that stays unsent. Where no supported route
    reaches it at all, report the exact resume action its owner has to take and bind nothing,
    because a status read is not the execution that was asked for.
