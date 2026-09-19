@@ -3438,26 +3438,26 @@ class TheFindingsFromReview(TransitionCase):
         from crw_transition import inventory, steps
 
         host = self.ready()
-        real_glob = Path.glob
+        real_scandir = os.scandir
 
-        def refusing(self, pattern, *arguments, **keywords):
-            if "superseded" in str(pattern):
+        def refusing(where, *arguments, **keywords):
+            if str(where) == str(host.home):
                 raise OSError(errno.EACCES, "Permission denied")
-            return real_glob(self, pattern, *arguments, **keywords)
+            return real_scandir(where, *arguments, **keywords)
 
-        Path.glob = refusing
-        self.addCleanup(setattr, Path, "glob", real_glob)
+        os.scandir = refusing
+        self.addCleanup(setattr, os, "scandir", real_scandir)
         with self.assertRaises(OSError):
             steps.retire(host.home / "crw-completion-hook.json")
-        Path.glob = real_glob
+        os.scandir = real_scandir
         # Nothing was archived and the document is still where it was.
         self.assertTrue((host.home / "crw-completion-hook.json").is_file())
         self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
         # And the step that calls it answers with a refusal rather than a claim.
-        Path.glob = refusing
+        os.scandir = refusing
         answer = steps.settings_retire(inventory.snapshot(host.home, repo_root=ROOT), {},
                                        apply=True)
-        Path.glob = real_glob
+        os.scandir = real_scandir
         self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:500])
         self.assertTrue((host.home / "crw-completion-hook.json").is_file())
 
@@ -3471,20 +3471,24 @@ class TheFindingsFromReview(TransitionCase):
         host = self.ready()
         code, _ = host.transition("--apply")
         self.assertEqual(code, 0)
-        real_glob = Path.glob
+        real_scandir = os.scandir
+        seen = []
 
-        def refusing(self, pattern, *arguments, **keywords):
-            # Only the bridge record's archives, so the settings move and the bridge does not.
-            if "crw-bridge-mcp.json.superseded" in str(pattern):
-                raise OSError(errno.EACCES, "Permission denied")
-            return real_glob(self, pattern, *arguments, **keywords)
+        def refusing(where, *arguments, **keywords):
+            # Both surfaces archive into the same directory, so the SECOND enumeration is the
+            # bridge record's: the settings move and the bridge does not.
+            if str(where) == str(host.home):
+                seen.append(str(where))
+                if len(seen) > 1:
+                    raise OSError(errno.EACCES, "Permission denied")
+            return real_scandir(where, *arguments, **keywords)
 
         snapshot = inventory.snapshot(host.home, repo_root=ROOT)
-        Path.glob = refusing
+        os.scandir = refusing
         try:
             results = steps.disable(snapshot, {}, apply=True)
         finally:
-            Path.glob = real_glob
+            os.scandir = real_scandir
         outcomes = {item["step"]: item["outcome"] for item in results}
         self.assertEqual(outcomes["hook settings"], "settled", json.dumps(results)[:700])
         self.assertEqual(outcomes["bridge record"], "refused", json.dumps(results)[:700])
@@ -3526,6 +3530,56 @@ class TheFindingsFromReview(TransitionCase):
         self.assertFalse((host.home / "crw-bridge-mcp.json").exists())
         self.assertIn("did not come apart cleanly",
                       [item for item in results if item["step"] == "hook settings"][0]["detail"])
+
+    @needs_reader
+    def test_a_relative_interpreter_is_not_a_registration_this_writer_emits(self):
+        """The hook resolves it from each session's workspace; this command resolves it here."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        # A real Python reachable from this command's directory and nowhere in particular later.
+        relative = Path(host.root) / "python3"
+        relative.symlink_to(sys.executable)
+        entry["command"] = entry["command"].replace(str(sys.executable), "./python3", 1)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        # Read from the directory the relative token resolves in, so what refuses is the rule and
+        # not the interpreter being unreachable from here.
+        here = os.getcwd()
+        os.chdir(str(host.root))
+        self.addCleanup(os.chdir, here)
+        found = inventory.read_hook(host.home, repo_root=ROOT)
+        os.chdir(here)
+        self.assertTrue(found["entries"], json.dumps(found)[:400])
+        self.assertFalse(any(item["proven"] for item in found["entries"]),
+                         json.dumps(found["entries"])[:600])
+        before = host.hooks_document()
+        done = run([CLI, "--codex-home", host.home, "transition", "--apply",
+                    "--accept-hook-trust-gap"], cwd=host.root)
+        self.assertEqual(done.returncode, 1, done.stdout[-700:])
+        self.assertEqual(host.hooks_document(), before)
+
+    @needs_reader
+    def test_an_unreadable_but_searchable_home_refuses_the_retirement(self):
+        """3.13 suppresses the scanning error inside glob, so the enumeration cannot use it."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        host = self.ready()
+        settings = host.home / "crw-completion-hook.json"
+        host.home.chmod(0o311)
+        self.addCleanup(host.home.chmod, 0o755)
+        if os.access(str(host.home), os.R_OK):
+            self.skipTest("this user can read a directory without the read bit")
+        with self.assertRaises(OSError):
+            steps.retire(settings)
+        host.home.chmod(0o755)
+        self.assertTrue(settings.is_file(), "the document was archived on an unread directory")
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
 
     @needs_reader
     def test_a_suffixed_archive_left_behind_still_decides_the_next_name(self):

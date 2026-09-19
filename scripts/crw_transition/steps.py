@@ -77,8 +77,12 @@ def retire(path, into=None, stem=None):
     prefix = (str(Path(into) / stem) if into and stem else str(path)) + ".superseded-"
     holder, name = Path(prefix).parent, Path(prefix).name
     try:
-        reached = [inventory.archive_order(found, name)
-                   for found in holder.glob(name + "*") if found.is_file()]
+        # scandir rather than glob: 3.13 suppresses the scanning OSError inside glob, so an
+        # unreadable-but-searchable directory answered "no archives here" and the except below
+        # was never reached. The failure has to arrive before a name is chosen.
+        with os.scandir(str(holder)) as scanning:
+            reached = [inventory.archive_order(Path(found.path), name) for found in scanning
+                       if found.name.startswith(name) and found.is_file()]
     except OSError as error:
         # Not an empty set. Treating an unlistable directory as one holding no archives chooses a
         # wall-clock name, and a future-dated archive that is still there then outranks the

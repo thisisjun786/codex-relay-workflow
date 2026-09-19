@@ -375,9 +375,14 @@ def canonical_command(argv):
     script = argv[1]
     if Path(script).name != completion.ENTRY_POINT_NAME:
         return None
-    if not all(os.path.isabs(word) for word in argv[1:]):
+    if not all(os.path.isabs(str(word).strip("\"'")) for word in argv):
         # The hook fires from each session's own workspace and this command runs somewhere else, so
         # a relative path names one file here and another one there. Unproven rather than resolved.
+        #
+        # argv[0] included: runtime_install.py settles the interpreter to an absolute path before
+        # it writes one, so a relative ./python is not what this repository's writer emits -- and
+        # probing it would resolve it from THIS command's directory while the hook resolves it
+        # from each session's own.
         return None
     return completion.command_for(argv[0], script, argv[2] if len(argv) == 3 else None)
 
