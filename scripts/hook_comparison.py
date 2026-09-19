@@ -18,9 +18,16 @@ An off arm that called a helper to have something to compare would be comparing 
 
 A cell is filled by the reading its own question called for. CELLS declares the cell, the source
 that answers it and the path the answer is read from, and read() is the only way a cell is ever
-filled. A reading that could not be made answers UNREADABLE naming why; a reading whose absence is
-a normal state answers ABSENT naming why it is normal there. Neither ever answers False, and
-neither ever takes the value of the cell beside it.
+filled. A reading that could not be made answers with an Unreadable naming why; a reading whose
+absence is a normal state answers ABSENT naming why it is normal there. Neither ever answers
+False, and neither ever takes the value of the cell beside it.
+
+The first of those is a TYPE rather than a spelling, which is the whole of CRW-103. While it was
+the string UNREADABLE it fitted the slot a real value occupies: truthy, unequal to everything
+real, hashable, and answering yes to "is there something there". Those are three different checks
+and one string walked through all of them, so twenty-one consumption sites were closed one at a
+time against it. Now the language refuses, and a site that treats a reading which was not taken
+as a value breaks at that site instead of passing.
 
 Absence is declared in advance, per scenario and per arm, so the places where it is correct are
 part of the scenario table rather than a discovery made while reading the results. Every cell that
@@ -66,7 +73,9 @@ RELAY_SOURCE = ROOT / "packages" / "codex-session-relay" / "src"
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 
 SOURCE = "hook-comparison"
-HARNESS_VERSION = 1
+# 2 since CRW-103: a reading that was not taken is rendered as an object naming what was not read
+# and why, where it used to be printed as the bare string a real answer could also have been.
+HARNESS_VERSION = 2
 
 # The relay declares this floor in its own metadata, and the guard is imported by the command this
 # harness runs. Below it there is no run to report on, so the refusal is the answer and it is
@@ -156,10 +165,123 @@ FIRING_CELLS = tuple(cell for cell, _s, _p, _q in CELLS if cell not in ARM_CELLS
 # must then be a place something declared an absence to be normal.
 ABSENCE_ANSWERS = (reading.ABSENT, NOT_PUBLISHED, NOT_RESERVED, None)
 
-# The answers that are a reading which did not happen rather than something a reading found. They
-# are non-empty strings, so truthiness, uniqueness and "is anything there" all let them through,
-# and every place that consumes a cell has to exclude them before asking its own question.
+# The states a producer OUTSIDE this file answers in when its reading did not happen. The runtime
+# modules carry these as the state of a Reading, where the state is a field of its own and the
+# value sits beside it, so a record read off disk can still arrive carrying one as text. read()
+# converts them, so this names what has to be converted rather than what may be consumed.
 NOT_A_VALUE = (reading.UNREADABLE, reading.ACCESS_ERROR)
+
+
+class NotAValue(Exception):
+    """Raised where a reading that was not taken is used as though it were a value.
+
+    Deliberately NOT a TypeError. reading.SHAPE_FAILURES carries TypeError and reading.region
+    turns one into a quiet Refused reporting "could not read", so a TypeError subclass could be
+    converted into precisely the silent unreadable reading this arrangement exists to refuse.
+    Measured rather than assumed: a TypeError subclass raised inside a region comes back out as
+    state UNREADABLE, and an Exception subclass comes back out as itself.
+    """
+
+
+class Unreadable(object):
+    """A reading that could not be taken. It is not a value and it will not act like one.
+
+    CRW-68 closed twenty-one consumption sites by hand because this answer was the non-empty
+    string UNREADABLE. A non-empty string is truthy, compares unequal to every real answer,
+    hashes into a set, and satisfies "is there something there" - three separate checks, and one
+    string walked through all of them. Nothing but attention at each site kept it out, so a new
+    site reopened it. Here every use that treats it as a value raises NotAValue instead, which
+    moves the guarantee from attention to the language.
+
+    ONE INSTANCE PER READING, and never a module-level one. That is the invariant this class
+    rests on rather than a detail of how it is built. CPython compares by identity before it
+    calls __eq__ inside a container, so with a shared sentinel both x in (x,) and the mapping
+    comparison {a: x} == {a: x} answer equal without ever reaching __eq__ - and the second is
+    exactly the comparison stability() makes over two source digests. A shared sentinel would
+    therefore report two digests nobody could take as the same bytes, which is the defect the
+    comment there already warns about. A fresh instance carrying its own reason cannot.
+
+    repr() stays readable on purpose, so a traceback and a failing assertion can still say which
+    reading failed and why.
+    """
+
+    __slots__ = ("state", "why")
+
+    def __init__(self, why, state=reading.UNREADABLE):
+        self.state = state
+        self.why = why
+
+    def __repr__(self):
+        return "<not read: " + str(self.state) + ": " + str(self.why) + ">"
+
+    def rendered(self):
+        """The JSON form, which is not a value there either: an object equals no cell's answer.
+
+        It carries its own reason because the places that hold one are not all cells. A cell has
+        a detail field beside it and repeats the reason; sourceDigests, workingTree and the
+        containment answers have nothing beside them, so the reason travels with the value.
+        """
+        return {"notRead": self.state, "why": self.why}
+
+    def _refuse(self, how):
+        raise NotAValue("a reading that was not taken was " + how + ", which is something only"
+                        " a value can be: " + str(self.why))
+
+    def __eq__(self, other):
+        self._refuse("compared for equality")
+
+    def __ne__(self, other):
+        self._refuse("compared for inequality")
+
+    def __lt__(self, other):
+        self._refuse("ordered")
+
+    __le__ = __gt__ = __ge__ = __lt__
+
+    def __bool__(self):
+        self._refuse("asked whether it is true")
+
+    def __hash__(self):
+        self._refuse("hashed into a set or used as a key")
+
+    def __str__(self):
+        self._refuse("formatted as text")
+
+    def __format__(self, specification):
+        self._refuse("formatted as text")
+
+    def __len__(self):
+        self._refuse("measured for length")
+
+    def __iter__(self):
+        self._refuse("iterated")
+
+    def __contains__(self, other):
+        self._refuse("asked what it contains")
+
+    def __getitem__(self, key):
+        self._refuse("indexed")
+
+
+def not_read(value):
+    """Whether this is a reading that was not taken, rather than something a reading found.
+
+    The one question a consumer may ask about one. It is an isinstance rather than a comparison,
+    because a comparison is the thing that cannot be trusted here: what it would have to compare
+    against is the answer that is not a value.
+    """
+    return isinstance(value, Unreadable)
+
+
+def _answered(value, wanted):
+    """Whether this reading answered exactly this. A reading that was not taken answers no.
+
+    Answering no is safe only because every place that asks this collects the readings that were
+    not taken beside it and cannot be met while that list is non-empty. The two are written next
+    to each other for that reason: "it did not say this" and "nobody could read whether it said
+    this" are different facts, and only one of them is about the hook.
+    """
+    return not not_read(value) and value == wanted
 
 # A managed scenario is one whose workspace a marker names. Only there can the guard select an
 # assignment, so only there is a published observation something to require.
@@ -267,8 +389,8 @@ NOT_PERFORMED = "not_performed"
 # taken. Dropping the unreadable sample and concluding from what is left reports a bound as kept on
 # evidence nobody has, which is the substitution the whole arrangement refuses.
 def unreadable_among(values):
-    """Which of these readings could not be taken."""
-    return [str(value) for value in values if value == reading.UNREADABLE]
+    """Which of these readings could not be taken, each naming why."""
+    return [value.why for value in values if not_read(value)]
 
 
 def across(scope, values, predicate):
@@ -291,9 +413,18 @@ def judged(met, not_taken):
     only fires when a not-taken count is already nonzero, which never happens in a healthy run, so
     it watched the property without ever exercising it. Here the guard cannot be left out, because
     there is nowhere else to compute the answer.
+
+    met may be a callable, and then it is CALLED ONLY AFTER the count is checked. That makes the
+    ordering structural instead of remembered: a met expression that reads a cell cannot run at
+    all while one of the readings under it was not taken, where before it ran and its answer was
+    thrown away afterwards. Three of them read cell values directly and would now raise rather
+    than return false. It also closes a trap in the old shape, because an uncalled function is
+    truthy, so a predicate passed by mistake used to produce a true verdict.
     """
     count = not_taken if isinstance(not_taken, int) else len(not_taken or ())
-    return bool(met) and not count
+    if count:
+        return False
+    return bool(met() if callable(met) else met)
 
 # The contract fixes these at skills/crw-run/references/hook-contract.md, "Decision criteria, fixed
 # before implementation". They are neither restated nor extended: where this arrangement cannot
@@ -368,8 +499,11 @@ def _unreadable(cell, source, path, detail):
 
     A distinct answer, not a negative one. Returning False here, or falling through to whatever
     the neighbouring cell said, is the defect this module exists to refuse.
+
+    Distinct by TYPE since CRW-103, so a consumer that treats it as the value it sits beside
+    breaks at that consumer rather than being let through by it.
     """
-    return _cell(cell, source, path, reading.UNREADABLE, False, detail)
+    return _cell(cell, source, path, Unreadable(detail), False, detail)
 
 
 def _absent(cell, source, path, detail):
@@ -389,7 +523,7 @@ def read(cell, payloads):
     The only accessor. It takes the payload of the declared source, confirms the payload is the one
     that source produces, walks the declared path and returns what it found. A source that declared
     an absence answers ABSENT with that source's reason; every other way of failing to reach an
-    answer returns UNREADABLE naming why.
+    answer returns an Unreadable naming why.
     """
     declared_cell, source, path, _producer = _row(cell)
     payload = payloads.get(source)
@@ -411,12 +545,19 @@ def read(cell, payloads):
                 return _absent(declared_cell, source, path, why)
             return _unreadable(declared_cell, source, path, "the reading has no " + repr(key))
         found = found[key]
-    if found == reading.UNREADABLE:
+    if not_read(found) or found in NOT_A_VALUE:
         # A producer that already said it could not read is not made readable by the fact that its
         # answer was where this table expected it. The path being reachable answers "was there an
         # answer here", which is a different question from "was the reading made".
+        #
+        # Both shapes are converted here because read() is the only door. A producer in this file
+        # hands over the type; a record read off disk carries the state as text, and ACCESS_ERROR
+        # used to walk straight through this line as a perfectly good value. A cell whose value
+        # was either spelling would be exactly the defect the type removes.
         return _unreadable(declared_cell, source, path,
-                           str(payload.get("detail") or "the reading reported itself unreadable"))
+                           str(payload.get("detail")
+                               or (found.why if not_read(found)
+                                   else "the reading reported itself unreadable")))
     return _cell(declared_cell, source, path, found, True)
 
 
@@ -501,10 +642,13 @@ class Arm(object):
             done = subprocess.run(self.argv, capture_output=True, text=True, timeout=300,
                                   env=self.environment)
         except subprocess.TimeoutExpired:
-            return {"source": INSTALL, "exitCode": reading.UNREADABLE,
+            return {"source": INSTALL,
+                    "exitCode": Unreadable("the install did not finish within its timeout"),
                     "detail": "the install did not finish within its timeout"}
         except OSError as error:
-            return {"source": INSTALL, "exitCode": reading.UNREADABLE,
+            return {"source": INSTALL,
+                    "exitCode": Unreadable("the install could not be started: " + str(error),
+                                           state=reading.ACCESS_ERROR),
                     "detail": "the install could not be started: " + str(error)}
         try:
             payload = json.loads(done.stdout) if done.stdout.strip() else {}
@@ -854,7 +998,8 @@ def journal_payload(record, unidentifiable=None):
     that failed and must never pass as one that was taken.
     """
     if unidentifiable:
-        return {"source": JOURNAL, "detail": unidentifiable, "adapterOutcome": reading.UNREADABLE}
+        return {"source": JOURNAL, "detail": unidentifiable,
+                "adapterOutcome": Unreadable(unidentifiable)}
     if record is None:
         return {"source": JOURNAL, "absent": NO_REGISTRATION}
     payload = dict(record)
@@ -866,7 +1011,7 @@ def _faulted(source, fired, keys):
     """A firing that never completed. Its readings could not be taken, and say so."""
     payload = {"source": source, "detail": fired["faulted"]}
     for key in keys:
-        payload[key] = reading.UNREADABLE
+        payload[key] = Unreadable(fired["faulted"])
     return payload
 
 
@@ -946,8 +1091,10 @@ def _there(path, present, missing):
         found = path.stat()
     except FileNotFoundError:
         return missing
-    except OSError:
-        return reading.UNREADABLE
+    except OSError as error:
+        return Unreadable("whether a file is at " + str(path) + " could not be established: "
+                          + type(error).__name__ + ": " + str(error),
+                          state=reading.ACCESS_ERROR)
     return present if stat.S_ISREG(found.st_mode) else missing
 
 
@@ -994,7 +1141,7 @@ def judge(arm, declared, cells, expected):
     if arm.name == OFF:
         for cell in FIRING_CELLS:
             found = cells[cell]
-            if found["value"] != reading.ABSENT:
+            if not _answered(found["value"], reading.ABSENT):
                 disagreed.append({"cell": cell, "wanted": reading.ABSENT,
                                   "found": found["value"]})
             elif found.get("detail") != NO_REGISTRATION:
@@ -1003,7 +1150,7 @@ def judge(arm, declared, cells, expected):
         return {"passed": not disagreed, "disagreed": disagreed,
                 "because": "the off arm registered nothing, so nothing ran"}
 
-    if cells["adapterOutcome"]["value"] != "guard_answered":
+    if not _answered(cells["adapterOutcome"]["value"], "guard_answered"):
         return {"passed": False, "unmeasured": True, "disagreed": [
             {"cell": "adapterOutcome", "wanted": "guard_answered",
              "found": cells["adapterOutcome"]["value"]}],
@@ -1011,10 +1158,11 @@ def judge(arm, declared, cells, expected):
                        " it does not mean no omission was present"}
     for cell, wanted in expected.items():
         found = cells[cell]["value"]
-        if found in NOT_A_VALUE and wanted not in NOT_A_VALUE:
-            # Before any predicate sees it. recordedAs expects "a path was named", and the
-            # sentinel is a non-empty string, so a reading that failed would have satisfied the
-            # one question the row asks there.
+        if not_read(found):
+            # Before any predicate sees it. recordedAs expects "a path was named", and while the
+            # answer was a non-empty string a reading that failed satisfied the one question the
+            # row asks there. The type answers that question correctly on its own now, and this
+            # stays because a wrong answer and a reading nobody took are different findings.
             disagreed.append({"cell": cell, "wanted": wanted, "found": found,
                               "because": "a reading that could not be taken is not a value"})
             continue
@@ -1025,7 +1173,7 @@ def judge(arm, declared, cells, expected):
     published = cells["recordedAs"]["value"]
     unmeasured = (declared["kind"] == MANAGED
                   and expected.get("recordedAs", PUBLISHED) == PUBLISHED
-                  and (published in NOT_A_VALUE or not published))
+                  and (not_read(published) or not published))
     verdict = {"passed": not disagreed and not unmeasured, "disagreed": disagreed}
     if unmeasured:
         verdict["unmeasured"] = True
@@ -1052,8 +1200,8 @@ def _firings(scenarios, arm, names=None):
 def _reported(fired, observation):
     """Whether this firing reported that observation, on a reading that was actually taken."""
     cells = fired["cells"]
-    return (cells["adapterOutcome"]["value"] == "guard_answered"
-            and cells["observation"]["value"] == observation)
+    return (_answered(cells["adapterOutcome"]["value"], "guard_answered")
+            and _answered(cells["observation"]["value"], observation))
 
 
 def _detection(scenarios, observation, injected_names):
@@ -1063,8 +1211,8 @@ def _detection(scenarios, observation, injected_names):
     # answers, and counting them together would let an unreadable journal read as a detector that
     # stayed silent. Neither concludes the criterion met; only one of them is about the hook.
     unreadable = [declared["name"] + "#" + str(index) for declared, index, fired in injected
-                  if fired["cells"]["observation"]["value"] == reading.UNREADABLE
-                  or fired["cells"]["adapterOutcome"]["value"] == reading.UNREADABLE]
+                  if not_read(fired["cells"]["observation"]["value"])
+                  or not_read(fired["cells"]["adapterOutcome"]["value"])]
     return {"answer": MEASURED, "injected": len(injected), "reported": len(reported),
             "unreadable": unreadable, "arms": [ON],
             "met": judged(len(injected) > 0 and len(injected) == len(reported), unreadable),
@@ -1117,22 +1265,23 @@ def measures(scenarios):
     watched = ("unmanaged", "declared_blocked_needs_input", "declared_interrupted")
     guarded = _firings(scenarios, ON, watched)
     reserved = [declared["name"] for declared, _i, fired in guarded
-                if fired["cells"]["heldFile"]["value"] == RESERVED]
+                if _answered(fired["cells"]["heldFile"]["value"], RESERVED)]
     printed = [declared["name"] for declared, _i, fired in guarded
-               if fired["cells"]["printedBlock"]["value"] == PRINTED_A_BLOCK]
+               if _answered(fired["cells"]["printedBlock"]["value"], PRINTED_A_BLOCK)]
     # A reading that could not be taken is not evidence that nothing was held. Dropping it from
     # the list made the criterion read as met on the strength of a reservation nobody could look
     # at, which is the one substitution this whole arrangement refuses.
     unreadable = [declared["name"] + "/" + cell for declared, _i, fired in guarded
                   for cell in ("heldFile", "printedBlock")
-                  if fired["cells"][cell]["value"] not in
+                  if not_read(fired["cells"][cell]["value"])
+                  or fired["cells"][cell]["value"] not in
                   (RESERVED, NOT_RESERVED, PRINTED_A_BLOCK, PRINTED_NOTHING)]
     answers["wrongBlock"] = {
         "answer": MEASURED,
         "criterion": "zero holds on unmarked sessions, on blocked_needs_input and on interrupted",
         "watched": list(watched), "reserved": reserved, "printedABlock": printed,
         "unreadable": unreadable, "arms": [ON],
-        "met": judged(not reserved and not printed, unreadable),
+            "met": judged(not reserved and not printed, unreadable),
         "narrowing": "the holds counted are this hook's own, which is what the contract makes it"
                      " responsible for. Whether a host would honour a printed block is not"
                      " observed here, and a default installation is observe mode and prints none.",
@@ -1188,14 +1337,19 @@ def supplemental(scenarios):
             "what": "one turn, the registered command fired twice",
             "reservations": reservations,
             "observationsPublished": published,
-            "notTaken": len(not_taken), "arms": [ON],
-            # The claim is about the reservation, so the reservation is what is checked: the
-            # create-once file is there after both firings, and the two firings published two
-            # distinct observations rather than one record read twice. Counting only the
-            # observations would have reported success for a turn that reserved nothing at all.
-            "met": judged(len(firings) == 2 and reservations == [RESERVED, RESERVED]
-                          and len([one for one in published if one]) == 2
-                          and len(set(one for one in published if one)) == 2, not_taken),
+                "notTaken": len(not_taken), "arms": [ON],
+                # The claim is about the reservation, so the reservation is what is checked: the
+                # create-once file is there after both firings, and the two firings published two
+                # distinct observations rather than one record read twice. Counting only the
+                # observations would have reported success for a turn that reserved nothing at all.
+                #
+                # Passed as a callable, because every comparison below reads a cell: the list
+                # equality, the truthiness and the set all refuse an unread reading rather than
+                # answering about it, so the guard has to run before they do.
+                "met": judged(lambda: len(firings) == 2
+                              and reservations == [RESERVED, RESERVED]
+                              and len([one for one in published if one]) == 2
+                              and len(set(one for one in published if one)) == 2, not_taken),
             "isNot": "the duplicate execution measure. It is the hold leg of it and none of the"
                      " rest, because nothing here verifies, corrects, or restarts a daemon.",
         },
@@ -1204,8 +1358,8 @@ def supplemental(scenarios):
             "arms": list(ARMS),
             "values": foreign_values,
             "notTaken": len(foreign_not_taken),
-            "met": judged(across(ARMS, foreign_values,
-                                 lambda value: value == FOREIGN_PRESENT),
+            "met": judged(lambda: across(ARMS, foreign_values,
+                                        lambda value: value == FOREIGN_PRESENT),
                           foreign_not_taken),
             "isNot": "evidence that the two hooks interact at run time. The foreign command is"
                      " never executed here; this reads the file, not a decision.",
@@ -1248,7 +1402,9 @@ def source_identity():
     the dirty state is recorded beside it, and the files whose contents decide a run are digested,
     which identifies them whether or not anything is committed.
     """
-    identity = {"repositoryCommit": repository_commit(), "workingTree": reading.UNREADABLE}
+    identity = {"repositoryCommit": repository_commit(),
+                "workingTree": Unreadable("whether the working tree was clean could not be"
+                                          " established")}
     try:
         done = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
                               capture_output=True, text=True, timeout=60)
@@ -1278,12 +1434,14 @@ def _digest(target):
             path for path in target.rglob("*") if path.is_file()
             and "__pycache__" not in path.parts)
         if not paths:
-            return reading.UNREADABLE
+            return Unreadable("nothing under " + str(target) + " could be listed to digest")
         for path in paths:
             summed.update(str(path.relative_to(ROOT)).encode("utf-8"))
             summed.update(path.read_bytes())
-    except OSError:
-        return reading.UNREADABLE
+    except OSError as error:
+        return Unreadable("the bytes of " + str(target) + " could not be read: "
+                          + type(error).__name__ + ": " + str(error),
+                          state=reading.ACCESS_ERROR)
     return summed.hexdigest()
 
 
@@ -1294,8 +1452,12 @@ def repository_commit():
     except (OSError, subprocess.TimeoutExpired):
         # A timeout is as ordinary here as a missing git, and letting it escape would end the
         # command with no document at all over a question about provenance.
-        return reading.UNREADABLE
-    return done.stdout.strip() if done.returncode == 0 else reading.UNREADABLE
+        return Unreadable("git rev-parse could not be run, so the commit is not established",
+                          state=reading.ACCESS_ERROR)
+    if done.returncode != 0:
+        return Unreadable("git rev-parse exited " + str(done.returncode) + ", so the commit is"
+                          " not established")
+    return done.stdout.strip()
 
 
 def own_directory(where):
@@ -1327,8 +1489,10 @@ def owned(path, root):
     """
     try:
         resolved = Path(path).resolve()
-    except OSError:
-        return reading.UNREADABLE
+    except OSError as error:
+        return Unreadable("this path could not be resolved, so where it leads is not"
+                          " established: " + type(error).__name__ + ": " + str(error),
+                          state=reading.ACCESS_ERROR)
     try:
         resolved.relative_to(Path(root).resolve())
     except (ValueError, OSError):
@@ -1344,8 +1508,7 @@ def containment(root, places):
     """
     answers = dict((str(place), owned(place, root)) for place in places)
     outside = sorted(place for place, answer in answers.items() if answer is False)
-    not_taken = sorted(place for place, answer in answers.items()
-                       if answer == reading.UNREADABLE)
+    not_taken = sorted(place for place, answer in answers.items() if not_read(answer))
     return {"checked": len(places), "outside": outside, "notTaken": not_taken,
             "met": judged(not outside, not_taken),
             "what": "every place this run creates resolves inside the directory it made for"
@@ -1357,10 +1520,38 @@ def containment(root, places):
                             " source the subprocesses import."}
 
 
-def refusal(detail):
-    """An answer for a run that cannot be made, printed instead of rows nobody took."""
-    return {"source": SOURCE, "harnessVersion": HARNESS_VERSION, "refused": detail,
-            "pythonVersion": ".".join(str(part) for part in sys.version_info[:3])}
+def refusal(detail, at=None, defect=None):
+    """An answer for a run that cannot be made, printed instead of rows nobody took.
+
+    A refusal is the answer for two different things and they must not read alike. The relay's
+    version floor and a root that could not be created are facts about the environment; a
+    consumption site that used a reading which was not taken as a value is a defect in this file.
+    The second carries the frame that raised, because a defect reported without a location is
+    reported as a data problem and the place it came from is gone.
+    """
+    answer = {"source": SOURCE, "harnessVersion": HARNESS_VERSION, "refused": detail,
+              "pythonVersion": ".".join(str(part) for part in sys.version_info[:3])}
+    if at:
+        answer["raisedAt"] = at
+    if defect:
+        answer["defect"] = defect
+    return answer
+
+
+def render(value):
+    """The JSON form of anything in this document that is not a value.
+
+    Handed to json.dumps as default= rather than applied as a walk over the places that might
+    hold one. The encoder calls it wherever the object actually sits - inside a cell, inside a
+    source identity, inside a list - while a walk is a list of places and can miss one. A missed
+    one would be worse than a wrong answer here, because json.dump streams: it would write a
+    truncated document and then raise, and one JSON object on stdout is what this command
+    promises.
+    """
+    if not_read(value):
+        return value.rendered()
+    raise TypeError("this document carries something that cannot be written as JSON: "
+                    + repr(value))
 
 
 def absence_places():
@@ -1395,11 +1586,15 @@ def stability(earlier, later):
     """
     digests = list((earlier.get("sourceDigests") or {}).values())
     digests += list((later.get("sourceDigests") or {}).values())
-    # Equality is not enough: a digest that could not be taken is the same sentinel at both ends,
-    # so an unreadable source would compare equal to itself and report the bytes as identified.
+    # Equality is not enough, and since CRW-103 it is not even available. While the answer was a
+    # sentinel string, a digest that could not be taken was the SAME sentinel at both ends, so an
+    # unreadable source compared equal to itself and reported the bytes as identified. A reading
+    # that was not taken is now a fresh object per reading, and CPython only shortcuts a mapping
+    # comparison on identity, so the two ends no longer answer equal - they refuse to compare at
+    # all, and the guard below is what keeps that refusal from running.
     unread = unreadable_among(digests)
     return {"before": earlier, "after": later, "digestsNotTaken": len(unread),
-            "met": judged(earlier.get("sourceDigests") == later.get("sourceDigests")
+            "met": judged(lambda: earlier.get("sourceDigests") == later.get("sourceDigests")
                           and bool(earlier.get("sourceDigests")), unread),
             "what": "every source whose contents decide a run was readable and had the same digest"
                     " before the first subprocess and after the last"}
@@ -1416,7 +1611,8 @@ def compare(root):
                  for cell in ARM_CELLS}
         wanted = ARM_INSTALL[name]
         disagreed = [{"cell": cell, "wanted": value, "found": cells[cell]["value"]}
-                     for cell, value in wanted.items() if cells[cell]["value"] != value]
+                     for cell, value in wanted.items()
+                     if not _answered(cells[cell]["value"], value)]
         scenarios["_arms"][name] = dict(
             cells, codexHome=str(arm.codex_home), argv=arm.argv,
             installed={"passed": not disagreed, "disagreed": disagreed, "wanted": wanted})
@@ -1501,11 +1697,9 @@ def main(argv=None):
     if sys.version_info < RELAY_PYTHON:
         # The relay declares this floor and the command under test imports it. Below it there is no
         # run to report on, and rows that were never taken must not be printed as though they were.
-        json.dump(refusal(
+        _print(refusal(
             "the relay requires Python " + ".".join(str(p) for p in RELAY_PYTHON) + " or newer,"
-            " so no arm can be driven on this interpreter and no row was taken"),
-            sys.stdout, indent=2, sort_keys=True)
-        sys.stdout.write("\n")
+            " so no arm can be driven on this interpreter and no row was taken"))
         return 2
 
     keep = args.root is not None
@@ -1513,9 +1707,7 @@ def main(argv=None):
         root = own_directory(args.root) if keep else Path(
             tempfile.mkdtemp(prefix="hook-comparison-")).resolve()
     except OSError as error:
-        json.dump(refusal("a directory for this run could not be created: " + str(error)),
-                  sys.stdout, indent=2, sort_keys=True)
-        sys.stdout.write("\n")
+        _print(refusal("a directory for this run could not be created: " + str(error)))
         return 2
     answer = None
     try:
@@ -1523,6 +1715,16 @@ def main(argv=None):
         answer = document(compare(root), root, earlier)
     except RelayError as error:
         answer = refusal("a relay command a scenario needed refused: " + str(error))
+    except NotAValue as error:
+        # The one failure this file is about, reported as what it is. A consumption site used a
+        # reading that was not taken as though it were a value; the type refused, and the refusal
+        # names the site rather than leaving the run to be read as a data problem.
+        answer = refusal("a consumption site used a reading that was not taken as a value: "
+                         + str(error)[:400], at=reading.where(error),
+                         defect="this is a defect in this harness, not a problem with what it"
+                                " read. The reading that was not taken is a distinct type, and"
+                                " the site that consumed it asked it a question only a value can"
+                                " answer.")
     except BaseException as error:
         # Named rather than allowed to escape, which is the rule guard.evaluate states for itself:
         # a detector that dies detects nothing and leaves no trace it ran, and that is worse than
@@ -1531,15 +1733,24 @@ def main(argv=None):
         # a traceback in place of the one document it promises. The type and message are carried
         # so a defect here is reported as a defect rather than as a data problem.
         answer = refusal("the comparison did not finish: " + type(error).__name__ + ": "
-                         + str(error)[:400])
+                         + str(error)[:400], at=reading.where(error))
     finally:
         if not keep:
             shutil.rmtree(root, ignore_errors=True)
-    json.dump(answer, sys.stdout, indent=2, sort_keys=True)
-    sys.stdout.write("\n")
+    _print(answer)
     if answer.get("refused"):
         return 2
     return 0 if answer["passed"] else 1
+
+
+def _print(answer):
+    """The one write to stdout, composed in full before any of it is written.
+
+    json.dump streams to the file object, so anything it cannot encode leaves a truncated
+    document behind and then raises. Composing the whole string first means an encoding failure
+    happens before a single byte is written, and one JSON object on stdout stays true.
+    """
+    sys.stdout.write(json.dumps(answer, default=render, indent=2, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":

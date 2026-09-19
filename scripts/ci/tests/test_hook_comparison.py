@@ -525,19 +525,19 @@ class ReadingTests(unittest.TestCase):
                     continue
                 found = harness.read(cell, kept)
                 if source == withheld:
-                    self.assertEqual(found["value"], harness.reading.UNREADABLE,
-                                     cell + " answered although " + withheld + " did not")
+                    self.assertTrue(harness.not_read(found["value"]),
+                                    cell + " answered although " + withheld + " did not")
                     self.assertIn(withheld, found["detail"])
                 else:
-                    self.assertNotEqual(found["value"], harness.reading.UNREADABLE,
-                                        cell + " went unreadable because " + withheld
-                                        + " was withheld, which is a question it was not asked")
+                    self.assertFalse(harness.not_read(found["value"]),
+                                     cell + " went unreadable because " + withheld
+                                     + " was withheld, which is a question it was not asked")
 
     def test_a_missing_key_answers_unreadable_and_says_which_key(self):
         every = self.payloads()
         del every["journal"]["observation"]
         found = harness.read("observation", every)
-        self.assertEqual(found["value"], harness.reading.UNREADABLE)
+        self.assertTrue(harness.not_read(found["value"]))
         self.assertIn("observation", found["detail"])
         self.assertFalse(found["readable"])
         # The neighbour reading the same payload is untouched.
@@ -555,10 +555,9 @@ class ReadingTests(unittest.TestCase):
 
         undeclared = self.payloads()
         del undeclared["hook-file"]["command"]
-        self.assertEqual(harness.read("firedCommand", undeclared)["value"],
-                         harness.reading.UNREADABLE,
-                         "a key missing without a declared reason is a failed reading, not an"
-                         " absence")
+        self.assertTrue(harness.not_read(harness.read("firedCommand", undeclared)["value"]),
+                        "a key missing without a declared reason is a failed reading, not an"
+                        " absence")
 
     def test_stdout_that_the_host_would_discard_is_not_a_delivered_block(self):
         """A block with no reason is a failed hook run that continues nothing.
@@ -595,7 +594,8 @@ class ReadingTests(unittest.TestCase):
         values = {"processExit": 0, "adapterOutcome": "guard_answered",
                   "observation": "receipt_missing", "guardDecision": "block",
                   "guardState": "receipt_missing", "printedBlock": "printed_a_block",
-                  "heldFile": "reserved", "recordedAs": harness.reading.UNREADABLE,
+                  "heldFile": "reserved", "recordedAs": unread("the firing wrote no journal"
+                                                              " record for this turn"),
                   "observationFile": "resolved", "firedCommand": "python3 x",
                   "journalElapsedMs": 5, "processWallMs": 9}
         cells = dict((cell, {"cell": cell, "value": value, "readable": True})
@@ -639,7 +639,7 @@ class ReadingTests(unittest.TestCase):
         every = self.payloads()
         every["journal"] = dict(every["journal"], source="stdout")
         found = harness.read("observation", every)
-        self.assertEqual(found["value"], harness.reading.UNREADABLE)
+        self.assertTrue(harness.not_read(found["value"]))
         self.assertIn("stamp", found["detail"])
 
     def test_a_producer_that_reported_itself_unreadable_stays_unreadable(self):
@@ -647,8 +647,26 @@ class ReadingTests(unittest.TestCase):
         every["journal"]["observation"] = harness.reading.UNREADABLE
         every["journal"]["detail"] = "the record could not be parsed"
         found = harness.read("observation", every)
-        self.assertEqual(found["value"], harness.reading.UNREADABLE)
+        self.assertTrue(harness.not_read(found["value"]))
         self.assertIn("could not be parsed", found["detail"])
+
+    def test_a_producer_that_could_not_ask_at_all_is_not_a_readable_answer_either(self):
+        """The other half of the partition, which used to walk straight through this door.
+
+        A record read off disk carries its state as text, and only one of the two spellings was
+        converted here: an ACCESS_ERROR arrived as a perfectly good value and filled the cell
+        with it. Both are readings nobody took and neither is something a cell answered.
+        """
+        every = self.payloads()
+        every["journal"]["observation"] = harness.reading.ACCESS_ERROR
+        every["journal"]["detail"] = "the journal could not be reached"
+        found = harness.read("observation", every)
+        self.assertFalse(found["readable"],
+                         "a reading that could not be asked at all was recorded as readable")
+        self.assertTrue(harness.not_read(found["value"]),
+                        "a reading that could not be asked at all filled the cell as though it"
+                        " were an answer")
+        self.assertIn("could not be reached", found["detail"])
 
     def test_the_environment_handed_to_a_subprocess_writes_nothing_into_the_checkout(self):
         """Asked of the function that builds it, because the promise is about what it hands over.
@@ -681,7 +699,7 @@ class ReadingTests(unittest.TestCase):
         os.symlink(str(loop), str(loop))
         real = root / "real"
         real.write_text("x", encoding="utf-8")
-        self.assertEqual(harness._there(loop, "present", "missing"), harness.reading.UNREADABLE)
+        self.assertTrue(harness.not_read(harness._there(loop, "present", "missing")))
         self.assertEqual(harness._there(root / "nope", "present", "missing"), "missing")
         self.assertEqual(harness._there(real, "present", "missing"), "present")
 
@@ -1453,6 +1471,635 @@ class RefusalTests(unittest.TestCase):
         self.assertNotIn("scenarios", answer)
         self.assertEqual(answer["source"], "hook-comparison")
 
+
+# ------------------------------------------------------------- CRW-103: a read failure is a type
+#
+# CRW-68 closed twenty-one consumption sites against a sentinel that was a non-empty string, and
+# the child who did it wrote that a type could not have escaped. These cases are that claim, asked
+# of the thing itself. They obtain the reading through the harness rather than naming a class, so
+# they say the same thing against either representation: at the commit this replaces they fail on
+# the property they name, not on a class that does not exist there yet.
+
+
+def unread(why="the record could not be parsed"):
+    """A reading that was not taken, obtained from the harness rather than spelled here.
+
+    A FRESH one every call, which is the representation's own invariant rather than a convenience
+    of this helper. CPython compares containers by identity before it calls __eq__, so one shared
+    instance would answer equal to itself inside a mapping - which is exactly the comparison the
+    digest stability judgment makes across the two ends of a run.
+    """
+    return harness.read("observation", {"journal": {"source": "journal",
+                                                    "observation": "UNREADABLE",
+                                                    "detail": why}})["value"]
+
+
+def rendered(payload):
+    """The document as JSON, asking anything that is not a value for its own written form.
+
+    Written here rather than taken from the harness so these cases run against either
+    representation. Before the change nothing needs writing out at all and the bare sentinel is
+    then visible in the value slots, which is the thing being measured.
+    """
+    def written(value):
+        own = getattr(value, "rendered", None)
+        if callable(own):
+            return own()
+        raise TypeError(repr(value))
+
+    return json.loads(json.dumps(payload, default=written, sort_keys=True))
+
+
+def bare_sentinels(payload, path=()):
+    """Every place the written document still spells a reading that was not taken as an answer."""
+    found = []
+    if isinstance(payload, dict):
+        for key, value in sorted(payload.items()):
+            if key != "notRead":
+                found.extend(bare_sentinels(value, path + (key,)))
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload):
+            found.extend(bare_sentinels(value, path + (index,)))
+    elif payload in ("UNREADABLE", "ACCESS_ERROR"):
+        found.append("/".join(str(one) for one in path))
+    return found
+
+
+class AReadFailureCannotBeUsedAsAValueTests(unittest.TestCase):
+    """The distinction is carried by the language, so a site that misuses it breaks at that site."""
+
+    def test_a_reading_that_was_not_taken_is_not_a_string(self):
+        """The whole defect in one line: it used to fit the slot a real answer occupies."""
+        self.assertNotIsInstance(unread(), str,
+                                 "a reading that was not taken is still spelled as an ordinary"
+                                 " answer, so every place that consumes one has to remember to"
+                                 " exclude it")
+
+    def test_the_three_checks_it_walked_through_no_longer_let_it_through(self):
+        """Truthiness, uniqueness and "is there something there" - the three CRW-68 names.
+
+        Each is written the way a consumption site writes it. Each must either refuse to answer
+        or answer that there is nothing. What none of them may do is answer that something is
+        there, which is what all three of them did.
+        """
+        for name, ask in (("truthiness", lambda value: bool(value)),
+                          ("uniqueness through a set",
+                           lambda value: len({value, "resolved"}) == 2),
+                          ("is there something there",
+                           lambda value: isinstance(value, str) and bool(value))):
+            with self.subTest(check=name):
+                try:
+                    answered = ask(unread())
+                except Exception:
+                    continue
+                self.assertFalse(answered,
+                                 "a reading that was not taken answered yes to " + name
+                                 + ", which is how one sentinel escaped three separate checks")
+
+    def test_the_question_the_row_actually_asks_is_answered_correctly_on_its_own(self):
+        """recordedAs asks whether a path was named. The old answer said yes without naming one.
+
+        Asked of the harness's own predicate rather than of a copy of it, because that predicate
+        is the consumption site this case is about.
+        """
+        asks = harness.PREDICATES[("recordedAs", harness.PUBLISHED)]
+        self.assertTrue(asks("hook/session/turn/0"), "a named path is a named path")
+        self.assertFalse(asks(unread()),
+                         "a reading that was not taken satisfied the question whether a path was"
+                         " named, without naming one")
+
+    def test_the_refusal_it_raises_cannot_be_swallowed_as_a_reading(self):
+        """The refusal must not be a shape reading.region converts into a quiet unreadable one.
+
+        reading.SHAPE_FAILURES carries TypeError and reading.region turns one into a Refused
+        reporting "could not read". A refusal of that type would therefore be convertible into
+        precisely the silent unreadable reading this representation exists to forbid, so the
+        exception is checked against that lattice rather than against a name.
+        """
+        value = unread()
+        raised = None
+        try:
+            value == "anything"
+        except BaseException as error:
+            raised = error
+        self.assertIsNotNone(raised,
+                             "using a reading that was not taken as a value raised nothing, so"
+                             " nothing but attention keeps it out of a slot a value occupies")
+        self.assertNotIsInstance(raised, harness.reading.SHAPE_FAILURES,
+                                 "the refusal is a shape reading.region converts into a quiet"
+                                 " unreadable reading, which is the swallow it exists to refuse")
+        with self.assertRaises(type(raised)):
+            with harness.reading.region("here", "a record"):
+                raise type(raised)("a consumer used a reading that was not taken as a value")
+
+    def test_a_new_consumption_site_that_treats_it_as_a_value_is_revealed(self):
+        """A new site, written here the careless way, and driven. Measured rather than claimed.
+
+        This IS the new consumption site the issue is about: nothing below asks whether the
+        reading was taken, which is how the twenty-one closed ones were written before CRW-68
+        closed them one at a time. Each must either break or report an absence, and none of them
+        may report that something is there.
+        """
+        careless = (
+            ("compares it with the answer it expected", lambda v: v == "resolved"),
+            ("asks whether anything is there", lambda v: bool(v)),
+            ("puts it in a set beside a real answer", lambda v: {v, "resolved"}),
+            ("formats it into a message", lambda v: "the file is " + str(v)),
+            ("uses it as a key", lambda v: {v: 1}),
+            ("tests it against a tuple of answers", lambda v: v in ("resolved", "reserved")),
+            ("sorts it beside a real answer", lambda v: sorted([v, "resolved"])),
+            ("writes it into a document", lambda v: json.dumps({"value": v})),
+        )
+        for how, site in careless:
+            with self.subTest(site=how):
+                try:
+                    answered = site(unread())
+                except Exception:
+                    continue
+                self.assertFalse(
+                    answered,
+                    "a new consumption site that " + how + " got an answer out of a reading that"
+                    " was not taken, so this site has to remember to exclude it and a site that"
+                    " forgets reopens CRW-68")
+
+
+# Positions where a reading that was not taken changes no verdict, because nothing judges that
+# cell there. judge() iterates the cells a scenario declared an expectation for, and neither of
+# these appears in a scenario row or in any measure. Declared rather than skipped: a cell that
+# stops being judged, or a new one nothing judges, has to be written down here. Giving them a
+# verdict would be adjudication, which CRW-103 excludes - it is CRW-68's class, a reading nobody
+# judges, and it is reported as a follow-up rather than closed here.
+UNJUDGED_CELLS = (("on", "firedCommand"), ("on", "journalElapsedMs"))
+
+# What the sweep below does NOT reach, emitted here rather than left for the reader to assume.
+# It drives judge(), measures(), supplemental(), containment(), stability(), document() and the
+# writing out. It does not drive read(), fire(), relay() or an install, so a producer that stops
+# handing over a reading that was not taken is not visible from here; the cases above drive read()
+# directly and the boundary cases drive the rest. It also reproduces compare()'s arm verdict
+# rather than calling it, because compare() cannot be driven without a run.
+SWEEP_DOES_NOT_REACH = (
+    "read(), which is driven directly by the reading cases",
+    "fire(), relay() and the installs, which need a run",
+    "compare(), whose arm verdict is reproduced here because it cannot be driven without a run",
+)
+
+
+class _SyntheticArm(object):
+    """The name is all a verdict reads off an arm."""
+
+    def __init__(self, name):
+        self.name = name
+
+
+def _declared(name):
+    for one in harness.SCENARIOS:
+        if one["name"] == name:
+            return one
+    raise KeyError(name)
+
+
+def _expectations(declared):
+    found = [declared["expected"]]
+    if declared["fireTwice"]:
+        found.append(declared["second"])
+    return found
+
+
+def _disagrees(value, wanted):
+    """Whether this reading failed to answer exactly this, asked without comparing a non-value.
+
+    Written against the shape rather than against a class so it reads the same before and after
+    the representation changed, which is what lets this whole sweep run at either commit.
+    """
+    if callable(getattr(value, "rendered", None)):
+        return True
+    return value != wanted
+
+
+def _positions():
+    """Every place a cell value sits in a document, from this module's own inventories."""
+    found = [("_arms", arm, 0, cell) for arm in ARMS for cell in ARM_CELLS]
+    for name in SCENARIOS:
+        for arm in ARMS:
+            for index in range(FIRINGS[name]):
+                found.extend((name, arm, index, cell) for cell in FIRING_CELLS)
+    return tuple(found)
+
+
+def _answers(declared, expected, arm, index):
+    """What a healthy arm reads in every firing cell, from the expectations declared in advance."""
+    if arm == "off":
+        return dict((cell, "ABSENT") for cell in FIRING_CELLS)
+    values = {"adapterOutcome": "guard_answered",
+              "firedCommand": "python3 completion_hook.py settings.json",
+              "journalElapsedMs": 5, "processWallMs": 9}
+    for cell, wanted in expected.items():
+        if cell == "recordedAs":
+            values[cell] = ("hook/" + declared["name"] + "/" + str(index)
+                            if wanted == "published" else None)
+        else:
+            values[cell] = wanted
+    return values
+
+
+def _cells(values, detail=None, replaced=None):
+    built = {}
+    for cell, value in values.items():
+        answer = {"cell": cell, "value": value, "answeredBy": "synthetic",
+                  "readingPath": [], "readable": cell != replaced}
+        if cell == replaced:
+            answer["detail"] = "a reading this sweep replaced with one that was not taken"
+        elif detail:
+            answer["detail"] = detail
+        built[cell] = answer
+    return built
+
+
+def _build(root, mutate=None):
+    """Every cell position a document carries, assembled, with at most one reading replaced.
+
+    Assembled rather than run. The run cases drive the relay, the installs and the firings; what
+    this needs is every position at once, so exactly one of them can be handed a reading that was
+    not taken. Everything that JUDGES is the harness's own.
+    """
+    where, replacement = mutate if mutate else (None, None)
+
+    def value_of(place, cell, healthy):
+        return replacement if where == place + (cell,) else healthy
+
+    def replaced_in(place):
+        return where[3] if where is not None and where[:3] == place else None
+
+    scenarios = {"_arms": {}, "_wrote": [root / "inside"]}
+    for arm in ARMS:
+        place = ("_arms", arm, 0)
+        wanted = harness.ARM_INSTALL[arm]
+        values = dict((cell, value_of(place, cell, answer))
+                      for cell, answer in wanted.items())
+        cells = _cells(values, replaced=replaced_in(place))
+        disagreed = [{"cell": cell, "wanted": answer, "found": cells[cell]["value"]}
+                     for cell, answer in wanted.items()
+                     if _disagrees(cells[cell]["value"], answer)]
+        scenarios["_arms"][arm] = dict(
+            cells, codexHome=str(root / arm), argv=["synthetic"],
+            installed={"passed": not disagreed, "disagreed": disagreed, "wanted": dict(wanted)})
+
+    for name in SCENARIOS:
+        declared = _declared(name)
+        scenarios[name] = {}
+        for arm in ARMS:
+            firings = []
+            for index, expected in enumerate(_expectations(declared)):
+                place = (name, arm, index)
+                healthy = _answers(declared, expected, arm, index)
+                values = dict((cell, value_of(place, cell, answer))
+                              for cell, answer in healthy.items())
+                cells = _cells(values,
+                               detail=harness.NO_REGISTRATION if arm == "off" else None,
+                               replaced=replaced_in(place))
+                firings.append({
+                    "cells": cells, "expected": dict(expected),
+                    "provenance": {"stopPayload": "assembled by this check, never delivered"},
+                    "verdict": harness.judge(_SyntheticArm(arm), declared, cells, expected)})
+            scenarios[name][arm] = {"built": {"workspace": "w", "session": "s", "turn": "t"},
+                                    "firings": firings}
+    return scenarios
+
+
+FIXED_IDENTITY = {"repositoryCommit": "0" * 40, "workingTree": "clean",
+                  "sourceDigests": {"harness": "d" * 64}}
+
+
+def _document(root, mutate=None):
+    """One document over those readings, computed by the harness from end to end."""
+    with mock.patch.object(harness, "source_identity", lambda: dict(FIXED_IDENTITY)):
+        return harness.document(_build(root, mutate), root, dict(FIXED_IDENTITY))
+
+
+def _failed(body):
+    return set(where for where, value in harness.judgments(body) if value is False)
+
+
+# Every way a judgment says a reading under it was not taken. A judgment that newly fails must
+# say so through one of these, because "it answered something else" and "nobody could read what
+# it answered" are different findings and only the second is what this sweep injects.
+NOT_TAKEN_CHANNELS = ("unreadable", "notTaken", "timingsNotTaken", "digestsNotTaken")
+
+
+def _carrier(body, where):
+    node = body
+    for step in where.split("/")[:-1]:
+        node = node[int(step)] if isinstance(node, list) else node[step]
+    return node
+
+
+class TheSweepDrivesTheRefusalRatherThanWatchingForItTests(unittest.TestCase):
+    """A reading that was not taken, put in every position one can sit in, and the result read.
+
+    Nothing in this suite used to construct one inside a whole document, so the refusal the
+    representation rests on would first have fired on a real run - which is the shape this file
+    already names elsewhere: a guard that watches a property without ever being driven. Here it
+    is driven at every position instead, and what each position does about it is measured.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(tempfile.mkdtemp(prefix="hook-comparison-sweep-"))
+        (cls.root / "inside").mkdir(parents=True, exist_ok=True)
+        cls.baseline = _document(cls.root)
+        cls.baseline_failed = _failed(cls.baseline)
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        shutil.rmtree(str(cls.root), ignore_errors=True)
+
+    def test_the_assembled_document_without_any_injection_passes(self):
+        """The control this whole sweep is measured against. A baseline that already failed
+        would make every mutant below agree with it for the wrong reason."""
+        self.assertTrue(self.baseline["passed"],
+                        "the assembled readings do not describe a healthy run, so a mutant that"
+                        " fails proves nothing: " + json.dumps(sorted(self.baseline_failed)))
+        self.assertEqual(sorted(self.baseline_failed), [])
+        self.assertGreaterEqual(self.baseline["judgmentsCounted"], 9)
+
+    def detected(self, make):
+        """Which positions a document notices a replaced reading in, and which it does not."""
+        noticed, quiet = [], []
+        for place in _positions():
+            body = _document(self.root, (place, make("injected at " + "/".join(
+                str(one) for one in place))))
+            grew = _failed(body) - self.baseline_failed
+            (noticed if grew else quiet).append((place, sorted(grew), body))
+        return noticed, quiet
+
+    def test_every_position_something_judges_notices_a_reading_that_was_not_taken(self):
+        """One position at a time, over all of them, with the verdicts recomputed by the harness.
+
+        Three things are required of every mutant and they are not the same thing. The refusal
+        must not escape, or a consumption site somewhere is still treating it as a value. The
+        written document must not spell it as a plain answer, or a reader of the JSON inherits
+        the defect the type removed. And a judgment that newly fails must say a reading under it
+        was not taken, because "it answered something else" is a different finding from "nobody
+        could read what it answered" and only the second is what this injects.
+        """
+        noticed, quiet = self.detected(unread)
+        self.assertGreaterEqual(len(noticed) + len(quiet), 200,
+                                "almost no position was swept, so this is watching a document"
+                                " that stopped carrying readings")
+        for place, grew, body in noticed:
+            where = "/".join(str(one) for one in place)
+            self.assertEqual(bare_sentinels(rendered(body)), [],
+                             where + " left a reading that was not taken written into the"
+                             " document as an ordinary answer, so reading the JSON reopens the"
+                             " defect the type closed")
+            channelled = []
+            for judgment in grew:
+                carrier = _carrier(body, judgment)
+                channels = [key for key in NOT_TAKEN_CHANNELS if key in carrier]
+                if not channels:
+                    continue
+                channelled.append(any(carrier[key] for key in channels))
+            self.assertNotIn(False, channelled,
+                             where + " made a judgment fail while that judgment still reported"
+                             " nothing unread, so it failed for being a different answer rather"
+                             " than for being a reading nobody took")
+
+    def test_the_positions_nothing_judges_are_the_declared_ones(self):
+        """The partition, in both directions, so a new unjudged cell has to be written down."""
+        _noticed, quiet = self.detected(unread)
+        found = sorted((place[1], place[3]) for place, _grew, _body in quiet)
+        wanted = sorted((arm, cell) for name in SCENARIOS for arm in ARMS
+                        for _index in range(FIRINGS[name])
+                        for cell in FIRING_CELLS if (arm, cell) in UNJUDGED_CELLS)
+        self.assertEqual(found, wanted,
+                         "the positions where a reading that was not taken changes no verdict"
+                         " and the positions declared unjudged disagree. Say what the new one is,"
+                         " or judge it.")
+        self.assertTrue(SWEEP_DOES_NOT_REACH, "the sweep must declare what it does not reach")
+
+    def test_the_sweep_stops_noticing_when_the_historical_spelling_is_injected_instead(self):
+        """The sensitivity half. Without it this sweep could be passing on nothing at all.
+
+        The control is the defect replayed rather than the enforcement disarmed. Disarming it
+        would make every consumer refuse and the sweep would fail by exception, which proves the
+        refusal and says nothing about the sweep. Injecting the non-empty string the sentinel
+        used to be proves the sweep is sensitive to exactly the thing that changed: the string
+        still disagrees with an expected answer nearly everywhere, and at recordedAs it satisfies
+        the one question the row asks - a path was named - without naming one, which is how it
+        escaped in CRW-68.
+        """
+        typed = set(place for place, _grew, _body in self.detected(unread)[0])
+        historical = set(place for place, _grew, _body in self.detected(lambda why: "UNREADABLE")[0])
+        self.assertTrue(historical, "the control noticed nothing anywhere, so it is not a"
+                                    " control over this sweep at all")
+        missed = typed - historical
+        self.assertTrue(missed,
+                        "the sweep notices the historical spelling in exactly the places it"
+                        " notices the type, so it is not measuring the change")
+        self.assertEqual(sorted(set(historical) - set(typed)), [],
+                         "the historical spelling is noticed somewhere the type is not")
+        recorded = sorted(place for place in missed if place[1] == "on"
+                          and place[3] == "recordedAs")
+        self.assertTrue(recorded,
+                        "recordedAs is the case CRW-68 records, and the control did not"
+                        " reproduce it: " + json.dumps(sorted(str(one) for one in missed)))
+
+    def test_two_digests_that_could_not_be_taken_do_not_report_the_bytes_as_identified(self):
+        """Driven apart from the cells, because it is the one judgment that compares two ends.
+
+        While the answer was a sentinel string it was the SAME string at both ends, so a source
+        nobody could digest compared equal to itself and the run reported its bytes as
+        identified. A reading that was not taken is now a fresh object per reading, so the two
+        ends cannot answer equal.
+        """
+        # The comparison itself first, because the judgment below is only sound while this is
+        # true: two ends that answered the same sentinel string compared equal, and a mapping
+        # comparison is what stability() actually makes.
+        try:
+            same = {"relay": unread("at the start")} == {"relay": unread("at the end")}
+        except Exception:
+            same = False
+        self.assertFalse(same,
+                         "two readings that were not taken compare equal to each other, so a"
+                         " source nobody could digest reports its bytes as identified")
+        both = harness.stability({"sourceDigests": {"relay": unread("at the start")}},
+                                 {"sourceDigests": {"relay": unread("at the end")}})
+        self.assertFalse(both["met"],
+                         "two digests nobody could take reported the source as unchanged")
+        self.assertEqual(both["digestsNotTaken"], 2)
+        one_end = harness.stability({"sourceDigests": {"relay": "a" * 64}},
+                                    {"sourceDigests": {"relay": unread("at the end")}})
+        self.assertFalse(one_end["met"])
+        self.assertEqual(one_end["digestsNotTaken"], 1)
+        healthy = harness.stability({"sourceDigests": {"relay": "a" * 64}},
+                                    {"sourceDigests": {"relay": "a" * 64}})
+        self.assertTrue(healthy["met"], "an unchanged source has to still be able to pass")
+
+    def test_a_place_that_could_not_be_resolved_is_not_reported_as_inside_the_root(self):
+        """The containment judgment, driven with an answer it could not take."""
+        answer = harness.containment(self.root, [self.root / "inside"])
+        self.assertTrue(answer["met"])
+        with mock.patch.object(harness, "owned",
+                               lambda place, root: unread("this path could not be resolved")):
+            refused = harness.containment(self.root, [self.root / "inside"])
+        self.assertFalse(refused["met"],
+                         "a run reported that it wrote only inside its own directory on a path"
+                         " nobody could resolve")
+        self.assertEqual(len(refused["notTaken"]), 1)
+        self.assertEqual(refused["outside"], [],
+                         "a path that could not be resolved was reported as leading outside,"
+                         " which names the wrong repair and claims to know where it led")
+
+
+# Support, not evidence for a criterion. These are drift guards: they keep the inventories above
+# honest as the file changes, and none of them measures the behaviour the issue is about.
+
+# Every function that hands over a reading that was not taken, derived below and compared with
+# this. A new producer fails here until it is written down, and writing it down is the moment to
+# ask whether the sweep reaches it.
+UNREADABLE_PRODUCERS = {
+    "_unreadable": 1,
+    "_install": 2,
+    "journal_payload": 1,
+    "_faulted": 1,
+    "_there": 1,
+    "source_identity": 1,
+    "_digest": 2,
+    "repository_commit": 2,
+    "owned": 1,
+}
+
+# Every function that consumes a cell's value, derived below and compared with this.
+CELL_CONSUMERS = ("judge", "_reported", "_detection", "measures", "supplemental", "compare")
+
+# What these two derivations cannot see, as data rather than as a claim of completeness.
+DERIVATION_BLIND_SPOTS = (
+    "matching is by name, so a local called Unreadable would count and a producer reached"
+    " through an alias would not",
+    "only scripts/hook_comparison.py is read; a consumer in another file that imports the"
+    " harness is outside this reach",
+    "a value bound to another name and consumed in a different function is not followed",
+    "a consumer that reads the printed JSON rather than a cell is not visible at all",
+)
+
+
+def _harness_tree():
+    return ast.parse((ROOT / "scripts" / "hook_comparison.py").read_text(encoding="utf-8"))
+
+
+def _owners(tree):
+    parents, owner = {}, {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            for child in ast.walk(node):
+                owner.setdefault(child, node.name)
+    return parents, owner
+
+
+class TheReadFailureInventoriesAreDerivedTests(unittest.TestCase):
+    """Support. The two inventories the sweep rests on, produced from source rather than counted.
+
+    A sentence naming how many producers or consumers were migrated is the thing that goes stale,
+    and this file's own history is checks whose reach was narrower than the property they claimed.
+    """
+
+    def test_every_producer_of_a_reading_that_was_not_taken_is_declared(self):
+        tree = _harness_tree()
+        _parents, owner = _owners(tree)
+        found = {}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "Unreadable"):
+                where = owner.get(node, "<module>")
+                found[where] = found.get(where, 0) + 1
+        self.assertEqual(found, dict(UNREADABLE_PRODUCERS),
+                         "the places that hand over a reading that was not taken and the places"
+                         " written down disagree. Declare the new one, and say whether the sweep"
+                         " reaches it.")
+        self.assertTrue(DERIVATION_BLIND_SPOTS,
+                        "a derivation that declares no blind spot is claiming completeness")
+
+    def test_every_function_that_consumes_a_cell_value_is_declared(self):
+        tree = _harness_tree()
+        _parents, owner = _owners(tree)
+        found = set()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
+                    and node.slice.value == "value"):
+                found.add(owner.get(node, "<module>"))
+        self.assertEqual(sorted(found), sorted(CELL_CONSUMERS),
+                         "a function reads a cell's value that this check does not name. It is a"
+                         " consumption site: show by mutation that it treats a reading nobody"
+                         " took as one nobody took, then declare it.")
+
+    def test_no_value_slot_in_the_harness_still_carries_the_state_as_text(self):
+        """The class this issue closes, swept over the file rather than over the sites it knew.
+
+        The predicate is the shape of the defect: one of the two states written into something a
+        value is read out of. It is reported for this file only, and the PR names what the same
+        predicate still matches elsewhere.
+        """
+        tree = _harness_tree()
+        offenders = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Attribute):
+                if node.value.attr in ("UNREADABLE", "ACCESS_ERROR"):
+                    offenders.append("return at line " + str(node.lineno))
+            if isinstance(node, ast.Dict):
+                for key, value in zip(node.keys, node.values):
+                    named = isinstance(key, ast.Constant) and key.value in (
+                        "value", "exitCode", "adapterOutcome", "workingTree")
+                    if named and isinstance(value, ast.Attribute) and value.attr in (
+                            "UNREADABLE", "ACCESS_ERROR"):
+                        offenders.append("value slot at line " + str(node.lineno))
+        self.assertEqual(offenders, [],
+                         "a reading that was not taken is written into a value slot as text: "
+                         + "; ".join(offenders))
+
+
+class TheVerdictGuardRunsBeforeThePredicateTests(unittest.TestCase):
+    """Support. The ordering the guard now carries, driven rather than read off the source."""
+
+    def test_a_predicate_is_not_run_at_all_while_a_reading_under_it_was_not_taken(self):
+        ran = []
+
+        def would_raise():
+            ran.append(True)
+            raise AssertionError("the predicate ran while a reading under it was not taken")
+
+        self.assertFalse(harness.judged(would_raise, ["one/cell"]))
+        self.assertEqual(ran, [], "the guard ran the predicate before checking the count")
+        self.assertTrue(harness.judged(lambda: True, 0))
+        self.assertFalse(harness.judged(lambda: False, 0))
+
+    def test_an_uncalled_predicate_no_longer_reads_as_a_true_verdict(self):
+        """A function object is truthy, so the old shape answered true for one passed by mistake."""
+        self.assertFalse(harness.judged(lambda: False, []))
+
+    def test_the_document_is_written_out_in_one_piece(self):
+        """Support. Anything the encoder cannot write must fail before a byte reaches stdout.
+
+        json.dump streams, so a value it cannot encode leaves a truncated document behind and
+        then raises - and one JSON object on stdout is the one thing this command promises.
+        """
+        tree = _harness_tree()
+        streamed = [node.lineno for node in ast.walk(tree)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "dump" and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "json"]
+        self.assertEqual(streamed, [],
+                         "the document is streamed to stdout, so a value that cannot be written"
+                         " leaves a partial one behind: line " + str(streamed))
+        written = harness.render(unread("nothing could be read here"))
+        self.assertEqual(sorted(written), ["notRead", "why"])
+        self.assertEqual(written["notRead"], harness.reading.UNREADABLE)
+        self.assertNotIsInstance(written, str,
+                                 "the written form is a plain answer again, so a reader of the"
+                                 " JSON inherits the defect the type removed")
 
 if __name__ == "__main__":
     unittest.main()
