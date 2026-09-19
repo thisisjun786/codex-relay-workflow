@@ -167,6 +167,9 @@ FORBIDDEN_IN_A_PATH = ("\x00", "~")
 
 # How often the final gate looks at the witness while it waits out that counter's own interval.
 WITNESS_POLL = 0.05
+# The one name a state selection derives for its database: Selection.db_path is
+# path / "relay.sqlite3". Pinned against that source in the contract checks.
+RELAY_DATABASE_NAME = "relay.sqlite3"
 
 # What an assignment that has not started yet answers with, from the relay's own state machine.
 # Its generation carries no head revision, so nothing has been emitted into it: that is the state
@@ -2255,10 +2258,16 @@ def reading_store(record, relay):
         # The pathname is read from the store's own dbPath, which probe() fills from the
         # selection on every doctor payload. It is not read from stateSelection: cmd_store_identity
         # builds that one, and requiring it of a doctor capture would refuse every genuine peer.
+        #
+        # Compared exactly, because a selection derives one name: Selection.db_path is
+        # path / "relay.sqlite3" and nothing else. Containment in the directory accepted a peer
+        # reporting another database beside the shared one, which is the same defect one level
+        # down -- a reading that answers "somewhere in there" for a question about which file.
         peer_state = field(peer, "store", "dbPath")
         declared_state = field(record, "relay", "stateDirectory")
-        state_agrees = (isinstance(peer_state, str)
-                        and within(peer_state, declared_state))
+        state_agrees = (isinstance(peer_state, str) and isinstance(declared_state, str)
+                        and resolve(peer_state) == resolve(Path(declared_state)
+                                                           / RELAY_DATABASE_NAME))
         # OPS-3.3, asked of every participant rather than only of the boundary this process runs
         # in. The flag moves the store and the environment moves the adapter's ledger, so a peer
         # that sets one without the other keeps the record which suppresses duplicate delivery
@@ -2747,6 +2756,33 @@ def names_exactly(text, value):
     and this comparison has nothing left to get wrong.
     """
     return bool(value) and value in text.split()
+
+
+def dispatch_inputs(record):
+    """The bytes of the two files the order gate compares, digested.
+
+    The gate reads them once, and the probes after it can each run for as long as their timeout
+    allows. A file rewritten in that window leaves the gate's comparison describing a dispatch
+    that is no longer the one about to be sent, which is the race the gate exists to narrow.
+    """
+    assignment = record.get("assignment") or {}
+    return {"assignmentFile": digest_or_none(assignment.get("assignmentFile")),
+            "dispatchMessageFile": digest_or_none(assignment.get("dispatchMessageFile"))}
+
+
+def dispatch_inputs_unchanged(record, before):
+    """Read again after the last probe, for the same reason everything else here is.
+
+    This starts nothing: two file reads, so it can sit after the last command without moving
+    anything behind it. It reports a change rather than preventing one -- what the gate compared
+    is what it compared -- and a run whose inputs moved is refused rather than published.
+    """
+    after = dispatch_inputs(record)
+    return {"passed": before == after, "before": before, "after": after, "readAt": stamp(),
+            "detail": "the gate compares the assignment file and the dispatch message once, and"
+                      " the probes after it can each run for as long as their timeout allows. A"
+                      " file rewritten in that window leaves the comparison describing a dispatch"
+                      " that is not the one being sent"}
 
 
 def order_gate(record, store_payload, entry):
@@ -3473,6 +3509,9 @@ def preflight(record, *, sleeper=time.sleep):
         assembled[name] = {"value": value, "met": value == VERIFIED, "cells": cells}
 
     gate = order_gate(record, store_payload, entry)
+    # The bytes the gate just compared, so the reading below can say whether they are still the
+    # ones being dispatched after every probe that follows.
+    gate_inputs = dispatch_inputs(record)
     # The store's identity, asked again now that every probe that used it has run, and before
     # the launcher is read, so the spawn this makes is covered by that reading too.
     supervisor = supervisor_still_running(record, relay, sleeper=sleeper)
@@ -3491,6 +3530,10 @@ def preflight(record, *, sleeper=time.sleep):
     # asked, and this is the last observation of any kind before the document is assembled.
     supervisor = supervisor_still_alive(record, supervisor, sleeper=sleeper)
     launcher = launcher_unchanged(record, relay)
+    # The gate's own two files once more, after the last command this run starts. Both are file
+    # reads, so this starts nothing and sits among the other readings that start nothing; where it
+    # sits among them is immaterial, because none of them can change what another one reads.
+    dispatch_held = dispatch_inputs_unchanged(record, gate_inputs)
     captures = captures_still_fresh(record)
     # The window was ahead when the record was read; the witness delay and the probes take real
     # time, so it is read again here. A run that publishes readiness after the window has opened
@@ -3518,6 +3561,7 @@ def preflight(record, *, sleeper=time.sleep):
         "supervisorStillRunning": supervisor,
         "readings": assembled,
         "orderGate": gate,
+        "dispatchInputsStillTheSameBytes": dispatch_held,
         "windowStillAhead": window_ahead,
         "capturesStillFresh": captures,
         # Filled from the judgment walk below, so a judgment added later cannot be left out of it.

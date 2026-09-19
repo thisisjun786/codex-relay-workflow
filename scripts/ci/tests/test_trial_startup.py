@@ -387,7 +387,7 @@ class World:
                           # the packet's own stateDirectory. probe() fills this from the
                           # selection, so every doctor payload says which database that process
                           # would open.
-                          "dbPath": str(self.state / "relay" / "operations.sqlite3"),
+                          "dbPath": str(self.state / "relay" / "relay.sqlite3"),
                           "observedAccess": {"read": True, "write": True,
                                              "directoryWritable": True}},
                 # OPS-3.3, which doctor answers for every acting process it runs in: the report
@@ -844,7 +844,7 @@ class StoreIdentity(TrialCase):
             "sameStore": "proven",
             "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
             "store": {"storeId": "another-store", "device": 1, "inode": 2,
-                      "dbPath": str(self.world.state / "relay" / "operations.sqlite3"),
+                      "dbPath": str(self.world.state / "relay" / "relay.sqlite3"),
                       "observedAccess": {"read": True, "write": True,
                                          "directoryWritable": True}},
             "ledger": {"configured": True, "split": False},
@@ -5249,6 +5249,44 @@ class FortyFifthHostedRound(TrialCase):
                          UNKNOWN)
         self.assertFalse(document["readyToStart"],
                          "a peer that never said which database it opened was read as ready")
+
+    def test_a_peer_naming_another_database_in_the_right_directory_is_not_verified(self):
+        # Containment answered "somewhere in there" for a question about which file. A selection
+        # derives one name -- Selection.db_path is path / "relay.sqlite3" and nothing else -- so a
+        # peer reporting another database beside the shared one is describing a different store
+        # while every other field about it agrees.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["doctor-" + task + ".json"]["store"]["dbPath"] = str(
+                self.world.state / "relay" / "another.sqlite3")
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a peer naming another database in the right directory was read as ready")
+        self.assertEqual(cells_of(document, "storeIdentity")["peer:" + World.PARENT_A]["value"],
+                         NOT_VERIFIED)
+
+    def test_the_one_database_name_a_selection_derives_is_the_relays_own(self):
+        # Support, and the guard on a name this module pins from another lane: a rename there would
+        # otherwise make every genuine peer read as naming another database.
+        source = relay_source("packages", "codex-session-relay", "src", "codex_session_relay",
+                              "store.py")
+        self.assertIn('self.path / "' + startup.RELAY_DATABASE_NAME + '"', source,
+                      "the relay no longer derives this database name from its selection")
+
+    def test_a_dispatch_message_replaced_during_the_last_probes_is_caught(self):
+        # The gate compares the message once, and the probes after it can each run for as long as
+        # their timeout allows. A message rewritten in that window leaves the comparison
+        # describing a dispatch that is not the one being sent.
+        self.world.start_supervisor()
+        self.world.flush()
+        message = self.world.trial / "dispatch.txt"
+        self.a_last_probe_that(lambda: message.write_text("nothing this names", encoding="utf-8"))
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a dispatch message replaced after the gate read it was published")
+        self.assertTrue(document["orderGate"]["passed"],
+                        "this case is about a gate that passed and then went stale")
 
     def test_one_file_cannot_be_two_kinds_of_evidence(self):
         # This procedure is explicit that a creation receipt never establishes lifecycle. Pointing
