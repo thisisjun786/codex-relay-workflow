@@ -89,6 +89,20 @@ REQUIRED_EXPECT = ("model", "reasoningEffort", "sandbox", "approvalPolicy")
 # record can be usable and complete while these three disagree with what creation recorded.
 DELIVERY_ACCESS = ("cwd", "runtimeWorkspaceRoots", "environments")
 
+# The defaults the pinned SandboxPolicy declares, copied from the relay's own settings module so
+# an omitted default and an explicit one are not read as a difference. This is a second copy of
+# another lane's contract and it is held here only because the relay is not importable from a
+# checker that runs before anything is started. A copy that drifts is worse than none, so a case
+# parses POLICY_DEFAULTS out of that module and asserts this equals it: the duplication fails
+# loudly instead of quietly widening what a record is read to have declared.
+POLICY_DEFAULTS = {
+    "workspaceWrite": {"writableRoots": [], "networkAccess": False,
+                       "excludeTmpdirEnvVar": False, "excludeSlashTmp": False},
+    "readOnly": {"networkAccess": False},
+    "externalSandbox": {"networkAccess": "restricted"},
+    "dangerFullAccess": {},
+}
+
 
 def receipt_access(payload, key):
     """Where a creation receipt actually carries each delivery setting.
@@ -417,22 +431,42 @@ def declared_agrees(declared, found):
     empty writableRoots beside it. Structural equality read those as a disagreement and refused
     every valid workspace-write trial.
 
-    So a declared object is a requirement rather than an image: every key it names has to agree,
-    including a key the payload does not carry at all, and a key only the payload carries is the
-    host's own default. The defaults themselves are the relay's to define and are not restated
-    here; what the payload added beyond the declaration is named in the cell's evidence, so an
-    operator who cares about one of them can declare it and have it compared.
+    Filling the declaration's own defaults is what makes the two comparable without widening it.
+    A policy type carries defined values for the keys it does not name, so an omitted
+    networkAccess is false rather than anything the host cares to record: treating it as
+    unconstrained accepted a trial started with network access the record never declared, which
+    is the opposite error and the worse one.
+
+    Beyond a policy, a declared object stays a requirement: every key it names has to agree,
+    including a key the payload does not carry, and what the payload added beyond it is named in
+    the cell's evidence.
     """
     if isinstance(declared, dict) and isinstance(found, dict):
-        return all(same_value(found.get(key, MISSING), value)
-                   for key, value in declared.items())
+        # Both sides, the way the relay normalises both sides before comparing. Filling only the
+        # declaration made a payload that omits a default disagree with a record that names one.
+        wanted, carried = with_policy_defaults(declared), with_policy_defaults(found)
+        return all(same_value(carried.get(key, MISSING), value)
+                   for key, value in wanted.items())
     return same_value(declared, found)
+
+
+def with_policy_defaults(declared):
+    """A declared sandbox policy with the defaults its own type declares, or the object itself.
+
+    Only a policy is filled, and only from its own type. An object that is not one — a settings
+    value that happens to be structured — is returned unchanged, because nothing here knows what
+    its omitted keys would mean.
+    """
+    kind = declared.get("type")
+    if not isinstance(kind, str) or kind not in POLICY_DEFAULTS:
+        return declared
+    return dict(POLICY_DEFAULTS[kind], **declared)
 
 
 def beyond_declaration(declared, found):
     """The keys a payload carries that the record never named, in a stable order."""
     if isinstance(declared, dict) and isinstance(found, dict):
-        return sorted(set(found) - set(declared))
+        return sorted(set(with_policy_defaults(found)) - set(with_policy_defaults(declared)))
     return []
 
 
@@ -1204,15 +1238,16 @@ def reading_capability(record, relay):
                                     provenance=CAPTURED,
                                     measured_at=found["capturedAt"],
                                     unreadable="the receipt carries no " + ", no ".join(absent),
-                                    evidence=("the host echoed every declared setting and reported"
-                                              " no findings" if ok else
-                                              "this receipt names task "
-                                              + str(shown(field(found["payload"], "taskId")))
-                                              + ", disagrees at " + ", ".join(disagreed)
-                                              + " and reports findings "
-                                              + json.dumps(shown(findings))
-                                              + (", and the host also recorded "
-                                                 + ", ".join(added) if added else "")),
+                                    evidence=(("the host echoed every declared setting and"
+                                               " reported no findings" if ok else
+                                               "this receipt names task "
+                                               + str(shown(field(found["payload"], "taskId")))
+                                               + ", disagrees at " + ", ".join(disagreed)
+                                               + " and reports findings "
+                                               + json.dumps(shown(findings)))
+                                              + (". The host also recorded " + ", ".join(added)
+                                                 + ", which this record does not name and this"
+                                                 " does not compare" if added else "")),
                                     detail=found["path"]))
 
             probe = relay.relay("settings-show", "--task", task)
@@ -1248,10 +1283,10 @@ def reading_capability(record, relay):
                                           "task " + str(shown(field(payload, "task"))) + ", usable "
                                           + str(shown(usable)) + ", missing "
                                           + json.dumps(shown(field(payload, "missing")))
-                                          + ", disagreeing " + json.dumps(differs)
-                                          + (", and the store also holds "
-                                             + ", ".join(recorded_beyond)
-                                             if recorded_beyond else ""))))
+                                          + ", disagreeing " + json.dumps(differs))
+                                        + (". The store also holds " + ", ".join(recorded_beyond)
+                                           + ", which this record does not name and this does not"
+                                           " compare" if recorded_beyond else "")))
             seen[str(task)] = settings
 
             # What the trial will actually run with, against what creation recorded. The four
@@ -1289,10 +1324,12 @@ def settings_now(record, relay, seen):
     change to what delivery will use.
     """
     cells = []
+    rows = {}
     for name in participants_of(record):
         probe = relay.relay("settings-show", "--task", name)
         payload = probe["payload"] or {}
         current = field(payload, "settings")
+        rows[name] = current
         before = seen.get(name, MISSING)
         readable = current is not MISSING and before is not MISSING
         agrees = readable and structurally_same(current, before)
@@ -1306,7 +1343,7 @@ def settings_now(record, relay, seen):
                                       "this participant's settings row is not the one the"
                                       " capability reading graded, so the trial would run with a"
                                       " record this preflight never approved")))
-    return cells
+    return cells, rows
 
 
 def reading_store(record, relay):
@@ -1721,7 +1758,57 @@ def criteria_now(record, relay):
                   evidence=("read again after every other reading rather than before them: digest "
                             + str(shown(digest)) + ", source " + str(shown(source)) + ", "
                             + str(count) + " criteria. A set replaced while the run was working"
-                            " would judge this trial against criteria nobody approved"))
+                            " would judge this trial against criteria nobody approved")), payload
+
+
+def criteria_summary(payload):
+    """The three values the criteria cell is decided on, for comparing one read against another."""
+    registered = field(payload, "criteria")
+    return {"setDigest": shown(field(payload, "setDigest")),
+            "sourceRef": shown(field(payload, "sourceRef")),
+            "count": len(registered) if isinstance(registered, list) else None}
+
+
+def gate_reads_held(record, relay, rows, criteria):
+    """The gate's own reads, taken once more after the last of them.
+
+    These are separate relay processes and not one store transaction, so a settings row approved
+    by its own read could be replaced while the assignment read runs, and its cell would still
+    report it current. The relay exposes no revision to bind to and adding one would be a new
+    delivery layer this issue forbids, so the reads are taken again after the last of them and
+    required to be unchanged.
+
+    That does not make the block atomic, and this cell does not claim it does. What remains is
+    the gap between this confirmation and the dispatch itself, which every reading here has and
+    which the stand-ins name: the order narrows it and the relay's own refusal at delivery is
+    what closes it.
+    """
+    moved, unread = [], []
+    for name in participants_of(record):
+        probe = relay.relay("settings-show", "--task", name)
+        current = field(probe["payload"] or {}, "settings")
+        before = rows.get(name, MISSING)
+        if current is MISSING or before is MISSING:
+            unread.append("the settings row for " + name)
+        elif not structurally_same(current, before):
+            moved.append("the settings row for " + name)
+    assignment = record.get("assignment") or {}
+    probe = relay.relay("criteria-show", "--relationship", assignment.get("relationshipId"))
+    payload = probe["payload"] or {}
+    if field(payload, "criteria") is MISSING or field(criteria, "criteria") is MISSING:
+        unread.append("the registered criteria")
+    elif criteria_summary(payload) != criteria_summary(criteria):
+        moved.append("the registered criteria")
+    return graded("gateReadsHeld", MISSING if unread else len(rows) + 1, not moved, probe=probe,
+                  provenance=EXECUTED,
+                  unreadable="a read the gate was graded from could not be taken again: "
+                             + ", ".join(unread),
+                  evidence=("every read the gate was graded from is unchanged when taken again"
+                            " after the last of them. They are separate processes and not one"
+                            " transaction, so this bounds the window rather than removing it"
+                            if not moved else
+                            ", ".join(moved) + " changed between the gate's own reads, so the"
+                            " document would have reported a value the dispatch will not use"))
 
 
 
@@ -2188,10 +2275,15 @@ def preflight(record, *, sleeper=time.sleep):
     # that read and the dispatch is not closed here and is named in the stand-ins: these are
     # readings at moments, not one transaction, and the relay's own refusal at delivery is what
     # makes the race impossible.
-    capability_cells.extend(settings_now(record, relay, settings_seen))
-    assignment_cells.append(criteria_now(record, relay))
+    settings_cells, settings_rows = settings_now(record, relay, settings_seen)
+    capability_cells.extend(settings_cells)
+    criteria_cell, criteria_payload = criteria_now(record, relay)
+    assignment_cells.append(criteria_cell)
     current, store_payload, entry = assignment_now(record, relay)
     assignment_cells.append(current)
+    # Taken once more after the last of them, because these are separate processes rather than
+    # one transaction and the order alone cannot make every earlier read current.
+    assignment_cells.append(gate_reads_held(record, relay, settings_rows, criteria_payload))
 
     assembled = {}
     for name, cells in readings.items():

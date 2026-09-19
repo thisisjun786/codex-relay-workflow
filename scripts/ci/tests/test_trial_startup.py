@@ -3218,14 +3218,39 @@ class ThirtyThirdHostedRound(TrialCase):
 class ThirtyFourthHostedRound(TrialCase):
     """The order the final reads are taken in, and a time that never said which offset it is in."""
 
-    def test_the_assignment_the_gate_compares_is_the_last_read_taken(self):
+    def asked(self):
+        return [json.loads(line)["subcommand"]
+                for line in self.world.calls.read_text().splitlines() if line.strip()]
+
+    def test_the_assignment_is_the_last_read_the_gate_is_graded_from(self):
         self.world.start_supervisor()
         self.world.preflight()
-        asked = [json.loads(line)["subcommand"]
-                 for line in self.world.calls.read_text().splitlines() if line.strip()]
-        self.assertEqual(asked[-1], "assignment-find",
-                         "a later probe ran after the answer the gate compares against")
+        asked = self.asked()
         self.assertEqual(asked.count("assignment-find"), 2)
+        last = len(asked) - 1 - asked[::-1].index("assignment-find")
+        before, after = asked[:last], asked[last + 1:]
+        # Four participants read twice, and the criteria read twice, all before the answer the
+        # gate compares against rather than after it.
+        self.assertEqual(before.count("settings-show"), 8,
+                         "the gate's settings pass did not precede the answer it compares")
+        self.assertEqual(before.count("criteria-show"), 2)
+        # And everything after it is the confirmation that those reads did not move while it ran.
+        self.assertEqual(sorted(set(after)), ["criteria-show", "settings-show"])
+
+    def test_a_read_that_moves_while_the_last_one_runs_is_caught(self):
+        # Eight settings-show asks happen before the assignment read, so the ninth is the
+        # confirmation's own: this is a row replaced while that last read was running.
+        widened = json.loads(json.dumps(self.world.payloads["settings-show"]["payload"]))
+        widened["settings"]["runtimeWorkspaceRoots"] = [str(self.world.root)]
+        self.world.payloads["after"] = {"subcommand": "settings-show", "calls": 8,
+                                        "payloads": {"settings-show": {"payload": widened}}}
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        cell = cells_of(document, "assignmentState")["gateReadsHeld"]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("changed between the gate's own reads", cell["evidence"])
+        self.assertFalse(document["readyToStart"])
 
     def test_a_time_without_an_offset_is_refused(self):
         # Read directly, because the consequence is a ledger line placed in the wrong stretch:
@@ -3289,21 +3314,59 @@ class ThirtyFifthHostedRound(TrialCase):
         self.assertEqual(cell["value"], NOT_VERIFIED)
         self.assertIn("sandbox", cell["evidence"])
 
-    def test_a_declared_key_the_payload_does_not_carry_still_fails(self):
-        document = self.declare({"type": "workspaceWrite", "networkAccess": False},
+    def test_a_declared_key_the_payload_leaves_at_its_default_still_fails(self):
+        # The payload names only a type, so its networkAccess is the type's default, false. A
+        # record declaring true disagrees with it rather than going unanswered: both sides are
+        # normalised, which is what the relay does before it compares them.
+        document = self.declare({"type": "workspaceWrite", "networkAccess": True},
                                 {"type": "workspaceWrite"})
         self.assertEqual(
             cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
             NOT_VERIFIED)
 
-    def test_what_the_host_added_beyond_the_declaration_is_named(self):
-        # Nothing is silently accepted: a key the record never named is reported, so an operator
-        # who cares about one of them can declare it and have it compared.
-        normalised = {"type": "workspaceWrite", "networkAccess": True, "writableRoots": []}
-        document = self.declare({"type": "workspaceWrite", "excludeSlashTmp": False}, normalised)
+    def test_a_policy_and_its_own_defaults_written_out_are_one_policy(self):
+        # Support: normalising both sides is what makes an omitted default and an explicit one
+        # the same policy, which is the relay's own rule.
+        document = self.declare({"type": "workspaceWrite", "networkAccess": False},
+                                {"type": "workspaceWrite"})
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"], VERIFIED)
+
+    def test_a_type_only_declaration_does_not_accept_a_widened_default(self):
+        # The keys a type does not name still have defined values. Reading them as unconstrained
+        # accepted a trial started with network access the record never declared.
+        normalised = {"type": "workspaceWrite", "networkAccess": True, "writableRoots": [],
+                      "excludeTmpdirEnvVar": False, "excludeSlashTmp": False}
+        document = self.declare({"type": "workspaceWrite"}, normalised)
+        cells = cells_of(document, "capability")
+        self.assertEqual(cells["receiptEcho:" + World.PARENT_A]["value"], NOT_VERIFIED)
+        self.assertEqual(cells["recordedSettings:" + World.PARENT_A]["value"], NOT_VERIFIED)
+        self.assertFalse(document["readyToStart"],
+                         "a trial started with access the record never declared")
+
+    def test_a_key_outside_the_policy_contract_is_named_rather_than_compared(self):
+        # Nothing is silently accepted: a key neither the record nor the policy's own defaults
+        # name is reported, so an operator who cares about it can declare it.
+        normalised = {"type": "workspaceWrite", "networkAccess": False, "writableRoots": [],
+                      "excludeTmpdirEnvVar": False, "excludeSlashTmp": False,
+                      "somethingThisCheckerDoesNotKnow": "x"}
+        document = self.declare({"type": "workspaceWrite"}, normalised)
         cell = cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]
-        self.assertIn("the host also recorded", cell["evidence"])
-        self.assertIn("sandbox.networkAccess", cell["evidence"])
+        self.assertEqual(cell["value"], VERIFIED)
+        self.assertIn("The host also recorded", cell["evidence"])
+        self.assertIn("sandbox.somethingThisCheckerDoesNotKnow", cell["evidence"])
+
+    def test_the_policy_defaults_are_the_relays_own(self):
+        # Support, and the guard on the one place this checker copies another lane's contract:
+        # a copy that drifts would quietly widen what a record is read to have declared.
+        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
+                  / "settings.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        theirs = next(ast.literal_eval(node.value) for node in ast.walk(tree)
+                      if isinstance(node, ast.Assign)
+                      and any(getattr(t, "id", None) == "POLICY_DEFAULTS" for t in node.targets))
+        self.assertEqual(startup.POLICY_DEFAULTS, theirs,
+                         "the checker's copy of the policy defaults is not the relay's")
 
 
 if __name__ == "__main__":                                           # pragma: no cover
