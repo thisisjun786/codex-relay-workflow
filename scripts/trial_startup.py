@@ -732,6 +732,14 @@ def normalised_environments(value):
     for entry in value:
         if not isinstance(entry, dict) or "environmentId" not in entry or "cwd" not in entry:
             return MISSING
+        # And carrying them in the shape the host answers with. An environment naming its
+        # working directory as 7 is one no host response preserved, and the omitted-roots
+        # default would have manufactured a selection out of it: [7] is not a place, and a
+        # reading that builds one is inventing the evidence it then agrees with.
+        if not isinstance(entry["environmentId"], str) or not entry["environmentId"].strip():
+            return MISSING
+        if not absolute_roots([entry["cwd"]]):
+            return MISSING
         roots = entry.get("runtimeWorkspaceRoots")
         if roots is not None and not absolute_roots(roots):
             # list(7) raises, and a helper the capability reading calls before it can report
@@ -1726,9 +1734,11 @@ def reading_capability(record, relay):
                                           required=RECEIPT_IDENTITY_REQUIRED,
                                           optional=RECEIPT_IDENTITY_OPTIONAL)
                 verified = field(found["payload"], "settings", "verified")
-                if not isinstance(verified, list):
+                if not isinstance(verified, list) or not all(isinstance(v, str) for v in verified):
                     # A list is the only shape this answer takes. Anything else is a reading
-                    # nobody took rather than a disagreement.
+                    # nobody took rather than a disagreement, and so is a list holding something
+                    # that is not a setting's name: comparing it against the request's keys
+                    # raised before this could report a receipt that cannot be genuine.
                     verified = MISSING
                 # A setting the creation never asked for cannot produce a finding, so empty
                 # findings do not establish it: actual reports whatever the thread inherited and
@@ -3005,6 +3015,24 @@ def supervisor_still_running(record, relay=None, sleeper=time.sleep):
                       " for the counter rather than for the clock"}
 
 
+def supervisor_still_alive(record, answer):
+    """The poller read once more, after the last command this run starts.
+
+    Every probe is a subprocess that can take as long as its timeout allows, so a verdict about
+    a process taken before one of them is a verdict about a moment that has passed. This adds no
+    probe of its own: it is a signal and a session lookup, taken after the last thing that could
+    have outlived the answer beside it.
+    """
+    anchor = record.get("_supervisor") or {}
+    pid = anchor.get("pid")
+    if not anchor or not answer.get("passed"):
+        return answer
+    still, theirs = alive(pid), session_of(pid)
+    detached = theirs is not None and theirs != os.getsid(0)
+    return dict(answer, passed=still is True and detached,
+                aliveAfterTheLastProbe=still, detachedAfterTheLastProbe=detached)
+
+
 def store_still_the_same(record, relay):
     """The store's identity asked again, after every probe that used it.
 
@@ -3148,6 +3176,11 @@ def preflight(record, *, sleeper=time.sleep):
     # behind a verdict taken before them. This is the last relay command the run makes, and the
     # launcher reading below covers its spawn.
     store_held = store_still_the_same(record, relay)
+    # And the poller once more, after that command. Whichever of these two runs last, the other's
+    # verdict was taken before a subprocess that can take a minute, so ordering them against each
+    # other only moves which one is stale. The store's identity is the last question the relay is
+    # asked, and this is the last observation of any kind before the document is assembled.
+    supervisor = supervisor_still_alive(record, supervisor)
     launcher = launcher_unchanged(record, relay)
     captures = captures_still_fresh(record)
     # The window was ahead when the record was read; the witness delay and the probes take real

@@ -4977,6 +4977,64 @@ class FortyFifthHostedRound(TrialCase):
                          "a relay command ran after the store's identity was last confirmed")
         self.assertIn("service status", asked[:-1])
 
+    def test_a_supervisor_that_leaves_during_the_last_probe_is_not_a_running_one(self):
+        # Whichever of the store check and the supervisor gate runs last, the other's verdict was
+        # taken before a subprocess that can take as long as its timeout allows. Ordering them
+        # against each other only moves which one is stale, so the poller is read once more after
+        # the last command this run starts.
+        if process_state_of(os.getpid()) is None:
+            raise unittest.SkipTest("this host does not report a process state to read")
+        self.world.start_supervisor()
+        original = startup.store_still_the_same
+
+        def leave_during_the_last_probe(record, relay):
+            answer = original(record, relay)
+            self.world.supervisor.terminate()
+            self.world.supervisor.wait(timeout=5)
+            self.world.supervisor = None
+            return answer
+
+        startup.store_still_the_same = leave_during_the_last_probe
+        self.addCleanup(setattr, startup, "store_still_the_same", original)
+        document = self.world.preflight()
+        answer = document["supervisorStillRunning"]
+        self.assertFalse(document["readyToStart"],
+                         "a supervisor that left during the last probe was read as running")
+        self.assertTrue(answer["aliveAgain"],
+                        "the gate's own reading did not see the process this case needs")
+        self.assertFalse(answer["aliveAfterTheLastProbe"])
+
+    def test_an_environment_naming_no_place_is_not_a_selection(self):
+        # An omitted roots list means the entry's own working directory, so an environment whose
+        # cwd is not a place had one manufactured out of it: [7] is not a selection, and a
+        # reading that builds one is inventing the evidence it then agrees with.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            capture["creation"]["thread"]["environments"] = [{"environmentId": "local", "cwd": 7}]
+        self.world.payloads["settings-show"]["payload"]["settings"]["environments"] = [
+            {"environmentId": "local", "cwd": 7}]
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "an environment naming no place was read as a selection")
+        self.assertEqual(
+            cells_of(document, "capability")["deliveryAccess:" + World.PARENT_A]["value"],
+            UNKNOWN)
+
+    def test_a_verified_list_holding_something_that_is_not_a_name_is_unreadable(self):
+        # Sorting it against the request's keys raised before the cell could report a receipt
+        # that cannot be genuine, and the operator got a document saying this run raised.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["receipt-" + task + ".json"]["settings"]["verified"] = ["model", 7]
+        self.world.flush()
+        code, payload, stderr = self.world.run_cli()
+        self.assertNotIn("raised before it could report", json.dumps(payload),
+                         "a malformed receipt raised instead of being read as one")
+        self.assertEqual(code, 1, stderr)
+        cell = {c["cell"]: c for c in payload["readings"]["capability"]["cells"]}
+        self.assertEqual(cell["receiptEcho:" + World.PARENT_A]["value"], UNKNOWN)
+
     def test_a_root_is_judged_as_the_bytes_the_relay_receives(self):
         # The bound on that refusal: a root that is absolute without anything being taken off it
         # is still a root, trailing characters and all, because the relay compares it the same
