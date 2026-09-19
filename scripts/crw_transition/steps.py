@@ -363,6 +363,19 @@ def preflight(host, options):
 
     refusals.extend(runtime_complaints(host))
 
+    # Nothing to carry forward is not the same as nothing to do. The plugin-owned settings are
+    # built from the document this host is using, and with no live document, none named by a
+    # registration and no archive left, the marker root, the store and the journal cannot be
+    # established at all. The standdown would still remove the registration, and the install
+    # would then refuse with the hook already gone.
+    carried, _source = registered_settings(host)
+    if carried is None:
+        refusals.append("no settings document could be found to carry forward: the registration"
+                        " names none that can be read, the fixed path holds none and no archived"
+                        " one remains, so the marker root, the store and the journal this host"
+                        " uses cannot be established and the plugin settings cannot be built"
+                        " from anything")
+
     # The comparison the record writer will make, made before anything is removed. A plugin-owned
     # record is never retired -- it already names the plugin -- so the install compares it on
     # identity and refuses when it differs, and the table is removed before that write. Reaching
@@ -1233,6 +1246,20 @@ def _rollback_if_unfinished(results):
     standdown = done.get("hook standdown")
     if standdown is not None and standdown["outcome"] in DONE:
         return
+    if standdown is not None and standdown.get("wrote"):
+        # The write landed and only the read-back failed, so the registration may already be gone.
+        # Restoring a user-owned document then leaves the packaged launcher standing down on an
+        # owner that is not the plugin while there is no manual registration left to serve the
+        # Stop either: both hooks off, from a rollback meant to keep one. The archive stays where
+        # the recovery looks for it and the receipt says why.
+        standdown["settingsRestored"] = []
+        standdown["settingsLeftArchived"] = [moved["to"] for moved in
+                                             (retire.get("retired") or [])]
+        standdown["detail"] = (str(standdown["detail"]) + ". The settings stay archived because"
+                               " this step had already written the hook file: putting them back"
+                               " while the registration may be gone would leave no completion"
+                               " hook at all. Rerun to converge from where this stopped")
+        return
     restored, kept = _restore_retired(results)
     # Reported on the answer that ended the run, which is the one an operator reads first.
     stopper = next((item for item in reversed(results)
@@ -1258,8 +1285,13 @@ def transition(host, options, *, apply=False):
         for name, step in ORDER:
             active = name
             if name == MCP_STEPS[0] and apply:
-                lock = hostrecord.Locked(bridgerecord.ownership_lock_path(host["codexHome"]))
-                lock.__enter__()
+                # Assigned only after it is held. Assigning first meant a Busy raised inside
+                # __enter__ reached the finally below with an object whose __exit__ unlinks the
+                # lock file by name -- another run's lock, removed by the run that failed to take
+                # it, letting a third in while the first was still writing.
+                taking = hostrecord.Locked(bridgerecord.ownership_lock_path(host["codexHome"]))
+                taking.__enter__()
+                lock = taking
                 # Re-read INSIDE the lock, because the snapshot was taken before it. Two concurrent
                 # runs would otherwise both hold the user-owned record in memory, and the second
                 # would retire the plugin record the first had just written, leaving new sessions
@@ -1318,8 +1350,12 @@ def transition(host, options, *, apply=False):
     finally:
         if lock is not None:
             lock.__exit__(None, None, None)
-    if apply:
-        _rollback_if_unfinished(results)
+        # In the finally, because an OSError on the way through does not resume after it. The
+        # settings are retired for a standdown, and a run that dies between them leaves the same
+        # host whether it died of a refusal, a held lock or a full disk. The original failure
+        # keeps propagating; what changes is that the host is put back first.
+        if apply:
+            _rollback_if_unfinished(results)
     if apply and all(item["outcome"] in DONE for item in results):
         results.append(hook_recheck(host))
     return results

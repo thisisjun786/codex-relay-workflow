@@ -146,8 +146,25 @@ def cmd_swap_state(args):
     return EXIT_OK
 
 
+class _Parser(argparse.ArgumentParser):
+    """An argument parser that keeps this command's promise when the arguments are wrong.
+
+    Every command here answers with one JSON document, and argparse answers a bad invocation with
+    usage text on stderr and exit 2. A caller parsing the output then has nothing to parse at the
+    one moment it most needs to know what happened, so the usage failure is emitted in the shape
+    the caller was promised, with the usage text carried inside it.
+    """
+
+    def error(self, message):
+        emit({"command": None, "outcome": "refused", "error": str(message),
+              "usage": self.format_usage().strip(),
+              "note": "the arguments were not usable, so nothing was read and nothing was"
+                      " written."})
+        raise SystemExit(EXIT_USAGE)
+
+
 def build():
-    parser = argparse.ArgumentParser(prog="plugin_transition.py", description=__doc__)
+    parser = _Parser(prog="plugin_transition.py", description=__doc__)
     parser.add_argument("--codex-home")
     parser.add_argument("--dest", help="the install destination whose pointer names the runtime;"
                                        " derived from the recorded relayExecutable when omitted")

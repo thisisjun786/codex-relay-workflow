@@ -2163,6 +2163,95 @@ class TheFindingsFromReview(TransitionCase):
         self.assertTrue(fixed.is_file())
         self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
 
+    def test_a_lock_that_was_never_taken_is_never_released(self):
+        """__exit__ unlinks by name, so releasing one this run failed to take frees somebody's."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import bridgerecord, hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        held = Path(str(bridgerecord.ownership_lock_path(host.home)) + hostrecord.LOCK_SUFFIX)
+        held.write_text("999999", encoding="utf-8")
+        self.addCleanup(held.unlink, missing_ok=True)
+        original = hostrecord.LOCK_TIMEOUT_SECONDS
+        hostrecord.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, hostrecord, "LOCK_TIMEOUT_SECONDS", original)
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["mcp record retire"], "busy", json.dumps(results)[:700])
+        # The other run still holds it, and its contents are untouched.
+        self.assertTrue(held.is_file(), "the lock this run could not take was removed anyway")
+        self.assertEqual(held.read_text(encoding="utf-8"), "999999")
+
+    def test_an_operational_failure_after_the_retire_still_puts_the_settings_back(self):
+        """A full disk is one more way of not reaching the standdown."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        settings = host.settings()
+        original = steps.hook_standdown
+
+        def failing(host_view, options, *, apply=False):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        steps.hook_standdown = failing
+        self.addCleanup(setattr, steps, "hook_standdown", original)
+        # ORDER holds the function object, so the name has to be rebound there as well.
+        steps.ORDER = tuple((name, failing if name == "hook standdown" else step)
+                            for name, step in steps.ORDER)
+        self.addCleanup(setattr, steps, "ORDER",
+                        tuple((name, original if name == "hook standdown" else step)
+                              for name, step in steps.ORDER))
+        with self.assertRaises(OSError):
+            steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        self.assertEqual(host.settings(), settings)
+        self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
+
+    def test_a_standdown_that_wrote_before_failing_keeps_the_settings_archived(self):
+        """Restoring a user-owned document with the registration gone leaves no hook at all."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        results = [
+            {"step": "settings retire", "outcome": "settled", "detail": "retired",
+             "retired": [{"from": "/nowhere/crw-completion-hook.json",
+                          "to": "/nowhere/crw-completion-hook.json.superseded-x"}]},
+            {"step": "hook standdown", "outcome": "refused", "detail": "the file was written and"
+             " could not be read back", "applied": True, "wrote": True, "removed": ["user:Stop:0:0"]},
+        ]
+        steps._rollback_if_unfinished(results)
+        standdown = results[1]
+        self.assertEqual(standdown["settingsRestored"], [])
+        self.assertEqual(standdown["settingsLeftArchived"],
+                         ["/nowhere/crw-completion-hook.json.superseded-x"])
+        self.assertIn("stay archived", standdown["detail"])
+
+    def test_a_host_with_nothing_to_carry_forward_is_refused(self):
+        """The plugin settings are built from a document; with none, there is nothing to build."""
+        host = self.ready()
+        (host.home / "crw-completion-hook.json").unlink()
+        before = host.hooks_document()
+        code, answer = host.call("--dest", str(host.destination), "transition", "--apply",
+                                 "--accept-hook-trust-gap")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("carry forward", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_a_usage_failure_is_still_a_receipt(self):
+        """Every command here promises one JSON document, including the ones that never ran."""
+        done = run([CLI, "--codex-home", self.host.home, "nonsense"])
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        answer = json.loads(done.stdout)
+        self.assertEqual(answer["outcome"], "refused")
+        self.assertIn("invalid choice", answer["error"])
+        self.assertIn("usage", answer)
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
