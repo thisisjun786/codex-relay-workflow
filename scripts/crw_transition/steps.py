@@ -167,6 +167,15 @@ def preflight(host, options):
                              " which is the double fire this transition removes"})
 
     mcp = host["mcp"]
+    if mcp["table"] not in (reading.PRESENT, reading.ABSENT):
+        # A configuration that could not be read is not a configuration with no table in it.
+        # Read as absence it would let the plugin record be written while the file still
+        # registers the bridge, which is two bridges. On the documented 3.10 floor this is
+        # where the run stops, because the reader that answers this question needs tomllib.
+        refusals.append("the Codex configuration at " + mcp["configPath"] + " could not be"
+                        " read (" + str(mcp["table"]) + ": " + str(mcp["detail"]) + "), so"
+                        " whether this host registers " + inventory.SERVER_NAME + " was not"
+                        " established")
     if mcp["table"] == reading.PRESENT and not mcp["tableProven"]:
         refusals.append("the " + inventory.SERVER_NAME + " table in " + mcp["configPath"]
                         + " is not the block this repository renders for the registration it"

@@ -276,7 +276,7 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
         view = codexconfig.scan(text.value)
         if not view.readable:
             answer["table"] = codexconfig.UNREADABLE
-            answer["detail"] = "; ".join(view.complaints)
+            answer["detail"] = "; ".join(view.unreadable)
         else:
             present, registration = codexconfig.registration_of(view, name)
             if present:

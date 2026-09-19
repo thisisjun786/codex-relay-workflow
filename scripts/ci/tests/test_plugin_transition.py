@@ -22,6 +22,18 @@ CLI = ROOT / "scripts" / "plugin_transition.py"
 RUNTIME = ROOT / "scripts" / "runtime_install.py"
 INSTALL = ROOT / "scripts" / "install.py"
 PLUGIN_VERSION = "0.2.0"
+try:
+    import tomllib as _tomllib
+except ImportError:
+    _tomllib = None
+HAS_READER = _tomllib is not None
+
+# Reading a Codex configuration needs tomllib, so on the documented 3.10 floor this transition
+# cannot establish whether the host registers the bridge and refuses instead of proceeding. The
+# cases that need a readable configuration are marked, and TheFloorRefuses below asserts what
+# happens without it, so the behaviour is covered on both interpreters.
+needs_reader = unittest.skipUnless(
+    HAS_READER, "reading a configuration needs tomllib; this interpreter refuses instead")
 TRUST_KEY = 'crw@crw:wiring/hooks/stop-recording-completion.json:stop:0:0'
 
 
@@ -168,6 +180,7 @@ class PreflightRefusesBeforeItRemovesAnything(TransitionCase):
         self.assertEqual(code, 1)
         self.assertIn("--payload", answer["results"][0]["detail"])
 
+    @needs_reader
     def test_an_untrusted_hook_is_refused_until_the_window_is_accepted(self):
         host = self.ready(trusted=False)
         code, answer = host.transition("--apply")
@@ -207,6 +220,7 @@ class PreflightRefusesBeforeItRemovesAnything(TransitionCase):
         self.assertIn("cannot prove is its own adapter", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), document)
 
+    @needs_reader
     def test_a_table_this_repository_did_not_render_is_left_alone(self):
         host = self.ready()
         text = host.config().replace("[mcp_servers.codex-thread-bridge]",
@@ -217,6 +231,7 @@ class PreflightRefusesBeforeItRemovesAnything(TransitionCase):
         self.assertIn("not the block this repository renders", answer["results"][0]["detail"])
         self.assertEqual(host.config(), text)
 
+    @needs_reader
     def test_work_in_flight_is_reported_and_refused_until_it_is_allowed(self):
         host = self.ready()
         (host.marker / "published").mkdir(parents=True, exist_ok=True)
@@ -228,6 +243,7 @@ class PreflightRefusesBeforeItRemovesAnything(TransitionCase):
         self.assertEqual(code, 0)
 
 
+@needs_reader
 class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
     def test_a_normal_manual_install_converges_to_a_plugin_owned_host(self):
         host = self.ready()
@@ -311,6 +327,7 @@ class TheTransitionMovesOnlyWhatItOwns(TransitionCase):
         self.assertNotEqual((host.settings() or {}).get("owner"), "plugin")
 
 
+@needs_reader
 class RunningItAgainChangesNothing(TransitionCase):
     def test_a_second_run_converges_and_writes_nothing(self):
         host = self.ready()
@@ -342,6 +359,7 @@ class RunningItAgainChangesNothing(TransitionCase):
         self.assertEqual(host.settings()["owner"], "plugin")
 
 
+@needs_reader
 class DisableAndRemoveKeepTheOperationalData(TransitionCase):
     def test_disable_stops_new_calls_and_deletes_nothing(self):
         host = self.ready()
@@ -396,6 +414,7 @@ class SwapStateReportsWhatItRead(TransitionCase):
         self.assertFalse(answer["pointerResolves"])
 
 
+@needs_reader
 class TheDryRunAndTheWayBack(TransitionCase):
     def test_a_dry_run_of_a_normal_manual_install_settles_and_writes_nothing(self):
         """A dry run has to project past the retire step, or it refuses a sequence that works."""
@@ -438,6 +457,26 @@ class TheDryRunAndTheWayBack(TransitionCase):
         self.assertIn("no install destination", preflight["detail"])
         self.assertEqual({r["step"]: r["outcome"] for r in answer["results"][1:]},
                          {r["step"]: "not_reached" for r in answer["results"][1:]})
+
+
+class TheFloorRefuses(TransitionCase):
+    """What happens on an interpreter that cannot read a Codex configuration.
+
+    Not a skipped case: the refusal IS the behaviour on that interpreter, and the thing worth
+    proving is that it refuses rather than reading an unreadable configuration as one holding no
+    registration. Read as absence, the plugin record would be written while the file still
+    registers the bridge, and that is two bridges.
+    """
+
+    @unittest.skipIf(HAS_READER, "this interpreter can read a configuration")
+    def test_without_a_reader_the_transition_refuses_and_removes_nothing(self):
+        host = self.ready()
+        before = (host.config(), host.hooks_document(), host.settings(), host.record())
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("could not be read", answer["results"][0]["detail"])
+        self.assertEqual((host.config(), host.hooks_document(), host.settings(), host.record()),
+                         before)
 
 
 if __name__ == "__main__":
