@@ -210,6 +210,11 @@ TOUCHES_SOURCE_WITHOUT_CONCLUDING = {
     "diagnose_for":
         "it runs RUNTIME as a program and reads what the program answered. The text of that"
         " file is never opened here, and what the run answers is the thing being asked.",
+    "test_a_decorator_alias_resolves_in_the_scope_that_imported_it":
+        "it compiles and runs a sample written into the case itself, and then asks the OBJECT"
+        " it built whether a descriptor was installed. No file is read, and the point is"
+        " precisely that the expectation comes from running the code rather than from this"
+        " module's own reading of it.",
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice":
         "it parses a sample written into the case itself, to measure that a derivation comes"
         " back on it. No file is read and nothing about this module's own text is concluded:"
@@ -282,6 +287,72 @@ SOURCE_UNDECIDED_CALLS = {
 # file's own text, so a new reader of the bare form fails the module rather than waiting to be
 # found, and an entry that stops being true fails too.
 ASSIGN_ONLY_ON_PURPOSE = {}
+
+# The lexical rule for a decorator alias, with the expected answer taken from PYTHON rather than
+# from this reader. Each sample is RUN and the class it builds is asked whether a property
+# descriptor was installed; the reader's inventory is then compared with that. Computing the
+# expectation with the lookup under test would be the derived-therefore-complete fallacy with
+# one more step in it -- a visibility guard that exists and answers wrongly passes a structural
+# sweep and fails a person.
+#
+# Three cases, all inside the reach this resolver already claims. The third exists because a
+# file-wide map passes the first by accident whenever the file order happens to suit it.
+DECORATOR_ALIAS_CONTROLS = {
+    "two scopes reusing one alias": (
+        ("def good():",
+         "    import builtins as d",
+         "    class Holder:",
+         "        @d.property",
+         "        def carrier(self):",
+         "            return reading.UNREADABLE",
+         "        def answer(self):",
+         "            return self.carrier",
+         "    return Holder",
+         "",
+         "def bad():",
+         "    import json as d",
+         "    return d"),
+        "good", "good.answer"),
+    "an inner scope shadowing an outer binding": (
+        ("import builtins as d",
+         "",
+         "def bad():",
+         "    import json as d",
+         "    class Holder:",
+         "        @d.property",
+         "        def carrier(self):",
+         "            return reading.UNREADABLE",
+         "        def answer(self):",
+         "            return self.carrier",
+         "    return Holder"),
+        "bad", "bad.answer"),
+    "the same two scopes written in the other order": (
+        ("def bad():",
+         "    import json as d",
+         "    return d",
+         "",
+         "def good():",
+         "    import builtins as d",
+         "    class Holder:",
+         "        @d.property",
+         "        def carrier(self):",
+         "            return reading.UNREADABLE",
+         "        def answer(self):",
+         "            return self.carrier",
+         "    return Holder"),
+        "good", "good.answer"),
+    "one scope binding the alias to something else": (
+        ("def good():",
+         "    import json as d",
+         "    class Holder:",
+         "        @d.property",
+         "        def carrier(self):",
+         "            return reading.UNREADABLE",
+         "        def answer(self):",
+         "            return self.carrier",
+         "    return Holder"),
+        "good", "good.answer"),
+}
 
 # Every place the certainty of a class-body binding is decided. A name bound under a branch that
 # may not run does not shadow -- whether it ran is a question about the run -- and treating one
@@ -4556,7 +4627,12 @@ def _hands_on(tree, spelled):
                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                   for statement in node.body}
     module_bindings, class_bindings, run_bindings = [], {}, {}
-    imported, imported_from = set(), {}
+    # Keyed by the scope that wrote the import, not by the file. Two functions may import
+    # different modules under one alias, and a file-wide last-write-wins map answers for both
+    # with whichever landed later -- so a decorator the first one really applied is read
+    # against the second one's module. Looked up innermost-first by _names_module, the same
+    # lexical lookup the qualifier map already uses.
+    import_names_at, imported_at = {}, {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             bound = [(node.lineno, alias.asname or alias.name.split(".")[0],
@@ -4578,10 +4654,13 @@ def _hands_on(tree, spelled):
                     bound.append((node.lineno, alias.asname or alias.name,
                                   alias.name if exported is not None and exported is builtin
                                   else None))
-            imported |= {name for _line, name, _value in bound}
+            at = places.get(id(node), (MODULE_LEVEL, None))[0]
+            for _line, name, _value in bound:
+                import_names_at.setdefault(at, {}).setdefault(name, set()).add(name)
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    imported_from[alias.asname or alias.name.split(".")[0]] = alias.name
+                    imported_at.setdefault(at, {}).setdefault(
+                        alias.asname or alias.name.split(".")[0], set()).add(alias.name)
         elif isinstance(node, ast.Assign):
             spelling = (_dotted(node.value) or "").rpartition(".")[2]
             bound = [(node.lineno, inner.id, spelling) for target in node.targets
@@ -4674,10 +4753,14 @@ def _hands_on(tree, spelled):
         spelled_as = _dotted(mark) or ""
         owner, _, last = spelled_as.rpartition(".")
         held_by = owner.rpartition(".")[2]
-        if owner and held_by in imported:
-            module = sys.modules.get(imported_from.get(held_by, ""))
-            return module is not None and getattr(module, last, None) in the_objects(seed)
-        if owner and owner.split(".")[0] in imported:
+        if owner and _names_module(import_names_at, scope, held_by, None):
+            # Every module that spelling is bound to IN THE SCOPE THAT CAN SEE IT. Within one
+            # scope a name may be bound more than once, and which binding a decorator ran under
+            # is a question about position; a name that ever names the owner is treated as
+            # naming it, the direction this reader errs in everywhere else.
+            return any(getattr(sys.modules.get(named), last, None) in the_objects(seed)
+                       for named in _names_module(imported_at, scope, held_by, None))
+        if owner and _names_module(import_names_at, scope, owner.split(".")[0], None):
             # import innocent.decorators binds innocent, so innocent.decorators names a path
             # through that module rather than a name of its own. Reduced to its last part the
             # owner matches nothing here, and the terminal name is then read as the builtin it
@@ -6679,6 +6762,35 @@ class SevenReadingsTests(unittest.TestCase):
                                      form + ": " + place + " cannot reach the declared thing and"
                                      " this reader named it anyway: " + json.dumps(places))
 
+    def test_a_decorator_alias_resolves_in_the_scope_that_imported_it(self):
+        """The lexical rule, checked against what Python really binds rather than against this
+        reader's own lookup.
+
+        The sweep beside this one establishes that a lookup HAS a visibility predicate. It
+        cannot establish that the predicate answers correctly, and here the whole defect was a
+        guard that existed and answered wrongly, so structure alone would have passed it.
+
+        So the expectation is observed rather than computed: each sample is run, and the class
+        it builds is asked whether a property descriptor was installed. Where the alias names a
+        module with no such attribute, Python does not build the class at all -- which is the
+        same answer, reached by the language rather than by agreeing with this file.
+        """
+        for form, (lines, maker, place) in sorted(DECORATOR_ALIAS_CONTROLS.items()):
+            with self.subTest(form):
+                written = "\n".join(lines)
+                namespace = {}
+                exec(compile(written, "<control>", "exec"), namespace)
+                try:
+                    installed = isinstance(vars(namespace[maker]()).get("carrier"), property)
+                except AttributeError:
+                    # The module the alias really names has no attribute of that spelling, so
+                    # the class is never built: no descriptor, and no consumer reading one.
+                    installed = False
+                self.assertEqual(place in places_reached(REFUSAL, written), installed,
+                                 form + ": this reader and Python disagree about whether the"
+                                 " decorator installed a descriptor, so the alias was resolved"
+                                 " in a scope that cannot reach the use site")
+
     def test_no_class_body_binding_shadows_without_asking_whether_it_happened(self):
         """The certainty rule, swept over every place that decides it rather than one branch.
 
@@ -7648,6 +7760,7 @@ HANDED = {
     "_passed_through": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
+    "test_a_decorator_alias_resolves_in_the_scope_that_imported_it": NOTHING,
     "test_no_class_body_binding_shadows_without_asking_whether_it_happened": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
