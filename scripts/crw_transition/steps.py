@@ -583,6 +583,11 @@ def transition(host, options, *, apply=False):
             if name == MCP_STEPS[0] and apply:
                 lock = hostrecord.Locked(bridgerecord.ownership_lock_path(host["codexHome"]))
                 lock.__enter__()
+                # Re-read INSIDE the lock, because the snapshot was taken before it. Two concurrent
+                # runs would otherwise both hold the user-owned record in memory, and the second
+                # would retire the plugin record the first had just written, leaving new sessions
+                # with no bridge. The decision is made about the state that will be written.
+                host = {**host, "mcp": inventory.read_mcp(host["codexHome"])}
             answer = step(host, options, apply=apply) if name != "settings install" \
                 else step(host, options, apply=apply, previous=previous)
             results.append(answer)

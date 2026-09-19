@@ -677,6 +677,35 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(document["markerRoot"], str(host.marker / "round11"),
                          "recovered " + str(name))
 
+    def test_a_nested_server_table_is_not_proven_and_is_left_alone(self):
+        """[mcp_servers.<name>.env] belongs to the same registration even though it is a header."""
+        host = self.ready()
+        host.append_config('[mcp_servers.codex-thread-bridge.env]\nA = "b"\n')
+        before = host.config()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1)
+        self.assertIn("not the block this repository renders", answer["results"][0]["detail"])
+        self.assertEqual(host.config(), before)
+        self.assertIsNotNone(host.record())
+
+    def test_a_second_run_under_the_lock_does_not_retire_the_first_runs_record(self):
+        """The snapshot is taken before the lock, so the MCP surface is re-read inside it."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        stale = inventory.snapshot(host.home, repo_root=ROOT)
+        code, _ = host.transition("--apply")
+        self.assertEqual(code, 0)
+        installed = host.record()
+        self.assertEqual(installed["owner"], "plugin")
+        # The second run still holds the pre-lock reading, which named the user-owned record.
+        results = steps.transition(stale, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes.get("mcp record retire"), "already_done", json.dumps(results)[:800])
+        self.assertEqual(host.record(), installed)
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

@@ -110,9 +110,16 @@ def table_span(text, header):
         if line.strip() != header:
             continue
         collected = [line]
+        child = header[:-1] + "."
         for following in lines[index + 1:]:
             if TABLE.match(following):
-                break
+                # A nested table such as [mcp_servers.<name>.env] is part of the SAME registration
+                # even though it starts with a header, so the span has to reach it. Stopping short
+                # would prove only the parent block, and removing that block would leave the nested
+                # one orphaned under no server at all. Included here, the span stops matching what
+                # this repository renders, which is the correct answer: not ours, left alone.
+                if not following.strip().startswith(child):
+                    break
             collected.append(following)
         while collected and not collected[-1].strip():
             collected.pop()
@@ -396,13 +403,22 @@ def read_mcp(codex_home, *, name=SERVER_NAME):
                 # the registration it finds there. Anything else is somebody's own edit.
                 rendered = codexconfig.render(name, registration.get("command"),
                                               registration.get("args") or [])
-                span = table_span(text.value, "[mcp_servers." + codexconfig.key(name) + "]")
+                header = "[mcp_servers." + codexconfig.key(name) + "]"
+                span = table_span(text.value, header)
+                # A nested table belongs to the same registration and TOML lets it sit anywhere in
+                # the file, so it is looked for everywhere rather than only after the parent.
+                # Removing the parent while one exists would orphan it under no server at all.
+                nested = [line.strip() for line in text.value.splitlines()
+                          if line.strip().startswith(header[:-1] + ".")]
+                answer["nestedTables"] = nested
                 answer["renderedTable"] = rendered
                 answer["tableSpan"] = span
-                answer["tableProven"] = span is not None and span.strip() == rendered.strip()
+                answer["tableProven"] = (span is not None and not nested
+                                         and span.strip() == rendered.strip())
                 if span is not None and not answer["tableProven"]:
                     answer["detail"] = ("the table holds more or other than the command and"
-                                        " arguments this repository renders for it")
+                                        " arguments this repository renders for it"
+                                        + (", including " + ", ".join(nested) if nested else ""))
     document, outcome, detail = bridgerecord.read(Path(answer["recordPath"]))
     answer["record"] = document
     answer["recordOutcome"] = outcome
