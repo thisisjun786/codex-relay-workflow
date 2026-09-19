@@ -9303,6 +9303,29 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
                          "the pointer cell says this path is left as it is, and the entry"
                          " beside it listed the same object for removal")
 
+    def test_a_child_sharing_a_foreign_pointer_s_name_is_still_scanned(self):
+        """The exclusion is for THIS destination's pointer. Excluding by basename alone
+        suppressed a local child that merely shared the name of a pointer recorded elsewhere,
+        and an abandoned staging sitting at that child vanished from cleanup."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            host.pointer_path.unlink()
+            host.pointer_path.mkdir()
+            staging.write_claim(host.pointer_path, staging.STAGING, issue="CRW-100")
+            elsewhere = Path(temporary) / "old-destination"
+            elsewhere.mkdir()
+            far = pointer.pointer_path(elsewhere)
+            pointer.place(far, elsewhere / "env")
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            record["pointer"] = {"path": str(far), "recordedAt": "2026-09-18T00:00:00Z",
+                                 "recordedBy": "CRW-49"}
+            hostrecord.save(host.record_path, record)
+            found = _diagnose(host)
+        entries = {Path(entry["path"]).name: entry for entry in found["residue"]["entries"]}
+        self.assertNotEqual(entries[host.pointer_path.name]["decision"], residue.NOT_SCANNED,
+                            "a local child was skipped because a pointer recorded under another"
+                            " destination happens to share its name")
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here

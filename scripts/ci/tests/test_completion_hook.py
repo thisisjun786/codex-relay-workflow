@@ -2498,6 +2498,49 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                       " cause standing, and it was ruled out")
         self.assertEqual(cell.get("value"), firing.CAUSE_UNREADABLE)
 
+    def test_two_journals_nobody_could_list_leave_divergence_standing(self):
+        """Neither side was read, so neither is settled: one unread journal may hold records
+        while the other is empty, which is exactly this cause. Ruling it out omits a candidate
+        precisely where the command promises to carry every unsettled one."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            blocked = [Path(temporary) / "not-a-journal-one", Path(temporary) / "not-a-journal-two"]
+            for one in blocked:
+                one.write_text("", encoding="utf-8")
+            amend_settings(temporary, journalRoot=str(blocked[0]))
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["journalRoot"] = str(blocked[1])
+            second.write_text(json.dumps(document), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertIn(firing.RECORDED_ON_ANOTHER_PATH,
+                      [one["cause"] for one in cell.get("candidates") or []],
+                      "neither journal was read, so this cause is unsettled rather than out")
+
+    def test_one_journal_directory_is_listed_once_however_it_is_spelled(self):
+        """A journal root is opened as a directory and _journal_cell puts it through Path, so a
+        trailing separator reaches the same scandir. Keyed apart, one directory was listed
+        twice and a Stop between the listings could give it two counts."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            _first, second = second_registration(temporary, "journal-two")
+            document = json.loads(second.read_text(encoding="utf-8"))
+            document["journalRoot"] = str(Path(temporary) / "journal") + os.sep
+            second.write_text(json.dumps(document), encoding="utf-8")
+            listed = []
+            real = completion._journal_cell
+
+            def counting(config):
+                listed.append(str(Path(str((config or {}).get("journalRoot") or ""))))
+                return real(config)
+
+            with mock.patch.object(completion, "_journal_cell", side_effect=counting):
+                completion.status(codex_home=temporary, environ={})
+        self.assertEqual(len(listed), len(set(listed)),
+                         "one journal directory, two spellings, two listings: " + repr(listed))
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition

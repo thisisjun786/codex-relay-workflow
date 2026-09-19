@@ -72,7 +72,12 @@ NOTE = ("residue is exactly what the installer's own decision would reclaim (sta
         " It is also not a snapshot: the claim, the lock, the contents, the host record and"
         " the pointer are read at different moments, so a host changing underneath this"
         " command is described in pieces. Every decision is conservative in the same"
-        " direction, so that costs a path being kept rather than a live one being named.")
+        " direction, so an error costs a path being kept rather than one being missed."
+        " What it does NOT promise is that a listed path is still residue when this payload"
+        " is read: this survey takes no lock, so an install can reclaim and rebuild a path"
+        " between the reading and the reading being acted on. Entries can go stale, and a"
+        " path is only safely clearable under the installer lock -- which is why the recovery"
+        " text names the install rather than a removal.")
 
 
 def _entry(path, **fields):
@@ -152,7 +157,12 @@ def survey(destination, *, pointer_path=None, recorded_pointer=None, protection=
     # was an alias of the directory the pointer sits in, and a real directory standing where
     # the pointer belongs -- carrying an abandoned claim -- was then classified RECLAIM while
     # the pointer cell beside it read NOT_A_LINK and promised it was left exactly as it is.
-    excluded = {str(root / Path(pointer_path).name)} if pointer_path else set()
+    # Only when the pointer is actually IN this destination. Excluding by basename alone
+    # suppressed a local child that merely shared the name of a pointer recorded
+    # elsewhere, and an abandoned staging sitting at that child vanished from cleanup.
+    excluded = ({str(root / Path(pointer_path).name)}
+                if pointer_path and _same_directory(Path(pointer_path).parent, root)
+                else set())
     try:
         # Not a glob: a listing that cannot be made must raise here rather than come back as a
         # complete description of a smaller tree (reading.OMITTING_READERS).

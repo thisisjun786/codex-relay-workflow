@@ -1454,7 +1454,12 @@ def journals_named(registrations, already_read=None):
         # answers "/", which is a real directory a configuration may legitimately name, and the
         # two would then share a snapshot. NO_ROOT is a sentinel no path can equal.
         configured = config.get("journalRoot")
-        root = resource_key(configured) if configured else NO_ROOT
+        # A journal root is opened as a DIRECTORY and _journal_cell puts it through
+        # Path, which drops a trailing separator, so /tmp/journal and /tmp/journal/
+        # reach one scandir. The trailing separator resource_key keeps is a real
+        # distinction for an executable and not for this, so it is dropped here rather
+        # than weakened there.
+        root = (resource_key(str(Path(configured))) if configured else NO_ROOT)
         if root in scanned:
             # The policy is this registration's own; the listing is the directory's, and the
             # directory is the same one.
