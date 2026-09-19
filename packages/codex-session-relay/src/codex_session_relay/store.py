@@ -664,6 +664,20 @@ CREATE INDEX IF NOT EXISTS scope_links_upper ON scope_links
     (upper_kind, upper_key, link_kind, status);
 CREATE INDEX IF NOT EXISTS scope_directives_scope ON scope_directives
     (scope_kind, scope_key, disposition);
+-- One live owner per scope and role, and one live edge per kind and scope pair, enforced by
+-- the database rather than only by the code that writes it. A partial unique index because
+-- superseded and archived rows are retained deliberately and must not compete.
+--
+-- An index CAN be added to an existing store, unlike a CHECK constraint, which only ever
+-- reaches a database created after it. So the invariants that matter most are indexes and the
+-- vocabulary checks stay in Python, rather than being written where half the stores would
+-- never get them.
+CREATE UNIQUE INDEX IF NOT EXISTS scope_bindings_one_live_owner ON scope_bindings
+    (scope_kind, scope_key, role)
+    WHERE status IN ('active','paused') AND superseded_by IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS scope_links_one_live_edge ON scope_links
+    (link_kind, upper_kind, upper_key, lower_kind, lower_key)
+    WHERE status IN ('active','paused') AND superseded_by IS NULL;
 CREATE INDEX IF NOT EXISTS sync_ready ON sync_outbox (state, next_attempt_at);
 """
 

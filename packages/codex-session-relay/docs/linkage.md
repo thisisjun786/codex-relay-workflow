@@ -40,10 +40,14 @@ and no second database.
 
 ## Identity
 
-    bindingId   = "bnd-" + sha256(role|scopeKind|scopeKey|taskId)[:16]
-    linkId      = "lnk-" + sha256(kind|upperKind|upperKey|lowerKind|lowerKey)[:16]
-    peer linkId = "lnk-" + sha256("peer"|"project"|lower|"project"|higher)[:16]
-    directiveId = "dir-" + sha256(scopeKind|scopeKey|fromScopeKey|digest)[:16]
+    bindingId   = "bnd-" + sha256(role|scopeKind|scopeKey|taskId)[:32]
+    linkId      = "lnk-" + sha256(kind|upperKind|upperKey|lowerKind|lowerKey)[:32]
+    peer linkId = "lnk-" + sha256("peer"|"project"|lower|"project"|higher)[:32]
+    directiveId = "dir-" + sha256(scopeKind|scopeKey|fromScopeKey|digest)[:32]
+
+128 bits, not the 64 the contract's `relationshipId` keeps. That one is frozen and cannot be
+widened; these are relay-owned, and a collision here would silently MERGE two scopes or two
+edges rather than fail loudly, so the cheap width is the right one.
 
 A **link** is keyed by its two scopes and never by a task id. Keying on the owner would mean a
 handover changed the identity of an unchanged relationship, so a later re-registration would

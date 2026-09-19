@@ -60,6 +60,12 @@ SUPERSEDED = "superseded"
 DISPOSITIONS = (CHOSEN, SUPERSEDED)
 
 
+# How much of the digest a relay-owned identifier keeps. 128 bits rather than the 64 the
+# contract's relationship id uses: that one is frozen and cannot be widened, these are not,
+# and a collision here would silently MERGE two scopes or two edges rather than fail loudly.
+ID_WIDTH = 32
+
+
 def _exact(value, what):
     """A scope or task identifier is a non-empty string that cannot corrupt a derivation."""
     if not isinstance(value, str) or not value.strip():
@@ -76,7 +82,7 @@ def _exact(value, what):
 
 
 def binding_id(role, scope_kind, scope_key, task_id):
-    return "bnd-" + sha256_hex("|".join((role, scope_kind, scope_key, task_id)))[:16]
+    return "bnd-" + sha256_hex("|".join((role, scope_kind, scope_key, task_id)))[:ID_WIDTH]
 
 
 def link_id(kind, upper_kind, upper_key, lower_kind, lower_key):
@@ -88,16 +94,16 @@ def link_id(kind, upper_kind, upper_key, lower_kind, lower_key):
     """
     if kind == PEER:
         low, high = sorted((upper_key, lower_key))
-        return "lnk-" + sha256_hex("|".join((PEER, PROJECT, low, PROJECT, high)))[:16]
+        return "lnk-" + sha256_hex("|".join((PEER, PROJECT, low, PROJECT, high)))[:ID_WIDTH]
     return "lnk-" + sha256_hex(
         "|".join((kind, upper_kind, upper_key, lower_kind, lower_key))
-    )[:16]
+    )[:ID_WIDTH]
 
 
 def directive_id(scope_kind, scope_key, from_scope_key, digest):
     return "dir-" + sha256_hex(
         "|".join((scope_kind, scope_key, from_scope_key, digest))
-    )[:16]
+    )[:ID_WIDTH]
 
 
 class _Refusal:
@@ -185,21 +191,17 @@ class Linkage:
         _exact(endpoint.task_id, "a task id")
         _exact(endpoint.host_id, "a host id")
         bid = binding_id(role, scope_kind, scope_key, endpoint.task_id)
-        existing = self.store.one("SELECT * FROM scope_bindings WHERE binding_id = ?", (bid,))
-        if existing is not None:
-            if existing["host_id"] != endpoint.host_id:
-                raise LinkageError(
-                    RefusalReason.LINK_CONFLICT,
-                    bid + " is already bound on host " + repr(existing["host_id"])
-                    + ", not " + repr(endpoint.host_id),
-                )
-            return self._binding_record(existing)
         now = self.clock.iso()
+        refusal = None
         with self.store.transaction() as db:
-            refusal = self._binding_refusal(db, role, scope_kind, scope_key, endpoint)
+            # The lookup, the decision and the write are all inside BEGIN IMMEDIATE. Read
+            # beforehand, two identical calls could both miss the row and the loser collided
+            # on the primary key with a database error instead of converging; and an ARCHIVED
+            # binding was returned as success without ever asking who holds the scope now.
+            plan, refusal = self.binding_plan(
+                db, role=role, scope_key=scope_key, endpoint=endpoint)
             if refusal is None:
-                self._insert_binding(db, bid, role, scope_kind, scope_key, endpoint, status,
-                                     revision=1, at=now)
+                self.apply_binding_plan(db, plan, status=status, at=now)
             else:
                 self._record_conflict_in(db, refusal, at=now)
         if refusal is not None:
@@ -229,8 +231,17 @@ class Linkage:
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=current["task_id"], challenger=endpoint.task_id,
                 )
-            action = "present" if current["status"] in LIVE else "reactivate"
-            return (bid, action, role, scope_kind, scope_key, endpoint), None
+            if current["status"] in LIVE:
+                return (bid, "present", role, scope_kind, scope_key, endpoint), None
+            # Reactivating is a claim on a scope somebody else may hold by now, and a task
+            # that has since taken another role must not get one back this way. So an
+            # archived binding is revalidated exactly like a new one rather than restored on
+            # the strength of having existed.
+            refusal = self._binding_refusal(db, role, scope_kind, scope_key, endpoint,
+                                            replacing=replacing)
+            if refusal is not None:
+                return None, refusal
+            return (bid, "reactivate", role, scope_kind, scope_key, endpoint), None
         refusal = self._binding_refusal(db, role, scope_kind, scope_key, endpoint,
                                         replacing=replacing)
         if refusal is not None:

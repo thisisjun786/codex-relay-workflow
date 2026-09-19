@@ -875,5 +875,75 @@ class TheObservationsFromTheSameRound(LinkageTestCase):
             self.assertEqual(answer["findings"] if "findings" in answer else [], [])
             self.assertTrue(answer["detail"], "the fault was discarded with the answer")
 
+class TheThirdRoundFoundTheseToo(LinkageTestCase):
+    def test_an_archived_binding_is_revalidated_rather_than_restored(self):
+        """bind_scope returned a matching archived binding as success without asking who holds
+        the scope now, and binding_plan reactivated one without the role check."""
+        self.linkage.bind_scope(
+            role=linkage.PARENT, scope_key=PROJECT, endpoint=self.parent())
+        self.store.db.execute(
+            "UPDATE scope_bindings SET status = 'archived' WHERE scope_key = ?", (PROJECT,))
+        self.linkage.bind_scope(
+            role=linkage.PARENT, scope_key=PROJECT, endpoint=self.parent(OTHER_PARENT))
+        self.assertRefused(
+            RefusalReason.DUPLICATE_SCOPE_OWNER,
+            self.linkage.bind_scope, role=linkage.PARENT, scope_key=PROJECT,
+            endpoint=self.parent())
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], OTHER_PARENT)
+
+    def test_two_identical_concurrent_binds_converge(self):
+        """The lookup happened before BEGIN IMMEDIATE, so both could miss the row and the
+        loser collided on the primary key with a database error instead of converging."""
+        gate = threading.Barrier(2)
+        errors, wins = [], []
+
+        def claim():
+            store = Store(self.store.path)
+            try:
+                worker = Linkage(store, FakeClock())
+                gate.wait(timeout=10)
+                wins.append(worker.bind_scope(
+                    role=linkage.PARENT, scope_key=PROJECT,
+                    endpoint=Endpoint(PARENT, HOST, cwd="/parent"))["bindingId"])
+            except Exception as problem:
+                errors.append(problem)
+            finally:
+                store.close()
+
+        threads = [threading.Thread(target=claim) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+        self.assertEqual(errors, [], "an identical replay raised instead of converging")
+        self.assertEqual(len(set(wins)), 1)
+        self.assertEqual(
+            len(self.store.all("SELECT 1 FROM scope_bindings WHERE scope_key = ?", (PROJECT,))),
+            1)
+
+    def test_the_database_holds_one_live_owner_per_scope(self):
+        """The invariant was enforced only by the code that writes it. An index reaches an
+        existing store on reopen, which a CHECK constraint never would."""
+        import sqlite3
+
+        self.linkage.bind_scope(
+            role=linkage.PARENT, scope_key=PROJECT, endpoint=self.parent())
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.db.execute(
+                "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key,"
+                " task_id, host_id, cwd, cxc_session, status, revision, supersedes,"
+                " superseded_by, handover_note, created_at, updated_at)"
+                " VALUES ('bnd-forced','parent','project',?,?,?,NULL,NULL,'active',1,NULL,"
+                "         NULL,NULL,?,?)",
+                (PROJECT, OTHER_PARENT, HOST, self.clock.iso(), self.clock.iso()))
+
+    def test_a_relay_owned_identifier_keeps_more_than_the_frozen_one(self):
+        """64 bits made a collision merge two scopes silently. These ids are not frozen."""
+        bid = binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, PARENT)
+        self.assertEqual(len(bid), len("bnd-") + 32)
+        lid = link_id(linkage.EXECUTION, linkage.INITIATIVE, INITIATIVE,
+                      linkage.PROJECT, PROJECT)
+        self.assertEqual(len(lid), len("lnk-") + 32)
+
 if __name__ == "__main__":
     unittest.main()
