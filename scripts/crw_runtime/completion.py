@@ -881,12 +881,12 @@ def _require_python(candidate):
         raise ValueError(str(candidate) + " could not be run as an interpreter: "
                          + str(error)) from error
     said = (finished.stdout or b"").decode("utf-8", "replace").strip()
-    parts = said.split(".")
-    if finished.returncode != 0 or len(parts) != 2 or not all(p.isdigit() for p in parts):
+    version = _python_said(said)
+    if finished.returncode != 0 or version is None:
         raise ValueError(str(candidate) + " is executable but does not run Python; every Stop"
                                           " would succeed at running it and never reach the"
                                           " adapter")
-    if (int(parts[0]), int(parts[1])) < SUPPORTED_PYTHON:
+    if version < SUPPORTED_PYTHON:
         raise ValueError(str(candidate) + " runs Python " + said + ", below the supported "
                          + ".".join(str(part) for part in SUPPORTED_PYTHON)
                          + "; the adapter would fail on every Stop before evaluating or"
@@ -1562,6 +1562,21 @@ def _startable_from(halves):
     return None
 
 
+def _python_said(said):
+    """The version a Python reported, as a pair, or None when that is not what it said.
+
+    One rule for the installer's refusal and the diagnosis probe, because they were two: the
+    installer already knew that being executable is not the question and that being a Python is
+    not the whole question, and refused an interpreter below the floor -- while diagnosis, on
+    the same host, reported the registration startable. A predicate the writer enforces and the
+    reader does not is the two of them disagreeing about one host.
+    """
+    parts = said.split(".")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        return None
+    return (int(parts[0]), int(parts[1]))
+
+
 def _interpreter_question():
     """A question only a program that RAN the source can answer.
 
@@ -1571,9 +1586,14 @@ def _interpreter_question():
     was fixed for one round ago. The source therefore asks for something COMPUTED: a nonce this
     call invents, written back reversed. Echoing the source shows the nonce forward, and the
     exact answer is compared rather than searched for.
+
+    It asks for the VERSION in the same breath, because being a Python is not the whole
+    question either: one too old to run this adapter fails every Stop and looks identical from
+    the hook file. One execution answers both, so the stronger check costs no more.
     """
     nonce = os.urandom(12).hex()
-    source = ("import sys;sys.stdout.write(''.join(reversed(" + repr(nonce) + ")))")
+    source = ("import sys;sys.stdout.write(''.join(reversed(" + repr(nonce) + "))"
+              " + ' %d.%d' % (sys.version_info[0], sys.version_info[1]))")
     return source, nonce[::-1]
 
 
@@ -1609,7 +1629,15 @@ def _answers_as_an_interpreter(resolved, label):
         return _cell(firing.COULD_NOT_BE_RUN, label + " could not be run: " + str(error),
                      path=str(resolved),
                      errno=errno.errorcode.get(error.errno, error.errno))
-    if finished.returncode == 0 and _text(finished.stdout).strip() == expected:
+    answered = _text(finished.stdout).strip().split(" ")
+    version = _python_said(answered[1]) if len(answered) == 2 else None
+    if finished.returncode == 0 and answered[0] == expected and version is not None:
+        if version < SUPPORTED_PYTHON:
+            return _cell(firing.BELOW_SUPPORTED_PYTHON, label + " runs Python "
+                         + ".".join(str(part) for part in version) + ", below the supported "
+                         + ".".join(str(part) for part in SUPPORTED_PYTHON) + ", so the"
+                         " adapter fails on every Stop before evaluating or journalling"
+                         " anything", path=str(resolved))
         return _cell(reading.PRESENT, label + " ran and answered as a Python interpreter when"
                      " this was asked; whether it does so on the next invocation is that"
                      " invocation's own fact", path=str(resolved))

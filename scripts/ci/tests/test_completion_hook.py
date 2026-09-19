@@ -3986,6 +3986,42 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          "a program that echoed the question back was read as having answered"
                          " it, so a registration that cannot run read as startable")
 
+    def test_a_python_below_the_floor_is_not_a_startable_interpreter(self):
+        """Being a Python is not the whole question, and the installer already knew that.
+
+        _require_python refuses to REGISTER an interpreter below SUPPORTED_PYTHON, because the
+        adapter fails on every Stop before evaluating or journalling anything. Diagnosis then
+        ran the same host and reported the registration startable: the writer's predicate and
+        the reader's disagreed about one host, which is the stronger form of a capability
+        claimed beyond what the reading established.
+        """
+        below = ".".join(str(part - 1 if index else part)
+                         for index, part in enumerate(completion.SUPPORTED_PYTHON))
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            # A real interpreter, answering the probe truthfully, from a version too old.
+            old = host / "an-older-python"
+            old.write_text("#!/bin/sh\n"
+                           + "exec " + shlex.quote(sys.executable)
+                           + " -c \"import sys;src=sys.argv[1];"
+                           + "sys.argv=['-c'];"
+                           + "exec(src.replace('sys.version_info[0], sys.version_info[1]',"
+                           + " '" + str(completion.SUPPORTED_PYTHON[0]) + ","
+                           + str(completion.SUPPORTED_PYTHON[1] - 1) + "'))\" \"$2\"\n",
+                           encoding="utf-8")
+            old.chmod(0o755)
+            register(temporary)
+            hook_file = host / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(sys.executable, str(old), 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                         firing.ESTABLISHED,
+                         "an interpreter the installer would refuse for its version was read"
+                         " as startable by diagnosis, on the same host (" + below + ")")
+
     def test_every_state_the_interpreter_probe_can_answer_has_a_consumer(self):
         """SUPPORT, not evidence: the sweep for the class, derived from the probe's own source.
 

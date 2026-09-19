@@ -81,13 +81,19 @@ NOT_AN_INTERPRETER = "not_an_interpreter"
 # uncertainty: the host gets the same refusal on the next Stop.
 COULD_NOT_BE_RUN = "not_started"
 
+# It is a Python and it is too old to run this adapter. A separate answer from "not an
+# interpreter" because it is a different repair: one path needs a program, the other needs a
+# newer one, and collapsing them sends the operator looking for the wrong thing.
+BELOW_SUPPORTED_PYTHON = "below_supported_python"
+
 # A target or an interpreter in one of these states cannot be started. PRESENT is the only
 # value that says it can; everything else is a spelling this command did not judge, and those
 # are not ruled out rather than established either way.
 #
 # Every consumer reads THIS tuple rather than restating its members, because a state added
 # here and dropped by one consumer is the defect that produced it in the first place.
-CANNOT_START = (reading.ABSENT, reading.UNREADABLE, NOT_AN_INTERPRETER, COULD_NOT_BE_RUN)
+CANNOT_START = (reading.ABSENT, reading.UNREADABLE, NOT_AN_INTERPRETER, COULD_NOT_BE_RUN,
+                BELOW_SUPPORTED_PYTHON)
 
 
 def _not_registered(observed):
