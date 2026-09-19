@@ -148,12 +148,16 @@ REQUESTABLE_SETTINGS = ("cwd", "model", "reasoningEffort", "runtimeWorkspaceRoot
 # nothing in the path would keep.
 DECLARABLE_SETTINGS = REQUESTABLE_SETTINGS + ("approvalPolicy",)
 
-# Where a creation receipt names the thread it is about. The bridge derives the top-level id from
-# the created response on both of its creation paths and keeps that response beside it, so those
-# are the same string in any receipt a bridge wrote. A receipt whose nested response names another
-# participant is spliced, and the settings and the environment this reading grades come out of
-# that nested response rather than out of the top-level id.
-RECEIPT_IDENTITIES = ("threadId", "taskId", ("creation", "thread", "id"))
+# Where a creation receipt names the thread it is about, and which of those a bridge always
+# writes. Both creation paths derive the top-level id from the created response and keep that
+# response beside it, so a receipt carrying neither, or only one, is one no bridge wrote: the
+# spellings beside a missing required identity cannot stand in for it, or a truncated capture
+# clears the cross-check by leaving out the half that disagrees. taskId is the relay's own word
+# for the same participant and no bridge writes it, so it is read where it is there and never
+# required.
+RECEIPT_IDENTITY_REQUIRED = ("threadId", ("creation", "thread", "id"))
+RECEIPT_IDENTITY_OPTIONAL = ("taskId",)
+RECEIPT_IDENTITIES = RECEIPT_IDENTITY_REQUIRED + RECEIPT_IDENTITY_OPTIONAL
 
 
 def blank_settings(values):
@@ -503,7 +507,7 @@ def identities_in(payload, *keys):
     return [value for value in found if value is not MISSING and value is not None]
 
 
-def names_participant(payload, task, *keys):
+def names_participant(payload, task, required=(), optional=()):
     """Whether this capture names this participant, on every identity it carries.
 
     Reading either spelling on its own and accepting the first that agreed let one capture naming
@@ -511,9 +515,17 @@ def names_participant(payload, task, *keys):
     single host response answered two per-participant cells and the condition those cells exist
     to catch arrived as two passes. Every identity the payload carries has to agree, and at least
     one has to be there: a capture that names nobody names nobody.
+
+    An identity its own producer always writes is required. A capture without one is a capture
+    that producer never wrote, and reading the spellings beside it would let a truncated or
+    fabricated receipt clear a cross-check by leaving out the half that would disagree. A
+    spelling the producer may or may not use is read where it is there and never demanded.
     """
-    carried = identities_in(payload, *keys)
-    return bool(carried) and all(same(value, task) for value in carried)
+    carried = identities_in(payload, *required)
+    if len(carried) != len(required):
+        return False
+    found = carried + identities_in(payload, *optional)
+    return bool(found) and all(same(value, task) for value in found)
 
 
 def structurally_same(left, right):
@@ -1464,7 +1476,13 @@ def reading_process(record, relay, sleeper=time.sleep):
         probe = relay.relay("service", "status")
         payload = probe["payload"] or {}
         lock = field(payload, "lock")
+        # The supervisor re-reads this intent at every worker boundary and stops spawning
+        # replacements once it is off, so a service disabled while its current worker still holds
+        # the lock is a poller with one segment left. The lock says a worker is running now; the
+        # intent says whether another one follows it.
+        enabled = field(payload, "enabled")
         ok = (lock == "held" and field(payload, "staleRecord") is False
+              and enabled is True
               and same(field(payload, "pid"), pid)
               and field(payload, "ownership") == "ours"
               and same(field(payload, "storeId"), field(record, "store", "storeId")))
@@ -1472,6 +1490,7 @@ def reading_process(record, relay, sleeper=time.sleep):
         # lock and nothing else never said whose it was, and a disagreement would say it did.
         absent = [name for name, value in (("a lock", lock),
                                            ("staleRecord", field(payload, "staleRecord")),
+                                           ("whether it is enabled", enabled),
                                            ("a pid", field(payload, "pid")),
                                            ("ownership", field(payload, "ownership")),
                                            ("a store id", field(payload, "storeId")))
@@ -1480,6 +1499,7 @@ def reading_process(record, relay, sleeper=time.sleep):
                             provenance=EXECUTED,
                             unreadable="service status did not report " + ", ".join(absent),
                             evidence=("lock " + str(lock) + ", ownership "
+                                      + str(shown(enabled)) + " enabled, "
                                       + str(shown(field(payload, "ownership"))) + ", pid "
                                       + str(shown(field(payload, "pid"))) + ", staleRecord "
                                       + str(shown(field(payload, "staleRecord"))))))
@@ -1542,7 +1562,7 @@ def reading_lifecycle(record):
             # A predicate insisting on a string failed every capture a real host produced, so both
             # shapes are read, and each is read where the state actually is.
             state = status_state(status)
-            names = names_participant(payload, task, "threadId", "taskId")
+            names = names_participant(payload, task, optional=("threadId", "taskId"))
             if status is MISSING and refusal is None:
                 cells.append(cell("lifecycle:" + str(task), UNKNOWN,
                                   evidence="the capture carries no thread status to read",
@@ -1606,7 +1626,9 @@ def reading_capability(record, relay):
                 # payload carries has to agree, so one capture cannot answer for two.
                 carried = identities_in(found["payload"], *RECEIPT_IDENTITIES)
                 identifies = carried[0] if carried else MISSING
-                names = names_participant(found["payload"], task, *RECEIPT_IDENTITIES)
+                names = names_participant(found["payload"], task,
+                                          required=RECEIPT_IDENTITY_REQUIRED,
+                                          optional=RECEIPT_IDENTITY_OPTIONAL)
                 verified = field(found["payload"], "settings", "verified")
                 if not isinstance(verified, list):
                     # A list is the only shape this answer takes. Anything else is a reading
@@ -2770,7 +2792,7 @@ def same_file(left, right):
         return False
 
 
-def supervisor_still_running(record):
+def supervisor_still_running(record, relay=None):
     """The poller read once more, after every probe that follows the process reading.
 
     That reading is taken near the start of the pass, and the lifecycle, boundary, capability,
@@ -2804,10 +2826,25 @@ def supervisor_still_running(record):
         advanced = False
     else:
         advanced = held > moved if must_advance else held >= moved
-    return {"passed": still is True and detached and named and advanced,
+    # The intent the supervisor itself re-reads at every worker boundary, asked again for the
+    # same reason everything else here is: an owner who disables the service while the pass runs
+    # leaves the current worker holding the lock and no replacement after it.
+    service = MISSING
+    serving = True
+    if (record.get("supervisor") or {}).get("service") and relay is not None:
+        probe = relay.relay("service", "status")
+        payload = probe["payload"] or {}
+        service = {"lock": shown(field(payload, "lock")),
+                   "enabled": shown(field(payload, "enabled")),
+                   "ownership": shown(field(payload, "ownership"))}
+        serving = (field(payload, "lock") == "held" and field(payload, "enabled") is True
+                   and field(payload, "ownership") == "ours"
+                   and same(field(payload, "pid"), pid))
+    return {"passed": still is True and detached and named and advanced and serving,
             "pid": pid, "aliveAgain": still, "detached": detached, "namesTheSamePid": named,
             "progressBefore": shown(anchor.get("progress")), "progressAfter": shown(after),
             "elapsedSeconds": round(elapsed, 3), "advanceRequired": must_advance,
+            "service": shown(service),
             "readAt": stamp(),
             "detail": "a supervisor that exits while the probes run leaves every cell those"
                       " probes filled verified, so liveness and the counter are read again here."
@@ -2953,10 +2990,10 @@ def preflight(record, *, sleeper=time.sleep):
     # The store's identity, asked again now that every probe that used it has run, and before
     # the launcher is read, so the spawn this makes is covered by that reading too.
     store_held = store_still_the_same(record, relay)
+    # Before the launcher is read, so the probe this may make is covered by that reading, and
+    # after everything else, because its answer is the one that expires soonest.
+    supervisor = supervisor_still_running(record, relay)
     launcher = launcher_unchanged(record, relay)
-    # The last reading taken, because its answer is the one that expires soonest: everything
-    # above is graded on cells filled while a poller was alive near the start of the pass.
-    supervisor = supervisor_still_running(record)
     captures = captures_still_fresh(record)
     # The window was ahead when the record was read; the witness delay and the probes take real
     # time, so it is read again here. A run that publishes readiness after the window has opened

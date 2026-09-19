@@ -280,6 +280,9 @@ class World:
             }},
             "service status": {"payload": {
                 "lock": "held", "staleRecord": False, "ownership": "ours", "pid": 0,
+                # The intent the supervisor re-reads at every worker boundary. A payload without
+                # it never said whether another worker follows the one holding the lock.
+                "enabled": True,
                 "storeId": self.STORE_ID,
             }},
             "assignment-find": {"payload": {
@@ -705,6 +708,7 @@ class ProcessPersistence(TrialCase):
                              NOT_VERIFIED, key + " did not fail the service cell")
             self.world.payloads["service status"]["payload"] = {
                 "lock": "held", "staleRecord": False, "ownership": "ours",
+                "enabled": True,
                 "pid": self.world.supervisor.pid, "storeId": World.STORE_ID}
 
     def test_no_service_declared_is_not_applicable_rather_than_a_failure(self):
@@ -1184,7 +1188,8 @@ class PayloadContract(TrialCase):
         ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode"),
         ("cli.py", "_access_receipt"): ("observedAccess", "write"),
         ("store.py", "compare_store"): ("sameStore",),
-        ("service.py", "status"): ("lock", "staleRecord", "ownership", "pid", "storeId"),
+        ("service.py", "status"): ("lock", "staleRecord", "ownership", "pid", "storeId",
+                                   "enabled"),
         ("registry.py", "_row_to_record"): ("authorizedScope", "scopeRef", "artifactRoots",
                                             "allowedRecipients", "child", "parent", "taskId",
                                             "cwd"),
@@ -4573,6 +4578,56 @@ class FortyFifthHostedRound(TrialCase):
                     created_thread_id(value)
                     or (isinstance(value, ast.Name) and value.id in derived),
                     name + " no longer writes the created thread's own id")
+
+    def test_a_receipt_missing_the_identity_its_producer_always_writes_is_refused(self):
+        # Dropping the nested id left the cross-check optional: a truncated or fabricated receipt
+        # cleared it by leaving out the half that would have disagreed, and the spellings beside
+        # it verified the capture on their own.
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            self.world.captures["receipt-" + task + ".json"]["creation"]["thread"].pop("id")
+        self.world.flush()
+        self.world.start_supervisor()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a receipt without the identity its producer always writes was accepted")
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_a_disabled_service_is_not_a_supervisor_that_continues(self):
+        # The supervisor re-reads this intent at every worker boundary and spawns no replacement
+        # once it is off, so a service disabled while its current worker still holds the lock is
+        # a poller with one segment left. The lock says a worker runs now; the intent says
+        # whether another follows it.
+        self.world.start_supervisor()
+        self.world.record["supervisor"]["service"] = True
+        self.world.payloads["service status"]["payload"]["pid"] = self.world.supervisor.pid
+        self.world.payloads["service status"]["payload"]["enabled"] = False
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a service nothing will replace was read as a running supervisor")
+        self.assertEqual(cells_of(document, "processPersistence")["service"]["value"],
+                         NOT_VERIFIED)
+
+    def test_a_service_disabled_during_the_pass_is_caught_at_the_gate(self):
+        # And the same intent read again at the end, because it expires like everything else
+        # here: an owner who disables the service while the probes run leaves the reading taken
+        # at the start saying a poller continues.
+        self.world.start_supervisor()
+        self.world.record["supervisor"]["service"] = True
+        self.world.payloads["service status"]["payload"]["pid"] = self.world.supervisor.pid
+        disabled = json.loads(json.dumps(self.world.payloads["service status"]["payload"]))
+        disabled["enabled"] = False
+        self.world.payloads["after"] = {
+            "subcommand": "service status", "calls": 1,
+            "payloads": {"service status": {"payload": disabled}}}
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertEqual(cells_of(document, "processPersistence")["service"]["value"], VERIFIED)
+        self.assertFalse(document["readyToStart"],
+                         "a service disabled while the probes ran was published as ready")
+        self.assertIn("supervisorStillRunning.passed", document["judgmentsThatFailed"])
 
     def test_the_final_doctor_grades_the_reachability_it_reports(self):
         # The socket and the write access were graded once, at the start. The same payload the
