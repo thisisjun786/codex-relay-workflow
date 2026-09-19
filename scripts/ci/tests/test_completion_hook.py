@@ -13,7 +13,9 @@ evidence the hook contract's packet and this repository's status command keep ap
 """
 
 import argparse
+import ast
 import errno
+import inspect
 import json
 import os
 from pathlib import Path
@@ -23,6 +25,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import unittest
 from unittest import mock
@@ -3959,6 +3962,66 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          firing.ESTABLISHED,
                          "a registered interpreter that is not an interpreter was read as"
                          " startable because a file exists at its path and is executable")
+
+    def test_a_program_that_repeats_its_arguments_is_not_an_interpreter(self):
+        """Echoing the question is not answering it.
+
+        The probe looked for a marker IN the output, and a program that repeats its arguments
+        prints the source back, marker and all. "The marker appeared" and "this ran Python" are
+        different claims, and they differ exactly for the family this was supposed to exclude.
+        The source asks for something computed from a nonce this call invents, and the exact
+        reply is compared rather than searched for.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            hook_file = Path(temporary) / "hooks.json"
+            written = json.loads(hook_file.read_text(encoding="utf-8"))
+            entry = written["hooks"][completion.EVENT][0]["hooks"][0]
+            entry["command"] = entry["command"].replace(sys.executable, "/bin/echo", 1)
+            hook_file.write_text(json.dumps(written), encoding="utf-8")
+            cell = why_no_record(temporary)
+        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                         firing.ESTABLISHED,
+                         "a program that echoed the question back was read as having answered"
+                         " it, so a registration that cannot run read as startable")
+
+    def test_every_state_the_interpreter_probe_can_answer_has_a_consumer(self):
+        """SUPPORT, not evidence: the sweep for the class, derived from the probe's own source.
+
+        The states are read out of _answers_as_an_interpreter rather than listed here, so a
+        state added later is swept too. Each one has to be accounted for by BOTH consumers of
+        the probe's answer: firing's CANNOT_START, which the rules read, and the startable
+        mapping the journal entries carry. A state that neither classifies is the defect that
+        produced this sweep -- three consumers, one richer vocabulary, and the new members
+        dropped on the floor at each of them.
+        """
+        source = inspect.getsource(completion._answers_as_an_interpreter)
+        answered = set()
+        for node in ast.walk(ast.parse(textwrap.dedent(source))):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_cell":
+                named = node.args[0]
+                if isinstance(named, ast.Attribute):
+                    answered.add(getattr(getattr(completion, named.value.id), named.attr))
+                elif isinstance(named, ast.Name):
+                    answered.add(getattr(completion, named.id))
+        self.assertTrue(answered, "no state could be read out of the probe's source, so this"
+                                  " sweep would pass by finding nothing")
+        for state in sorted(answered):
+            with self.subTest(state=state):
+                if state == reading.PRESENT:
+                    self.assertIs(completion._startable_from({state}), True)
+                    continue
+                halves = {reading.PRESENT, state}
+                if state in firing.CANNOT_START:
+                    self.assertIs(completion._startable_from(halves), False,
+                                  "a state the rules treat as unable to start was not carried"
+                                  " into the journal entry's startable flag")
+                else:
+                    self.assertIn(state, completion.INTERPRETER_UNESTABLISHED,
+                                  "the probe can answer a state that neither CANNOT_START nor"
+                                  " INTERPRETER_UNESTABLISHED accounts for")
+                    self.assertIsNone(completion._startable_from(halves))
 
     def test_a_recorded_interpreter_that_is_not_one_is_not_startable_either(self):
         """SUPPORT, not evidence: the sibling site, pinned so the class stays closed at both.

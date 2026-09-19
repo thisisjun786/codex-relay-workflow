@@ -76,10 +76,18 @@ RECORD_ANSWERS = (COUNTED, NO_RECORDS_KEPT, UNESTABLISHED)
 # uncertainty.
 NOT_AN_INTERPRETER = "not_an_interpreter"
 
+# The probe's answer when the host refused to create the process at all -- an invalid
+# executable format, a missing loader. Nothing ran, and that is a repair rather than an
+# uncertainty: the host gets the same refusal on the next Stop.
+COULD_NOT_BE_RUN = "not_started"
+
 # A target or an interpreter in one of these states cannot be started. PRESENT is the only
 # value that says it can; everything else is a spelling this command did not judge, and those
 # are not ruled out rather than established either way.
-CANNOT_START = (reading.ABSENT, reading.UNREADABLE, NOT_AN_INTERPRETER)
+#
+# Every consumer reads THIS tuple rather than restating its members, because a state added
+# here and dropped by one consumer is the defect that produced it in the first place.
+CANNOT_START = (reading.ABSENT, reading.UNREADABLE, NOT_AN_INTERPRETER, COULD_NOT_BE_RUN)
 
 
 def _not_registered(observed):

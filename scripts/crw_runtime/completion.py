@@ -1532,10 +1532,49 @@ def _interpreter_cell(ours):
                  probes=checked)
 
 
-INTERPRETER_PROBE_SECONDS = 10
+# Bounded, because this runs a program on a real host. A slower answer is not a better one:
+# past this the reading is unestablished and says so, rather than waiting for a definite
+# answer it cannot have.
+INTERPRETER_PROBE_SECONDS = 5
 
-# Printed by the interpreter itself, so exit 0 alone cannot answer for it.
-INTERPRETER_MARKER = "crw-interpreter-answered"
+# What the probe's own answer can be, beside PRESENT. Declared so a consumer can be checked
+# against the whole vocabulary rather than against the cases someone remembered.
+INTERPRETER_UNESTABLISHED = (NOT_READ,)
+
+
+def _startable_from(halves):
+    """Whether a registration's two probe answers say it can start, cannot, or did not settle.
+
+    Three answers, not two. A probe this command did not judge -- a workspace-dependent
+    spelling, one it could not reach, one that did not answer in time -- is neither "starts"
+    nor "cannot start", and recording it as the latter dropped that registration's journal from
+    every question while a blocked neighbour supplied a settled explanation for the whole host.
+
+    The cannot-start side reads firing's DECLARED set rather than restating its members. It was
+    written out as two of them, and when the probe learned to answer two more the new ones were
+    dropped here while the rule that reads the same set acted on them -- one payload saying a
+    registration cannot start and, beside it, counting its journal as a startable peer's.
+    """
+    if halves == {reading.PRESENT}:
+        return True
+    if halves & set(firing.CANNOT_START):
+        return False
+    return None
+
+
+def _interpreter_question():
+    """A question only a program that RAN the source can answer.
+
+    A marker printed by the source and looked for in the output is answered by any program
+    that repeats its arguments -- /bin/echo prints the source, marker and all -- so "the marker
+    appeared" and "this ran Python" are different claims, which is the same mismatch this cell
+    was fixed for one round ago. The source therefore asks for something COMPUTED: a nonce this
+    call invents, written back reversed. Echoing the source shows the nonce forward, and the
+    exact answer is compared rather than searched for.
+    """
+    nonce = os.urandom(12).hex()
+    source = ("import sys;sys.stdout.write(''.join(reversed(" + repr(nonce) + ")))")
+    return source, nonce[::-1]
 
 
 def _answers_as_an_interpreter(resolved, label):
@@ -1549,14 +1588,17 @@ def _answers_as_an_interpreter(resolved, label):
     hook.
 
     Asked the way _offers_guard asks the runtime, and for the same reason exit 0 is not enough
-    there: the answer has to come from the program's own output.
+    there: the answer has to come from the program's own output. And not merely CONTAIN the
+    answer -- a program that repeats its arguments prints the source back, marker and all --
+    so the source asks for something computed and the exact reply is compared.
 
     What this establishes is a MOMENT. It ran as a Python interpreter when this was asked, and
     the evidence says so, because the host runs it again on the next Stop and this command
     cannot speak for that one.
     """
     try:
-        finished = subprocess.run([str(resolved), "-c", "print('" + INTERPRETER_MARKER + "')"],
+        source, expected = _interpreter_question()
+        finished = subprocess.run([str(resolved), "-c", source],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   timeout=INTERPRETER_PROBE_SECONDS)
     except subprocess.TimeoutExpired:
@@ -1564,10 +1606,10 @@ def _answers_as_an_interpreter(resolved, label):
                      + str(INTERPRETER_PROBE_SECONDS) + "s, so whether it runs was not"
                      " established", path=str(resolved))
     except OSError as error:
-        return _cell(NOT_STARTED, label + " could not be run: " + str(error),
+        return _cell(firing.COULD_NOT_BE_RUN, label + " could not be run: " + str(error),
                      path=str(resolved),
                      errno=errno.errorcode.get(error.errno, error.errno))
-    if finished.returncode == 0 and INTERPRETER_MARKER in _text(finished.stdout):
+    if finished.returncode == 0 and _text(finished.stdout).strip() == expected:
         return _cell(reading.PRESENT, label + " ran and answered as a Python interpreter when"
                      " this was asked; whether it does so on the next invocation is that"
                      " invocation's own fact", path=str(resolved))
@@ -2202,13 +2244,9 @@ def status(codex_home=None, environ=None, event=EVENT):
     # spelling, or one it could not reach -- is neither "starts" nor "cannot start", and
     # recording it as the latter dropped that registration's journal from every question while
     # a blocked neighbour supplied a settled explanation for the whole host.
-    startable = {}
-    for probe in start_probes:
-        halves = {probe["adapter"], probe["interpreter"]}
-        startable[probe["registration"]] = (
-            True if halves == {reading.PRESENT}
-            else False if halves & {reading.ABSENT, reading.UNREADABLE}
-            else None)
+    startable = {probe["registration"]:
+                 _startable_from({probe["adapter"], probe["interpreter"]})
+                 for probe in start_probes}
     named_journals = journals_named(
         [
         {"registration": entry["identity"],
