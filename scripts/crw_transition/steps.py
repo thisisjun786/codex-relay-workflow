@@ -93,6 +93,29 @@ def _discard(target):
         pass
 
 
+def symlink_complaint(path):
+    """Why an artifact that is a symlink is not archived by moving it, or None.
+
+    An archive is made by renaming, and renaming a link relocates the LINK. A relative target then
+    resolves from the archive's directory rather than the original's, so the archive is dangling:
+    newest_retired() skips it because it is not a file, and a run interrupted after the retire
+    cannot rebuild the destination, the store or the journal from it. Dereferencing instead would
+    move or copy a file this command was never pointed at -- the target can live in somebody
+    else's directory entirely -- so the layout is named and refused rather than guessed at.
+    """
+    if not Path(path).is_symlink():
+        return None
+    try:
+        target = os.readlink(str(path))
+    except OSError as error:
+        target = type(error).__name__ + ": " + str(error)
+    return (str(path) + " is a symlink to " + str(target) + ", and these documents are archived by"
+            " moving them. Moving a link archives the link and not the document, and a relative"
+            " target then resolves from the archive's directory, so the recovery would find no"
+            " document there. Replace the link with the file it names, or move it aside by hand,"
+            " and rerun")
+
+
 def _answer(step, outcome, detail, **extra):
     return {"step": step, "outcome": outcome, "detail": detail, **extra}
 
@@ -595,6 +618,12 @@ def settings_retire(host, options, *, apply=False):
     paths = [path for index, path in enumerate(paths) if path not in paths[index + 1:]]
     if not paths:
         return _answer("settings retire", ALREADY, "no settings file is there to retire")
+    # Asked before the dry run answers too, so an operator learns the layout is unsupported from
+    # the run that changes nothing rather than from the one that was going to change everything.
+    linked = [complaint for complaint in (symlink_complaint(candidate) for candidate in paths)
+              if complaint]
+    if linked:
+        return _answer("settings retire", REFUSED, "; ".join(linked))
     known = ((host.get("registered") or {}).get("conflict") or {}).get("documents") or {}
     owners = []
     for candidate in paths:
@@ -742,6 +771,9 @@ def mcp_record_retire(host, options, *, apply=False):
         return _answer("mcp record retire", ALREADY, "no bridge record is there")
     if bridgerecord.owner_of(record) == bridgerecord.OWNER_PLUGIN:
         return _answer("mcp record retire", ALREADY, "the record already names the plugin")
+    linked = symlink_complaint(path)
+    if linked:
+        return _answer("mcp record retire", REFUSED, linked)
     if not apply:
         return _answer("mcp record retire", WOULD, "would retire " + str(path))
     moved = retire(path)
@@ -898,11 +930,32 @@ def skill_unlink(host, options, *, apply=False):
     # that landed a link after the snapshot would otherwise survive a run that reported success,
     # still exposing the installation this was removing.
     fresh = inventory.read_skill_links(host["codexHome"], host["repoRoot"])
+    if fresh["unreadable"]:
+        # An empty crwOwned means "none there" or "not read", and those are different hosts. Read
+        # as the first, a timed-out installer check answers already_done while the links are still
+        # in place and the run reports a manual install removed that is still offered.
+        return _answer("skill unlink", REFUSED,
+                       "the skill links could not be inventoried, so whether any CRW-owned link"
+                       " is still there was not established and nothing was removed: "
+                       + str(fresh["unreadable"]))
     known = {item["path"] for item in owned}
     candidates = list(owned) + [item for item in fresh["crwOwned"]
                                 if item["path"] not in known]
     if not candidates:
         return _answer("skill unlink", ALREADY, "no CRW-owned links are there")
+    # The replacement requirement, applied to the set actually being removed. plugin_refusals
+    # derives it from the snapshot, so a link that arrived after it would be removed without the
+    # installed package ever being asked whether it carries that skill -- and the link can be the
+    # only copy of it.
+    plugin = inventory.read_plugin(host["codexHome"])
+    absent = sorted({Path(item["path"]).name for item in candidates}
+                    - set(plugin.get("skills") or []))
+    if absent:
+        return _answer("skill unlink", REFUSED,
+                       "the installed package does not carry " + ", ".join(absent)
+                       + ", which the links being removed provide, so nothing was removed: taking"
+                       " them away would leave this host with no copy of those skills",
+                       paths=[item["path"] for item in candidates])
     removed, left = [], []
     for item in candidates:
         path = Path(item["path"])
@@ -922,7 +975,14 @@ def skill_unlink(host, options, *, apply=False):
                        removed=removed, applied=bool(removed), wrote=bool(removed))
     # Read once more, for the same reason the hook file is: what is in reach is not preventing a
     # link that arrives during the removals, but refusing to report success over one.
-    again = inventory.read_skill_links(host["codexHome"], host["repoRoot"])["crwOwned"]
+    back = inventory.read_skill_links(host["codexHome"], host["repoRoot"])
+    if back["unreadable"]:
+        return _answer("skill unlink", REFUSED,
+                       "the links were removed and the directory could not be inventoried again,"
+                       " so whether one arrived meanwhile was not established: "
+                       + str(back["unreadable"]),
+                       removed=removed, applied=bool(removed), wrote=bool(removed))
+    again = back["crwOwned"]
     if again:
         return _answer("skill unlink", REFUSED,
                        "a CRW-owned link is in the destination again ("
@@ -995,8 +1055,10 @@ def transition(host, options, *, apply=False):
         return results
     previous, _carried = registered_settings(host)
     lock = None
+    active = None
     try:
         for name, step in ORDER:
+            active = name
             if name == MCP_STEPS[0] and apply:
                 lock = hostrecord.Locked(bridgerecord.ownership_lock_path(host["codexHome"]))
                 lock.__enter__()
@@ -1046,7 +1108,15 @@ def transition(host, options, *, apply=False):
                 results += [_answer(n, NOT_REACHED, "an earlier step refused") for n in remaining]
                 break
     except hostrecord.Busy as error:
-        results.append(_answer("mcp ownership lock", BUSY, str(error)))
+        # Named for the step that was running, not for the last lock this function happens to
+        # mention. Every step here takes a lock of its own, and a receipt that answers "mcp
+        # ownership lock" for a contended settings file sends the operator to the wrong resource.
+        results.append(_answer(active or "preflight", BUSY, str(error)))
+        order = [n for n, _ in ORDER]
+        remaining = order[order.index(active) + 1:] if active in order else order
+        results += [_answer(other, NOT_REACHED,
+                            "a lock an earlier step needs is held by another run")
+                    for other in remaining]
     finally:
         if lock is not None:
             lock.__exit__(None, None, None)
@@ -1083,6 +1153,9 @@ def disable(host, options, *, apply=False):
         """Every answer that needs no write. None means the move is this command's to make."""
         if not Path(path).exists():
             return _answer(step, ALREADY, str(path) + " is not there")
+        linked = symlink_complaint(path)
+        if linked:
+            return _answer(step, REFUSED, linked)
         if owner != completion.OWNER_PLUGIN:
             return _answer(step, REFUSED,
                            str(path) + " does not name " + completion.OWNER_PLUGIN

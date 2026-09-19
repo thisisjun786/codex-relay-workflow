@@ -1682,9 +1682,13 @@ class TheFindingsFromReview(TransitionCase):
         from crw_transition import inventory, steps
 
         host = self.ready()
+        # A skill the installed package does carry, so what this measures is the re-inventory and
+        # not the replacement check below it.
+        late = host.home / "skills" / "crw-run"
+        target = late.resolve()
+        late.unlink()
         snapshot = inventory.snapshot(host.home, repo_root=ROOT)
-        late = host.home / "skills" / "crw-late"
-        late.symlink_to(ROOT / "plugins" / "crw" / "skills" / "crw-run")
+        late.symlink_to(target)
         answer = steps.skill_unlink(snapshot, {}, apply=True)
         self.assertEqual(answer["outcome"], "settled", json.dumps(answer)[:600])
         self.assertIn(str(late), answer["removed"])
@@ -1692,6 +1696,82 @@ class TheFindingsFromReview(TransitionCase):
         left = [p.name for p in (host.home / "skills").iterdir()
                 if p.name.startswith("crw-")]
         self.assertEqual(left, [], json.dumps(left))
+
+    def test_a_late_link_the_package_does_not_carry_is_not_removed(self):
+        """The replacement requirement applies to the set being removed, not to the snapshot."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        late = host.home / "skills" / "crw-elsewhere"
+        late.symlink_to(ROOT / "plugins" / "crw" / "skills" / "crw-run")
+        answer = steps.skill_unlink(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertIn("crw-elsewhere", answer["detail"])
+        # Nothing at all was removed, including the seven the snapshot did prove.
+        self.assertEqual(len([p for p in (host.home / "skills").iterdir()
+                              if p.name.startswith("crw-")]), 8)
+
+    def test_an_unreadable_skill_inventory_is_not_read_as_an_empty_one(self):
+        """crwOwned == [] means "none there" or "not read", and those are different hosts."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        original = inventory.read_skill_links
+        inventory.read_skill_links = lambda home, root: {
+            "crwOwned": [], "foreign": [], "unreadable": "TimeoutExpired: install.py --check"}
+        self.addCleanup(setattr, inventory, "read_skill_links", original)
+        answer = steps.skill_unlink(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:400])
+        self.assertIn("could not be inventoried", answer["detail"])
+        self.assertTrue((host.home / "skills" / "crw-run").is_symlink())
+
+    def test_a_settings_path_that_is_a_symlink_is_refused_before_anything_moves(self):
+        """An archive is made by renaming, and renaming a link archives the link."""
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        actual = host.root / "actual.json"
+        shutil.move(str(custom), str(actual))
+        custom.symlink_to(Path(actual.name))
+        host.install_plugin()
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        retire = [item for item in answer["results"] if item["step"] == "settings retire"][0]
+        self.assertEqual(retire["outcome"], "refused")
+        self.assertIn("is a symlink", retire["detail"])
+        self.assertEqual(host.hooks_document(), before)
+        self.assertTrue(custom.is_symlink())
+        self.assertTrue(actual.is_file())
+        self.assertEqual(sorted(host.home.glob("*.superseded-*")), [])
+
+    def test_a_contended_lock_is_reported_against_the_step_that_took_it(self):
+        """Every step takes a lock of its own, so the receipt names the step, not the last lock."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        held = Path(str(host.home / "crw-completion-hook.json") + hostrecord.LOCK_SUFFIX)
+        held.write_text("1", encoding="utf-8")
+        self.addCleanup(held.unlink, missing_ok=True)
+        original = hostrecord.LOCK_TIMEOUT_SECONDS
+        hostrecord.LOCK_TIMEOUT_SECONDS = 0.2
+        self.addCleanup(setattr, hostrecord, "LOCK_TIMEOUT_SECONDS", original)
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes.get("settings retire"), "busy", json.dumps(results)[:700])
+        self.assertNotIn("mcp ownership lock", outcomes)
+        self.assertEqual(outcomes["hook standdown"], "not_reached")
+        self.assertEqual(outcomes["skill unlink"], "not_reached")
+        self.assertIsNotNone(host.settings())
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
