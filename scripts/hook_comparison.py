@@ -1148,8 +1148,14 @@ TRACED_CALLS = {
     "rename": (WRITES, ((0, None), (1, None))),
     "renameat": (WRITES, ((1, 0), (3, 2))),
     "renameat2": (WRITES, ((1, 0), (3, 2))),
-    "link": (WRITES, ((0, None), (1, None))),
-    "linkat": (WRITES, ((1, 0), (3, 2))),
+    # The link, and not what it is linked FROM. A rename removes its source, so both of its
+    # paths change; a hard link only adds a second name for an inode that is otherwise left
+    # exactly as it was. Reporting the source would fail a run for linking an outside file to
+    # a place inside the root, which is the same overstatement as reading a symlink target as
+    # written. The inode link count does change, and that is metadata, which nothing here
+    # watches and which is declared below.
+    "link": (WRITES, ((1, None),)),
+    "linkat": (WRITES, ((3, 2),)),
     "symlink": (WRITES, ((1, None),)),
     "symlinkat": (WRITES, ((2, 1),)),
     "mknod": (WRITES, ((0, None),)),
@@ -1174,12 +1180,21 @@ OPEN_FLAGS = {"open": 1, "openat": 2, "openat2": 2}
 # the difference is data rather than a silence.
 WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND", "O_TMPFILE")
 
-# The flags that change the file at the moment it is opened, as against the ones that only ask
-# for the right to change it later. O_CREAT is NOT one of them: opening a file that already
-# exists with O_CREAT and nothing else changes nothing at all, so counting it would overstate
-# exactly the number this distinction exists to keep honest. O_CREAT with O_EXCL is different,
-# and only because the calls here succeeded: an exclusive create over an existing file fails
-# with EEXIST, and a failed call never reaches this table.
+# What an open DID, which is three answers and not two. Calling it a boolean was wrong in both
+# directions in turn: counting O_CREAT as a change overstates it against a file that already
+# existed, and not counting it understates the one that created a file which did not. The
+# trace says which flags were passed and that the call succeeded, and from that alone a plain
+# O_CREAT determines NEITHER - so it answers neither, the way a reading that cannot be taken
+# answers neither true nor false everywhere else in this file.
+#
+# O_TRUNC and O_TMPFILE change the file whatever was there. O_CREAT with O_EXCL created it,
+# and only because these calls succeeded: an exclusive create over an existing file fails with
+# EEXIST, and a failed call never reaches this table.
+CHANGED = "changed"
+MAY_HAVE_CHANGED = "may_have_changed"
+ONLY_ABLE_TO_CHANGE = "only_able_to_change"
+WHAT_AN_OPEN_DID = (CHANGED, MAY_HAVE_CHANGED, ONLY_ABLE_TO_CHANGE)
+
 CHANGING_FLAGS = ("O_TRUNC", "O_TMPFILE")
 CREATED_IT = ("O_CREAT", "O_EXCL")
 
@@ -1220,7 +1235,12 @@ WITNESS_DOES_NOT_COVER = (
     "whether a path opened in a way that could change it was actually changed. The call that"
     " would do it carries a descriptor and no path, so this reading counts the open instead."
     " It errs towards reporting a write that may not have happened rather than towards"
-    " missing one, and changedTheFile beside each entry says which of the two it is",
+    " missing one. changedTheFile beside each entry says which of THREE it is, because a"
+    " plain O_CREAT created the file if it was absent and changed nothing if it was there,"
+    " and this trace does not say which, so it says may_have_changed rather than picking",
+    "a change to an inode that is not a change to a path: the link count a hard link moves,"
+    " and ownership, timestamps and extended attributes generally. The link is recorded as"
+    " written and the file it was linked from is not",
     "a filesystem socket created by bind, which makes a path without any call in this table",
     "ownership, timestamps, extended attributes and access control lists. They are not in the"
     " traced set, so they are not in the trace at all, and no row says anything about them",
@@ -1241,6 +1261,22 @@ WITNESS_DOES_NOT_COVER = (
 )
 
 _ESCAPES = {"n": 10, "t": 9, "r": 13, "f": 12, "v": 11, "b": 8, "a": 7, "\\": 92, '"': 34}
+
+
+def _what_an_open_did(flags):
+    """Which of the three an open was, from the flags the tracer recorded and nothing else.
+
+    The middle answer is the whole point. A successful O_CREAT without O_EXCL created the file
+    if it was not there and changed nothing if it was, and this trace carries no reading of
+    which. Answering either one would be inventing the half of the evidence that is missing.
+    """
+    if any(flag in flags for flag in CHANGING_FLAGS):
+        return CHANGED
+    if all(flag in flags for flag in CREATED_IT):
+        return CHANGED
+    if "O_CREAT" in flags:
+        return MAY_HAVE_CHANGED
+    return ONLY_ABLE_TO_CHANGE
 
 
 def _arguments_of(text):
@@ -1516,9 +1552,7 @@ def parse_trace(text, cwd):
             answer["writes"].append({
                 "line": number, "pid": pid, "call": name,
                 "path": _resolved_descriptor(result) or path,
-                "changedTheFile": (
-                    any(flag in arguments[flags] for flag in CHANGING_FLAGS)
-                    or all(flag in arguments[flags] for flag in CREATED_IT))})
+                "changedTheFile": _what_an_open_did(arguments[flags])})
             continue
         answer["writeCalls"] += 1
         for position, directory in positions:
@@ -1526,8 +1560,10 @@ def parse_trace(text, cwd):
             if path is None:
                 answer["unreadable"].append({"line": number, "text": line[:200], "why": why})
                 continue
+            # A call in this table changes every path position the table declares for it, which
+            # is why the link source is no longer one of them.
             answer["writes"].append({"line": number, "pid": pid, "call": name, "path": path,
-                                     "changedTheFile": True})
+                                     "changedTheFile": CHANGED})
     for pid, name in sorted(unfinished):
         answer["unreadable"].append({"line": None, "text": name,
                                      "why": "a call interrupted in process " + str(pid) + " and"
@@ -1819,7 +1855,10 @@ def witness_payload(arm, fired):
             "writesInsideRoot": len(seen["writes"]) - len(outside) - len(unresolved),
             # How many of those changed a file outright, as against how many only opened one
             # able to change it. Both count as writes here, and a reader can tell them apart.
-            "changedAFile": len([one for one in seen["writes"] if one["changedTheFile"]]),
+            "changedAFile": len([one for one in seen["writes"]
+                                 if one["changedTheFile"] == CHANGED]),
+            "mayHaveChangedAFile": len([one for one in seen["writes"]
+                                        if one["changedTheFile"] == MAY_HAVE_CHANGED]),
             "writesOutside": strayed,
             "failedAttempts": seen["failedAttempts"], "restarted": seen["restarted"],
             "tracePath": fired.get("tracePath"), "tracerArgv": fired.get("tracerArgv"),

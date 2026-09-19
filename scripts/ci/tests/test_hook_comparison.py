@@ -1139,6 +1139,48 @@ class ProcessWitnessTests(unittest.TestCase):
         self.assertIn(str(written), strayed["cells"]["writesOutsideRoot"]["value"],
                       "a write to a path the run never named was not witnessed")
 
+    @unittest.skipUnless(HAVE_RELAY and CAN_WITNESS, "the demonstration starts a real process"
+                                                     " under a real tracer")
+    def test_a_write_that_only_may_have_changed_a_file_is_still_a_write_outside_the_root(self):
+        """The uncertain shape, planted, so the conservative bias is measured and not asserted.
+
+        A successful O_CREAT without O_EXCL or O_TRUNC creates the file when it is absent and
+        changes nothing when it is there, and one trace line cannot say which. The reading has to
+        report that it does not know WITHOUT letting the path fall out of the writes: the cell that
+        judges lists it either way, and only the certainty beside it is unknown.
+        """
+        self.assertTrue(hasattr(harness, "_what_an_open_did"),
+                        "the witness answers what an open did with a yes or a no, so an open that"
+                        " may have created a file is reported as one that changed nothing")
+        arm, built = self.witness_arm()
+        outside = Path(tempfile.mkdtemp(prefix="hook-comparison-elsewhere-"))
+        self.addCleanup(shutil.rmtree, str(outside), True)
+        outside = outside.resolve()
+        planted = outside / "created-by-an-open-that-only-may-have"
+        (outside / "sitecustomize.py").write_text(
+            "import os\n"
+            "os.close(os.open(" + repr(str(planted)) + ", os.O_WRONLY | os.O_CREAT, 0o666))\n",
+            encoding="utf-8")
+        self.assertFalse(planted.exists(), "the planted path existed before the run, so this case"
+                                           " would not be watching a creation")
+        kept = arm.environment
+        arm.environment = dict(kept, PYTHONPATH=str(outside))
+        try:
+            strayed = self.fired_row(arm, built)
+        finally:
+            arm.environment = kept
+        self.assertTrue(planted.exists(),
+                        "the open did not create the file, so there is no uncertainty to report")
+        self.assertIn(str(planted), strayed["cells"]["writesOutsideRoot"]["value"],
+                      "an open that created a file outside the root fell out of the writes because"
+                      " the trace could not say for certain that it had changed anything")
+        said = [one for one in strayed["witness"]["writesOutside"]
+                if one["path"] == str(planted)]
+        self.assertTrue(said, "the path is reported outside the root with nothing said about it")
+        for one in said:
+            self.assertEqual(one["changedTheFile"], "may_have_changed",
+                             "the witness decided an open the trace leaves undetermined")
+
     def test_a_host_that_cannot_witness_says_so_and_never_says_nothing_was_written(self):
         """The third property: an unwitnessable boundary is a reading nobody took.
 
@@ -1243,6 +1285,27 @@ class ProcessWitnessTests(unittest.TestCase):
                          " are different sets: " + json.dumps(sorted(named - rows)))
 
 
+# The three answers an open can give about what it did, written here rather than imported.
+WHAT_AN_OPEN_DID = ("changed", "may_have_changed", "only_able_to_change")
+
+# How many paths each traced call actually CHANGES, written here and compared with the positions
+# the harness records a path from. Review found two calls whose recorded positions were wider than
+# what the call does - a symlink's target, then a hard link's source - and both were the same
+# predicate, so it is asked of every call rather than of the two that were reported. execve and
+# chdir change nothing; a rename changes two paths because its source stops existing; a hard link
+# changes one, because the file it is linked from is left exactly as it was.
+CHANGES_PER_CALL = {
+    "execve": 0, "execveat": 0, "chdir": 0, "fchdir": 0,
+    "open": 1, "openat": 1, "openat2": 1, "creat": 1,
+    "truncate": 1, "ftruncate": 1,
+    "mkdir": 1, "mkdirat": 1, "rmdir": 1,
+    "unlink": 1, "unlinkat": 1,
+    "mknod": 1, "mknodat": 1,
+    "symlink": 1, "symlinkat": 1,
+    "link": 1, "linkat": 1,
+    "rename": 2, "renameat": 2, "renameat2": 2,
+}
+
 class TheTraceParserCases(unittest.TestCase):
     """SUPPORT. Drift guards on the parser the witness rests on, not evidence for a criterion.
 
@@ -1284,23 +1347,60 @@ class TheTraceParserCases(unittest.TestCase):
         self.assertEqual(seen["writes"], [])
         self.assertEqual(seen["unreadable"], [])
 
-    def test_an_open_that_could_change_a_file_is_a_write_and_says_it_changed_nothing_yet(self):
-        """The wider reading, and the flag that keeps it from overstating.
+    def test_a_hard_link_writes_the_link_and_not_what_it_is_linked_from(self):
+        """A rename removes its source; a hard link leaves it exactly as it was."""
+        seen = self.parse('11 link("/outside/src", "/inside/dst")   = 0',
+                          '11 linkat(AT_FDCWD</w>, "/outside/s2", AT_FDCWD</w>, "/inside/d2", 0) = 0')
+        self.assertEqual(sorted(one["path"] for one in seen["writes"]),
+                         ["/inside/d2", "/inside/dst"],
+                         "a hard link reported the file it was linked FROM as written, which would",
+                         )
 
-        Counting only the flags that change a file at open time would miss every write into
-        a file that already existed, because the call that does it carries a descriptor and
-        no path. So the capability counts, and which of the two it was travels with it.
+    def test_an_open_that_may_have_created_a_file_says_so_rather_than_choosing(self):
+        """The third answer, and the reason it exists.
+
+        A successful O_CREAT without O_EXCL created the file if it was absent and changed nothing
+        if it was there. The trace carries the flags and the success and nothing else, so either
+        verdict would be inventing the missing half of the evidence.
         """
         seen = self.parse('11 openat(AT_FDCWD</w>, "/a", O_WRONLY|O_CLOEXEC) = 3</a>',
                           '11 openat(AT_FDCWD</w>, "/b", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 4</b>',
                           '11 openat(AT_FDCWD</w>, "/c", O_RDWR|O_CREAT, 0666) = 5</c>',
                           '11 openat(AT_FDCWD</w>, "/d", O_WRONLY|O_CREAT|O_EXCL, 0600) = 6</d>')
         self.assertEqual([(one["path"], one["changedTheFile"]) for one in seen["writes"]],
-                         [("/a", False), ("/b", True), ("/c", False), ("/d", True)],
-                         "an open able to change a file was dropped, or one that only asked"
-                         " to be able to was reported as having changed it. O_CREAT over a"
-                         " file that already exists changes nothing; with O_EXCL it would"
-                         " have failed, and a failed call is not in this table")
+                         [("/a", "only_able_to_change"), ("/b", "changed"),
+                          ("/c", "may_have_changed"), ("/d", "changed")],
+                         "an open was read as having changed a file the trace does not say it",
+                         )
+
+    def test_every_answer_an_open_can_give_is_one_of_the_three_declared(self):
+        """Support. The partition, so a fourth answer cannot appear unannounced."""
+        self.assertTrue(hasattr(harness, "_what_an_open_did"),
+                        "the witness has no vocabulary for what an open did, so there is no"
+                        " partition to check")
+        for flags in ("O_RDONLY", "O_WRONLY", "O_RDWR|O_APPEND", "O_WRONLY|O_CREAT",
+                      "O_WRONLY|O_CREAT|O_EXCL", "O_RDWR|O_TRUNC", "O_TMPFILE|O_RDWR"):
+            self.assertIn(harness._what_an_open_did(flags), WHAT_AN_OPEN_DID,
+                          flags + " answered outside the declared vocabulary")
+        self.assertEqual(sorted(harness.WHAT_AN_OPEN_DID), sorted(WHAT_AN_OPEN_DID),
+                         "the harness answers in a different vocabulary from this check")
+
+    def test_every_traced_call_writes_exactly_the_paths_it_actually_changes(self):
+        """SUPPORT, and the sweep behind two findings that were one predicate.
+
+        Both were a path named as written that the call does not change: a hard link's source,
+        and before that a symlink's target. So the predicate is asked of the whole table rather
+        than of the line that was reported, and the answer is written HERE rather than imported.
+        A call added to the harness without an entry below fails until somebody says what it
+        changes.
+        """
+        declared = {}
+        for name, (kind, positions) in harness.TRACED_CALLS.items():
+            declared[name] = 0 if kind in ("starts", "moves") else len(positions)
+        self.assertEqual(declared, CHANGES_PER_CALL,
+                         "the paths the harness records as written and the paths these calls"
+                         " actually change disagree. Say what the new call changes, or stop"
+                         " recording a path it leaves alone.")
 
     def test_a_relative_path_after_a_change_of_directory_is_unread(self):
         seen = self.parse('11 chdir("/elsewhere")                   = 0',
