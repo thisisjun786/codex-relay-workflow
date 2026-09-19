@@ -64,8 +64,9 @@ missing verification and route it to the task that owns that scope: the responsi
 issue, the parents that own the work where the gap spans projects, and a standalone issue's own
 issue-scoped owner where there is no parent to route through. An ordinary cross-project gap those
 parents can settle goes to them; an unresolved disagreement, a scope change, new ownership or a
-shared resource is their common supervisor's decision even when they agree, and goes to the user
-where they have none. All of this follows
+shared resource is their common supervisor's decision even when they agree. Where the projects
+answer to different supervisors, a requirement for one of them goes to that project's own
+supervisor, and only a genuinely shared decision with no common supervisor goes to the user. All of this follows
 [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope). Do not start a successor
 whose prerequisite is unverified. If the required result is verified, choose the
 next ready dependency or milestone step that advances the product outcome.
