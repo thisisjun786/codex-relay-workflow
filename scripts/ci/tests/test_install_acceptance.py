@@ -1710,6 +1710,40 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", True,
          "the import makes the answer readable here without an attribute to match, and it is an"
          " ordinary refactor rather than a form out of reach."),
+    "two scopes binding one spelling to different classes":
+        (REFUSAL,
+         ("class Clean:",
+          "    unread = \"fine\"",
+          "",
+          "class Bad:",
+          "    unread = reading.UNREADABLE",
+          "",
+          "def first():",
+          "    holder = Clean()",
+          "    return holder.unread",
+          "",
+          "def second():",
+          "    holder = Bad()",
+          "    return holder.unread"),
+         "second", True,
+         "which instance a spelling names depends on where it is read, so the table is keyed by"
+         " scope as well. Keeping the first binding answers the second function with the wrong"
+         " class and loses the place that really does settle."),
+    "a decorator qualified by a module nothing here can read":
+        (REFUSAL,
+         ("import arbitrary_decorators as deco",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @deco.staticmethod",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "an imported owner is asked what it exports, and only modules already imported here"
+         " are asked -- a module named in the source under analysis is not something to import"
+         " in order to answer a question about the text. One that cannot be read answers no,"
+         " which keeps the receiver and errs towards reporting."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2630,25 +2664,48 @@ def _instance_classes(tree):
     asked of the class rather than answered from the spelling of the attribute. To a fixpoint,
     because second = first holds the same instance.
     """
+    places = _places(tree)
     classes = frozenset(node.name for node in ast.walk(tree)
                         if isinstance(node, ast.ClassDef))
-    named, where_made, growing = {}, {}, True
+
+    def held_in(made, scope, name):
+        """The class this name holds an instance of, looked up innermost first."""
+        reach = [] if scope == MODULE_LEVEL else scope.split(".")
+        while reach:
+            found = made.get((".".join(reach), name))
+            if found:
+                return found
+            reach.pop()
+        return made.get((MODULE_LEVEL, name))
+
+    # Keyed by scope as well as spelling. Two functions may each bind holder, to different
+    # classes, and a table that keeps the first answers the second with the wrong one.
+    made, growing = {}, True
     while growing:
         growing = False
         for node in ast.walk(tree):
+            scope = places.get(id(node), (MODULE_LEVEL, None))[0]
             for target, value in _bindings(node):
-                made = ((_dotted(value.func) or "").rpartition(".")[2]
-                        if isinstance(value, ast.Call) else named.get(_dotted(value)))
+                builds = ((_dotted(value.func) or "").rpartition(".")[2]
+                          if isinstance(value, ast.Call)
+                          else held_in(made, scope, _dotted(value) or ""))
                 bound = _dotted(target)
-                if made in classes and bound:
-                    # Where the instance was built. A name bound to a constructor in the scope
-                    # that reads it is not shadowing anything: it IS the instance.
-                    where_made.setdefault(bound, set()).add(
-                        _places(tree).get(id(node), (MODULE_LEVEL, None))[0])
-                    if bound not in named:
-                        named[bound] = made
-                        growing = True
-    return classes, named, where_made
+                if builds in classes and bound and made.get((scope, bound)) != builds:
+                    made[(scope, bound)] = builds
+                    growing = True
+    # Answered per NODE, because which instance a spelling names depends on where it is read.
+    by_node, built = {}, set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name):
+            continue
+        scope = places.get(id(node), (MODULE_LEVEL, None))[0]
+        reached = held_in(made, scope, node.id)
+        if reached:
+            by_node[id(node)] = reached
+        if (scope, node.id) in made:
+            # Built in the scope that reads it, so it IS the instance rather than a shadow.
+            built.add(id(node))
+    return classes, by_node, built
 
 
 def _shadowing_names(tree):
@@ -2906,12 +2963,15 @@ def _hands_on(tree, spelled):
     owns_a_body = {id(statement): node.name for node in ast.walk(tree)
                    if isinstance(node, ast.ClassDef) for statement in node.body}
     module_bindings, class_bindings = [], {}
-    imported = set()
+    imported, imported_from = set(), {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             bound = [(node.lineno, alias.asname or alias.name.split(".")[0],
                       alias.name.rpartition(".")[2]) for alias in node.names]
             imported |= {name for _line, name, _value in bound}
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imported_from[alias.asname or alias.name.split(".")[0]] = alias.name
         elif isinstance(node, ast.Assign):
             spelling = (_dotted(node.value) or "").rpartition(".")[2]
             bound = [(node.lineno, inner.id, spelling) for target in node.targets
@@ -2959,6 +3019,22 @@ def _hands_on(tree, spelled):
 
     def decorated_by(node, seed, within=None):
         """Whether any decorator on this definition reaches one of these builtins."""
+        def the_objects():
+            """What these names denote, asked of the interpreter rather than listed.
+
+            Only modules this process has ALREADY imported are consulted. A module named in the
+            source under analysis is not something to import in order to answer a question
+            about the text, and one that cannot be read answers no rather than yes -- which
+            keeps the receiver, and errs towards reporting.
+            """
+            found = set()
+            for holder in (sys.modules.get("builtins"), sys.modules.get("functools")):
+                for name in seed:
+                    thing = getattr(holder, name, None) if holder is not None else None
+                    if thing is not None:
+                        found.add(thing)
+            return found
+
         def reaches(mark):
             spelled_as = _dotted(mark) or ""
             owner, _, last = spelled_as.rpartition(".")
@@ -2968,7 +3044,12 @@ def _hands_on(tree, spelled):
             # different: functools.cached_property is the descriptor it is spelled like, and
             # rejecting it loses every reader of the getter.
             held_by = owner.rpartition(".")[2]
-            if owner and held_by not in imported and (
+            if owner and held_by in imported:
+                # An imported owner is asked what it exports: functools.cached_property is the
+                # descriptor, deco.staticmethod from an unknown module is not.
+                module = sys.modules.get(imported_from.get(held_by, ""))
+                return module is not None and getattr(module, last, None) in the_objects()
+            if owner and (
                     held_by in parents
                     or any(bound == held_by for _line, bound, _value in module_bindings)):
                 return False
@@ -3800,7 +3881,8 @@ def _refusal_spelled(spellings, held, classes=(), as_class=None, shadowed=(), bu
                 return None
             # A name holding an instance answers to its class: what innocent.NOT_READ reads is
             # what Innocent binds, and what holder.unread reads is what Holder binds.
-            reader = (as_class or {}).get(reader, reader)
+            if isinstance(node.value, ast.Name):
+                reader = (as_class or {}).get(id(node.value), reader)
             if reader is not None and node.attr in held.get(reader, ()):
                 return (through or "") + "." + node.attr
             if reader in classes:
@@ -3888,7 +3970,8 @@ def _source_spelled(handles, hands_source, held, as_class=None, shadowed=(), dec
                 # instance bound at module level under the same spelling is what this reads.
                 return None
             # A name holding an instance answers to its class, the same way a refusal does.
-            reader = (as_class or {}).get(reader, reader)
+            if isinstance(node.value, ast.Name):
+                reader = (as_class or {}).get(id(node.value), reader)
             if reader is not None and node.attr in held.get(reader, ()):
                 return (through or "") + "." + node.attr
             return "." + node.attr if node.attr == "__file__" else None
@@ -4006,17 +4089,9 @@ def refusals_reached(source):
     spellings = refusal_spellings()
     # Which names in this source are classes written here, so an attribute read off one is
     # answered by what the class binds rather than by the spelling of its name.
-    classes, as_class, where_made = _instance_classes(tree)
+    classes, as_class, built = _instance_classes(tree)
     shadowed = _shadowing_names(tree)
     places = _places(tree)
-
-    def inside(scope, made):
-        return any(scope == owner or scope.startswith(owner + ".") for owner in made)
-
-    # A qualifier the scope itself built is the instance, not a shadow of one.
-    built = {id(node) for node in ast.walk(tree)
-             if isinstance(node, ast.Name) and node.id in where_made
-             and inside(places.get(id(node), (MODULE_LEVEL, None))[0], where_made[node.id])}
     # A refusal imported by name is that answer under a bare name: from completion import
     # NOT_READ makes the constant readable here without an attribute to match.
     answers_here = spellings["module attribute"] | spellings["collection"]
@@ -4043,7 +4118,7 @@ def source_text_reached(source):
     handles, hands_source, undecided, called = source_spellings(tree)
     declared = frozenset(handles)
     handles, where_from = _handle_names(tree, handles)
-    _classes, as_class, where_made = _instance_classes(tree)
+    _classes, as_class, built = _instance_classes(tree)
     places = _places(tree)
 
     def inside(scope, made):
@@ -4058,11 +4133,6 @@ def source_text_reached(source):
               and not inside(places.get(id(node), (MODULE_LEVEL, None))[0],
                              where_from[node.id])}
     shadowed = _shadowing_names(tree)
-    # A qualifier the scope itself built is the instance rather than a shadow of one, the same
-    # distinction the refusal side makes.
-    built = {id(node) for node in ast.walk(tree)
-             if isinstance(node, ast.Name) and node.id in where_made
-             and inside(places.get(id(node), (MODULE_LEVEL, None))[0], where_made[node.id])}
     # Whether open is the builtin here. A module that defines its own open has shadowed it, and
     # what that one answers with is a question about the run rather than a file's text.
     opens_a_file = not any(
