@@ -9,6 +9,8 @@ Make the intended change clear enough to decide whether and what to plan.
 An initiative is a goal with an observable finish, not a permanent product bucket.
 Read the shared [Integrations](../crw-plan/references/integrations.md) for source
 of truth, write authority, classification, and tool access.
+Defining an initiative creates no supervisor and moves no project's ownership; the execution
+roles are in [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
 
 ## Recover the intent
 

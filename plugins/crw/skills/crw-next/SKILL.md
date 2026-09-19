@@ -60,7 +60,9 @@ and observed behavior. Reuse valid proof; read
 readiness or integration determines the next action.
 
 If the claimed result still has a consequential gap, choose its correction or
-missing verification and route it to the existing owner. Do not start a successor
+missing verification and route it to the owner of that scope: an issue's correction goes to its
+child's parent, and a cross-project one to the supervisor where an initiative has one, under
+[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope). Do not start a successor
 whose prerequisite is unverified. If the required result is verified, choose the
 next ready dependency or milestone step that advances the product outcome.
 Do not repeatedly audit completed work or demand deployment when the agreed

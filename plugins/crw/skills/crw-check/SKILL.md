@@ -53,7 +53,7 @@ For suspected violations, state the expected rule, observation, smallest useful 
 
 ## Resolve findings and report
 
-For a completion check in an established execution workflow, send evidence-backed in-scope corrections to the existing responsible task through [crw-run](../crw-run/SKILL.md#return-corrections-to-the-existing-task). Include the violated criterion, reviewed revision, reproducible evidence, required outcome, and recheck. Do not make Jun relay the packet or ask again whether to send it. When called as a bounded audit helper, return this packet to the coordinator; the coordinator owns dispatch.
+For a completion check in an established execution workflow, send evidence-backed in-scope corrections to the existing responsible task through [crw-run](../crw-run/SKILL.md#return-corrections-to-the-existing-task). Include the violated criterion, reviewed revision, reproducible evidence, required outcome, and recheck. Do not make Jun relay the packet or ask again whether to send it. When called as a bounded audit helper, return this packet to the coordinator; the coordinator owns dispatch. A finding is returned to the level that owns it: a child's issue to that child's own parent, and a project's reported outcome to the supervisor where the initiative has one. A check never sends a correction into another project's children, per [supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
 
 Recheck the corrected revision against the original criteria and the reproduced failure. Missing evidence calls for a scoped verification request, not an invented defect or a speculative fix. Reuse valid evidence and keep the same correction scope until verified or a concrete blocker requires a decision.
 

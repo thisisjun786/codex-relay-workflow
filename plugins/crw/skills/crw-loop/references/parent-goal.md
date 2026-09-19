@@ -4,6 +4,10 @@ This is the lifecycle for the fixed project parent's native host goal. It does n
 use a CXC implementation goalplan or borrow any child's goal. Read the exposed tool
 schemas and effective hook behavior; unsupported actions stay unsupported.
 
+This lifecycle is the project parent's. A supervisor's goal is not defined here, and nothing in
+this file transfers to initiative scope; the roles themselves are in
+[Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
+
 ## Preflight before starting workers
 
 1. Establish the current parent thread, project, agreed issue scope, finish boundary

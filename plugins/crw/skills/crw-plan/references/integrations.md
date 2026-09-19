@@ -39,7 +39,9 @@ Run and Loop use this shared setup and recovery procedure before execution.
 Make this Codex task the continuing management point for one Linear project.
 Preserve that target across follow-up requests and context recovery. This parent
 orchestrates one project; its independent children each orchestrate one issue
-under the shared [parent and child scope](#parent-and-child-scope).
+under the shared [supervisor, parent and child scope](#supervisor-parent-and-child-scope), and a
+supervisor above it, where an initiative has one, works through this parent rather than through
+its children.
 
 ### Establish the link
 
@@ -210,24 +212,113 @@ through `crw-plan` before new dispatch. Preserve active work, IDs, and history;
 do not silently split, close, or reassign live issues. Editing these instructions
 does not migrate existing work or alter the relay's runtime contracts.
 
-### Parent and child scope
+### Supervisor, parent and child scope
 
-One parent Codex task orchestrates one Linear project: issue dependencies,
-sequencing, parallel children, delivery verification and project integration.
-One child Codex task orchestrates one Linear issue: implementation, tests, its
-PR and review fixes, with internal helpers as needed. A ready batch means
-several separate children, not several issues assigned to one child. Internal
-helpers do not acquire project or issue ownership by receiving a subtask.
+Execution runs at three levels, and each level is one Codex task bound to one Linear level by
+stable ID: a supervisor to an initiative, a parent to a project, a child to an issue. That binding
+is what makes a role. A title, a folder, a branch or a chat link is not, so identity stays on the
+stable IDs under [OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) and
+[OPS-7.4](../../crw-run/references/operations.md#ops-74-three-levels-and-their-routing-identity). Each scope has one active
+execution owner. Internal helpers acquire no ownership by receiving a subtask, a CXC internal
+helper agent is not a child, and the operating system's process supervisor is a different thing
+that happens to share the word.
 
-Bind the parent by stable project ID and each child by its issue ID. An initiative
-spanning projects is a planning scope, not a combined execution-parent binding.
-Preserve other project coordinators and route cross-project prerequisites by
-relation; do not absorb their issues. Standalone issues may remain projectless
-and run in an issue-scoped task without inventing a project or a project parent.
-An explicit current-task implementation request keeps that mode and issue scope;
-it is not evidence that an independent child was created. Reuse the responsible
-child for the same issue’s follow-ups, not for a new issue. Explicit project-focus
-switches preserve old bindings and active ownership before establishing the new one.
+| Role | Bound to | Coordinates | Instructs |
+|---|---|---|---|
+| Supervisor | one initiative ID | its initiative's projects: cross-project dependencies, priority, shared resources, and the order in which projects reach a shared target | the parents of those projects |
+| Parent | one project ID | its project's issues: dependencies, sequencing, parallel children, delivery verification and integration | its own children, and peer parents directly |
+| Child | one issue ID | nothing outside its own issue | its own internal helpers |
+
+| Role | Verifies | Merges | Updates in Linear | Complete when |
+|---|---|---|---|---|
+| Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
+| Parent | each child's delivery, pull request, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
+| Child | its own implementation and the review on its one pull request | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | nothing; it returns proposed record changes to its parent | its one delivery PR has landed under [Implementation Done](#implementation-done) |
+
+A ready batch means several separate children, not several issues assigned to one child, and the
+same holds a level up: several ready projects mean several parents. Each level reads the level
+below by result and does not repeat its work. A supervisor does not redo its parents' issue
+investigation, planning or assignment, and a parent does not redo its children's implementation or
+review; running the same enquiry once per level is how one project's cost becomes three.
+
+Instructions travel between adjacent levels, and only the owning parent instructs its own children.
+A supervisor that wants a child's work changed says so to that child's parent. Where reading a
+lower level directly is genuinely necessary, the existing owner stays in place, and the route and
+its reason are recorded.
+
+Each level writes its own record and no other. The supervisor's record is the initiative's own:
+an authorized definition change follows the [initiative body standard](#initiative-body-standard),
+decisions and dispositions are comments, and material progress is an update. The parent's records
+are the project and the issues it owns. A child writes none. It returns the document or issue ID,
+the revision it read, the reason, the smallest sufficient change and its evidence to its parent,
+which decides and writes. Accepted design text is preserved rather than rewritten.
+
+Bind a supervisor by stable initiative ID, the parent by stable project ID and each child by its
+issue ID. An initiative spanning projects may have one execution supervisor; it never becomes a
+combined execution parent, and each contributing project keeps its one parent. A project
+contributing to several initiatives keeps one execution supervisor and one parent, and the other
+initiatives reference its outcome instead of issuing it work, so no second supervisor instructs
+that parent or clones its children. Preserve other project coordinators and route cross-project
+prerequisites by relation; do not absorb their issues. A project with no supervisor, and a
+standalone issue with no project, run exactly as they do today in a project- or issue-scoped task:
+do not invent an initiative, a project or an upper task to complete the shape. An explicit
+current-task implementation request keeps that mode and issue scope; it is not evidence that an
+independent child was created. Reuse the responsible child for the same issue's follow-ups, not for
+a new issue. Explicit project-focus switches preserve old bindings and active ownership before
+establishing the new one.
+
+Approvals and limits travel down without widening. The user's restrictions, approvals, settings and
+pause or cancel hold in the scope they were given, and being linked to a level above is neither an
+expansion of authority nor a new goal ([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents)). A
+supervisor's or a parent's coordination goal is its own, and neither is mixed with a child's
+implementation FSM.
+
+This contract fixes the roles; it does not establish how a supervisor is instantiated. A task
+becomes a supervisor only by an explicit designation naming the initiative, an initiative link by
+itself rebinds no existing parent, and no supervisor title convention or binding procedure is
+defined here. Start policy, creation authority and the limits that survive them stay where they
+already are in [crw-run](../../crw-run/SKILL.md#independent-implementation-tasks), and this section
+references them rather than keeping a second copy.
+
+### Direct coordination between parents
+
+Parents coordinate with each other directly, and that is the ordinary path rather than an
+exception. Two projects whose work meets in the same files, interfaces, data or behaviour settle
+between themselves what each will change and what must keep holding. A supervisor that relayed
+every message would become the bottleneck it exists to remove, so it decides only what a pair
+cannot settle alone: an agreement they cannot reach, a change that widens either project's scope,
+who owns newly discovered work, and shared resources, including the order in which projects reach a
+shared target. The resource decision and the merge order are two decisions and are recorded as two.
+
+Only the owning parent instructs its own children. A peer request is answered by the parent that
+received it, and that parent decides what its own issues and children do about it; it never reaches
+into the other project's children. A peer message is not a delivery: it carries no receipt, no
+acknowledgement and no verdict, and it never enters another parent's registered relationship
+([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents),
+[OPS-7.4](../../crw-run/references/operations.md#ops-74-three-levels-and-their-routing-identity)).
+
+An agreement names its target issues, the revision it is based on, the exact area each side will
+change, the behaviour that must keep holding, the condition for accepting it, and who owns the next
+step. Owning a file for this change is not owning every future change to it. Where part of the
+surface is unsettled, hold that part and keep the independent work moving. When the base revision
+or the interface moves, the agreements that depended on it are confirmed again rather than assumed.
+
+Five things are distinct and are recorded separately: the transport accepted the message, the
+recipient understood and agreed, the owning parent instructed its child, the change was actually
+made, and the result was verified. Silence is not consent and a successful send is not agreement.
+A conditional acceptance is recorded as conditional, together with the condition that would make it
+applied, and it is never cited as applied evidence. An agreement between two parents binds no third
+project: a follow-up proposal records its trigger, its acceptance condition and whether the next
+owner accepted, and it stays marked unassigned until that owner accepts it explicitly. Where the
+follow-up is a required dependency, unassigned is escalated as a blocker rather than left standing
+as an implied promise.
+
+A merge turn and an edit agreement are different things. Agreeing on an edit grants no merge
+permission and creates no new project scope, and the merge itself stays with the owning parent
+under [OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release). Use the shared
+[Coordination message](../../crw-run/references/task-packet.md#coordination-message), reference the
+values the existing relationship already holds instead of recopying them, and prefer one message
+carrying a real state change over a heartbeat carrying none.
 
 ### Resolve the implementation repository
 
@@ -282,6 +373,10 @@ issue complete on its first partial merge or retroactively manufacture completed
 
 Release, deployment, installation and live behavior are separate claims. New
 plans track those operational results separately from the implementation PR.
+A child's delivery, its parent's acceptance, the merge into the intended target, installation,
+observed live behavior, the project's completion and the initiative's completion are seven
+separate claims in the same way: one child's finished goal, or a few projects marked Done, does
+not establish the level above it.
 For an existing issue whose accepted criteria already require installation or
 live verification, preserve those obligations until fulfilled or explicitly
 re-scoped within authorization; a merge alone does not erase them. Operational
@@ -327,6 +422,8 @@ concrete, update the relevant body passages instead of appending every issue or
 repeating operating rules. A project/issue-only write does not authorize a parent
 initiative write; return any needed body adjustment as a proposal. Keep each project's
 contribution to the initiative and its handoff to other projects understandable.
+Where the initiative has an execution supervisor, that supervisor is the authorized writer of its
+record updates under the [role contract](#supervisor-parent-and-child-scope).
 Use linked detail when explicitly requested or needed, without replacing the body
 or maintaining a second copy of its definition. Respect a requested output format;
 preserve existing documents and history, and migrate only within authorization.
@@ -374,7 +471,8 @@ Recover the existing task first. A replacement is routine only when task creatio
 ### Default independent execution
 
 Write instructions sent to child tasks in English, including initial assignments,
-review corrections, active-turn steer messages, resumes, and restoration blocks.
+review corrections, active-turn steer messages, resumes, and restoration blocks. The same applies
+to a supervisor's instructions to a parent and to messages between peer parents.
 Translate the actionable instructions without changing their scope or acceptance
 criteria; preserve exact identifiers, URLs, paths, code, and necessary source quotes.
 Keep task titles under the existing Korean title convention, and keep user-facing
