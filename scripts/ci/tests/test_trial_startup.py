@@ -47,28 +47,39 @@ VERIFIED, NOT_VERIFIED, UNKNOWN, NOT_APPLICABLE = (
 # Every relay subcommand the module may compose, written here rather than imported.
 ALLOWED = ("doctor", "assignment-find", "criteria-show", "settings-show", "service status")
 
-LAUNCHER = r'''#!/usr/bin/env python3
-import json, sys
-from pathlib import Path
+# Started without site processing and without pathlib: this stub is spawned thousands of times in
+# one run of this module, and an import it does not need is paid every time.
+LAUNCHER = r'''#!/usr/bin/env -S python3 -SE
+import json, os, sys
 
-here = Path(__file__).resolve().parent
-payloads = json.loads((here / "payloads.json").read_text())
+here = os.path.dirname(os.path.realpath(__file__))
+
+
+def read(name):
+    with open(os.path.join(here, name), encoding="utf-8") as handle:
+        return handle.read()
+
+
+payloads = json.loads(read("payloads.json"))
 argv = sys.argv[1:]
 words = [a for a in argv if not a.startswith("--")]
 # --state and --socket each take a value, so the subcommand is the first bare word after them.
 subcommand = words[2] if len(words) > 2 else (words[-1] if words else "")
 if subcommand == "service":
     subcommand = "service " + (words[3] if len(words) > 3 else "")
-with (here / "calls.jsonl").open("a") as handle:
+with open(os.path.join(here, "calls.jsonl"), "a", encoding="utf-8") as handle:
     handle.write(json.dumps({"subcommand": subcommand, "argv": sys.argv[1:]}) + "\n")
 # A trial can ask this stub to replace itself partway through, which is what an update moving the
 # pointer looks like from the caller's side.
-rewrite = here / "rewrite-after"
-if rewrite.exists():
-    calls = len((here / "calls.jsonl").read_text().splitlines())
-    if calls == int(rewrite.read_text().strip()):
-        mine = Path(__file__)
-        mine.write_text(mine.read_text() + "\n# a different build\n")
+rewrite = os.path.join(here, "rewrite-after")
+if os.path.exists(rewrite):
+    calls = len(read("calls.jsonl").splitlines())
+    if calls == int(read("rewrite-after").strip()):
+        mine = os.path.realpath(__file__)
+        with open(mine, encoding="utf-8") as handle:
+            body = handle.read()
+        with open(mine, "w", encoding="utf-8") as handle:
+            handle.write(body + "\n# a different build\n")
 entry = payloads.get(subcommand)
 # A trial can ask this stub to answer differently once a subcommand has been asked a number of
 # times, which is what a row another process replaces partway through the run looks like from the
@@ -76,7 +87,7 @@ entry = payloads.get(subcommand)
 # "after the reading that already graded it" instead of "at some point".
 after = payloads.get("after")
 if isinstance(after, dict):
-    made = len([c for c in (json.loads(l) for l in (here / "calls.jsonl").read_text().splitlines()
+    made = len([c for c in (json.loads(l) for l in read("calls.jsonl").splitlines()
                             if l.strip()) if c["subcommand"] == after.get("subcommand")])
     if made > int(after.get("calls", 0)):
         for name, replacement in (after.get("payloads") or {}).items():
@@ -109,7 +120,9 @@ WITNESS_WRITER = (
     "    n += 1\n"
     "    with open(path, 'a') as handle:\n"
     "        handle.write(json.dumps({'pid': os.getpid(), 'progress': n}) + '\\n')\n"
-    "    time.sleep(0.05)\n"
+    # Ticks faster than any interval a case declares, so a wait for the counter to move is a
+    # short wait. What a case asserts is that it moved, never how often.
+    "    time.sleep(0.01)\n"
 )
 
 
@@ -214,7 +227,10 @@ class World:
         # on when this call reached Popen. The two differ by however long the child took to
         # exist, which is small here and was not small on a loaded CI runner: the uptime cell
         # read under the bound there while this waited above it.
-        wanted = min(self.record["supervisor"]["minimumAliveSeconds"], 1) + 0.1
+        # The margin over the bound is small because the reading happens later still, after the
+        # record is written and the pass has begun: every one of those adds to the age this
+        # waits for, and a loaded runner adds more rather than less.
+        wanted = min(self.record["supervisor"]["minimumAliveSeconds"], 1) + 0.02
         deadline = time.time() + 10
         while time.time() < deadline:
             started = startup.process_started_at(self.supervisor.pid)
@@ -443,7 +459,29 @@ class World:
         record = startup.load_start(str(self.trial / "start.json"),
                                     environment=self.environment())
         record["_now"] = startup.datetime.datetime.now(startup.datetime.timezone.utc)
-        return startup.preflight(record, sleeper=lambda seconds: time.sleep(min(seconds, 0.1)))
+        return startup.preflight(record, sleeper=self.settle)
+
+    def settle(self, seconds):
+        """Wait for the witness to actually advance rather than for a fixed interval.
+
+        The module pauses between its two observations so the counter can move, and what this
+        suite needs is that it moved, not that a particular number of milliseconds passed. A
+        fixed pause spends the whole interval on every run of every case; the thing it waits for
+        is observable, so this waits for that and stops. Bounded by the interval the record
+        declares, and skipped where nothing is writing the witness at all, which is a reading
+        no amount of waiting changes.
+        """
+        if self.supervisor is None:
+            return
+        witness = str(self.trial / "supervisor.jsonl")
+        before = startup.read_witness(witness)
+        first = (before or {}).get("progress")
+        deadline = time.time() + min(seconds, 0.1)
+        while time.time() < deadline:
+            found = startup.read_witness(witness)
+            if found is not None and found.get("progress") != first:
+                return
+            time.sleep(0.002)
 
     def preflight_with(self, sleeper):
         """The same run with the pause between the two witness observations under the test's
@@ -1661,9 +1699,9 @@ class ThirdHostedRound(TrialCase):
         # fresh for as long as the run took. The witness delay is real time inside one preflight.
         self.world.start_supervisor()
         self.world.record["captureMaxAgeSeconds"] = 1
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 1.2
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.3
         self.world.record["captures"]["parentLifecycle"][World.PARENT_A]["capturedAt"] = (
-            startup.stamp(time.time() - 0.5))
+            startup.stamp(time.time() - 0.9))
         self.world.flush()
         document = startup.preflight(
             startup.load_start(str(self.world.trial / "start.json"),
@@ -2450,9 +2488,9 @@ class EighteenthHostedRound(TrialCase):
     def test_readiness_is_refused_when_the_window_opens_during_the_run(self):
         # A window a moment ahead, and a witness observation longer than that moment.
         self.world.start_supervisor()
-        self.world.record["window"] = {"opensAt": startup.stamp(time.time() + 0.5),
+        self.world.record["window"] = {"opensAt": startup.stamp(time.time() + 0.2),
                                        "closesAt": startup.stamp(time.time() + 600)}
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 1.2
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.4
         self.world.flush()
         document = startup.preflight(
             startup.load_start(str(self.world.trial / "start.json"),
@@ -2604,11 +2642,11 @@ class TwentySecondHostedRound(TrialCase):
     def test_a_capture_that_expires_during_the_run_fails_at_the_end(self):
         self.world.start_supervisor()
         self.world.record["captureMaxAgeSeconds"] = 1
-        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 1.5
+        self.world.record["supervisor"]["witnessAdvanceSeconds"] = 0.3
         for kind in ("parentLifecycle", "creationReceipt", "registration", "peerDoctor"):
             for name in self.world.record["captures"][kind]:
                 self.world.record["captures"][kind][name]["capturedAt"] = startup.stamp(
-                    time.time() - 0.2)
+                    time.time() - 0.9)
         self.world.flush()
         document = startup.preflight(
             startup.load_start(str(self.world.trial / "start.json"),
