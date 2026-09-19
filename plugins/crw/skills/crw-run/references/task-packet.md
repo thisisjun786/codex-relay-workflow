@@ -262,6 +262,10 @@ Initiative / Supervisor: [stable initiative ID, the revision of its record that 
 Project: [stable project ID and URL, and the parent task id where one already exists]
 Criteria: [the project record revision read, and this project's contribution to the initiative's
   finish condition. Issue-level criteria stay in the issues]
+Scope as read: [this project's membership in the approved set, and the completion boundary, both
+  as they stood at the initiative revision above. They are stated rather than left implicit so the
+  receiver has both sides of the comparison instead of only the current record and a revision it
+  cannot read backwards]
 Prerequisites: [cross-project prerequisites by relation, each with where its verification will
   appear; and the peer parents this project shares a surface with, to settle with directly]
 Authority: [the designation and its date, the limits in force, child-creation authority, and the
@@ -290,10 +294,10 @@ record read directly rather than quoted back to it inside the message, since a q
 only what the sender wrote. Identity is half of it, because a handoff naming the right supervisor
 can still carry the wrong scope, by forgery, by mistake, or by arriving after the scope moved. The
 same read settles the rest: that the initiative named is the one whose record this is, that this
-parent's own project is in that initiative's approved set, and that the approved set and completion
-boundary this handoff was written from are the ones that record carries now. The handoff states the
-revision it was written from so the comparison has a starting point, but the test is those two
-values and not revision equality: an authorized edit elsewhere in the initiative moves the revision
+parent's own project is in that initiative's approved set, and that the two values this handoff
+states it was written from, that membership and the completion boundary, are the ones the record
+carries now. The handoff states both, with the revision it read them at, so the receiver has each
+side of the comparison; the test is those values and not revision equality: an authorized edit elsewhere in the initiative moves the revision
 without moving them, and refusing a handoff over that would turn ordinary record-keeping into a
 stall. Where those values have moved, the handoff is out of date, and what it needs is the scope
 decision rather than a refusal. Where any of those disagree it answers the message as a peer
