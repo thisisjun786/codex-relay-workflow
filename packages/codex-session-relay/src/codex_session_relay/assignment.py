@@ -192,8 +192,23 @@ class AssignmentView:
                 return blank
             from .linkage import Linkage, PARENT as PARENT_ROLE, PROJECT as PROJECT_SCOPE
 
-            holder = Linkage(self.store, self.clock).owner(PROJECT_SCOPE, scoped["project_key"])
+            held = Linkage(self.store, self.clock).owners(
+                PROJECT_SCOPE, scoped["project_key"])
             parent_task = owning[0]["parentTaskId"]
+            if len(held) > 1:
+                # Two live owners, which only a store whose unique index could not be
+                # installed can hold. This view is what a coordinator reads before acting on
+                # an issue, so naming whichever sorted first would hand it a guessed parent
+                # wearing the same shape as a known one. The contest is the answer.
+                return {
+                    "projectKey": scoped["project_key"],
+                    "projectParentTaskId": None,
+                    "scopeState": "ambiguous",
+                    "projectParentCandidates": sorted(
+                        record["taskId"] for record in held),
+                    "parentOwnsProject": None,
+                }
+            holder = held[0] if held else None
             return {
                 "projectKey": scoped["project_key"],
                 "projectParentTaskId": holder["taskId"] if holder else None,

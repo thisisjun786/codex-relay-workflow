@@ -143,21 +143,36 @@ class Registry:
         existing = self.store.one("SELECT * FROM relationships WHERE relationship_id = ?", (rid,))
         if existing is not None:
             record = self._row_to_record(existing)
-            same = (
-                record["authorizedScope"]["artifactRoots"] == roots
-                and record["authorizedScope"]["allowedRecipients"] == recipients
-                and existing["parent_host_id"] == parent.host_id
-                and existing["child_host_id"] == child.host_id
-            )
-            if not same:
+            if (record["authorizedScope"]["artifactRoots"] != roots
+                    or record["authorizedScope"]["allowedRecipients"] != recipients):
                 raise RegistrationError(
                     RefusalReason.RELATIONSHIP_CONFLICT,
-                    f"{rid!r} already exists with a different scope or hosts",
+                    f"{rid!r} already exists with a different scope",
+                )
+            hosts_match = (existing["parent_host_id"] == parent.host_id
+                           and existing["child_host_id"] == child.host_id)
+            if existing["status"] in LIVE and not hosts_match:
+                # A LIVE assignment claimed from a second host is the contradiction: one
+                # relationship cannot be running in two places at once. A DEAD one is a
+                # different question - that tenure ended, and a task which has since moved is
+                # stating where it is NOW, exactly as a reactivated binding does. Requiring
+                # the old host there left the handback either unreachable or a lie.
+                raise RegistrationError(
+                    RefusalReason.RELATIONSHIP_CONFLICT,
+                    f"{rid!r} already exists on different hosts",
                 )
             if existing["status"] not in LIVE:
-                returned = self._returning_tenure(
-                    rid, parent, child, issue_key, dispatch_request_id, dispatch_turn_id,
-                    supersedes, project_key)
+                try:
+                    returned = self._returning_tenure(
+                        rid, parent, child, issue_key, dispatch_request_id,
+                        dispatch_turn_id, supersedes, project_key)
+                except RelayError as failure:
+                    # Its transaction rolled back and took any conflict row with it, so the
+                    # contest is re-recorded here. This call sits OUTSIDE the try below, and
+                    # leaving it uncovered meant a refused handback lost its evidence, which
+                    # is the one thing the write protocol says a refusal must not do.
+                    self._record_raced(failure, self.clock.iso())
+                    raise
                 if returned is not None:
                     return returned
                 # It came back to life between the read above and that transaction, so the
@@ -235,15 +250,21 @@ class Registry:
                 rid, parent, child, issue_key, roots, recipients, scope_ref,
                 dispatch_request_id, dispatch_turn_id, supersedes, project_key, now)
         except RelayError as failure:
-            # Carried on the error rather than on self. Instance state made two concurrent
-            # registrations through ONE Registry able to read each other's contest, and a
-            # refusal that has to survive a rollback is the last thing that should depend on
-            # nobody sharing the object.
-            raced = getattr(failure, "raced_refusal", None)
-            if raced is not None:
-                with self.store.transaction() as db:
-                    self.linkage.record_conflict_in(db, raced, at=now)
+            self._record_raced(failure, now)
             raise
+
+    def _record_raced(self, failure, now):
+        """Re-record a refusal whose own transaction rolled back and took the row with it.
+
+        Carried on the ERROR rather than on self. Instance state made two concurrent
+        registrations through one Registry able to read each other's contest, and a refusal
+        that has to survive a rollback is the last thing that should depend on nobody sharing
+        the object.
+        """
+        raced = getattr(failure, "raced_refusal", None)
+        if raced is not None:
+            with self.store.transaction() as db:
+                self.linkage.record_conflict_in(db, raced, at=now)
 
     def _returning_tenure(self, rid, parent, child, issue_key, dispatch_request_id,
                           dispatch_turn_id, supersedes, project_key):
@@ -316,13 +337,19 @@ class Registry:
                     f"supersedes names {supersedes!r}, which is assigned to issue "
                     f"{predecessor['issue_key']!r}, not {issue_key!r}; a successor replaces "
                     "the assignment for its own issue")
-            outgoing = self.linkage.replaceable_child_in(db, supersedes)
-            if outgoing is None:
+            if predecessor["status"] not in LIVE:
                 raise RegistrationError(
                     RefusalReason.RELATIONSHIP_CONFLICT,
-                    f"supersedes names {supersedes!r}, which is {predecessor['status']!r} or "
-                    f"no longer holds issue {issue_key!r}, so there is no tenure for {rid!r} "
-                    "to take over")
+                    f"supersedes names {supersedes!r}, which is "
+                    f"{predecessor['status']!r}, so there is no tenure for {rid!r} to take "
+                    "over; a returning tenure replaces the assignment that holds the issue "
+                    "now")
+            # Liveness is the gate, and the binding lookup only supplies the outgoing child
+            # for the attachment below. It answers None for an UNSCOPED predecessor, which
+            # has no binding by definition - every relationship registered before the
+            # three-level linkage existed is one - and refusing on that would have shut the
+            # compatibility surface out of handbacks entirely.
+            outgoing = self.linkage.replaceable_child_in(db, supersedes)
             # The predecessor first, for the reason the insert path archives first: once the
             # returning row is live again the lifecycle guard stops recognising the outgoing
             # one as the issue's owner, and archiving it afterwards would skip releasing the
@@ -341,11 +368,11 @@ class Registry:
             # follows.
             db.execute(
                 "UPDATE relationships SET status = ?, superseded_by = NULL, supersedes = ?,"
-                " execution_generation = ?, parent_cwd = ?, parent_cxc_session = ?,"
-                " child_cwd = ?, child_cxc_session = ?, updated_at = ?"
-                " WHERE relationship_id = ?",
-                (ACTIVE, supersedes, generation, parent.cwd, parent.cxc_session,
-                 child.cwd, child.cxc_session, now, rid),
+                " execution_generation = ?, parent_host_id = ?, parent_cwd = ?,"
+                " parent_cxc_session = ?, child_host_id = ?, child_cwd = ?,"
+                " child_cxc_session = ?, updated_at = ? WHERE relationship_id = ?",
+                (ACTIVE, supersedes, generation, parent.host_id, parent.cwd,
+                 parent.cxc_session, child.host_id, child.cwd, child.cxc_session, now, rid),
             )
             # reason stays NULL. The two named reasons are an initial assignment and a
             # revision, and this is neither; the schema already allows null rather than making
@@ -364,6 +391,11 @@ class Registry:
                 "relationship_tenure_reopened", rid,
                 {"issueKey": issue_key, "executionGeneration": generation,
                  "supersedes": supersedes, "outgoingChild": outgoing}, at=now)
+            # A generation advanced here is a generation advanced anywhere: the deliveries of
+            # the tenure that just ended are history from this moment, and without the
+            # annotation a dispatched or capped one keeps reporting as current while its
+            # acknowledgement is refused as stale.
+            self._supersede_older_deliveries_in(db, rid, generation, now)
             if project_key is not None:
                 reborn = db.execute(
                     "SELECT * FROM relationships WHERE relationship_id = ?", (rid,)
@@ -571,7 +603,16 @@ class Registry:
             (number, now, rid),
         )
         self.store.journal("generation_opened", rid, {"generation": number, "reason": reason}, at=now)
-        # Anything still outstanding for an earlier generation is history from this moment on.
+        self._supersede_older_deliveries_in(db, rid, number, now)
+        return number
+
+    def _supersede_older_deliveries_in(self, db, rid, number, now):
+        """Annotate every delivery left behind by a generation advance.
+
+        Shared by open_generation_in and by a returning tenure, which advances the generation
+        by its own route. Anything outstanding for an earlier generation is history from this
+        moment on.
+        """
         # It is ANNOTATED, never rewritten: a send whose response was lost still has to be
         # reconciled, and a terminal superseded aggregate cannot be. Without this a delivery
         # that was sending or held_uncertain when the generation advanced reconciled to
@@ -603,7 +644,6 @@ class Registry:
             " ON CONFLICT(event_id) DO NOTHING",
             (now, rid, number),
         )
-        return number
 
     def bind_anchor(self, rid: str, number: int, *, dispatch_turn_id: str, source: str) -> dict:
         """Bind only from a dispatch receipt, and only to the exact turn it reported."""

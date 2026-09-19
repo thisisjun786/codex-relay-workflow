@@ -2100,5 +2100,95 @@ class TheFourteenthRoundFoundTheseToo(LinkageTestCase):
             supersedes=away["relationshipId"], project_key=PROJECT)
         self.assertEqual(self.registry.get(original)["status"], "archived")
 
+    def test_a_handback_still_works_after_the_returning_parent_moved_host(self):
+        """The host comparison belonged to a LIVE replay only.
+
+        Requiring the old host on a dead row made the handback either unreachable or a lie:
+        passing the original host to get past the check would have stored routing metadata
+        that had not been true since the move.
+        """
+        self.supervise()
+        first = self.register()
+        original = first["relationshipId"]
+        self.linkage.attach_issue(original, PROJECT)
+        away = self.handed_to(OTHER_PARENT, supersedes=original, dispatch="dispatch-away")
+        moved = self.registry.register(
+            parent=Endpoint(PARENT, "host-two", cwd="/moved", cxc_session="cxc-moved"),
+            child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-moved", dispatch_turn_id="turn-moved",
+            supersedes=away["relationshipId"], project_key=PROJECT)
+        self.assertEqual(moved["relationshipId"], original)
+        self.assertEqual(moved["executionGeneration"], 2)
+        self.assertEqual(moved["parent"]["hostId"], "host-two")
+        self.assertEqual(moved["parent"]["cwd"], "/moved")
+
+    def test_a_live_replay_from_another_host_is_still_a_conflict(self):
+        """The half that stays: one relationship cannot be running in two places at once."""
+        self.supervise()
+        self.register()
+        self.assertRefused(
+            RefusalReason.RELATIONSHIP_CONFLICT, self.registry.register,
+            parent=Endpoint(PARENT, "host-two", cwd="/parent"),
+            child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-elsewhere", dispatch_turn_id="turn-elsewhere")
+
+    def test_a_refused_returning_tenure_still_leaves_its_contest(self):
+        """Its transaction rolls back and takes the conflict row with it, and the call sits
+        outside the handler that re-records one. A refused handback lost its evidence, which
+        is the one thing the write protocol says a refusal must not do."""
+        self.supervise()
+        first = self.register()
+        original = first["relationshipId"]
+        self.linkage.attach_issue(original, PROJECT)
+        # The intermediate tenure uses a DIFFERENT child, which frees the original one.
+        away = self.registry.register(
+            parent=self.parent(OTHER_PARENT),
+            child=Endpoint("01child-two", HOST, cwd=self.root), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-away", dispatch_turn_id="turn-away",
+            supersedes=original, project_key=PROJECT)
+        # While the project was elsewhere, the original child took another issue.
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key="REL-ELSEWHERE", endpoint=Endpoint(CHILD, HOST))
+        self.assertRefused(
+            RefusalReason.ROLE_ALREADY_BOUND, self.registry.register,
+            parent=self.parent(), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-back", dispatch_turn_id="turn-back",
+            supersedes=away["relationshipId"], project_key=PROJECT)
+        self.assertTrue(
+            self.linkage.conflicts(linkage.ISSUE, ISSUE),
+            "the refused handback left no record that it was contested")
+        # And it rolled back whole: the tenure it tried to take over is untouched.
+        self.assertEqual(
+            self.registry.get(away["relationshipId"])["status"], "active")
+
+    def test_an_assignment_read_reports_a_contested_project_rather_than_one_owner(self):
+        """for_issue is what a coordinator reads before acting on an issue, so naming
+        whichever duplicate sorted first would hand it a guessed parent wearing the same shape
+        as a known one."""
+        from codex_session_relay.assignment import AssignmentView
+
+        self.supervise()
+        relationship = self.register()
+        self.linkage.attach_issue(relationship["relationshipId"], PROJECT)
+        self.store.db.execute("DROP INDEX scope_bindings_one_live_owner")
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key,"
+                " task_id, host_id, cwd, cxc_session, status, revision, supersedes,"
+                " superseded_by, handover_note, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,NULL,NULL,'active',2,NULL,NULL,NULL,?,?)",
+                (binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, OTHER_PARENT),
+                 linkage.PARENT, linkage.PROJECT, PROJECT, OTHER_PARENT, HOST,
+                 "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z"))
+        answer = AssignmentView(self.store, self.registry, self.clock).for_issue(ISSUE)
+        self.assertEqual(answer["scopeState"], "ambiguous")
+        self.assertIsNone(answer["projectParentTaskId"])
+        self.assertIsNone(answer["parentOwnsProject"])
+        self.assertEqual(answer["projectParentCandidates"], sorted([PARENT, OTHER_PARENT]))
+
 if __name__ == "__main__":
     unittest.main()
