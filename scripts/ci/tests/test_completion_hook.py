@@ -4160,6 +4160,67 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                             "a spelling the dispatcher refuses was published with the reading"
                             " taken from the spelling it accepts: " + repr(answers))
 
+    def test_reading_the_host_never_writes_a_record_into_it(self):
+        """SUPPORT, not evidence: the boundary the execution lives inside, proved not asserted.
+
+        It is not counted toward a criterion and it is not red at any parent -- the boundary
+        was never crossed. It exists so that a later change which crosses it fails here rather
+        than in a host's journal.
+
+        This command runs registered programs, so what it may run is a contract: only
+        invocations whose whole job is to answer and exit. Never the adapter's firing path, and
+        never anything that can write a journal record -- because CRW-102's witness
+        distinguishes registered from actually-fired from recorded-elsewhere, and a diagnosis
+        able to produce a record would corrupt the very evidence that distinction rests on.
+
+        So: an established-absent journal, a full hook-status against that host, and the
+        journal still established absent afterwards with nothing created at its path.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = Path(temporary)
+            fake_relay(temporary, stdout=json.dumps(RELEASED))
+            register(temporary)
+            journal = host / "journal"
+            if journal.exists():
+                shutil.rmtree(journal)
+            before = completion.status(codex_home=temporary, environ={})
+            self.assertEqual(before["firingJournal"]["value"], reading.ABSENT,
+                             "the fixture did not build a host whose journal is established"
+                             " absent, so this control would prove nothing")
+            # A second full reading, because the probe runs programs on each one.
+            after = completion.status(codex_home=temporary, environ={})
+            existed = journal.exists()
+            left = sorted(one.name for one in host.iterdir())
+        self.assertFalse(existed,
+                         "reading the host created the journal directory it was reporting on")
+        self.assertEqual(after["firingJournal"]["value"], reading.ABSENT,
+                         "a journal established absent before the reading was not absent"
+                         " after it, so the reading wrote into what it was reading")
+        self.assertNotIn("journal", left,
+                         "the reading left something at the journal path: " + repr(left))
+
+    def test_the_reading_says_which_program_it_ran(self):
+        """A reading with side effects that does not name them is itself missing evidence.
+
+        An operator holding this receipt has to be able to tell that the diagnosis executed
+        something and which invocation it made, rather than reading a conclusion whose cost is
+        invisible. This is the same standard the rest of the payload is held to.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            found = completion.status(codex_home=temporary, environ={})
+        cell = found["registeredInterpreter"]
+        self.assertEqual(cell["value"], reading.PRESENT,
+                         "the fixture did not build a host whose interpreter answers")
+        ran = [one["probe"].get("ran") for one in (cell.get("probes") or [])]
+        self.assertTrue(all(ran), "a probe that ran a program did not say which: " + repr(ran))
+        self.assertIn(sys.executable, " ".join(ran),
+                      "the cell did not name the program it executed: " + repr(ran))
+        self.assertIn("was RUN as", cell["evidence"],
+                      "the evidence does not say the reading executed anything: "
+                      + cell["evidence"][:160])
+
     def test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status(self):
         """Only a program that RAN the source can produce this nonce.
 

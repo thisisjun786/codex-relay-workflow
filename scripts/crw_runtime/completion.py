@@ -1563,12 +1563,23 @@ INTERPRETER_UNESTABLISHED = (NOT_READ,)
 
 
 def _startable_from(halves):
-    """Whether a registration's two probe answers say it can start, cannot, or did not settle.
+    """What a registration's two probe answers say about starting: cannot, could not judge, or
+    nothing establishes that it cannot.
 
-    Three answers, not two. A probe this command did not judge -- a workspace-dependent
-    spelling, one it could not reach, one that did not answer in time -- is neither "starts"
-    nor "cannot start", and recording it as the latter dropped that registration's journal from
-    every question while a blocked neighbour supplied a settled explanation for the whole host.
+    Three answers, and the first of them is deliberately NOT "this registration starts". No
+    reading here establishes that. The interpreter probe asks the registered first word to
+    answer as a supported Python at the spelling the host resolves, and that is what it
+    establishes -- not that the REGISTRATION would start, because the adapter path, its
+    readability and the argument convention are separate facts and a wrapper's own target is
+    deliberately not followed. Reading a present pair as startability would pick one cause
+    among several by guess, which is the thing this answer set exists to stop.
+
+    So True here means "nothing establishes that it cannot start", which is what the rules
+    downstream actually need to scope a count, and the payload says as much rather than
+    claiming the stronger thing. None stays "could not judge at all" -- a workspace-dependent
+    spelling, one this command could not reach, one that did not answer in time -- because that
+    is neither, and recording it as cannot-start dropped that registration's journal from every
+    question while a blocked neighbour supplied a settled explanation for the whole host.
 
     The cannot-start side reads firing's DECLARED set rather than restating its members. It was
     written out as two of them, and when the probe learned to answer two more the new ones were
@@ -1661,6 +1672,19 @@ def _interpreter_question():
 # report "startable" and an unestablished reading does not. The last case never reaches this
 # function: its caller answers it, because a gap that produces no verdict is read as a clean
 # one.
+def _said_invocation(resolved):
+    """What this command actually ran, in the words an operator can repeat.
+
+    A reading that runs host programs and does not say so is itself a missing piece of
+    evidence, which is the failure this whole answer set exists to close. The receipt has to
+    name the program and the invocation, not merely the conclusion drawn from it.
+
+    The source is summarised rather than printed: it is a generated nonce, so the literal text
+    differs on every probe and would be noise in a receipt meant to be compared.
+    """
+    return str(resolved) + " -c <version-and-nonce probe>"
+
+
 def _end_the_session(started, session):
     """Kill everything the probe started, not only the process it made.
 
@@ -1760,9 +1784,14 @@ def _answers_as_an_interpreter(resolved, label):
                          + ".".join(str(part) for part in SUPPORTED_PYTHON) + ", so the"
                          " adapter fails on every Stop before evaluating or journalling"
                          " anything", path=str(resolved))
-        return _cell(reading.PRESENT, label + " ran and answered as a Python interpreter when"
-                     " this was asked; whether it does so on the next invocation is that"
-                     " invocation's own fact", path=str(resolved))
+        return _cell(reading.PRESENT, label + " was RUN as " + _said_invocation(resolved)
+                     + " and answered as a supported Python interpreter. That is what this"
+                     " establishes: the registered first word answers at the spelling the host"
+                     " resolves. It does not establish that the registration starts -- the"
+                     " command was never run as written and a wrapper's own target is not"
+                     " followed -- and whether it answers on the next invocation is that"
+                     " invocation's own fact",
+                     path=str(resolved), ran=_said_invocation(resolved))
     if started.returncode != 0:
         # It REFUSED the question rather than answering it wrongly, and those are different
         # facts. A wrapper -- env, a shell, a launcher script -- rejects an option meant for an

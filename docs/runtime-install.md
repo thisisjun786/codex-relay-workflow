@@ -1433,9 +1433,26 @@ running against settings the command had just reported it would not install. The
 and the append are still not one atomic step, so the registration is read back afterwards and a
 second copy is reported rather than claimed away.
 
-`hook-status` writes nothing of its own, but it is not inert: answering whether the runtime
-offers `guard-evaluate` means running that runtime with `--help`, and what that runtime does
-is outside this command's control. The command says so in its own output.
+`hook-status` writes nothing of its own, but it is not inert: it RUNS two of the programs a
+host registers, and what those programs do is outside this command's control. Answering whether
+the runtime offers `guard-evaluate` means running that runtime with `--help`. Answering whether
+the registered interpreter is an interpreter at all means running the first word of the
+registered command with `-c` and a generated nonce, because a file being present and executable
+establishes nothing about what runs: a program that exits quietly is indistinguishable from a
+working interpreter by any reading of the filesystem, and every Stop would succeed at running it
+and never reach the adapter. Both invocations exist only to answer and exit. Neither is the
+adapter's firing path, and neither can write a journal record, so a reading cannot manufacture
+the firing evidence it is reporting on. The command names the program it ran and the invocation
+it made in the cell's own evidence, so a receipt shows the reading's cost rather than only its
+conclusion.
+
+What running the interpreter establishes is narrow, and the limit is stated rather than left to
+be inferred: the registered first word answers as a supported Python at the spelling this host
+resolves. It does not establish that the registration would start. The command was never run as
+written, the argument convention was never exercised, and a wrapper's own target is deliberately
+not followed -- so a wrapper that answers `-c` while rejecting its normal argv still reads as
+answering. `firingRecordAbsence` therefore treats a present pair as "nothing establishes that
+this cannot start" and never as "this starts".
 
 `hook-status` probes these paths through the four reading states rather than asking whether a
 file is there. A runtime behind a permission wall and one that was never installed answer
@@ -1455,7 +1472,9 @@ turn and is recorded.
 
 ## Registration is not firing
 
-`runtime_install.py hook-status` reads and writes nothing. It answers registration, the host's
+`runtime_install.py hook-status` writes nothing, and reads rather than changes -- with the one
+exception above, that it runs the registered runtime and the registered interpreter to ask them
+what they are. It answers registration, the host's
 trust state, whether the registered command's target still exists, the settings, the runtime,
 whether that runtime offers the subcommand, this hook's own record of its invocations, why
 there is no such record when there is none, the guard's records, and the daemon, each as its

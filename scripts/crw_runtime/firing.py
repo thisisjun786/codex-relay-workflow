@@ -227,7 +227,17 @@ def _adapter_cannot_run(observed):
                                " established: "
                                + ", ".join(sorted({value for probe in unjudged
                                                    for value in _halves(probe)})))
-    return RULED_OUT, "every registered adapter and interpreter is there"
+    # What this rules out is the cause it is named for: no registered half is in a state that
+    # says the host cannot start it. It is NOT "these registrations start". The interpreter was
+    # asked to answer as a supported Python at the spelling the host resolves, and the adapter
+    # script was read for presence and readability; the registered command was never run as
+    # written, and a wrapper's own target is deliberately not followed. Saying the stronger
+    # thing here would settle startability from a reading that never established it.
+    return RULED_OUT, ("no registered adapter or interpreter is in a state that stops the host"
+                       " starting it: the interpreter answered as a supported Python at the"
+                       " spelling registered and the adapter script was read. That the"
+                       " registered command as a whole starts is not established here -- it"
+                       " was never run as written, and a wrapper's own target is not followed")
 
 
 def _halves(probe):
