@@ -146,6 +146,13 @@ def bridge_command(host):
     registration = host["mcp"].get("registration") or {}
     if registration.get("command"):
         return registration["command"]
+    if named and bridgerecord.owner_of(record) == bridgerecord.OWNER_PLUGIN:
+        # A host whose bridge surface was already moved on its own, with an executable somebody
+        # chose: register-mcp takes --owner plugin with --bridge-command, so this is a supported
+        # partial state. Falling through to the destination's default fabricated a path the host
+        # had already answered, and preflight then compared the live record with the invention
+        # and refused, leaving the hook and the skill links unable to follow.
+        return named
     retired = _retired_record(host)
     if retired and retired.get("bridgeExecutable"):
         return retired["bridgeExecutable"]
@@ -772,9 +779,13 @@ def settings_retire(host, options, *, apply=False):
                 restored, kept = _restore_moved(moved, locked=True)
                 return _answer("settings retire", REFUSED,
                                "archiving " + str(candidate) + " failed ("
-                               + type(error).__name__ + ": " + str(error) + "), so the documents"
-                               " already archived were put back and nothing was left half"
-                               " retired", retired=[], settingsRestored=restored,
+                               + type(error).__name__ + ": " + str(error) + "), and the documents"
+                               " already archived were put back"
+                               + ("" if not kept else
+                                  " except " + ", ".join(kept) + ", which are still archived and"
+                                  " whose registrations have no settings to read until they are"
+                                  " restored by hand")
+                               + ".", retired=[], settingsRestored=restored,
                                settingsLeftArchived=kept)
     return _answer("settings retire", SETTLED, "retired " + ", ".join(p["from"] for p in moved),
                    applied=True, wrote=True, retired=moved)
@@ -1233,7 +1244,10 @@ def _restore_moved(moved, *, locked=False):
             # race with a supported installer, and losing it means replacing that installation's
             # configuration with a document from before it existed.
             with contextlib.nullcontext() if locked else hostrecord.Locked(origin):
-                if origin.exists() or not archive.is_file():
+                # lexists, not exists: exists() follows the link, so a dangling symlink placed at
+                # this path reads as nothing being there and os.replace would delete it. Anything
+                # at all at the path belongs to whoever put it there.
+                if os.path.lexists(str(origin)) or not archive.is_file():
                     kept.append(str(archive))
                     continue
                 try:
@@ -1277,6 +1291,28 @@ def _restore_retired(results):
     """
     retire = next((item for item in results if item["step"] == "settings retire"), None)
     return _restore_moved((retire or {}).get("retired") or [])
+
+
+def _recreated_settings(results):
+    """Paths this run archived that something has written to again, with the owner found there.
+
+    The retire releases each path's lock before the standdown takes the hook file's, and an
+    identical registration lets a supported runtime_install.py hook --apply recreate the settings
+    without touching hooks.json at all. Removing the registration after that leaves a user-owned
+    document the plugin install refuses to overwrite and a packaged launcher that stands down
+    because the owner is not the plugin: no completion hook at all, out of a run that refused.
+    Presence is enough to stop, whoever owns it, because the path is not this run's any more.
+    """
+    retire = next((item for item in results if item["step"] == "settings retire"), None)
+    found = []
+    for moved in (retire or {}).get("retired") or []:
+        origin = Path(moved["from"])
+        if not os.path.lexists(str(origin)):
+            continue
+        document, _outcome, _detail, _found = completion.read_configuration(origin)
+        found.append(str(origin) + " (owner "
+                     + str(completion.owner_of(document) if document else None) + ")")
+    return found
 
 
 def _rollback_if_unfinished(results):
@@ -1374,6 +1410,21 @@ def transition(host, options, *, apply=False):
                     results.append(_answer(name, REFUSED, "; ".join(changed)))
                     results += [_answer(other, NOT_REACHED,
                                         "the plugin stopped being able to serve what this removes")
+                                for other, _step in ORDER[[n for n, _s in ORDER].index(name) + 1:]]
+                    break
+            if apply and name == "hook standdown":
+                back = _recreated_settings(results)
+                if back:
+                    results.append(_answer(name, REFUSED,
+                                           "settings were written again at " + "; ".join(back)
+                                           + " after this run archived them, so the registration"
+                                           " is left installed and reading what is there now."
+                                           " Removing it would leave a document the plugin"
+                                           " settings cannot replace and no completion hook at"
+                                           " all. Rerun to decide against the host as it stands",
+                                           paths=back))
+                    results += [_answer(other, NOT_REACHED,
+                                        "the settings this run archived came back while it ran")
                                 for other, _step in ORDER[[n for n, _s in ORDER].index(name) + 1:]]
                     break
             answer = step(host, options, apply=apply) if name != "settings install" \

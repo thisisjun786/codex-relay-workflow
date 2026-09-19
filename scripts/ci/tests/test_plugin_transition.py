@@ -2344,6 +2344,118 @@ class TheFindingsFromReview(TransitionCase):
                           json.loads(custom.read_text(encoding="utf-8"))), before)
         self.assertEqual(sorted(host.home.glob("crw-completion-hook.json.superseded-*")), [])
 
+    def test_settings_recreated_between_the_retire_and_the_standdown_stop_it(self):
+        """An identical registration lets a supported install recreate them without touching hooks."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        settings = host.settings()
+        document = host.hooks_document()
+        genuine = steps.settings_retire
+
+        def recreating(host_view, options, *, apply=False):
+            answer = genuine(host_view, options, apply=apply)
+            if apply and answer["outcome"] == "settled":
+                (host.home / "crw-completion-hook.json").write_text(
+                    json.dumps(settings), encoding="utf-8")
+            return answer
+
+        steps.settings_retire = recreating
+        steps.ORDER = tuple((name, recreating if name == "settings retire" else step)
+                            for name, step in steps.ORDER)
+        self.addCleanup(setattr, steps, "ORDER",
+                        tuple((name, genuine if name == "settings retire" else step)
+                              for name, step in steps.ORDER))
+        self.addCleanup(setattr, steps, "settings_retire", genuine)
+        results = steps.transition(snapshot, {"accept_hook_trust_gap": True}, apply=True)
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["hook standdown"], "refused", json.dumps(results)[:800])
+        standdown = [item for item in results if item["step"] == "hook standdown"][0]
+        self.assertIn("written again at", standdown["detail"])
+        self.assertEqual(outcomes["settings install"], "not_reached")
+        # The registration is still installed and the document it reads is untouched.
+        self.assertEqual(host.hooks_document(), document)
+        self.assertEqual(host.settings(), settings)
+
+    def test_a_plugin_owned_record_names_the_executable_the_host_chose(self):
+        """register-mcp takes --owner plugin with --bridge-command, so that state is supported."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        # The bridge surface already moved on its own, to an executable somebody chose.
+        chosen = host.version / "bin" / "codex-thread-bridge-chosen"
+        chosen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        chosen.chmod(0o755)
+        path = host.home / "crw-bridge-mcp.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["owner"] = "plugin"
+        document["bridgeExecutable"] = str(chosen)
+        path.write_text(json.dumps(document), encoding="utf-8")
+        # The table removed exactly as the transition would remove it, so the rest of the
+        # configuration -- the plugin entry among it -- is untouched.
+        first = inventory.snapshot(host.home, repo_root=ROOT)
+        (host.home / "config.toml").write_text(
+            host.config().replace(first["mcp"]["tableSpan"], "", 1), encoding="utf-8")
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        self.assertEqual(steps.bridge_command(snapshot), str(chosen))
+        answer = steps.preflight(snapshot, {"accept_hook_trust_gap": True})
+        self.assertEqual(answer["outcome"], "settled", json.dumps(answer["refusals"])[:600])
+
+    def test_a_dangling_link_at_the_path_is_left_where_it_was_put(self):
+        """exists() follows the link, so a dangling one read as nothing and was overwritten."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        retired = steps.settings_retire(snapshot, {}, apply=True)
+        origin = Path(retired["retired"][0]["from"])
+        archive = Path(retired["retired"][0]["to"])
+        origin.symlink_to(host.root / "nothing-here.json")
+        restored, kept = steps._restore_moved(retired["retired"])
+        self.assertEqual(restored, [])
+        self.assertEqual(kept, [str(archive)])
+        self.assertTrue(origin.is_symlink())
+        self.assertEqual(os.readlink(str(origin)), str(host.root / "nothing-here.json"))
+        self.assertTrue(archive.is_file())
+
+    def test_a_rollback_that_could_not_finish_says_what_is_still_archived(self):
+        """Claiming nothing was left half retired is a claim, and it was not always true."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        genuine = steps.retire
+        done = []
+
+        def failing(path, into=None, stem=None):
+            if done:
+                # Somebody writes the first path back, so its archive cannot return either.
+                Path(done[0]).write_text("{}", encoding="utf-8")
+                raise OSError(errno.ENOSPC, "No space left on device")
+            done.append(str(path))
+            return genuine(path, into=into, stem=stem)
+
+        steps.retire = failing
+        self.addCleanup(setattr, steps, "retire", genuine)
+        answer = steps.settings_retire(snapshot, {}, apply=True)
+        steps.retire = genuine
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:600])
+        self.assertEqual(answer["settingsRestored"], [])
+        self.assertTrue(answer["settingsLeftArchived"], json.dumps(answer)[:600])
+        self.assertIn("except", answer["detail"])
+        self.assertIn("restored by hand", answer["detail"])
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()
