@@ -163,6 +163,14 @@ tried and both were wrong.
 
 Each assignment is moved by registering its successor with `supersedes`, which mints a correct
 new identity, carries the new parent's host and cwd, and repoints the project-to-issue edge.
+
+Handing a project BACK is the case where "a correct new identity" is not available. The id is
+`sha256(parentTaskId|childTaskId|issueKey)`, so returning to an earlier parent with the same
+child derives the id that parent already used. That is not a collision: the same triple is the
+same relationship, and the return is a second TENURE of it, recorded as a new generation with
+`supersedes` and `supersededBy` carrying the lineage in both directions. Registering a dead
+identity without naming a live predecessor is refused rather than answered with the retired
+row, and the refusal says whether to pass `supersedes` or to use `relationship-resume`.
 Once no live assignment still names the parent that is stepping down, the scope changes hands
 and nothing is left answering to it.
 
@@ -211,6 +219,21 @@ both tasks, and it is not counted as a gap, because two owners is not nobody.
 Quoting `from_scope` or `quoted_scope` resolves the message cases, which is what OPS-7.4
 already says a message carries. Nothing resolves the store cases except repairing the store;
 the reader's job is to say so rather than to pick.
+
+`owner_drift` is reported at BOTH ends of an edge, by both walks. It is not only a corruption
+symptom: the sequence a stranding refusal prescribes passes through it on purpose, because each
+assignment is moved to the incoming parent before the scope is, and during that window the
+project-to-issue edge names the new parent while the project binding still names the old one.
+A walk that checked one end called that window internally consistent.
+
+When the store could not install one of its partial unique indexes, `linkage-up`,
+`linkage-down` and `status` carry `unenforcedIndexes` naming it. An ambiguous answer and a
+missing index are the same fact from two sides: the second says the database is no longer
+refusing a second owner either, which is what a caller deciding whether to act on a contested
+scope has to know. A healthy store carries no such key.
+
+`linkage-up` takes exactly one of `--task`, `--issue` or `--relationship`, and `--scope` only
+with `--task`. Naming several used to resolve by an internal precedence the caller never saw.
 
 `gaps` name what is missing instead of omitting the level: `initiative_without_supervisor`,
 `project_without_parent`, `issue_without_child`, `unscoped_assignment` and `no_supervisor`.

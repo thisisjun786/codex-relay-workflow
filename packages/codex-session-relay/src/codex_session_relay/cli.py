@@ -403,15 +403,36 @@ def cmd_linkage_settle(services, args) -> dict:
         args.directive, args.disposition, decided_by=args.actor, reason=args.reason)
 
 
+def _with_enforcement(services, answer) -> dict:
+    """Say when the store could not install a guard index, where an operator is looking.
+
+    An ambiguous answer and a missing index are the same fact seen from two sides, and the
+    fact was recorded on the Store where nothing showed it. A reader deciding whether to act
+    on a contested owner needs to know the database is not stopping a second one either.
+    """
+    unenforced = getattr(services.store, "unenforced_indexes", [])
+    if unenforced:
+        answer = dict(answer, unenforcedIndexes=unenforced)
+    return answer
+
+
 def cmd_linkage_down(services, args) -> dict:
-    return services.linkage.down(args.scope_kind, args.scope)
+    return _with_enforcement(services, services.linkage.down(args.scope_kind, args.scope))
 
 
 def cmd_linkage_up(services, args) -> dict:
-    return services.linkage.up(
+    if args.scope and not args.task:
+        # --scope only narrows the task path, so naming it beside --issue or --relationship
+        # reads as a second filter that was never applied.
+        raise PayloadExit({
+            "ok": False, "reason": "bad_invocation",
+            "detail": "--scope chooses between the scopes one TASK owns, so it goes with"
+                      " --task. With --issue or --relationship the starting scope is already"
+                      " decided and --scope would be silently ignored.",
+        }, EXIT_REFUSED)
+    return _with_enforcement(services, services.linkage.up(
         task_id=args.task, issue_key=args.issue, relationship_id=args.relationship,
-        scope_key=args.scope)
-
+        scope_key=args.scope))
 
 def cmd_linkage_counterpart(services, args) -> dict:
     return services.linkage.counterpart(
@@ -887,6 +908,13 @@ def cmd_status(services, args) -> dict:
     payload["observation"] = services.delivery.observation_health(
         relationship_id=args.relationship,
     )
+    # Degraded enforcement is an operator fact. An index the store could not install means
+    # the database is no longer refusing a second owner, which is what makes the linkage
+    # readers answer ambiguous; recording it on the Store and showing it nowhere left the
+    # documented promise to name it unkept.
+    unenforced = getattr(services.store, "unenforced_indexes", [])
+    if unenforced:
+        payload["unenforcedIndexes"] = unenforced
     return payload
 
 
@@ -1966,13 +1994,19 @@ def build_parser() -> argparse.ArgumentParser:
     down.set_defaults(handler=cmd_linkage_down)
 
     up = subparsers.add_parser("linkage-up")
-    up.add_argument("--task")
-    up.add_argument("--issue")
-    up.add_argument("--relationship")
+    # Exactly one starting point. Left independently optional, argparse accepted none - which
+    # answered nothing - and several at once, which _starting_scope resolved by its own
+    # precedence: relationship over issue over task. A caller naming a relationship AND an
+    # issue got the relationship's hierarchy back and no sign the issue was never consulted.
+    start = up.add_mutually_exclusive_group(required=True)
+    start.add_argument("--task")
+    start.add_argument("--issue")
+    start.add_argument("--relationship")
     up.add_argument("--scope",
                     help="which scope to walk from when --task owns more than one. Without"
                          " it a task holding several scopes is answered as ambiguous rather"
-                         " than resolved down one arbitrary branch")
+                         " than resolved down one arbitrary branch. Goes with --task only:"
+                         " --issue and --relationship already decide the starting scope")
     up.set_defaults(handler=cmd_linkage_up)
 
     counterpart = subparsers.add_parser("linkage-counterpart")

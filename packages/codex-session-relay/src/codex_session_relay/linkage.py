@@ -1609,6 +1609,16 @@ class Linkage:
             (scope_kind, scope_key),
         ):
             edge = self._link_record(row)
+            # The UPPER endpoint too. This scope is the upper of every edge here, so an edge
+            # recording a different task than the one that holds this scope is drift - and it
+            # is exactly the state the documented handover staging passes through, where each
+            # successor repoints the project-to-issue edge to the incoming parent while the
+            # project binding still belongs to the outgoing one. Checking only the lower end
+            # reported that transitional tree as internally consistent.
+            if owner is not None and owner["taskId"] != edge["upper"]["taskId"]:
+                contention.append({"contention": "owner_drift", "linkId": edge["linkId"],
+                                   "recorded": edge["upper"]["taskId"],
+                                   "live": owner["taskId"]})
             live = self.owner(edge["lower"]["scopeKind"], edge["lower"]["scopeKey"])
             if live is not None and live["taskId"] != edge["lower"]["taskId"]:
                 contention.append({"contention": "owner_drift", "linkId": edge["linkId"],
@@ -1699,6 +1709,17 @@ class Linkage:
                     contention.append({"contention": "owner_drift", "linkId": edge["linkId"],
                                        "recorded": edge["lower"]["taskId"],
                                        "live": live["taskId"]})
+                # And the UPPER endpoint, which this walk was about to step onto without
+                # ever comparing. The downward walk reports this drift because it checks each
+                # edge's destination; reaching the same edge from below has to report the
+                # same thing, or one direction calls a tree consistent that the other does
+                # not. Two live owners up there is a contest rather than drift, and the next
+                # iteration reports it as one.
+                above = self.owners(row["upper_kind"], row["upper_key"])
+                if len(above) == 1 and above[0]["taskId"] != edge["upper"]["taskId"]:
+                    contention.append({"contention": "owner_drift", "linkId": edge["linkId"],
+                                       "recorded": edge["upper"]["taskId"],
+                                       "live": above[0]["taskId"]})
                 scope_kind, scope_key = row["upper_kind"], row["upper_key"]
             # Same rule the downward walk follows: a contest anywhere makes the answer
             # ambiguous rather than a resolved chain with one candidate quietly chosen.

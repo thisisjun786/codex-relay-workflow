@@ -53,6 +53,30 @@ class LinkageTestCase(RelayTestCase):
     def conflicts(self):
         return self.store.all("SELECT * FROM linkage_conflicts ORDER BY id")
 
+    def duplicated_store(self):
+        """A store holding two live owners of one project, the way an older writer could.
+
+        The index that forbids it is dropped first, which is the state a store that could not
+        install it arrives in. This is what an unenforced index proves can exist, and
+        therefore what these readers have to be able to describe.
+        """
+        import os
+
+        path = os.path.join(self.tmp, "duplicated.sqlite")
+        legacy = Store(path)
+        legacy.db.execute("DROP INDEX scope_bindings_one_live_owner")
+        with legacy.transaction() as db:
+            for task, revision in (("01owner-one", 1), ("01owner-two", 2)):
+                db.execute(
+                    "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key,"
+                    " task_id, host_id, cwd, cxc_session, status, revision, supersedes,"
+                    " superseded_by, handover_note, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,NULL,NULL,'active',?,NULL,NULL,NULL,?,?)",
+                    (binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, task),
+                     linkage.PARENT, linkage.PROJECT, PROJECT, task, HOST, revision,
+                     "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z"))
+        return Linkage(Store(path), self.clock)
+
 
 class Identity(LinkageTestCase):
     def test_a_binding_is_the_role_scope_and_task_and_nothing_else(self):
@@ -1880,30 +1904,6 @@ class TheThirteenthRoundFoundTheseToo(LinkageTestCase):
         answer = Linkage(reopened, self.clock).up(task_id="01owner-one")
         self.assertIs(answer["readable"], True)
 
-    def duplicated_store(self):
-        """A store holding two live owners of one project, the way an older writer could.
-
-        The index that forbids it is dropped first, which is the same state a store that
-        could not install it arrives in. This is what the unenforced index above proves can
-        exist, and therefore what these readers have to be able to describe.
-        """
-        import os
-
-        path = os.path.join(self.tmp, "duplicated.sqlite")
-        legacy = Store(path)
-        legacy.db.execute("DROP INDEX scope_bindings_one_live_owner")
-        with legacy.transaction() as db:
-            for task, revision in (("01owner-one", 1), ("01owner-two", 2)):
-                db.execute(
-                    "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key,"
-                    " task_id, host_id, cwd, cxc_session, status, revision, supersedes,"
-                    " superseded_by, handover_note, created_at, updated_at)"
-                    " VALUES (?,?,?,?,?,?,NULL,NULL,'active',?,NULL,NULL,NULL,?,?)",
-                    (binding_id(linkage.PARENT, linkage.PROJECT, PROJECT, task),
-                     linkage.PARENT, linkage.PROJECT, PROJECT, task, HOST, revision,
-                     "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z"))
-        return Linkage(Store(path), self.clock)
-
     def test_two_live_owners_are_reported_rather_than_resolved(self):
         """owner() answers with a row, so it ordered the duplicates and returned one - and the
         walk called that resolved. A deterministic pick is still a guess, and one that looks
@@ -1933,6 +1933,172 @@ class TheThirteenthRoundFoundTheseToo(LinkageTestCase):
         # must NOT appear is a gap saying the project has no parent, when it has two.
         self.assertNotIn("project_without_parent",
                          [gap["gap"] for gap in answer["gaps"]])
+
+
+class TheFourteenthRoundFoundTheseToo(LinkageTestCase):
+    def test_the_handover_staging_state_is_not_reported_as_consistent(self):
+        """Both walks checked only an edge's LOWER endpoint.
+
+        The sequence a stranding refusal prescribes moves each assignment to the incoming
+        parent BEFORE the scope moves, so the project-to-issue edge names the new parent while
+        the project binding still names the old one. Checking one end reported that
+        transitional tree as internally consistent, in both directions at once.
+        """
+        self.supervise()
+        first = self.register()
+        rid = first["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.registry.register(
+            parent=self.parent(OTHER_PARENT),
+            child=Endpoint("01child-two", HOST, cwd=self.root), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[OTHER_PARENT],
+            dispatch_request_id="dispatch-moved", dispatch_turn_id="turn-moved",
+            supersedes=rid, project_key=PROJECT)
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], PARENT)
+        downward = self.linkage.down(linkage.INITIATIVE, INITIATIVE)
+        self.assertIn("owner_drift",
+                      [row.get("contention") for row in downward["contention"]])
+        upward = self.linkage.up(issue_key=ISSUE)
+        self.assertIn("owner_drift",
+                      [row.get("contention") for row in upward["contention"]])
+
+    def test_the_upward_walk_needs_exactly_one_starting_point(self):
+        """Independently optional selectors accepted none, which answers nothing, and several
+        at once, which _starting_scope resolved by a precedence the caller never saw: naming a
+        relationship AND an issue returned the relationship's hierarchy with no sign the issue
+        was ignored."""
+        from codex_session_relay import cli
+
+        parser = cli.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["linkage-up"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["linkage-up", "--relationship", "rel-a", "--issue", ISSUE])
+
+    def test_a_scope_without_a_task_is_refused_rather_than_ignored(self):
+        """--scope narrows only the task path, so beside --issue it read as a second filter
+        that was never applied."""
+        import argparse
+
+        from codex_session_relay import cli
+
+        parsed = cli.build_parser().parse_args(
+            ["linkage-up", "--issue", ISSUE, "--scope", PROJECT])
+        with self.assertRaises(cli.PayloadExit) as caught:
+            cli.cmd_linkage_up(argparse.Namespace(linkage=self.linkage), parsed)
+        self.assertEqual(caught.exception.payload["reason"], "bad_invocation")
+
+    def test_a_reader_is_told_the_database_is_not_enforcing_ownership(self):
+        """The unenforced index was recorded on the Store and shown nowhere, so the promise to
+        name it was unkept. An ambiguous answer and a missing index are the same fact from two
+        sides, and a caller deciding whether to act on a contested owner needs both."""
+        import argparse
+
+        from codex_session_relay import cli
+
+        legacy = self.duplicated_store()
+        services = argparse.Namespace(linkage=legacy, store=legacy.store)
+        parsed = cli.build_parser().parse_args(
+            ["linkage-down", "--scope-kind", "project", "--scope", PROJECT])
+        answer = cli.cmd_linkage_down(services, parsed)
+        self.assertEqual(answer["state"], "ambiguous")
+        self.assertEqual([entry["index"] for entry in answer["unenforcedIndexes"]],
+                         ["scope_bindings_one_live_owner"])
+        # A healthy store says nothing, rather than carrying an empty key everywhere.
+        healthy = argparse.Namespace(linkage=self.linkage, store=self.store)
+        self.assertNotIn("unenforcedIndexes", cli.cmd_linkage_down(healthy, parsed))
+
+    def handed_to(self, incoming, *, supersedes, dispatch):
+        """Move the assignment to the incoming parent, then move the scope after it.
+
+        The sequence a stranding refusal prescribes, run for real rather than described.
+        """
+        moved = self.registry.register(
+            parent=self.parent(incoming), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id=dispatch, dispatch_turn_id=dispatch + "-turn",
+            supersedes=supersedes, project_key=PROJECT)
+        holder = self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"]
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=holder,
+            endpoint=self.parent(incoming),
+            acknowledged=self.linkage.outstanding(PROJECT),
+            evidence="the assignment moved first", actor="test")
+        return moved
+
+    def test_a_project_can_be_handed_back_to_the_parent_it_came_from(self):
+        """A -> B -> A was impossible.
+
+        relationship_id is sha256(parentTaskId|childTaskId|issueKey), so handing back to the
+        earlier parent with the same child derives the ORIGINAL id. That row is archived, so
+        the existing-row path handed it to attach_in and got relationship_not_active, the live
+        assignment under B went on blocking the handover, and the only escape was to invent a
+        child or parent task that does not exist. The same triple is the same relationship by
+        the contract's own identity rule, so the return is a second TENURE of it: a new
+        generation, with the lineage recorded on both rows.
+        """
+        self.supervise()
+        first = self.register()
+        original = first["relationshipId"]
+        self.linkage.attach_issue(original, PROJECT)
+
+        away = self.handed_to(OTHER_PARENT, supersedes=original, dispatch="dispatch-away")
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], OTHER_PARENT)
+
+        back = self.handed_to(PARENT, supersedes=away["relationshipId"],
+                              dispatch="dispatch-back")
+        self.assertEqual(back["relationshipId"], original,
+                         "the returning tenure is the same relationship, by identity")
+        self.assertEqual(back["status"], "active")
+        self.assertEqual(back["executionGeneration"], 2)
+        self.assertEqual(len(back["generations"]), 2)
+        self.assertEqual(self.linkage.owner(linkage.PROJECT, PROJECT)["taskId"], PARENT)
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], CHILD)
+        self.assertEqual(self.linkage.attachment(original)["projectKey"], PROJECT)
+        # Both directions of the lineage, so neither tenure pretends the other did not happen.
+        middle = self.registry.get(away["relationshipId"])
+        self.assertEqual(middle["status"], "archived")
+        self.assertEqual(
+            self.store.one("SELECT superseded_by, supersedes FROM relationships"
+                           "  WHERE relationship_id = ?",
+                           (away["relationshipId"],))["superseded_by"], original)
+        self.assertEqual(
+            self.store.one("SELECT supersedes FROM relationships WHERE relationship_id = ?",
+                           (original,))["supersedes"], away["relationshipId"])
+
+    def test_a_retired_identity_is_not_returned_as_a_registration(self):
+        """The silent half. Unscoped, the archived row came straight back as though a
+        registration had happened, over an assignment that owned nothing. It now says which
+        route applies instead of letting the matching id speak for itself."""
+        self.supervise()
+        first = self.register()
+        original = first["relationshipId"]
+        self.linkage.attach_issue(original, PROJECT)
+        self.registry.set_status(original, "archived", actor="test")
+        refusal = self.assertRefused(
+            RefusalReason.RELATIONSHIP_CONFLICT, self.registry.register,
+            parent=self.parent(), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-silent", dispatch_turn_id="turn-silent")
+        self.assertIn("relationship-resume", refusal.detail)
+        self.assertEqual(self.registry.get(original)["status"], "archived")
+
+    def test_a_returning_tenure_needs_a_predecessor_that_still_holds_the_issue(self):
+        """Naming a predecessor that has already let the issue go is not a handback, and the
+        returning row must not come back on the strength of a retired one."""
+        self.supervise()
+        first = self.register()
+        original = first["relationshipId"]
+        self.linkage.attach_issue(original, PROJECT)
+        away = self.handed_to(OTHER_PARENT, supersedes=original, dispatch="dispatch-away")
+        self.registry.set_status(away["relationshipId"], "cancelled", actor="test")
+        self.assertRefused(
+            RefusalReason.RELATIONSHIP_CONFLICT, self.registry.register,
+            parent=self.parent(), child=Endpoint(CHILD, HOST, cwd=self.root),
+            issue_key=ISSUE, artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-late", dispatch_turn_id="turn-late",
+            supersedes=away["relationshipId"], project_key=PROJECT)
+        self.assertEqual(self.registry.get(original)["status"], "archived")
 
 if __name__ == "__main__":
     unittest.main()
