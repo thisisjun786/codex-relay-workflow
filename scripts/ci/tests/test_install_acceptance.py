@@ -4580,6 +4580,63 @@ RESOLVES_LIKE_PYTHON = {
          " rather than a narrow claim: the line between it and the form that builds a new"
          " string is the one the language draws, so the exact one is followed and the other is"
          " named in HANDED_ON_THROUGH_A_TRANSFORMATION."),
+    "a subject captured by a match case":
+        (TEXT,
+         ("def helper():",
+          "    match HERE:",
+          "        case path:",
+          "            return path.read_text()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "match HERE: case path: binds path to the SUBJECT, and the pairing helper fell"
+         " straight through ast.Match, so an undeclared source-reading place passed the"
+         " inventory whole. Only a capture written at the TOP of a case is paired: one nested"
+         " inside a sequence or mapping pattern binds an element rather than the subject, and"
+         " pairing it with the subject would be an answer about something else."),
+    "a subject captured from something this text cannot read":
+        (TEXT,
+         ("def helper(given):",
+          "    match given:",
+          "        case path:",
+          "            return path.read_text()",
+          "",
+          "def consumer():",
+          "    return helper(None)"),
+         "consumer", False,
+         "SUPPORT, green at the parent: a capture binds whatever the subject is, so a subject"
+         " this text cannot read binds nothing of the kind. Pairing captures must not have"
+         " turned every match into a source read."),
+    "a classmethod wearing an aliased decorator":
+        (REFUSAL,
+         ("cm = classmethod",
+          "",
+          "class Holder:",
+          "    @cm",
+          "    def helper(cls, answer=reading.UNREADABLE):",
+          "        return answer",
+          "",
+          "def consumer():",
+          "    return Holder.helper(\"fine\")"),
+         "consumer", False,
+         "reading the decorator's spelling was wrong in BOTH directions, and the earlier fix"
+         " only closed one. A name rebound to something unreadable is still refused; a name"
+         " this text DOES say the value of is now followed to it, so @cm after cm = classmethod"
+         " is the builtin and the receiver it inserts is seated. Refusing an alias the text"
+         " spells out left the default active and invented a carrier."),
+    "a classmethod wearing the builtin's own spelling":
+        (REFUSAL,
+         ("class Holder:",
+          "    @classmethod",
+          "    def helper(cls, answer=reading.UNREADABLE):",
+          "        return answer",
+          "",
+          "def consumer():",
+          "    return Holder.helper(\"fine\")"),
+         "consumer", False,
+         "SUPPORT, green at the parent: following aliases must not have changed what the"
+         " builtin's own spelling answers."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -5423,6 +5480,12 @@ def _bindings(node):
         # binds nothing rather than a guess about what it yields, which is why only the
         # written forms are paired.
         holders, answer = [], None
+    elif isinstance(node, ast.Match):
+        # match HERE: case path: binds path to the SUBJECT. A capture written at the top of a
+        # case binds the whole subject, which is a deterministic binding of exactly the kind
+        # this helper answers for; a capture nested inside a sequence or mapping pattern binds
+        # an element instead, so only the top-level one is paired here.
+        holders, answer = [], None
     else:
         return []
     def pair(holder, value):
@@ -5453,6 +5516,11 @@ def _bindings(node):
         written = node.iter.keys if isinstance(node.iter, ast.Dict) else node.iter.elts
         return [entry for element in written if element is not None
                 for entry in pair(node.target, element)]
+    if isinstance(node, ast.Match):
+        return [(ast.copy_location(ast.Name(id=case.pattern.name, ctx=ast.Store()),
+                                   case.pattern), node.subject)
+                for case in node.cases
+                if isinstance(case.pattern, ast.MatchAs) and case.pattern.name]
     return [entry for holder in holders for entry in pair(holder, answer)]
 
 
@@ -5837,6 +5905,32 @@ def _default_applies(tree, places):
     by_spelling = _class_spellings(tree, places)
     alias_of = _class_aliases(tree)
     bound_here = _bound_names(tree, places)
+    # Which builtin a decorator spelling reaches, through an assignment or an import alias:
+    # cm = classmethod and from builtins import classmethod as cm both make @cm that builtin.
+    # Read rather than guessed, because the rule below refuses a spelling this text rebinds --
+    # correct when the rebinding is unreadable, and wrong when the text says what it binds.
+    dressed_as = {}
+    for node in ast.walk(tree):
+        for named, value in _bindings(node):
+            if not isinstance(named, ast.Name):
+                continue
+            # Through the pass-through vocabulary, so a decorator handed over by a conditional
+            # is still followed rather than being a form this loop cannot see.
+            for source in _passed_through(value):
+                dressed_as.setdefault(named.id, source.id)
+                break
+        if isinstance(node, ast.ImportFrom):
+            for imported in node.names:
+                if imported.asname:
+                    dressed_as.setdefault(imported.asname, imported.name)
+
+    def resolved(spelled_as):
+        """The builtin this decorator spelling reaches, following an alias of an alias."""
+        seen = set()
+        while spelled_as in dressed_as and spelled_as not in seen:
+            seen.add(spelled_as)
+            spelled_as = dressed_as[spelled_as]
+        return spelled_as
     _classes_here, holds_an, _built_here = _instance_classes(tree)
 
     def in_a_class_body(body):
@@ -5891,15 +5985,25 @@ def _default_applies(tree, places):
             # decorators known to keep that receiver qualify: staticmethod removes it, and a
             # decorator this text cannot read might, so an unrecognised one means no offset --
             # the direction that reports a place rather than dropping one.
-            worn = {(_dotted(dressed) or "").rpartition(".")[2]
-                    for dressed in getattr(node, "decorator_list", ())}
-            # A decorator is resolved where it is written before its spelling is read: the
-            # decorators are evaluated in the scope AROUND the def, and a name this text
-            # rebinds there does not mean what it spells. Rebound means unrecognised, which
-            # means no offset -- the direction that names a place rather than dropping one.
-            if (worn <= {"property", "cached_property", "classmethod", "abstractmethod"}
-                    and not any(taken_anywhere(name, at.rpartition(".")[0] or MODULE_LEVEL)
-                                for name in worn)):
+            # A decorator is resolved where it is written before its spelling is read. An alias
+            # this text DOES say the value of is followed to it, so @cm after cm = classmethod
+            # is the builtin; a name rebound to something this text cannot read is refused, and
+            # refusing means no offset -- the direction that names a place rather than dropping
+            # one. Reading the spelling alone was wrong in both directions at once.
+            around = at.rpartition(".")[0] or MODULE_LEVEL
+            worn, unreadable = set(), False
+            for dressed in getattr(node, "decorator_list", ()):
+                spelled_as = (_dotted(dressed) or "").rpartition(".")[2]
+                reaches = resolved(spelled_as)
+                if reaches != spelled_as:
+                    worn.add(reaches)
+                elif taken_anywhere(spelled_as, around):
+                    unreadable = True
+                else:
+                    worn.add(spelled_as)
+            if (not unreadable
+                    and worn <= {"property", "cached_property", "classmethod",
+                                 "abstractmethod"}):
                 receives.add(at)
                 if "classmethod" in worn:
                     # A classmethod is bound through the CLASS as well as through an instance,
