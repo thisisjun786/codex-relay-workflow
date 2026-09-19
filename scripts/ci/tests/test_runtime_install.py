@@ -9705,6 +9705,11 @@ class DiagnosisReportsResidue(unittest.TestCase):
         self.assertIsNone(found.get("internalError"),
                           "an unexpandable --dest was reported as an internal fault rather"
                           " than as a reading of the input that failed")
+        self.assertTrue(
+            any("could not be expanded" in one
+                for one in found.get("residue", {}).get("unreadable") or []),
+            "the destination could not be read and the survey did not say so: "
+            + repr(found.get("residue", {}).get("unreadable")))
 
     def test_a_destination_that_failed_to_expand_is_not_an_omitted_one(self):
         """The second half of the reading above, and the harder half.
@@ -9737,11 +9742,35 @@ class DiagnosisReportsResidue(unittest.TestCase):
                          survey.get("unreadable") or [],
                          "a destination WAS named; saying both is one list contradicting"
                          " itself")
-        self.assertTrue(
-            any("could not be expanded" in one
-                for one in found.get("residue", {}).get("unreadable") or []),
-            "the destination could not be read and the survey did not say so: "
-            + repr(found.get("residue", {}).get("unreadable")))
+
+    def test_an_empty_destination_is_supplied_rather_than_omitted(self):
+        """Same class as the case above, reached by a different spelling. argparse hands back
+        '' for --dest '', and the installer settles that to the current directory, so it is a
+        destination the operator named. Judged by string truthiness it read as an omitted
+        argument, and diagnosis fell back to the recorded pointer's own installation.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            record = hostrecord.load(host.record_path, host.data["definitionVersion"]).value
+            self.assertTrue((record.get("pointer") or {}).get("path"),
+                            "the fixture has no recorded pointer, so there is nothing this"
+                            " case could have wrongly fallen back to")
+            elsewhere = Path(temporary) / "cwd-for-this-case"
+            elsewhere.mkdir()
+            entered = os.getcwd()
+            try:
+                os.chdir(elsewhere)
+                settled_here = os.getcwd()
+                found = _diagnose(host, dest="")
+            finally:
+                os.chdir(entered)
+        self.assertEqual((found.get("residue") or {}).get("destination"), settled_here,
+                         "--dest '' is the current directory to the installer, and diagnosis"
+                         " read it as no destination at all")
+        self.assertNotEqual((found.get("residue") or {}).get("destination"),
+                            str(Path(host.pointer_path).parent),
+                            "diagnosis fell back to the installation the host record names"
+                            " while the operator had named one")
 
 
 class ResidueNeverNamesLiveWork(unittest.TestCase):

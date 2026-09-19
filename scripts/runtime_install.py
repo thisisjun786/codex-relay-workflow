@@ -1052,7 +1052,11 @@ def cmd_diagnose(args):
     # said about the single input that failed. A spelling that cannot be expanded becomes a
     # reading here, the way every other unreadable spelling this command meets already does.
     settled_destination, unreadable_destination = None, None
-    if destination:
+    # Asked as "was the option given", not "is its string non-empty". --dest '' is a spelling
+    # and not an absence: the installer settles it to the current directory, and judging it by
+    # truthiness made this command read the one destination the operator did name as no
+    # destination at all.
+    if destination is not None:
         try:
             settled_destination = Path(destination).expanduser().absolute()
         except RuntimeError as error:
@@ -1080,7 +1084,7 @@ def cmd_diagnose(args):
     # residualPaths from an installation the operator never named, inside the same answer
     # that reported the destination they did name as unreadable. The pointer is the fallback
     # for a missing --dest, never for an unusable one.
-    residue_root = (settled_destination if destination
+    residue_root = (settled_destination if destination is not None
                     else (Path(owned_pointer).parent if owned_pointer else None))
     # Which directory the protection reading asks about. The pointer the HOST reaches a runtime
     # through is the recorded one, and it does not have to sit under the destination this run
