@@ -1046,7 +1046,19 @@ def cmd_diagnose(args):
     # was built from the raw spelling while the survey root was absolute, so a pointer sitting
     # inside the surveyed destination was reported as belonging to another one and never
     # inspected at all.
-    settled_destination = (Path(destination).expanduser().absolute() if destination else None)
+    # Path.expanduser() raises RuntimeError -- not OSError -- for a ~user this host cannot
+    # resolve, and --dest is operator input rather than an internal fault. Losing the whole
+    # diagnostic payload to it was the worst of both answers: nothing diagnosed, and nothing
+    # said about the single input that failed. A spelling that cannot be expanded becomes a
+    # reading here, the way every other unreadable spelling this command meets already does.
+    settled_destination, unreadable_destination = None, None
+    if destination:
+        try:
+            settled_destination = Path(destination).expanduser().absolute()
+        except RuntimeError as error:
+            unreadable_destination = ("the destination named by --dest could not be expanded: "
+                                      + str(destination) + ": " + type(error).__name__ + ": "
+                                      + str(error))
     # The recorded pointer first: that is the link this host actually reaches a runtime
     # through, and a --dest supplied here only names where to look when nothing is recorded.
     owned_pointer = ((record or {}).get("pointer") or {}).get("path")
@@ -1094,6 +1106,10 @@ def cmd_diagnose(args):
         # withdraws the evidence that a link this command placed is at it, and only the
         # record itself can tell those two states apart.
         pointer_ownership=(record or {}).get("pointer"),
+        # A destination this command could not even spell out is the survey's own unreadable
+        # reading, so it is carried in the same list as every other one rather than reported
+        # as no destination having been named.
+        unreadable=unreadable_destination,
         protection=None if residue_root is None else ownership_of)
     try:
         classes = {

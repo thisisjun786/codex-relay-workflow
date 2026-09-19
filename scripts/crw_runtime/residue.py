@@ -143,7 +143,8 @@ def _target_exists(path):
     return True, "the target exists"
 
 
-def survey(destination, *, pointer_path=None, pointer_ownership=None, protection=None):
+def survey(destination, *, pointer_path=None, pointer_ownership=None, protection=None,
+           unreadable=None):
     """Every directory under this destination, classified by staging.decide.
 
     'protection' is the caller's ownership reading, called with an environment path and
@@ -156,10 +157,16 @@ def survey(destination, *, pointer_path=None, pointer_ownership=None, protection
     this command PLACED is at it -- and a rollback takes the second away while keeping the
     first. Handed only the path, this survey could not tell those apart and read a preserved
     location as placement evidence.
+
+    'unreadable' is a reading the CALLER already failed to take about this destination, carried
+    into the same list as the ones taken here. A destination spelling the caller could not even
+    resolve is not the same answer as no destination having been named, and reporting it as the
+    second would have described a scan nobody asked for.
     """
     answer = {"destination": None if destination is None else str(destination), "read": False,
               "entries": [], "pointer": None, "residualPaths": [], "recoveryRequires": [],
-              "unreadable": [], "ownershipRead": protection is not None, "note": NOTE}
+              "unreadable": ([unreadable] if unreadable else []),
+              "ownershipRead": protection is not None, "note": NOTE}
     if destination is None:
         answer["unreadable"].append("no destination was named, so nothing was scanned")
         return answer

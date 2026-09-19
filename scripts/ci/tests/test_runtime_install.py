@@ -9683,6 +9683,34 @@ class DiagnosisReportsResidue(unittest.TestCase):
         self.assertNotIn(str(host.pointer_path), found.get("residualPaths") or [],
                          "a link no placement evidence claims was published as owned residue")
 
+    def test_a_destination_naming_a_user_this_host_lacks_is_a_reading_not_a_crash(self):
+        """Path.expanduser() raises RuntimeError, not OSError, for a ~user it cannot resolve,
+        and --dest is operator input rather than an internal fault. The whole diagnostic payload
+        was lost to it: the command answered nothing at all, and said nothing about the one
+        input that had failed. Every other unreadable spelling this command meets becomes a
+        reading, and this is the same class.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            # Caught here so the failure is this case's own assertion rather than the
+            # traceback: "it raised" is the defect, and the case has to say so in its own
+            # words, the way the journal-path case beside it does.
+            try:
+                found = _diagnose(host, dest="~no-such-user-for-crw-100/runtime")
+            except Exception as error:
+                found = {"raised": type(error).__name__ + ": " + str(error)}
+        self.assertNotIn("raised", found,
+                         "a destination spelling this host cannot expand took the whole"
+                         " payload with it: " + str(found.get("raised")))
+        self.assertIsNone(found.get("internalError"),
+                          "an unexpandable --dest was reported as an internal fault rather"
+                          " than as a reading of the input that failed")
+        self.assertTrue(
+            any("could not be expanded" in one
+                for one in found.get("residue", {}).get("unreadable") or []),
+            "the destination could not be read and the survey did not say so: "
+            + repr(found.get("residue", {}).get("unreadable")))
+
 
 class ResidueNeverNamesLiveWork(unittest.TestCase):
     """Support for the cases above, not evidence of the CRW-100 defect. Each is a direction the
