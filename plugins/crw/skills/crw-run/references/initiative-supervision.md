@@ -55,9 +55,16 @@ accumulates, and it reaches no work outside it.
 
 Where a project in the set already answers to a different initiative's execution supervisor, it
 keeps that one: this initiative references its outcome instead of issuing it work, and the
-reference is recorded as a reference so nobody later reads it as an instruction. A supervisor
-binding makes this task no project's parent and no issue's child, it holds no checkout, and it
-merges nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). Where an
+reference is recorded as a reference so nobody later reads it as an instruction. The supervisor
+role carries no project's issues and no issue's implementation: it holds no checkout and it merges
+nothing ([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). That describes
+the role rather than converting whatever task the designation arrives in, so read this task's own
+current binding before binding anything. A task already bound as some project's parent does not
+become the supervisor by being handed a designation: its project would lose its parent and its
+children their owner. The supervision belongs in a task of its own, or in the existing supervisor
+where there is one, and the designation is routed there. A user who does want that task to stop
+being a parent is making an ownership change, recorded and completed first rather than produced as
+a side effect of binding. Where an
 installation records these relationships, one live scope per task per role is the rule it enforces,
 so a second same-role binding is refused rather than silently replacing the first. Where nothing
 records them, and the bundled relay records none, the reuse below is a read and not a lock: two
@@ -76,12 +83,13 @@ assumes the earlier one was checked:
 
 1. **The supervisor.** If this initiative already has one, that task is the supervisor and this
    designation belongs to it rather than to a second binding. Where this task is that supervisor,
-   continue here. Where it is another task, read its record and status first, then deliver the
-   designation the way a parent is addressed: the ordinary message path when it is idle, its
-   verified active turn when one is running, each carrying the
-   [restoration block](task-packet.md#restoration-block). Where no supported route reaches it,
-   report the exact resume action its owner has to take and bind nothing, because a status read is
-   not the execution that was asked for.
+   continue here. Where it is another task, read its record and status first. Where the limits in
+   force permit contacting it, deliver the designation the way a parent is addressed: the ordinary
+   message path when it is idle, its verified active turn when one is running, each carrying the
+   [restoration block](task-packet.md#restoration-block). Where those limits forbid contact,
+   return the existing supervisor and the designation that stays unsent. Where no supported route
+   reaches it at all, report the exact resume action its owner has to take and bind nothing,
+   because a status read is not the execution that was asked for.
 2. **Each project's parent.** A project in the set with a parent keeps it. Read that parent's
    coordination record for its issue scope, delivery limits and current state.
 3. **Each parent's children.** A live child is the owner of its issue. It is not reassigned, not
