@@ -1660,14 +1660,22 @@ def _hands_on(tree, spelled):
                 methods[(klass, target.id)] = places.get(id(node.value),
                                                          (MODULE_LEVEL, None))[0]
 
+    # What a class body binds, and where. A def binds its own name there as surely as an
+    # assignment does, and a binding written after a default has not happened yet when that
+    # default runs, so the line is part of the answer.
     class_bound = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         for statement in node.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                class_bound.setdefault(node.name, {}).setdefault(statement.name,
+                                                                 statement.lineno)
+                continue
             for target, _value in _bindings(statement):
                 if isinstance(target, ast.Name):
-                    class_bound.setdefault(node.name, set()).add(target.id)
+                    class_bound.setdefault(node.name, {}).setdefault(target.id,
+                                                                     statement.lineno)
 
     def instance(function):
         """How this scope spells its instance: whatever the first parameter is called.
@@ -1783,7 +1791,7 @@ def _hands_on(tree, spelled):
         which = declared_global if isinstance(node, ast.Global) else declared_nonlocal
         which.setdefault(where, set()).update(node.names)
 
-    def outwards(caller, named, aliases=None, klass=None):
+    def outwards(caller, named, aliases=None, klass=None, at=None):
         """Every place this name may reach, innermost scope first.
 
         A set, not one place. A name can be assigned twice and this reader does not decide which
@@ -1795,11 +1803,17 @@ def _hands_on(tree, spelled):
         the same name is a fact about the text, so the search stops there.
         """
         # A class body executes with the names it has already bound, so a default or a
-        # decorator written there reaches a method defined above it, and an ordinary binding
-        # made there shadows the module the same way a local one does.
-        if klass is not None and named in class_bound.get(klass, ()):
+        # decorator written there reaches a method or an alias made above it, and an ordinary
+        # binding made above it shadows the module the same way a local one does. Only in the
+        # class body: a bare name inside a method resolves outside the class, not in it.
+        written = class_bound.get(klass, {}).get(named) if klass is not None else None
+        if written is not None and caller == MODULE_LEVEL and (at is None or written < at):
             reached = methods.get((klass, named))
-            return {reached} if reached else set()
+            if reached:
+                return {reached}
+            if aliases and named in aliases.get(MODULE_LEVEL, {}):
+                return set(aliases[MODULE_LEVEL][named])
+            return set()
         if named in declared_global.get(caller, ()):
             # global says the module, not the next scope out that happens to share the name,
             # and what the module holds under it may be an alias rather than a def.
@@ -1850,7 +1864,8 @@ def _hands_on(tree, spelled):
                     return names(expression.value)
                 if isinstance(expression, ast.Name):
                     _where, in_class = places.get(id(node), (MODULE_LEVEL, None))
-                    return outwards(function, expression.id, aliases, in_class)
+                    return outwards(function, expression.id, aliases, in_class,
+                                    expression.lineno)
                 if isinstance(expression, ast.Await):
                     return names(expression.value)
                 if isinstance(expression, ast.BoolOp):
@@ -1906,7 +1921,7 @@ def _hands_on(tree, spelled):
         """Every place this call may reach."""
         if isinstance(node.func, ast.Name):
             _where, in_class = places.get(id(node), (MODULE_LEVEL, None))
-            return outwards(function, node.func.id, aliases, in_class)
+            return outwards(function, node.func.id, aliases, in_class, node.lineno)
         if isinstance(node.func, ast.Attribute):
             through = _dotted(node.func.value)
             if (through is None and isinstance(node.func.value, ast.Call)
@@ -2201,15 +2216,7 @@ def source_spellings(tree):
                 answer = node.value
             else:
                 continue
-            paired = []
-            for holder in holders:
-                if (isinstance(holder, (ast.Tuple, ast.List))
-                        and isinstance(answer, (ast.Tuple, ast.List))
-                        and len(holder.elts) == len(answer.elts)):
-                    paired += list(zip(holder.elts, answer.elts))
-                else:
-                    paired.append((holder, answer))
-            for holder, value in paired:
+            for holder, value in _bindings(node):
               for named in spelled_by(value):
                 if named not in hands_source:
                     # The name may hand source back without ever being called here: reader =
