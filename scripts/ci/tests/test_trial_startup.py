@@ -3252,5 +3252,59 @@ class ThirtyFourthHostedRound(TrialCase):
         self.assertIsNotNone(startup.maybe_moment("2026-09-19T01:30:00Z"))
 
 
+class ThirtyFifthHostedRound(TrialCase):
+    """A policy recorded with its defaults filled in, against a record that named a type.
+
+    Requiring the policy object closed one hole and opened another: the host records the policy
+    normalised, so a record naming {"type": "workspaceWrite"} compared unequal to the very
+    payload that policy produces, and every valid workspace-write trial was refused.
+    """
+
+    def declare(self, policy, recorded):
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["sandbox"] = policy
+        self.world.payloads["settings-show"]["payload"]["settings"]["sandbox"] = recorded
+        for task in (World.PARENT_A, World.CHILD_A, World.PARENT_B, World.CHILD_B):
+            capture = self.world.captures["receipt-" + task + ".json"]
+            for half in ("requested", "actual"):
+                capture["settings"][half]["sandbox"] = recorded
+        self.world.start_supervisor()
+        self.world.flush()
+        return self.world.preflight()
+
+    def test_a_declared_type_agrees_with_the_policy_the_host_recorded(self):
+        normalised = {"type": "workspaceWrite", "networkAccess": False, "writableRoots": [],
+                      "excludeTmpdirEnvVar": False, "excludeSlashTmp": False}
+        document = self.declare({"type": "workspaceWrite"}, normalised)
+        cells = cells_of(document, "capability")
+        self.assertEqual(cells["receiptEcho:" + World.PARENT_A]["value"], VERIFIED)
+        self.assertEqual(cells["recordedSettings:" + World.PARENT_A]["value"], VERIFIED)
+        self.assertTrue(document["readyToStart"], document["judgmentsThatFailed"])
+
+    def test_a_declared_key_that_disagrees_still_fails(self):
+        normalised = {"type": "workspaceWrite", "networkAccess": False, "writableRoots": []}
+        document = self.declare({"type": "workspaceWrite", "networkAccess": True}, normalised)
+        cell = cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("sandbox", cell["evidence"])
+
+    def test_a_declared_key_the_payload_does_not_carry_still_fails(self):
+        document = self.declare({"type": "workspaceWrite", "networkAccess": False},
+                                {"type": "workspaceWrite"})
+        self.assertEqual(
+            cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]["value"],
+            NOT_VERIFIED)
+
+    def test_what_the_host_added_beyond_the_declaration_is_named(self):
+        # Nothing is silently accepted: a key the record never named is reported, so an operator
+        # who cares about one of them can declare it and have it compared.
+        normalised = {"type": "workspaceWrite", "networkAccess": True, "writableRoots": []}
+        document = self.declare({"type": "workspaceWrite", "excludeSlashTmp": False}, normalised)
+        cell = cells_of(document, "capability")["receiptEcho:" + World.PARENT_A]
+        self.assertIn("the host also recorded", cell["evidence"])
+        self.assertIn("sandbox.networkAccess", cell["evidence"])
+
+
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

@@ -409,6 +409,33 @@ def same_value(left, right):
     return str(left) == str(right)
 
 
+def declared_agrees(declared, found):
+    """Whether what the record declared is what the payload carries.
+
+    A sandbox policy is recorded with its defaults filled in, so a record naming a type and
+    nothing else does not describe a different policy from one carrying networkAccess false and an
+    empty writableRoots beside it. Structural equality read those as a disagreement and refused
+    every valid workspace-write trial.
+
+    So a declared object is a requirement rather than an image: every key it names has to agree,
+    including a key the payload does not carry at all, and a key only the payload carries is the
+    host's own default. The defaults themselves are the relay's to define and are not restated
+    here; what the payload added beyond the declaration is named in the cell's evidence, so an
+    operator who cares about one of them can declare it and have it compared.
+    """
+    if isinstance(declared, dict) and isinstance(found, dict):
+        return all(same_value(found.get(key, MISSING), value)
+                   for key, value in declared.items())
+    return same_value(declared, found)
+
+
+def beyond_declaration(declared, found):
+    """The keys a payload carries that the record never named, in a stable order."""
+    if isinstance(declared, dict) and isinstance(found, dict):
+        return sorted(set(found) - set(declared))
+    return []
+
+
 def digest_of(path):
     reader = hashlib.sha256()
     with open(str(path), "rb") as handle:
@@ -1158,8 +1185,11 @@ def reading_capability(record, relay):
                 names = same(field(found["payload"], "taskId"), task)
                 disagreed = [] if actual is MISSING else [
                     key for key, value in sorted(expect.items())
-                    if not same_value(field(actual, key), value)
+                    if not declared_agrees(value, field(actual, key))
                 ]
+                added = [] if actual is MISSING else sorted(
+                    {key + "." + name for key, value in expect.items()
+                     for name in beyond_declaration(value, field(actual, key))})
                 ok = (names and not disagreed and isinstance(findings, list) and not findings
                       and actual is not MISSING)
                 # Answerable only where every field its predicate reads is there. A receipt with
@@ -1180,7 +1210,9 @@ def reading_capability(record, relay):
                                               + str(shown(field(found["payload"], "taskId")))
                                               + ", disagrees at " + ", ".join(disagreed)
                                               + " and reports findings "
-                                              + json.dumps(shown(findings))),
+                                              + json.dumps(shown(findings))
+                                              + (", and the host also recorded "
+                                                 + ", ".join(added) if added else "")),
                                     detail=found["path"]))
 
             probe = relay.relay("settings-show", "--task", task)
@@ -1194,8 +1226,11 @@ def reading_capability(record, relay):
                 wanted["cwd"] = participant.get("cwd")
             differs = [] if settings is MISSING or settings is None else [
                 key for key, value in sorted(wanted.items())
-                if not same_value(field(settings, key), value)
+                if not declared_agrees(value, field(settings, key))
             ]
+            recorded_beyond = [] if settings is MISSING or settings is None else sorted(
+                {key + "." + name for key, value in wanted.items()
+                 for name in beyond_declaration(value, field(settings, key))})
             # settings-show always reports missing, so an absent one is a payload this predicate
             # cannot read as complete rather than an empty list it may assume.
             answered = (MISSING if (settings is MISSING or usable is MISSING
@@ -1213,7 +1248,10 @@ def reading_capability(record, relay):
                                           "task " + str(shown(field(payload, "task"))) + ", usable "
                                           + str(shown(usable)) + ", missing "
                                           + json.dumps(shown(field(payload, "missing")))
-                                          + ", disagreeing " + json.dumps(differs))))
+                                          + ", disagreeing " + json.dumps(differs)
+                                          + (", and the store also holds "
+                                             + ", ".join(recorded_beyond)
+                                             if recorded_beyond else ""))))
             seen[str(task)] = settings
 
             # What the trial will actually run with, against what creation recorded. The four
