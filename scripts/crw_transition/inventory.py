@@ -8,6 +8,7 @@ asked only when the store it would open already exists.
 
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -377,17 +378,44 @@ def runs_python(candidate, seen=None):
     already runs this exact command on every Stop, the installer already probes candidates the
     same way, and the check is a fixed argument list with the installer's own timeout. The answer
     is cached per spelling, so a file carrying several registrations probes each interpreter once.
+
+    The installer's probe asks one FIXED question, so a launcher that prints a version string for
+    -c and does something else for every other argument passes it. This adds a question that
+    cannot be answered from a table: an expression built around a number drawn for this run, which
+    the candidate has to evaluate as Python to answer. A shell wrapper faking a version cannot.
+
+    What this still does not establish, stated rather than implied: that the executable behaves as
+    a Python for the argument shape the hook actually uses. An argv[0] written to deceive -- real
+    Python semantics for -c, something else for a script -- is indistinguishable from this side.
+    Closing that needs an attestation written at install time by the command that registers the
+    hook, which lives in scripts/runtime_install.py and is not this PR's to change. So this is
+    ownership evidence, not ownership proof, and the run says so in the reading.
     """
     if seen is None:
         seen = {}
     key = str(candidate or "")
     if key not in seen:
         try:
-            completion.interpreter_for(key, run=True)
-            seen[key] = True
+            settled = completion.interpreter_for(key, run=True)
+            seen[key] = _evaluates_python(settled)
         except (ValueError, OSError):
             seen[key] = False
     return seen[key]
+
+
+def _evaluates_python(candidate):
+    """Whether the candidate answers an expression it cannot have precomputed, as Python would."""
+    number = random.randrange(10 ** 6, 10 ** 7)
+    program = ("import sys;n=" + str(number)
+               + ";print((n * n + 7) % 1000003, sys.version_info[0], len(sys.argv))")
+    wanted = str((number * number + 7) % 1000003) + " 3 1"
+    try:
+        finished = subprocess.run([str(candidate), "-c", program], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    said = (finished.stdout or b"").decode("utf-8", "replace").strip()
+    return finished.returncode == 0 and said == wanted
 
 
 def event_registrations(document, event):
@@ -436,6 +464,13 @@ def read_hook(codex_home, event=None, *, destination=None, repo_root=None):
                                   "checkout": str(checkout) if checkout else None,
                                   "canonical": canonical,
                                   "adapterIsOurs": identical,
+                                  "provenBasis": (
+                                      "the words this repository's writer emits, the adapter file"
+                                      " compared byte for byte, and an interpreter that answered"
+                                      " an expression it could not have precomputed. Not an"
+                                      " installation attestation: an argv[0] written to deceive"
+                                      " is not distinguishable from here"
+                                      if proven else None),
                                   "why": None if proven else
                                   "the command is not what this repository's writer emits for the"
                                   " words it names, or the file it runs is not this repository's"

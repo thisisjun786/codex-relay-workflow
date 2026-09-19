@@ -191,6 +191,21 @@ What is compared, and why each part is there:
 - a declaration whose shape cannot be read is counted as exactly that rather than skipped, because
   a skipped declaration is one Codex still runs and this comparison cannot see.
 
+A registration is treated as this repository's own when three things hold: the command is byte for
+byte what this repository's writer emits for the words it names, the file at the script position is
+this checkout's adapter compared byte for byte, and the program at the interpreter position answers
+an expression it could not have precomputed, as a Python would. The third is asked by running the
+candidate, which the installer already does before it writes one, because a name is neither
+sufficient nor necessary: `runtime_install.py` takes `--python` and accepts any executable that
+answers as a supported Python, so a name rule would disown this repository's own registration, and
+`/tmp/python3 -> /bin/true` shows a name rule accepting one that runs nothing.
+
+That is evidence rather than proof, and the reading says so in `provenBasis`. An `argv[0]` written
+to deceive -- real Python semantics for `-c` and something else for a script argument -- cannot be
+distinguished from here. Closing that needs an attestation written when the hook is registered, by
+the command that registers it, which is `scripts/runtime_install.py` and outside this document's
+scope. What this side can do is refuse to remove anything the three tests do not agree on.
+
 What this deliberately is not: a shell parser, and not a resolution of the declared interpreter
 against a PATH this command does not control. An unreadable shape is refused rather than
 interpreted, and the interpreter that IS resolved is the one the settings record, through the same

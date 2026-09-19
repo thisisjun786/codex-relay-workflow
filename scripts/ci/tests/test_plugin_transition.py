@@ -3031,6 +3031,45 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(host.settings()["owner"], "plugin")
 
     @needs_reader
+    def test_a_launcher_that_fakes_a_version_is_not_a_python(self):
+        """One fixed question has one fixed answer, so the question carries a number per run."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        # Answers the installer's probe exactly and does nothing else: no Python behind it.
+        liar = Path(self.directory) / "python3-shaped"
+        liar.write_text("#!/bin/sh\necho 3.12\n", encoding="utf-8")
+        liar.chmod(0o755)
+        self.assertFalse(inventory.runs_python(str(liar)))
+        document = host.hooks_document()
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].replace(str(sys.executable), str(liar), 1)
+        (host.home / "hooks.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        found = inventory.read_hook(host.home, repo_root=ROOT)
+        self.assertFalse(any(item["proven"] for item in found["entries"]),
+                         json.dumps(found["entries"])[:600])
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertEqual(host.hooks_document(), before)
+
+    @needs_reader
+    def test_what_proves_a_registration_is_named_in_the_reading(self):
+        """Evidence rather than proof, so the reading says which evidence it is."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        found = inventory.read_hook(host.home, repo_root=ROOT)
+        self.assertTrue(found["entries"])
+        for item in found["entries"]:
+            self.assertTrue(item["proven"], json.dumps(item)[:400])
+            self.assertIn("Not an installation attestation", item["provenBasis"])
+
+    @needs_reader
     def test_a_legacy_table_with_no_record_survives_the_removal(self):
         """With no ownership record the table is the only copy of what the host registered."""
         import sys as _sys
