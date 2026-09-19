@@ -1096,6 +1096,19 @@ ARGUMENT_FORM_NOT_SEATED = {
 # stops being found the boundary is not where this says, and if the caller starts being found
 # the boundary has closed and the entry has to go.
 HANDED_ON_THROUGH_A_TRANSFORMATION = {
+    "a refusal handed on through a formatted string that builds a new one":
+        (REFUSAL,
+         ("def helper():",
+          "    return f\"answer={reading.UNREADABLE}\"",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "helper", "consumer",
+         "f\"{answer}\" alone IS the value's own string and is followed; this one is not. Text"
+         " beside the value, a conversion or a format spec builds a NEW string, and whether"
+         " that still answers as a refusal is a question about what reads it rather than about"
+         " this text. The line between the two is exactly the one the language draws, which is"
+         " why the exact form is followed and this one is named."),
     "a refusal handed on through a method call":
         (REFUSAL,
          ("def helper():",
@@ -4510,6 +4523,63 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", True,
          "SUPPORT, green at the parent: reading the alias table beside the spelling one must"
          " not have changed what the plain spelling answers."),
+    "a default overridden through a written unpacking":
+        (REFUSAL,
+         ("def helper(answer=reading.UNREADABLE):",
+          "    return answer",
+          "",
+          "def consumer():",
+          "    return helper(*(\"fine\",))"),
+         "consumer", False,
+         "the seating grammar expands a written tuple or list, and this consumer did not: it"
+         " read every Starred as a count it could not know, so a call that really does supply"
+         " the argument left the default active and invented a carrier. The declaration and"
+         " the implementation disagreeing about the same grammar is the shape this issue names,"
+         " one layer in."),
+    "a default overridden through a class alias":
+        (REFUSAL,
+         ("class Holder:",
+          "    def helper(self, answer=reading.UNREADABLE):",
+          "        return answer",
+          "",
+          "Alias = Holder",
+          "holder = Holder()",
+          "",
+          "def consumer():",
+          "    return Alias.helper(holder, \"fine\")"),
+         "consumer", False,
+         "the SAME rule the receiver seating learned one commit earlier, asked at the other"
+         " consumer and answered differently for a whole commit. Both ask it through one"
+         " helper now. The site inventory could not have caught this: its predicate asks"
+         " whether a site measures DISTANCE, and which owner SHAPE a site recognises is a"
+         " different question, which is written into that sweep's own declared boundary."),
+    "a default overridden through the class itself":
+        (REFUSAL,
+         ("class Holder:",
+          "    def helper(self, answer=reading.UNREADABLE):",
+          "        return answer",
+          "",
+          "holder = Holder()",
+          "",
+          "def consumer():",
+          "    return Holder.helper(holder, \"fine\")"),
+         "consumer", False,
+         "SUPPORT, green at the parent: teaching the owner filter aliases must not have"
+         " changed what the plain class spelling answers."),
+    "a refusal handed on through a formatted string that is only the value":
+        (REFUSAL,
+         ("def helper():",
+          "    return f\"{reading.UNREADABLE}\"",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "f\"{answer}\" with nothing beside it, no conversion and no format spec is the value's"
+         " own string, so for a refusal spelled as a string the helper hands on the same"
+         " string. This form was neither followed nor declared, which is the original defect"
+         " rather than a narrow claim: the line between it and the form that builds a new"
+         " string is the one the language draws, so the exact one is followed and the other is"
+         " named in HANDED_ON_THROUGH_A_TRANSFORMATION."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -5415,6 +5485,18 @@ def _reachable(expression, spelled, klass, bound):
         return _reachable(expression.value, spelled, klass, bound)
     if isinstance(expression, ast.NamedExpr):
         return _reachable(expression.value, spelled, klass, bound)
+    if isinstance(expression, ast.JoinedStr):
+        # f"{answer}" with nothing beside it, no conversion and no format spec IS the value's
+        # own string: for a refusal spelled as a string the result is the same string, so the
+        # helper really does hand it on. Anything else -- text around it, !r, a format spec --
+        # builds a NEW string, which is the transformation boundary declared in
+        # HANDED_ON_THROUGH_A_TRANSFORMATION rather than a value handed on.
+        written = [part for part in expression.values
+                   if not (isinstance(part, ast.Constant) and part.value == "")]
+        if (len(written) == 1 and isinstance(written[0], ast.FormattedValue)
+                and written[0].conversion == -1 and written[0].format_spec is None):
+            return _reachable(written[0].value, spelled, klass, bound)
+        return False
     return False
 
 
@@ -5753,6 +5835,7 @@ def _default_applies(tree, places):
     """
     supplied, defined, owned, receives, bound_to_its_class = {}, {}, {}, set(), set()
     by_spelling = _class_spellings(tree, places)
+    alias_of = _class_aliases(tree)
     bound_here = _bound_names(tree, places)
     _classes_here, holds_an, _built_here = _instance_classes(tree)
 
@@ -5773,19 +5856,12 @@ def _default_applies(tree, places):
                     for made in in_a_class_body(node.body)}
 
     def names_a_class(scope, name):
-        """Whether this spelling names a class here, innermost scope first.
+        """Whether this spelling names a class here, through an alias too.
 
-        Asked per scope rather than across the file, because a class written in one function
-        does not make that spelling a class in another, and reading it file-wide is the defect
-        this module has been handed most often.
+        One shared question rather than a copy: the receiver seating asks the same thing, and
+        when this one knew only the original spelling an aliased owner was read as an instance.
         """
-        reach = [] if scope == MODULE_LEVEL else scope.split(".")
-        while True:
-            if name in by_spelling.get(".".join(reach) if reach else MODULE_LEVEL, {}):
-                return True
-            if not reach:
-                return False
-            reach.pop()
+        return _owner_names_a_class(by_spelling, alias_of, scope, name)
 
     def taken_anywhere(name, scope):
         """Whether anything in this scope chain binds the name, innermost first.
@@ -5928,14 +6004,29 @@ def _default_applies(tree, places):
                                     places.get(id(node), (MODULE_LEVEL, None))[0],
                                     spelled_owner))
                            ) else 0
-            # An unpacking supplies a count this text cannot read: helper(*()) writes one
-            # Starred node and supplies no argument at all. Counting the node itself says the
-            # default was overridden and drops every consumer that really receives it, so a
-            # call carrying one is not allowed to answer the positional question. Keywords
-            # still answer it, because **kwargs carries arg None and matches nothing.
-            unpacked = any(isinstance(written, ast.Starred) for written in node.args)
-            handed = (not unpacked and where is not None
-                      and len(node.args) > where - seated) or any(
+            # How many arguments a call really writes. Counting the Starred node itself said
+            # helper(*()) supplied one and dropped every consumer that receives the default.
+            # The seating grammar expands a written tuple or list, so helper(*("fine",)) does
+            # supply it; a set or an unpacking this text cannot read stops the count, which is
+            # the same boundary ARGUMENT_FORM_NOT_SEATED declares -- this consumer reading it
+            # differently from that declaration was the claim and the implementation
+            # disagreeing about the same grammar.
+            written, countable = 0, True
+            for given in node.args:
+                if not isinstance(given, ast.Starred):
+                    written += 1
+                elif isinstance(given.value, (ast.Tuple, ast.List)):
+                    written += len(given.value.elts)
+                else:
+                    countable = False
+                    break
+            # A written mapping names its own slots, the same way a keyword written out does.
+            spelled_out = {key.value for word in node.keywords
+                           if word.arg is None and isinstance(word.value, ast.Dict)
+                           for key in word.value.keys
+                           if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+            handed = (countable and where is not None
+                      and written > where - seated) or argument in spelled_out or any(
                 word.arg == argument for word in node.keywords)
             supplied.setdefault((place, argument), set()).add(handed)
     # Absent from supplied means no resolved call reached that definition at all, which is not
@@ -6152,6 +6243,33 @@ def _base_named(alias_by_scope, spelled_as, scope):
             return found
         reach.pop()
     return alias_by_scope.get(MODULE_LEVEL, {}).get(spelled_as, spelled_as)
+
+
+def _owner_names_a_class(by_spelling, alias_by_scope, scope, spelled_as):
+    """Whether a qualified call's owner names a class here, through an alias as well.
+
+    Alias = Holder makes Alias.helper(holder, x) the same unbound call as Holder.helper(...),
+    so an owner is a class when its spelling IS one or when it is bound to one. Innermost
+    scope first, because a class written in one function does not make that spelling a class
+    in another.
+
+    Asked in one place because two consumers asked it separately and drifted apart exactly as
+    this module keeps predicting: the receiver seating learned aliases a commit before the
+    default applicability did, and the gap between them was a live false positive for that
+    whole commit. The site inventory did not catch it either, and could not -- its predicate
+    asks whether a site measures DISTANCE, which is a different question from which owner
+    SHAPE it recognises, and that limit is written into its own declared boundary.
+    """
+    if not spelled_as:
+        return False
+    reach = [] if scope == MODULE_LEVEL else scope.split(".")
+    while True:
+        at = ".".join(reach) if reach else MODULE_LEVEL
+        if spelled_as in by_spelling.get(at, {}) or spelled_as in alias_by_scope.get(at, {}):
+            return True
+        if not reach:
+            return False
+        reach.pop()
 
 
 def _instance_classes(tree):
@@ -7481,21 +7599,12 @@ def _hands_on(tree, spelled):
                         standing = list(slots)
                         if isinstance(node.func, ast.Attribute) and reached in receivers:
                             owner = (_dotted(node.func.value) or "").rpartition(".")[2]
-                            reach = [] if function == MODULE_LEVEL else function.split(".")
-                            through_a_class = False
-                            while True:
-                                at = ".".join(reach) if reach else MODULE_LEVEL
-                                # Through an alias as well as the spelling: Alias = Holder makes
-                                # Alias.identity(obj, x) the same unbound call, and reading the
-                                # class table alone took the alias for an instance and moved a
-                                # slot the call had written itself.
-                                if (owner in by_spelling.get(at, {})
-                                        or owner in alias_of.get(at, {})):
-                                    through_a_class = True
-                                    break
-                                if not reach:
-                                    break
-                                reach.pop()
+                            # The same question the default applicability asks, asked once:
+                            # Alias = Holder makes Alias.identity(obj, x) the same unbound
+                            # call, and a copy of this walk in each consumer is how the two
+                            # last drifted apart.
+                            through_a_class = _owner_names_a_class(
+                                by_spelling, alias_of, function, owner)
                             # A classmethod is bound through its class too, so naming the class
                             # does not mean the receiver was written.
                             if not through_a_class or reached in bound_to_its_class:
@@ -10416,6 +10525,7 @@ HANDED = {
     "_default_applies": NOTHING,
     "_declared_owner": NOTHING,
     "_seating_not_established": NOTHING,
+    "_owner_names_a_class": NOTHING,
     "_bound_names": NOTHING,
     "_lambda_named": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
