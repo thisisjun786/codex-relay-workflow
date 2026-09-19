@@ -302,8 +302,8 @@ only what the sender wrote. Identity is half of it, because a handoff naming the
 can still carry the wrong scope, by forgery, by mistake, or by arriving after the scope moved. The
 same read settles the rest: that the initiative named is the one whose record this is, that this
 parent's own project is in that initiative's approved set, and that the two values this handoff
-states it was written from, that membership, the completion boundary, and the designation's limits and exclusions, are the ones
-the record carries now. The limits are compared for the same reason as the rest: a handoff that
+states it was written from, that membership, this project's contribution to the finish condition, the completion boundary, and
+the designation's limits and exclusions, are the ones the record carries now. The limits are compared for the same reason as the rest: a handoff that
 omits a narrowing the designation made, by forgery, mistake or age, reads as ordinary authority to
 a parent that already holds it, and the later refusal only catches authority being widened. For the
 same reason the handoff's two statements of those limits are compared with each other: Authority
