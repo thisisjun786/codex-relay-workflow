@@ -405,6 +405,15 @@ def invoke_guard(config, payload):
                 out, err = opened.communicate(timeout=remaining)
             except subprocess.TimeoutExpired:
                 out, err = b"", b""
+        # Closed by hand, because the drain above is bounded and may have given up: a guard that
+        # outlives its budget leaves this process holding its pipe ends open, and a Stop happens
+        # on every turn. The group has already been ended; what is left is this side's handles.
+        for stream in (opened.stdin, opened.stdout, opened.stderr):
+            try:
+                if stream is not None:
+                    stream.close()
+            except OSError:
+                pass
         opened.poll()
         return {"ending": TIMED_OUT, "argv": argv, "code": None, "signal": None,
                 "elapsedMs": round((time.monotonic() - started) * 1000),

@@ -298,6 +298,13 @@ def payload_complaints(repo_root, cache_version):
             {"payloadCheck": argv, "exitCode": done.returncode})
 
 
+# Python options that do not consume the word after them. Anything outside this set -- -c and -m
+# most of all, which make the next word source text or a module name rather than a file to run --
+# means this command's shape is not one whose executed script can be read positionally, and a
+# declaration whose shape cannot be read is not one this transition may rely on.
+SAFE_INTERPRETER_FLAGS = ("-u", "-E", "-s", "-S", "-B", "-I", "-O", "-OO", "-q", "-b", "-bb", "-d")
+
+
 def _relative(word):
     """A declared path as the package's own relative one, whichever way it was spelled."""
     text = str(word).strip("\"'")
@@ -324,8 +331,13 @@ def _script(words):
         return None
     for word in words[1:]:
         text = str(word).strip("\"'")
-        if text.startswith("-"):
+        if text in SAFE_INTERPRETER_FLAGS:
             continue
+        if text.startswith("-"):
+            # -c takes source text and -m takes a module name, so the path that follows either is
+            # not a file Python runs. Every other unrecognised option could do the same, and
+            # guessing which is exactly the guess this function exists to stop making.
+            return None
         return _relative(text)
     return None
 
@@ -375,7 +387,7 @@ def _declared(root, repo_root):
                         words = []
                     script = _script(words)
                     if script:
-                        events.setdefault(event, set()).add(script)
+                        events.setdefault(event, []).append(script)
     named = manifest.get("mcpServers")
     if isinstance(named, str) and named.strip():
         path = Path(root) / _relative(named)
@@ -414,11 +426,16 @@ def declaration_complaints(repo_root, cache_version):
         found.append("this checkout's plugin package could not be read, so what the installed one"
                      " declares was compared with nothing: " + "; ".join(ours_unread))
     for event, wanted in sorted(ours_events.items()):
-        missing = sorted(wanted - (cached_events.get(event) or set()))
-        if missing:
-            found.append("the installed package does not declare a " + str(event) + " hook that"
-                         " runs " + ", ".join(missing) + ", which is what would answer the Stop"
-                         " this transition is removing the registration for")
+        # Counted, not merely contained. A cached document declaring the launcher twice answers a
+        # subset test and fires two adapters on every Stop, which is the duplicate execution this
+        # whole command exists to end.
+        got = cached_events.get(event) or []
+        if sorted(got) != sorted(wanted):
+            found.append("the installed package declares " + str(event) + " hooks running "
+                         + (", ".join(sorted(got)) if got else "nothing this checkout ships")
+                         + ", and this checkout declares " + ", ".join(sorted(wanted))
+                         + ". The replacement has to be the same surface, once each: anything"
+                         " else either leaves the Stop unanswered or answers it twice")
     for name, script in sorted(ours_servers.items()):
         if cached_servers.get(name) != script:
             found.append("the installed package does not declare the " + str(name) + " server"
@@ -947,7 +964,7 @@ def settings_retire(host, options, *, apply=False):
                                + ".", retired=[], settingsRestored=restored,
                                settingsLeftArchived=kept)
     return _answer("settings retire", SETTLED, "retired " + ", ".join(p["from"] for p in moved),
-                   applied=True, wrote=True, retired=moved)
+                   applied=True, wrote=True, retired=moved, watched=watched)
 
 
 def _newest_retired(host):
@@ -1467,8 +1484,13 @@ def _recreated_settings(results):
     """
     retire = next((item for item in results if item["step"] == "settings retire"), None)
     found = []
-    for moved in (retire or {}).get("retired") or []:
-        origin = Path(moved["from"])
+    paths = [moved["from"] for moved in (retire or {}).get("retired") or []]
+    # The watched paths too: a registration names them, they were absent when this run read the
+    # host, and one appearing now is the same event as one coming back -- a document the install
+    # will refuse to overwrite, behind a registration this step is about to remove.
+    paths += [path for path in (retire or {}).get("watched") or [] if path not in paths]
+    for candidate in paths:
+        origin = Path(candidate)
         if not os.path.lexists(str(origin)):
             continue
         document, _outcome, _detail, _found = completion.read_configuration(origin)
@@ -1583,8 +1605,11 @@ def transition(host, options, *, apply=False):
                 with contextlib.ExitStack() as guard:
                     retired = next((item for item in results
                                     if item["step"] == "settings retire"), None)
-                    for moved in (retired or {}).get("retired") or []:
-                        guard.enter_context(hostrecord.Locked(Path(moved["from"])))
+                    held = [moved["from"] for moved in (retired or {}).get("retired") or []]
+                    held += [path for path in (retired or {}).get("watched") or []
+                             if path not in held]
+                    for path in held:
+                        guard.enter_context(hostrecord.Locked(Path(path)))
                     back = _recreated_settings(results)
                     if back:
                         results.append(_answer(name, REFUSED,

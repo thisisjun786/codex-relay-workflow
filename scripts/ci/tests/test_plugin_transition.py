@@ -2515,8 +2515,9 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("does not declare a Stop hook that runs", answer["results"][0]["detail"])
-        self.assertIn("crw_stop_hook.py", answer["results"][0]["detail"])
+        self.assertIn("this checkout declares wiring/crw_stop_hook.py",
+                      answer["results"][0]["detail"])
+        self.assertIn("the same surface, once each", answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_cached_package_without_the_bridge_server_is_refused(self):
@@ -2556,8 +2557,8 @@ class TheFindingsFromReview(TransitionCase):
         before = host.hooks_document()
         code, answer = host.transition("--apply")
         self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
-        self.assertIn("does not declare a Stop hook that runs", answer["results"][0]["detail"])
-        self.assertIn("wiring/crw_stop_hook.py", answer["results"][0]["detail"])
+        self.assertIn("this checkout declares wiring/crw_stop_hook.py",
+                      answer["results"][0]["detail"])
         self.assertEqual(host.hooks_document(), before)
 
     def test_a_command_that_only_mentions_the_launcher_is_not_running_it(self):
@@ -2627,6 +2628,56 @@ class TheFindingsFromReview(TransitionCase):
                         "the settings lock was not held across the hook removal")
         self.assertEqual(outcomes["hook standdown"], "settled", json.dumps(results)[:700])
         self.assertEqual(outcomes["settings install"], "settled")
+
+    def test_a_cache_declaring_the_launcher_twice_is_refused(self):
+        """Two declarations of our own launcher is the duplicate this command exists to end."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = dict(document["hooks"]["Stop"][0]["hooks"][0])
+        document["hooks"]["Stop"][0]["hooks"].append(entry)
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("the same surface, once each", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    def test_an_option_that_eats_its_argument_is_not_running_the_launcher(self):
+        """python3 -c takes source text, so the path after it is never a file Python runs."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        launcher = "./wiring/crw_stop_hook.py"
+        self.assertIsNone(steps._script(["python3", "-c", launcher]))
+        self.assertIsNone(steps._script(["python3", "-m", "wiring.crw_stop_hook"]))
+        self.assertIsNone(steps._script(["python3", "-W", "ignore", launcher]))
+        self.assertIsNone(steps._script(["python3", "--what-is-this", launcher]))
+        # The options that do not consume the word after them still resolve.
+        self.assertEqual(steps._script(["python3", "-u", launcher]), "wiring/crw_stop_hook.py")
+        self.assertEqual(steps._script(["python3", launcher]), "wiring/crw_stop_hook.py")
+
+    def test_a_watched_path_is_locked_across_the_removal_too(self):
+        """A registration names it and it was absent; something arriving there is the same event."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.host
+        custom, fixed = self.registered_at(host, "registered.json")
+        document = json.loads(fixed.read_text(encoding="utf-8"))
+        fixed.unlink()
+        host.install_plugin()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        retired = steps.settings_retire(snapshot, {}, apply=True)
+        self.assertEqual(retired["outcome"], "settled", json.dumps(retired)[:500])
+        self.assertIn(str(fixed), retired["watched"], json.dumps(retired)[:500])
+        # The installer that owns the default path writing its settings back.
+        fixed.write_text(json.dumps(document), encoding="utf-8")
+        back = steps._recreated_settings([retired])
+        self.assertTrue([item for item in back if str(fixed) in item], json.dumps(back))
 
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
