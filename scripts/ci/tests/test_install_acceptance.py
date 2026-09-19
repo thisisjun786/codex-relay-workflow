@@ -3618,6 +3618,75 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", False,
          "its pair on the handle side: a local handle stays local, and a consumer reading an"
          " unrelated name of the same spelling is not reading this one."),
+    "a nonlocal declaration two scopes below its binding":
+        (REFUSAL,
+         ("def outer():",
+          "    answer = \"fine\"",
+          "",
+          "    def middle():",
+          "        def setter():",
+          "            nonlocal answer",
+          "            answer = reading.UNREADABLE",
+          "        return setter",
+          "",
+          "    def consumer():",
+          "        return answer",
+          "    return consumer"),
+         "outer.consumer", True,
+         "the fix above this one reached the immediately enclosing scope and stopped there, and"
+         " called the rest a declared boundary. It was not one: nothing prevented walking"
+         " outward, and the criterion only allows a declared limit where the form cannot be"
+         " widened. nonlocal binds at the NEAREST enclosing scope that really binds the name,"
+         " so filing it one scope short dropped the sibling that reads it at the owning scope."),
+    "a lambda default a call leaves to itself":
+        (REFUSAL,
+         ("helper = lambda answer=reading.UNREADABLE: answer",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "a REGRESSION this branch introduced rather than an old defect, and worth naming as"
+         " one. Gating defaults on whether a call supplies them made both readers ask this"
+         " question, but the question was only ever answered for def, so every lambda default"
+         " was read as overridden and its consumers dropped. A lambda answers to what it was"
+         " bound to, so the binding is what makes helper() resolve to it."),
+    "a lambda default a call supplies":
+        (REFUSAL,
+         ("helper = lambda answer=reading.UNREADABLE: answer",
+          "",
+          "def consumer():",
+          "    return helper(\"fine\")"),
+         "consumer", False,
+         "its pair, and it is stricter than the answer before the regression above: reading"
+         " lambda defaults unconditionally reported this consumer too, which was the other"
+         " error. Registering the definition answers both directions instead of trading one"
+         " for the other."),
+    "a handle a lambda default holds":
+        (TEXT,
+         ("helper = lambda path=HERE: path.read_text()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the handle side, where this was never right rather than newly broken: it has gated"
+         " defaults for longer, so a lambda reading the source file through its default has"
+         " been dropping its consumers all along. One registration answers both sides."),
+    "a lambda default behind a conditional binding":
+        (REFUSAL,
+         ("def pick(flag):",
+          "    first = lambda answer=reading.UNREADABLE: answer",
+          "    second = lambda answer=reading.UNREADABLE: answer",
+          "    helper = first if flag else second",
+          "",
+          "    def consumer():",
+          "        return helper()",
+          "    return consumer"),
+         "pick.consumer", True,
+         "the module's own value-follower guard asked for this one rather than a reviewer:"
+         " registering lambdas by reading a bare Lambda made this pass a resolver that follows"
+         " values through fewer forms than the vocabulary, and the guard failed until it read"
+         " the whole of it. Widening was correct here and a declared gap would not have been,"
+         " because a conditional binding really does hand one of the two over."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -4655,6 +4724,27 @@ def _defaults(node):
             for arg, default in paired]
 
 
+def _lambda_named(value):
+    """Each lambda a value expression may hand over, the branches of a conditional included.
+
+    The vocabulary beside _passed_through, asked for lambdas rather than for names.
+    helper = lambda path=HERE: ... if flag else other binds a lambda through a form a bare
+    isinstance check does not see, and a reader that sees only a bare Lambda would claim a
+    reach it does not have. Await is in the list because the vocabulary is, not because a
+    lambda is awaitable.
+    """
+    if isinstance(value, ast.Lambda):
+        yield value
+    elif isinstance(value, ast.IfExp):
+        yield from _lambda_named(value.body)
+        yield from _lambda_named(value.orelse)
+    elif isinstance(value, ast.BoolOp):
+        for inner in value.values:
+            yield from _lambda_named(inner)
+    elif isinstance(value, (ast.NamedExpr, ast.Await)):
+        yield from _lambda_named(value.value)
+
+
 def _declared_owner(tree, places):
     """Each (scope, name) that a global or nonlocal statement hands to a different scope.
 
@@ -4667,11 +4757,25 @@ def _declared_owner(tree, places):
     Asked once and consulted by both the refusal side and the handle side, because these two
     have answered the same question separately before and drifted apart.
 
-    Observable boundary, stated because it is one: nonlocal is filed against the immediately
-    enclosing function rather than the nearest enclosing one that really binds the name, so a
-    declaration reaching two scopes out is filed one scope short. That keeps the name visible
-    to the siblings that read it, which is the reporting direction.
+    nonlocal is resolved the way Python resolves it: outward to the NEAREST enclosing scope
+    that really binds the name, however many scopes that is. Filing it against the immediately
+    enclosing function instead was one scope short as soon as the declaration sat two functions
+    below its binding, and the sibling reading it at the owning scope was dropped.
     """
+    binds = {}
+    for node in ast.walk(tree):
+        at = places.get(id(node), (MODULE_LEVEL, None))[0]
+        for named, _value in _bindings(node):
+            if isinstance(named, ast.Name):
+                binds.setdefault(at, set()).add(named.id)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            # A parameter binds its name in the scope the definition opens.
+            args = node.args
+            for arg in (args.posonlyargs + args.args + args.kwonlyargs
+                        + ([args.vararg] if args.vararg else [])
+                        + ([args.kwarg] if args.kwarg else [])):
+                binds.setdefault(places.get(id(node), (MODULE_LEVEL, None))[0],
+                                 set()).add(arg.arg)
     owner = {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Global, ast.Nonlocal)):
@@ -4680,7 +4784,15 @@ def _declared_owner(tree, places):
         if at == MODULE_LEVEL:
             continue
         for name in node.names:
-            owner[(at, name)] = (MODULE_LEVEL if isinstance(node, ast.Global)
+            if isinstance(node, ast.Global):
+                owner[(at, name)] = MODULE_LEVEL
+                continue
+            # Outward from the scope around this one, stopping at the first that binds it.
+            reach = at.split(".")
+            reach.pop()
+            while reach and name not in binds.get(".".join(reach), set()):
+                reach.pop()
+            owner[(at, name)] = (".".join(reach) if reach
                                  else at.rpartition(".")[0] or MODULE_LEVEL)
     return owner
 
@@ -4728,10 +4840,11 @@ def _default_applies(tree, places):
             reach.pop()
 
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
         at = places.get(id(node), (MODULE_LEVEL, None))[0]
-        owned.setdefault(at.rpartition(".")[0] or MODULE_LEVEL, {})[node.name] = at
+        if not isinstance(node, ast.Lambda):
+            owned.setdefault(at.rpartition(".")[0] or MODULE_LEVEL, {})[node.name] = at
         spelled = node.args.posonlyargs + node.args.args
         if spelled and spelled[0].arg in ("self", "cls"):
             # A bound method is handed its receiver before any written argument, so the slot a
@@ -4743,6 +4856,18 @@ def _default_applies(tree, places):
         for argument, default in zip(node.args.kwonlyargs, node.args.kw_defaults):
             if default is not None:
                 defined[(at, argument.arg)] = None
+    # A lambda answers to whatever it was bound to rather than to a name of its own, so the
+    # binding is what makes helper() resolve to it. _defaults already reads a lambda's
+    # parameters; leaving the definition out here meant its pair never entered the answer and
+    # every consumer of a lambda default was dropped once this question started gating them.
+    for node in ast.walk(tree):
+        for named, value in _bindings(node):
+            if not isinstance(named, ast.Name):
+                continue
+            for made in _lambda_named(value):
+                owned.setdefault(places.get(id(node), (MODULE_LEVEL, None))[0],
+                                 {})[named.id] = places.get(
+                                     id(made), (MODULE_LEVEL, None))[0]
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -8837,6 +8962,7 @@ HANDED = {
     "_defaults": NOTHING,
     "_default_applies": NOTHING,
     "_declared_owner": NOTHING,
+    "_lambda_named": NOTHING,
     "test_every_value_follower_here_reads_the_whole_pass_through_vocabulary": NOTHING,
     "test_each_binding_fixpoint_here_halts_on_a_name_bound_twice": NOTHING,
     "test_a_decorator_alias_resolves_in_the_scope_that_imported_it": NOTHING,
