@@ -269,7 +269,9 @@ Scope as read: [this project's membership in the approved set, the completion bo
   backwards. The limits belong here because a handoff that quietly drops one reads as ordinary
   authority to a parent that already holds it]
 Prerequisites: [cross-project prerequisites by relation, each with where its verification will
-  appear; and the peer parents this project shares a surface with, to settle with directly]
+  appear; any shared-target order already decided for this project, which is the supervisor's
+  decision and not something the parent can infer; and the peer parents this project shares a
+  surface with, to settle with directly]
 Authority: [the designation and its date, the limits in force, child-creation authority, and the
   effective delivery, integration, release and deployment scope for this parent: the standing
   defaults, narrowed by every explicit limit, computed once here rather than left for the parent
@@ -308,10 +310,13 @@ same reason the handoff's two statements of those limits are compared with each 
 says what this parent may do and Scope as read says what the record said, so a handoff whose
 Authority is wider than its own Scope as read is inconsistent on its face, and it is refused and
 raised rather than followed at whichever of the two is more convenient. The same read covers the
-prerequisites and any shared-target order the handoff states, because those are the supervisor's to
-set and need not appear anywhere in this parent's own baseline: a prerequisite or an order the
-record does not carry is unconfirmed, and work that depends on it does not start on the message's
-word. The handoff states both, with the revision it read them at, so the receiver has each
+prerequisites and the shared-target order, and it runs in both directions, because these are the
+supervisor's to set and need not appear anywhere in this parent's own baseline. One the handoff
+states and the record does not carry is unconfirmed, and work depending on it does not start on the
+message's word. One the record carries and the handoff omits matters more, since omission is how a
+stale or altered handoff removes a blocker: the comparison is against the complete set the record
+holds for this project rather than against what the message happened to include, and a handoff
+missing any of it is out of date and is raised. The handoff states both, with the revision it read them at, so the receiver has each
 side of the comparison; the test is those values and not revision equality: an authorized edit elsewhere in the initiative moves the revision
 without moving them, and refusing a handoff over that would turn ordinary record-keeping into a
 stall. Where those values have moved, the handoff is out of date, and what it needs is the scope
