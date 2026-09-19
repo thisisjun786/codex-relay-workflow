@@ -97,6 +97,15 @@ DELIVERY_ACCESS = ("cwd", "runtimeWorkspaceRoots", "environments")
 RESUME_SANDBOX_TYPES = ("workspaceWrite", "readOnly", "dangerFullAccess")
 AUTHORIZED_APPROVAL_POLICY = "never"
 
+# The policy fields a resume can actually carry, per type, copied from the same contract and
+# guarded the same way. A type with a resume mode is not enough: readOnly has no config key for
+# its network access, so asking for a non-default one is a request the protocol cannot transmit
+# and the bridge refuses it before any call is made.
+POLICY_CONFIG_FIELDS = {
+    "workspaceWrite": ("writableRoots", "networkAccess", "excludeTmpdirEnvVar",
+                       "excludeSlashTmp"),
+}
+
 # The defaults the pinned SandboxPolicy declares, copied from the relay's own settings module so
 # an omitted default and an explicit one are not read as a difference. This is a second copy of
 # another lane's contract and it is held here only because the relay is not importable from a
@@ -495,6 +504,24 @@ def beyond_declaration(declared, found):
     return []
 
 
+def untransmittable_policy_fields(policy):
+    """The policy fields a resume could not carry, by the bridge's own rule.
+
+    A field with no config key asks for nothing when it equals its type's declared default, and
+    is a real request the protocol cannot carry when it differs. So a type with a resume mode is
+    not enough on its own: {"type": "readOnly", "networkAccess": true} has one, and no config
+    spelling moves read-only network access, so the bridge refuses it as untransmittable before
+    any call is made and the trial's round trip could never run under it.
+    """
+    if not isinstance(policy, dict):
+        return []
+    kind = policy.get("type")
+    mapped = POLICY_CONFIG_FIELDS.get(kind, ())
+    defaults = POLICY_DEFAULTS.get(kind, {})
+    return sorted(name for name, value in with_policy_defaults(policy).items()
+                  if name != "type" and name not in mapped and value != defaults.get(name))
+
+
 def digest_of(path):
     reader = hashlib.sha256()
     with open(str(path), "rb") as handle:
@@ -809,6 +836,15 @@ def load_start(path, *, environment=None, mode="preflight"):
                               boundary=boundary.get("name"), taskId=participant.get("taskId"),
                               sandbox=shown(sandbox.get("type")),
                               resumable=list(RESUME_SANDBOX_TYPES))
+            untransmittable = untransmittable_policy_fields(sandbox)
+            if untransmittable:
+                raise Refused("this sandbox policy asks for something no resume can carry, so the"
+                              " relay refuses it before any call is made and the trial could not"
+                              " deliver under it",
+                              boundary=boundary.get("name"), taskId=participant.get("taskId"),
+                              fields=untransmittable,
+                              transmittable=list(POLICY_CONFIG_FIELDS.get(sandbox.get("type"),
+                                                                          ())))
             if expect.get("approvalPolicy") != AUTHORIZED_APPROVAL_POLICY:
                 # A value constraint rather than a comparison: delivery authorises exactly one
                 # policy, so a row recording another is withheld after the resume and never
@@ -1481,13 +1517,22 @@ def reading_store(record, relay):
     # App Server, because each opens the store on construction. A participant without it cannot
     # run its leg of the trial at all, however well its store identity agrees.
     writable = field(payload, "actorReachability", "stateDirectoryWritable")
-    cells.append(graded("stateWritable", writable, writable is True, probe=probe,
+    # Both halves. The directory probe is a temporary file, which says the directory can be
+    # created and written; the database is opened read-write with WAL on every construction, and
+    # a directory this process can write holding a database it cannot is an environment where
+    # the store proves the same and the next command still fails to open it.
+    db_writable = field(payload, "store", "observedAccess", "write")
+    readable = writable is not MISSING and db_writable is not MISSING
+    cells.append(graded("stateWritable", writable if readable else MISSING,
+                        writable is True and db_writable is True, probe=probe,
                         provenance=EXECUTED,
-                        unreadable="doctor did not report whether the state directory is writable",
+                        unreadable="doctor did not report whether the state directory and the"
+                                   " database it holds are writable",
                         evidence=("the acting process can write the state directory: "
-                                  + str(shown(writable)) + ". Every relay command opens the store"
-                                  " on construction, so a reader that cannot write it cannot run"
-                                  " one")))
+                                  + str(shown(writable)) + ", and open its database for writing: "
+                                  + str(shown(db_writable)) + ". Every relay command opens the"
+                                  " store on construction, so a reader that cannot write it"
+                                  " cannot run one")))
     if not isinstance(configured, bool):
         # Whether the ledger sits beside the store is only answerable once doctor says a ledger
         # is configured at all. A payload carrying split without configured graded as placed,
@@ -1545,10 +1590,12 @@ def reading_store(record, relay):
         # directory cannot run even a read-only-looking relay command, so proving it holds the
         # same store says nothing about whether it can use it.
         peer_writable = field(peer, "actorReachability", "stateDirectoryWritable")
+        peer_db = field(peer, "store", "observedAccess", "write")
         # Every field the verdict reads, not only the verdict: a doctor payload naming a store
         # and no device never said which inode it was, and a disagreement would say it did.
         answered = MISSING if (peer_same is MISSING or asked is MISSING
                                or peer_writable is MISSING
+                               or peer_db is MISSING
                                or field(peer, "store", "storeId") is MISSING
                                or field(peer, "store", "device") is MISSING
                                or field(peer, "store", "inode") is MISSING) else peer_same
@@ -1561,7 +1608,7 @@ def reading_store(record, relay):
                       == json.dumps(peer, sort_keys=True))(capture(record, "peerDoctor", other)[0])]
         cells.append(graded("peer:" + name, answered,
                             peer_same == "proven" and agrees and nonce_agrees
-                            and peer_writable is True,
+                            and peer_writable is True and peer_db is True,
                             provenance=CAPTURED, measured_at=found["capturedAt"],
                             unreadable="this peer's doctor payload carries no same-store verdict"
                                        " and the challenge it was asked about, or does not say"
@@ -1572,6 +1619,8 @@ def reading_store(record, relay):
                                       + " the record, for challenge " + str(shown(asked))
                                       + ", and its state directory is writable: "
                                       + str(shown(peer_writable))
+                                      + " with its database openable for writing: "
+                                      + str(shown(peer_db))
                                       + ". A verdict speaks only for the nonce it was given"
                                       + (", and this payload is identical to " + ", ".join(alike)
                                          + ", which doctor cannot tell apart because it does not"

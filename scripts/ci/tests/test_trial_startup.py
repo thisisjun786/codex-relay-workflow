@@ -268,7 +268,11 @@ class World:
             "doctor": {"payload": {
                 "sameStore": "proven",
                 "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE,
-                          "createdAt": "2020-01-01T00:00:00Z"},
+                          "createdAt": "2020-01-01T00:00:00Z",
+                          # The database itself, not only the directory around it: every command
+                          # opens it read-write on construction.
+                          "observedAccess": {"read": True, "write": True,
+                                             "directoryWritable": True}},
                 "ledger": {"configured": True, "split": False},
                 "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
                 "nonce": {"nonce": self.NONCE, "found": True, "readable": True},
@@ -344,7 +348,10 @@ class World:
                 # OPS-3.5: every relay command opens the store, so a peer that cannot write the
                 # state directory cannot run one. A real peer's doctor reports both.
                 "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
-                "store": {"storeId": self.STORE_ID, "device": self.DEVICE, "inode": self.INODE},
+                "store": {"storeId": self.STORE_ID, "device": self.DEVICE,
+                          "inode": self.INODE,
+                          "observedAccess": {"read": True, "write": True,
+                                             "directoryWritable": True}},
                 "nonce": {"nonce": self.NONCE, "found": True, "readable": True,
                           "device": self.DEVICE, "inode": self.INODE},
             }
@@ -460,6 +467,33 @@ class World:
                                     environment=self.environment(), mode="ledger")
         record["_now"] = startup.datetime.datetime.now(startup.datetime.timezone.utc)
         return startup.ledger(record)
+
+
+def relay_source(*parts):
+    return (ROOT.joinpath(*parts)).read_text(encoding="utf-8")
+
+
+def assigned_literal(source, name):
+    """A module-level constant read as a value rather than matched as text.
+
+    This repository does not accept text matching as proof of behaviour, and a drift guard on a
+    contract copied from another lane is exactly where a substring would rot: an equivalent
+    rewrite fails it while a real change to the value slips past. So the value is parsed.
+    """
+    tree = ast.parse(source)
+    return next(ast.literal_eval(node.value) for node in ast.walk(tree)
+                if isinstance(node, ast.Assign)
+                and [target for target in node.targets
+                     if getattr(target, "id", None) == name])
+
+
+def constants_in(source, function):
+    """Every string constant a named function mentions, for the same reason."""
+    tree = ast.parse(source)
+    node = next(n for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == function)
+    return {c.value for c in ast.walk(node)
+            if isinstance(c, ast.Constant) and isinstance(c.value, str)}
 
 
 def cells_of(document, reading):
@@ -724,7 +758,9 @@ class StoreIdentity(TrialCase):
         self.world.captures["doctor-" + World.CHILD_A + ".json"] = {
             "sameStore": "proven",
             "actorReachability": {"socketConnect": "ok", "stateDirectoryWritable": True},
-            "store": {"storeId": "another-store", "device": 1, "inode": 2},
+            "store": {"storeId": "another-store", "device": 1, "inode": 2,
+                      "observedAccess": {"read": True, "write": True,
+                                         "directoryWritable": True}},
             "nonce": {"nonce": World.NONCE, "found": True, "readable": True}}
         self.world.flush()
         document = self.world.preflight()
@@ -1115,6 +1151,7 @@ class PayloadContract(TrialCase):
         ("cli.py", "_reachability"): ("socketConnect", "stateDirectoryWritable"),
         ("cli.py", "_ledger_location"): ("configured", "split"),
         ("store.py", "probe"): ("store", "storeId", "createdAt", "device", "inode"),
+        ("cli.py", "_access_receipt"): ("observedAccess", "write"),
         ("store.py", "compare_store"): ("sameStore",),
         ("service.py", "status"): ("lock", "staleRecord", "ownership", "pid", "storeId"),
         ("registry.py", "_row_to_record"): ("authorizedScope", "scopeRef", "artifactRoots",
@@ -2837,9 +2874,10 @@ class TwentyEighthHostedRound(TrialCase):
     def test_the_state_is_read_where_the_relay_reads_it(self):
         # Support, and the reason the key is "type": the relay's own adapter reads the thread
         # status there, so the checker is not inventing a shape of its own.
-        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
-                  / "bridge_adapter.py").read_text(encoding="utf-8")
-        self.assertIn('(thread.get("status") or {}).get("type"', source)
+        source = relay_source("packages", "codex-session-relay", "src",
+                              "codex_session_relay", "bridge_adapter.py")
+        self.assertIn("type", constants_in(source, "read_thread"))
+        self.assertIn("status", constants_in(source, "read_thread"))
 
     def test_a_ledger_placement_without_a_configured_ledger_is_unknown(self):
         self.world.payloads["doctor"]["payload"]["ledger"] = {"split": False}
@@ -3058,10 +3096,12 @@ class ThirtiethHostedRound(TrialCase):
     def test_the_access_compared_is_the_contract_the_relay_states(self):
         # Support, and the reason these three keys: the relay's settings contract names them
         # beside the four a record declares, so the checker is not choosing a set of its own.
-        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
-                  / "settings.py").read_text(encoding="utf-8")
+        source = relay_source("packages", "codex-session-relay", "src",
+                              "codex_session_relay", "settings.py")
+        required = assigned_literal(source, "REQUIRED")
         for key in startup.DELIVERY_ACCESS:
-            self.assertIn('"' + key + '"', source)
+            self.assertIn(key, required,
+                          key + " is not one of the settings the relay requires")
 
     def test_more_absences_are_unknown_rather_than_disagreements(self):
         def drop_child(world):
@@ -3134,9 +3174,9 @@ class ThirtyFirstHostedRound(TrialCase):
     def test_the_bridge_does_not_observe_the_environment_selection(self):
         # Support, and the reason environments is read from the created thread rather than from
         # settings.actual: the bridge's own observable list is what builds that object.
-        source = (ROOT / "packages" / "codex-thread-bridge" / "src" / "codex_thread_bridge"
-                  / "settings.py").read_text(encoding="utf-8")
-        observable = source.split("OBSERVABLE = (")[1].split(")")[0]
+        source = relay_source("packages", "codex-thread-bridge", "src",
+                              "codex_thread_bridge", "settings.py")
+        observable = assigned_literal(source, "OBSERVABLE")
         self.assertIn("runtimeWorkspaceRoots", observable)
         self.assertNotIn("environments", observable)
 
@@ -3227,9 +3267,16 @@ class ThirtyThirdHostedRound(TrialCase):
     def test_the_pointer_is_where_the_runtime_lane_puts_it(self):
         # Support, and the reason the command is <pointer>/bin/<console>: the runtime lane owns
         # that layout, and this reads it rather than choosing one.
-        source = (ROOT / "scripts" / "crw_runtime" / "pointer.py").read_text(encoding="utf-8")
-        self.assertIn('POINTER_NAME = "current"', source)
-        self.assertIn("Path(destination) / POINTER_NAME", source)
+        source = relay_source("scripts", "crw_runtime", "pointer.py")
+        self.assertEqual(assigned_literal(source, "POINTER_NAME"), "current")
+        # And the pointer path is that name under the destination, read as the function's own
+        # expression rather than as a line of text.
+        tree = ast.parse(source)
+        node = next(n for n in ast.walk(tree)
+                    if isinstance(n, ast.FunctionDef) and n.name == "pointer_path")
+        names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+        self.assertIn("POINTER_NAME", names)
+        self.assertIn("destination", names)
 
 
 class ThirtyFourthHostedRound(TrialCase):
@@ -3474,10 +3521,11 @@ class ThirtySixthHostedRound(TrialCase):
 
     def test_the_relay_is_what_checks_it(self):
         # Support, and the reason this reading exists: the comparison it mirrors.
-        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
-                  / "settings.py").read_text(encoding="utf-8")
-        self.assertIn('profile = response.get("activePermissionProfile")', source)
-        self.assertIn('self.data.get("expectedPermissionProfile")', source)
+        source = relay_source("packages", "codex-session-relay", "src",
+                              "codex_session_relay", "settings.py")
+        named = constants_in(source, "mismatches")
+        self.assertIn("activePermissionProfile", named)
+        self.assertIn("expectedPermissionProfile", named)
 
     def test_the_comparison_is_the_relays_own_rather_than_a_stricter_one(self):
         # The relay compares with Python equality, where a nested false and a nested zero are the
@@ -3608,12 +3656,6 @@ class ThirtyEighthHostedRound(TrialCase):
         self.assertEqual(cell["value"], UNKNOWN)
         self.assertFalse(cell["met"])
 
-    def test_the_relay_is_what_reports_write_access(self):
-        # Support, and the reason the key is this one: doctor's own reachability payload.
-        source = (ROOT / "packages" / "codex-session-relay" / "src" / "codex_session_relay"
-                  / "cli.py").read_text(encoding="utf-8")
-        self.assertIn('"stateDirectoryWritable": access["directoryWritable"]', source)
-
     def test_a_process_is_not_older_than_it_is_by_the_boot_seconds_fraction(self):
         # /proc/stat's btime is a whole second, so adding precise ticks to it moves the dropped
         # fraction into the age. A sub-second minimum could then be met early. The reconstructed
@@ -3631,6 +3673,71 @@ class ThirtyEighthHostedRound(TrialCase):
         self.assertGreaterEqual(started, before - 0.01,
                                 "the process was reconstructed as starting before it existed")
         self.assertLessEqual(started, time.time())
+
+
+class ThirtyNinthHostedRound(TrialCase):
+    """A policy the protocol cannot carry, and the database behind the writable directory."""
+
+    def test_a_policy_no_resume_can_carry_is_refused(self):
+        # readOnly has a resume mode and no config key for its network access, so asking for a
+        # non-default one is a request the bridge refuses before any call is made. A type-only
+        # allowlist accepted it and the trial could not have delivered under it.
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["sandbox"] = {"type": "readOnly", "networkAccess": True}
+        self.world.flush()
+        refused = self.world.refusal()
+        self.assertIsNotNone(refused, "a policy no resume can carry was accepted")
+        self.assertIn("no resume can carry", refused.reason)
+        self.assertEqual(refused.detail["fields"], ["networkAccess"])
+
+    def test_the_same_policy_at_its_own_default_is_still_accepted(self):
+        # Support: a field equal to its type's default asks for nothing, so it is transmittable.
+        for boundary in self.world.record["boundaries"]:
+            for participant in boundary["participants"]:
+                participant["expect"]["sandbox"] = {"type": "readOnly", "networkAccess": False}
+        self.world.flush()
+        self.assertIsNone(self.world.refusal())
+
+    def test_the_transmittable_fields_are_the_relays_own(self):
+        # Support, and the guard on another copied contract, read as a value rather than matched.
+        source = relay_source("packages", "codex-session-relay", "src", "codex_session_relay",
+                              "settings.py")
+        theirs = assigned_literal(source, "POLICY_CONFIG_KEYS")
+        self.assertEqual({kind: sorted(fields)
+                          for kind, fields in startup.POLICY_CONFIG_FIELDS.items()},
+                         {kind: sorted(fields) for kind, fields in theirs.items()})
+
+    def test_a_database_the_participant_cannot_write_refuses_the_start(self):
+        # The directory probe writes a temporary file; the store opens the database read-write on
+        # every construction. A writable directory holding a database this process cannot open
+        # is an environment where the same-store proof succeeds and the next command fails.
+        capture = self.world.captures["doctor-" + World.CHILD_A + ".json"]
+        capture["store"]["observedAccess"]["write"] = False
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"],
+                         "a participant whose next relay command cannot open the store passed")
+        cell = cells_of(document, "storeIdentity")["peer:" + World.CHILD_A]
+        self.assertEqual(cell["value"], NOT_VERIFIED)
+        self.assertIn("database openable for writing", cell["evidence"])
+
+    def test_the_acting_processs_database_is_read_too(self):
+        self.world.payloads["doctor"]["payload"]["store"]["observedAccess"]["write"] = False
+        self.world.start_supervisor()
+        self.world.flush()
+        document = self.world.preflight()
+        self.assertFalse(document["readyToStart"])
+        self.assertEqual(cells_of(document, "storeIdentity")["stateWritable"]["value"],
+                         NOT_VERIFIED)
+
+    def test_a_doctor_that_does_not_say_is_unknown_rather_than_writable(self):
+        self.world.payloads["doctor"]["payload"]["store"]["observedAccess"].pop("write")
+        self.world.flush()
+        cell = cells_of(self.world.preflight(), "storeIdentity")["stateWritable"]
+        self.assertEqual(cell["value"], UNKNOWN)
+        self.assertFalse(cell["met"])
 
 
 if __name__ == "__main__":                                           # pragma: no cover
