@@ -1130,6 +1130,56 @@ RESOLVES_LIKE_PYTHON = {
          "consumer", True,
          "its pair: the ordinary spelling has to keep being read, so narrowing the qualifier"
          " must not have narrowed it to nothing."),
+    "a class attribute rebound after the class statement":
+        (REFUSAL,
+         ("class Base:",
+          "    carrier = reading.UNREADABLE",
+          "",
+          "class Child(Base):",
+          "    def answer(self):",
+          "        return self.carrier",
+          "",
+          "Child.carrier = \"fine\""),
+         "answer", False,
+         "an attribute assigned after the class statement takes part in lookup exactly as one"
+         " written in the body does, so Child stands in front of what Base holds."),
+    "a decorator alias written in a class body":
+        (REFUSAL,
+         ("def outer():",
+          "    class Holder:",
+          "        sm = staticmethod",
+          "        def carrier(self):",
+          "            return reading.UNREADABLE",
+          "        @sm",
+          "        def consumer(this):",
+          "            return this.carrier()",
+          "    return Holder"),
+         "outer.consumer", False,
+         "a decorator in a class body resolves names the body has already bound, so this is a"
+         " real alias however the class is written. Scoping the search to the module alone lost"
+         " it, which is the cost of the narrower rule and the reason the scope is the class"
+         " body rather than the function around it."),
+    "a receiver given another name":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    def consumer(self):",
+          "        that = self",
+          "        return that.carrier()"),
+         "consumer", True,
+         "that = self is the same object, so the call through it reaches the same class. Read"
+         " as a class qualifier instead, the consumer leaves the inventory entirely."),
+    "source text opened through a keyword argument":
+        (TEXT,
+         ("def helper():",
+          "    return open(file=HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "open takes its file by keyword as readily as by position, and which one a caller"
+         " wrote is not a fact about what it opens."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -2087,6 +2137,19 @@ def _held_by_class(tree, spelled, over=None):
                 rebound.setdefault(node.name, set()).add(statement.name)
             elif not isinstance(statement, (ast.For, ast.AsyncFor)):
                 rebound.setdefault(node.name, set()).update(_binds_locally(statement))
+    # A class attribute assigned after the class statement takes part in lookup exactly as one
+    # written in the body does. Only at the top level of the module, where it certainly runs:
+    # one under an if or inside a function is the same guess about the run as before.
+    for statement in getattr(tree, "body", ()):
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        for target in ([statement.target] if isinstance(statement, ast.AnnAssign)
+                       else statement.targets):
+            if not isinstance(target, ast.Attribute):
+                continue
+            owner = (_dotted(target.value) or "").rpartition(".")[2] or None
+            if owner is not None:
+                rebound.setdefault(owner, set()).add(target.attr)
     # An attribute declared on a base is held by everything under it, the way a method is.
     parents = {node.name: [(_dotted(base) or "").rpartition(".")[2] for base in node.bases]
                for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
@@ -2159,13 +2222,18 @@ def _hands_on(tree, spelled):
     # methods. One module-wide set cannot say that, and reading a static method as a getter
     # makes an ordinary attribute read look like a call nobody performs.
     #
-    # Module level only. A name bound inside a function is that function's, and treating one as
-    # the decorator everywhere would suppress a receiver a method really has.
+    # Module level and class bodies. A decorator written in a class body resolves names the body
+    # has already bound, so sm = staticmethod beside the methods it decorates is a real alias
+    # wherever that class is written. A name bound inside a FUNCTION is that function's, and
+    # treating one as the decorator everywhere would suppress a receiver a method really has.
+    in_a_class_body = {id(statement) for node in ast.walk(tree)
+                       if isinstance(node, ast.ClassDef) for statement in node.body}
     module_bindings = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
-        if places.get(id(node), (MODULE_LEVEL, None))[0] != MODULE_LEVEL:
+        if (places.get(id(node), (MODULE_LEVEL, None))[0] != MODULE_LEVEL
+                and id(node) not in in_a_class_body):
             continue
         spelling = (_dotted(node.value) or "").rpartition(".")[2]
         for target in node.targets:
@@ -2290,18 +2358,44 @@ def _hands_on(tree, spelled):
             where, _klass = places.get(id(node), (MODULE_LEVEL, None))
             says_global.setdefault(where, set()).update(node.names)
 
+    # A method may give its receiver another name -- that = self -- and a call through that name
+    # reaches the same class. Collected per scope, and followed to a fixpoint below, because
+    # that = self and other = that are two steps onto one object.
+    receiver_alias = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
+            continue
+        where, _klass = places.get(id(node), (MODULE_LEVEL, None))
+        for target in node.targets:
+            for inner in ast.walk(target):
+                if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store):
+                    receiver_alias.setdefault(where, {}).setdefault(
+                        node.value.id, set()).add(inner.id)
+
     def instance(function):
         """How this scope spells its instance: whatever the first parameter is called.
 
         Looked up outwards, because a closure with no parameters of its own still sees the one
         the method around it was given.
+
+        And every name the scope gives that object: that = self reaches the same class, so a
+        call through the second name is the same call. A name that ever holds the receiver is
+        treated as holding it, which is the direction this reader errs in.
         """
         chain = [] if function == MODULE_LEVEL else function.split(".")
         while chain:
             scope = ".".join(chain)
             spelled = receivers.get(scope)
             if spelled:
-                return {spelled}
+                found, growing = {spelled}, True
+                while growing:
+                    growing = False
+                    for name in sorted(found):
+                        gained = receiver_alias.get(function, {}).get(name, set()) - found
+                        if gained:
+                            found |= gained
+                            growing = True
+                return found
             # A scope of its own that binds the same name is where the search stops: a nested
             # parameter called self is that function's, not the method's around it.
             # Any scope between here and the method binding the same name stops the search,
@@ -3003,7 +3097,8 @@ def _source_spelled(handles, hands_source, held):
             # what this recovers is the helper handing the text ON to its caller.
             if (isinstance(node.func, ast.Attribute) and node.func.attr.startswith("read")
                     and isinstance(node.func.value, ast.Call)):
-                for argument in node.func.value.args:
+                for argument in (list(node.func.value.args)
+                                 + [given.value for given in node.func.value.keywords]):
                     opened = spelled(argument, klass)
                     if opened:
                         return opened + "." + node.func.attr
