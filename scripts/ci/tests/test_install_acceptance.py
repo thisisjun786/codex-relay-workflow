@@ -192,6 +192,11 @@ TEXT_EVIDENCE = {
         " nowhere in the object: a table that exempts one and a table that exempts both are the"
         " same dict once built. Reading the file is the only way to sweep which of them a"
         " placement site consults.",
+    "test_every_statement_reader_here_pairs_an_unpacking_off":
+        "which helper a site asks for a binding is written in the site and nowhere in the"
+        " object: one that reads a statement's whole value and one that reads the pairs answer"
+        " identically for every binding that is not an unpacking. Reading the file is the only"
+        " way to see which question was put.",
     "test_no_reader_here_sees_only_the_unannotated_binding":
         "which form a reader here accepts is a property of how it is written, and the module"
         " object cannot be asked: a function that tests ast.Assign and one that tests both are"
@@ -446,6 +451,23 @@ PLACES_A_NAME_WITHOUT_ASKING_WHERE_IT_LIVES = {
         " plain local does. The direction is towards accounting for the attribute rather than"
         " missing it, so the question here is open rather than settled, and it is written down"
         " instead of being read as coverage this sweep does not have.",
+}
+
+# Where a site reads a binding statement without pairing an unpacking off. _assigned answers
+# with a statement's targets and its value; _bindings answers with the pairs. Three tables were
+# handed the same defect one at a time -- the refusal owner, the opener, the class alias --
+# before the set was swept instead of the instances.
+READS_A_STATEMENT_WITHOUT_PAIRING_IT = {
+    "_hands_on":
+        "the property scan, which requires the statement's WHOLE value to be a property() call"
+        " before it reads anything. An unpacking fails that guard and is skipped rather than"
+        " mis-paired, so the pairing cannot be got wrong here -- what it can do is miss"
+        " alias, ignored = property(getter), None, and that narrow miss is the cost stated.",
+    "source_text_reached":
+        "it asks only WHETHER anything named open is bound by the statement, and walks the"
+        " whole target for that spelling. Which value each name receives is not a question it"
+        " puts, and a destructured target is already read because walking reaches every Name"
+        " in it.",
 }
 
 # Where a value-following resolver here reads fewer forms than the pass-through vocabulary.
@@ -4083,6 +4105,79 @@ RESOLVES_LIKE_PYTHON = {
          " in a method's lookup chain, so the bare name there reaches the module however plainly"
          " the body above it rebound the spelling. Teaching the body to shadow must not have"
          " taught the methods inside it to."),
+    "an opener handed over by an unpacking":
+        (TEXT,
+         ("fopen, ignored = open, None",
+          "",
+          "def helper():",
+          "    return fopen(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the same defect as the refusal owner one commit earlier, on the opener table, and"
+         " reported rather than found by me -- which is what made it worth sweeping the set"
+         " instead of fixing a second instance. The alias walk accepted only a top-level Name"
+         " target, so an unpacked opener was never recognised and the helper was reported only"
+         " because it spells HERE while its caller was dropped."),
+    "an opener handed over plainly":
+        (TEXT,
+         ("fopen = open",
+          "",
+          "def helper():",
+          "    return fopen(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "SUPPORT, green at the parent: pairing the elements off must not have stopped an"
+         " ordinary single binding naming the opener."),
+    "a class alias handed over by an unpacking":
+        (REFUSAL,
+         ("class First:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "Alias, ignored = First, None",
+          "",
+          "class Child(Alias):",
+          "    def answer(self):",
+          "        return self.carrier()"),
+         "answer", True,
+         "the THIRD table with the same shape, and nobody reported this one: it came out of"
+         " asking the question of every _assigned site after the second was handed to me. A"
+         " base named by an unpacked alias resolved to no class, so the inherited carrier was"
+         " never reached and the method reading it went unaccounted for."),
+    "a decorator spelling the text rebinds":
+        (TEXT,
+         ("classmethod = staticmethod",
+          "",
+          "class Holder:",
+          "    @classmethod",
+          "    def helper(cls, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "def consumer(other):",
+          "    return Holder.helper(other)"),
+         "consumer", True,
+         "reading the decorator's spelling rather than resolving it: with classmethod bound to"
+         " staticmethod the method is handed no receiver, so the one written argument fills cls"
+         " and path really is left at HERE. Marking it a bound classmethod suppressed a default"
+         " that applies and dropped the consumer. A decorator is evaluated in the scope around"
+         " the def, so the spelling is trusted only where nothing in that chain takes the name."),
+    "a decorator spelling nothing rebinds":
+        (TEXT,
+         ("class Holder:",
+          "    @classmethod",
+          "    def helper(cls, path=HERE):",
+          "        return path.read_text()",
+          "",
+          "def consumer(other):",
+          "    return Holder.helper(other)"),
+         "consumer", False,
+         "SUPPORT, green at the parent, and the pair that stops the fix above from refusing"
+         " every decorator: with the name untaken the word means its builtin, the receiver is"
+         " handed over, and the written argument really does fill path."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -5005,49 +5100,49 @@ def _class_aliases(tree):
             here = named.setdefault(scope, {})
             held = ever.setdefault(scope, {})
             for node in body:
-                binding = _assigned(node)
-                if binding is None:
-                    continue
-                targets, value = binding
-                # Every name the value may hand through, so Alias = First if flag else Second
-                # is read as the two bindings it is. Arms that agree resolve; arms that name
-                # different classes make the alias undecidable by the rule below, which is the
-                # honest answer rather than whichever arm was written first.
-                spellings_here = [source.id for source in _passed_through(value)]
-                if not spellings_here:
-                    spellings_here = [(_dotted(value) or "").rpartition(".")[2]]
-                for spelling, target in [(one, target) for one in spellings_here
-                                         for target in targets]:
-                    named_key = _class_named(by_spelling, spelling, scope)
-                    reached = (named_key if named_key in classes
-                               else here.get(spelling)
-                               or named.get(MODULE_LEVEL, {}).get(spelling))
-                    bound = _dotted(target)
-                    if not bound:
-                        continue
-                    seen = held.setdefault(bound, set())
-                    if len(held.get(spelling, ())) > 1:
-                        # An alias OF an undecidable name is undecidable too. Asked before the
-                        # value is resolved, because an undecidable name resolves to nothing and
-                        # would otherwise leave whichever pass ran first standing -- which makes
-                        # the answer depend on the order these bodies are walked.
-                        if not seen >= held[spelling]:
-                            seen |= held[spelling]
-                            growing = True
-                        here.pop(bound, None)
-                        continue
-                    if not reached:
-                        continue
-                    if reached in seen:
-                        continue
-                    seen.add(reached)
-                    growing = True
-                    if len(seen) == 1:
-                        here[bound] = reached
-                    else:
-                        # Undecidable rather than last-seen, and it stays undecidable, which is
-                        # what keeps the measure growing instead of oscillating.
-                        here.pop(bound, None)
+                # Pair by pair: Alias, ignored = First, None names the class with ONE of them,
+                # and reading the statement's whole value paired the class with both or with
+                # neither. The third table handed this after the opener and the refusal owner,
+                # which is why the sweep below asks it of every one of them.
+                for target, value in _bindings(node):
+                    # Every name the value may hand through, so Alias = First if flag else
+                    # Second is read as the two bindings it is. Arms that agree resolve; arms
+                    # that name different classes make the alias undecidable by the rule below,
+                    # which is the honest answer rather than whichever arm was written first.
+                    spellings_here = [source.id for source in _passed_through(value)]
+                    if not spellings_here:
+                        spellings_here = [(_dotted(value) or "").rpartition(".")[2]]
+                    for spelling in spellings_here:
+                        named_key = _class_named(by_spelling, spelling, scope)
+                        reached = (named_key if named_key in classes
+                                   else here.get(spelling)
+                                   or named.get(MODULE_LEVEL, {}).get(spelling))
+                        bound = _dotted(target)
+                        if not bound:
+                            continue
+                        seen = held.setdefault(bound, set())
+                        if len(held.get(spelling, ())) > 1:
+                            # An alias OF an undecidable name is undecidable too. Asked before the
+                            # value is resolved, because an undecidable name resolves to nothing and
+                            # would otherwise leave whichever pass ran first standing -- which makes
+                            # the answer depend on the order these bodies are walked.
+                            if not seen >= held[spelling]:
+                                seen |= held[spelling]
+                                growing = True
+                            here.pop(bound, None)
+                            continue
+                        if not reached:
+                            continue
+                        if reached in seen:
+                            continue
+                        seen.add(reached)
+                        growing = True
+                        if len(seen) == 1:
+                            here[bound] = reached
+                        else:
+                            # Undecidable rather than last-seen, and it stays undecidable, which is
+                            # what keeps the measure growing instead of oscillating.
+                            here.pop(bound, None)
     return named
 
 
@@ -5301,6 +5396,20 @@ def _default_applies(tree, places):
                 return False
             reach.pop()
 
+    def taken_anywhere(name, scope):
+        """Whether anything in this scope chain binds the name, innermost first.
+
+        Asked of a decorator spelling: classmethod = staticmethod makes @classmethod hand no
+        receiver over, so the word cannot be read as its builtin once the text takes the name.
+        """
+        reach = [] if scope == MODULE_LEVEL else scope.split(".")
+        while True:
+            if name in bound_here.get(".".join(reach) if reach else MODULE_LEVEL, set()):
+                return True
+            if not reach:
+                return False
+            reach.pop()
+
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
@@ -5317,7 +5426,13 @@ def _default_applies(tree, places):
             # the direction that reports a place rather than dropping one.
             worn = {(_dotted(dressed) or "").rpartition(".")[2]
                     for dressed in getattr(node, "decorator_list", ())}
-            if worn <= {"property", "cached_property", "classmethod", "abstractmethod"}:
+            # A decorator is resolved where it is written before its spelling is read: the
+            # decorators are evaluated in the scope AROUND the def, and a name this text
+            # rebinds there does not mean what it spells. Rebound means unrecognised, which
+            # means no offset -- the direction that names a place rather than dropping one.
+            if (worn <= {"property", "cached_property", "classmethod", "abstractmethod"}
+                    and not any(taken_anywhere(name, at.rpartition(".")[0] or MODULE_LEVEL)
+                                for name in worn)):
                 receives.add(at)
                 if "classmethod" in worn:
                     # A classmethod is bound through the CLASS as well as through an instance,
@@ -7384,20 +7499,18 @@ def _opener_spellings(tree, places):
     while growing:
         growing = False
         for node in ast.walk(tree):
-            binding = _assigned(node)
-            if binding is None:
-                continue
-            targets, value = binding
-            # Through the pass-through vocabulary, because fopen = open if flag else open is
-            # the same rebinding written with a branch. _dotted answers None for every one of
-            # those forms, so reading it alone lost the alias and the handle with it.
-            spelling = _dotted(value)
-            if not (any(source.id in bare for source in _passed_through(value))
-                    or (spelling is not None and spelling in dotted)):
-                continue
             where = places.get(id(node), (MODULE_LEVEL, None))[0]
-            for target in targets:
+            # Pair by pair, because fopen, ignored = open, None hands the opener to ONE of the
+            # names and reading the statement's whole value followed neither.
+            for target, value in _bindings(node):
                 if not isinstance(target, ast.Name):
+                    continue
+                # Through the pass-through vocabulary, because fopen = open if flag else open
+                # is the same rebinding written with a branch. _dotted answers None for every
+                # one of those forms, so reading it alone lost the alias and the handle with it.
+                spelling = _dotted(value)
+                if not (any(source.id in bare for source in _passed_through(value))
+                        or (spelling is not None and spelling in dotted)):
                     continue
                 if target.id not in bare:
                     bare.add(target.id)
@@ -7851,19 +7964,18 @@ def source_text_reached(source):
     # named -- the same rule the opener alias already follows.
     reader_at = {}
     for node in ast.walk(tree):
-        binding = _assigned(node)
-        if binding is None:
-            continue
-        targets, value = binding
-        # Through the pass-through vocabulary as well as the dotted spelling, the same way the
-        # opener alias walk reads its value: reader = ast.parse is dotted, and a name handed
-        # through a branch is not.
-        if not ({(_dotted(value) or "")}
-                | {source.id for source in _passed_through(value)}) & set(hands_source):
-            continue
         at = places.get(id(node), (MODULE_LEVEL, None))[0]
-        for target in targets:
-            if isinstance(target, ast.Name):
+        # Pair by pair, the same reason the opener alias walk beside this one does it: an
+        # unpacking hands the reader to one of the names and the statement's whole value to
+        # neither.
+        for target, value in _bindings(node):
+            if not isinstance(target, ast.Name):
+                continue
+            # Through the pass-through vocabulary as well as the dotted spelling, the same way
+            # the opener alias walk reads its value: reader = ast.parse is dotted, and a name
+            # handed through a branch is not.
+            if ({(_dotted(value) or "")}
+                    | {source.id for source in _passed_through(value)}) & set(hands_source):
                 reader_at.setdefault(at, set()).add(target.id)
 
     def inside(scope, made):
@@ -8550,7 +8662,62 @@ class SevenReadingsTests(unittest.TestCase):
                          "_default_applies builds its own binding map instead of consulting a"
                          " scope-keyed one, so the predicate should not see it. If it does, the"
                          " fourth boundary above has stopped being true and the honest gap this"
-                         " list declares has changed shape")
+        " list declares has changed shape")
+
+    def test_every_statement_reader_here_pairs_an_unpacking_off(self):
+        """Support: coverage over the sites that read a binding statement.
+
+        _assigned answers with a statement's TARGETS and its VALUE, which is the right shape
+        for asking what a statement binds and the wrong one for asking what each name is
+        given. answers, ignored = reading, None hands the module to one name and None to the
+        other, and a site pairing the whole value against every target either taints both or,
+        where it accepts only a top-level Name, sees neither.
+
+        Three sites were handed exactly that, one at a time -- the refusal owner, the opener
+        and the class alias -- so the set is swept rather than the instances. The predicate is
+        read off this file and it is deliberately blunt: ANY use of _assigned has to be
+        declared with the reason the statement shape is right there.
+
+        Blunt because the obvious predicate was not honest. Treating a site as safe when its
+        function also calls _bindings passed both remaining sites for the wrong reason -- these
+        are long functions that call _bindings elsewhere for unrelated work, so the check would
+        have been measuring co-occurrence rather than pairing, and it would have gone on
+        passing while a new _assigned site inside one of them mis-paired.
+
+        COVERAGE, not correctness. That a use is declared says nothing about the pairing being
+        right where _bindings IS used; the paired cases in RESOLVES_LIKE_PYTHON hold that, and
+        their expectations come from Python rather than from this reader.
+        """
+        source = HERE.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        owner = {}
+        for top in parsed.body:
+            if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                for inner in ast.walk(top):
+                    owner[id(inner)] = top.name
+        reads_statements = {}
+        for node in ast.walk(parsed):
+            named = getattr(getattr(node, "func", None), "id", None)
+            here = owner.get(id(node), MODULE_LEVEL)
+            if named == "_assigned":
+                reads_statements.setdefault(here, []).append(node.lineno)
+        self.assertTrue(reads_statements,
+                        "no statement reader was recognised at all, so this check would pass by"
+                        " sweeping nothing rather than by finding nothing")
+        # The comparison itself, shown rather than asserted away.
+        without = sorted(reads_statements)
+        undeclared = sorted(set(without) - set(READS_A_STATEMENT_WITHOUT_PAIRING_IT))
+        self.assertEqual(undeclared, [],
+                         "a site reads a binding statement without pairing an unpacking off,"
+                         " and nobody wrote down why that is safe there: "
+                         + json.dumps({name: reads_statements[name] for name in undeclared}))
+        stale = sorted(set(READS_A_STATEMENT_WITHOUT_PAIRING_IT) - set(without))
+        self.assertEqual(stale, [],
+                         "declared as reading a statement without pairing it, but it pairs now,"
+                         " so delete the entry: " + json.dumps(stale))
+        for name, why in sorted(READS_A_STATEMENT_WITHOUT_PAIRING_IT.items()):
+            with self.subTest(name):
+                self.assertTrue(why.strip(), name + " is declared without a reason")
 
     def test_every_placement_site_here_honours_a_declared_owner(self):
         """Support: coverage over the sites that decide WHERE a binding lives.
@@ -9621,6 +9788,7 @@ HANDED = {
     "test_a_decorator_alias_resolves_in_the_scope_that_imported_it": NOTHING,
     "test_no_class_body_binding_shadows_without_asking_whether_it_happened": NOTHING,
     "test_every_placement_site_here_honours_a_declared_owner": NOTHING,
+    "test_every_statement_reader_here_pairs_an_unpacking_off": NOTHING,
     "test_every_owner_deciding_site_here_measures_how_near_the_binding_is": NOTHING,
     "_written_in": NOTHING,
     "_class_named": NOTHING,
