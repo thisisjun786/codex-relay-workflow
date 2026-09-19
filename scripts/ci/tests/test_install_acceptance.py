@@ -1418,9 +1418,18 @@ def _places(tree):
                                     ast.GeneratorExp)):
                 # A walrus inside a comprehension binds in the scope AROUND it, which is the
                 # one special case Python carved out of comprehension scoping.
-                for inner in ast.walk(child):
-                    if isinstance(inner, ast.NamedExpr):
-                        found[id(inner)] = (".".join(chain) if chain else MODULE_LEVEL, klass)
+                def walruses(node):
+                    """The walruses this comprehension owns, not the ones a lambda in it does."""
+                    for inner in ast.iter_child_nodes(node):
+                        if isinstance(inner, (ast.Lambda, ast.FunctionDef,
+                                              ast.AsyncFunctionDef)):
+                            continue
+                        if isinstance(inner, ast.NamedExpr):
+                            yield inner
+                        yield from walruses(inner)
+
+                for inner in walruses(child):
+                    found[id(inner)] = (".".join(chain) if chain else MODULE_LEVEL, klass)
                 # A comprehension has a scope of its own on Python 3: its target shadows an
                 # outer name INSIDE it and not after it. Its first iterable is the exception,
                 # evaluated outside before that scope exists.
@@ -1494,15 +1503,16 @@ def _bindings(node):
         answer = node.value
     else:
         return []
-    paired = []
-    for holder in holders:
+    def pair(holder, value):
         if (isinstance(holder, (ast.Tuple, ast.List))
-                and isinstance(answer, (ast.Tuple, ast.List))
-                and len(holder.elts) == len(answer.elts)):
-            paired += list(zip(holder.elts, answer.elts))
-        else:
-            paired.append((holder, answer))
-    return paired
+                and isinstance(value, (ast.Tuple, ast.List))
+                and len(holder.elts) == len(value.elts)):
+            # Nested, because other, (alias,) = str, (carrier,) unpacks twice.
+            return [entry for inner, given in zip(holder.elts, value.elts)
+                    for entry in pair(inner, given)]
+        return [(holder, value)]
+
+    return [entry for holder in holders for entry in pair(holder, answer)]
 
 
 def _reachable(expression, spelled, klass, bound):
@@ -1552,13 +1562,11 @@ def _held_by_class(tree, spelled, over=None):
     while spreading:
         spreading = False
         for node in ast.walk(tree):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
-                continue
             function, klass = places.get(id(node), (MODULE_LEVEL, None))
             local = bound.setdefault(function, set())
-            if not _reachable(node.value, spelled, klass, local):
-                continue
-            for named in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+            for named, value in _bindings(node):
+                if not _reachable(value, spelled, klass, local):
+                    continue
                 if isinstance(named, ast.Name) and named.id not in local:
                     local.add(named.id)
                     spreading = True
@@ -1651,6 +1659,15 @@ def _hands_on(tree, spelled):
             if isinstance(target, ast.Name):
                 methods[(klass, target.id)] = places.get(id(node.value),
                                                          (MODULE_LEVEL, None))[0]
+
+    class_bound = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in node.body:
+            for target, _value in _bindings(statement):
+                if isinstance(target, ast.Name):
+                    class_bound.setdefault(node.name, set()).add(target.id)
 
     def instance(function):
         """How this scope spells its instance: whatever the first parameter is called.
@@ -1777,6 +1794,12 @@ def _hands_on(tree, spelled):
         the run, but that the name belongs to the parameter and not to a module-level function of
         the same name is a fact about the text, so the search stops there.
         """
+        # A class body executes with the names it has already bound, so a default or a
+        # decorator written there reaches a method defined above it, and an ordinary binding
+        # made there shadows the module the same way a local one does.
+        if klass is not None and named in class_bound.get(klass, ()):
+            reached = methods.get((klass, named))
+            return {reached} if reached else set()
         if named in declared_global.get(caller, ()):
             # global says the module, not the next scope out that happens to share the name,
             # and what the module holds under it may be an alias rather than a def.
@@ -1795,10 +1818,7 @@ def _hands_on(tree, spelled):
                 return {candidate}
             if named in taken_names.get(scope, ()):
                 return set()
-        # A class body executes with the names it has already bound, so a default or a
-        # decorator written there reaches a method defined above it.
-        reached = methods.get((klass, named))
-        return {reached} if reached else set()
+        return set()
 
     # A name bound to a function, kept for the whole scope that binds it and visible to the
     # scopes inside it, the way a closure sees one. Chains are followed to a fixpoint, because
@@ -1857,15 +1877,7 @@ def _hands_on(tree, spelled):
             # method, a lambda, a conditional, a named expression, or one wrapped in another.
             # Unpacking is paired off first, so alias, other = carrier, str gives each name
             # what it is actually given rather than the union of both.
-            paired = []
-            for holder in holders:
-                if (isinstance(holder, (ast.Tuple, ast.List))
-                        and isinstance(answer, (ast.Tuple, ast.List))
-                        and len(holder.elts) == len(answer.elts)):
-                    paired += list(zip(holder.elts, answer.elts))
-                else:
-                    paired.append((holder, answer))
-            for named, value in paired:
+            for named, value in _bindings(node):
                 targets = names(value)
                 if not targets or not isinstance(named, ast.Name):
                     continue
