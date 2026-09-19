@@ -1229,6 +1229,18 @@ RESOLVES_LIKE_PYTHON = {
          "Alias = Holder binds the class itself, so the call through it is the same call. A"
          " qualifier a parameter shadows is still not a class, which is the case beside this"
          " one and the reason the two are resolved in that order."),
+    "a file object opened onto a name of its own":
+        (TEXT,
+         ("def helper():",
+          "    stream = open(HERE)",
+          "    return stream.read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the same read as open(HERE).read(), written in two steps. The helper was accounted"
+         " either way because HERE is named in it; what the two-step form lost is the onward"
+         " step, and with it every caller downstream."),
 }
 
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
@@ -3101,6 +3113,10 @@ def _handle_names(tree, handles):
     """Every name that reaches a source file, the module's own and the local ones bound to them.
 
     path = HERE is an ordinary line, and a read taken on path reaches the same file.
+
+    stream = open(HERE) is the same line in two steps: the name holds the file the handle named,
+    and a read taken on it reaches that file. The call is recognised rather than followed, since
+    what open answers with is the file it was given and that is the whole of what is needed here.
     """
     known, growing = set(handles), True
     while growing:
@@ -3113,6 +3129,9 @@ def _handle_names(tree, handles):
                 return reaches(expression.value)
             if isinstance(expression, ast.BoolOp):
                 return any(reaches(value) for value in expression.values)
+            if isinstance(expression, ast.Call) and _dotted(expression.func) == "open":
+                return any(reaches(given) for given in list(expression.args)
+                           + [given.value for given in expression.keywords])
             return _dotted(expression) in known
 
         for node in ast.walk(tree):
