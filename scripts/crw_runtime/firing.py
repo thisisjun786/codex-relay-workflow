@@ -315,7 +315,7 @@ def _policy_records_only_faults(observed):
     # registration's own, so an unjudged peer neither creates nor removes the ambiguity.
     faults = [entry for entry in (observed.get("namedJournals") or [])
               if entry.get("usable") and entry.get("faultsOnly")
-              and not (entry.get("records") or 0)]
+              and entry.get("recordsAnswer") == COUNTED and not entry.get("records")]
     if faults:
         return NOT_RULED_OUT, ("these settings record only invocations that faulted ("
                                + _named(faults) + "), so an empty journal is equally what a"

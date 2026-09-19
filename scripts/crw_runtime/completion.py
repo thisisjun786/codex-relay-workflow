@@ -1376,7 +1376,10 @@ def _journal_cell(config):
         return _cell(reading.ABSENT, "the journal directory does not exist, so this hook has"
                                      " recorded no invocation into it",
                      journalRoot=str(directory), journalPolicy=policy)
-    except OSError as error:
+    except (OSError, ValueError) as error:
+        # ValueError as well: complaints() accepts any absolute string, and one carrying a
+        # NUL cannot name a path at all, so scandir raises it. A settings document that
+        # reads back fine must still produce a journal reading rather than a traceback.
         return _cell(reading.ACCESS_ERROR, "the journal could not be listed: " + str(error),
                      journalRoot=str(directory), journalPolicy=policy)
     days = [day for day in days if JOURNAL_DAY.match(day)]

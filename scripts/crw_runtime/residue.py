@@ -97,8 +97,15 @@ def _same_directory(one, other):
     """
     one, other = str(one), str(other)
     try:
-        if os.path.normpath(one) != os.path.normpath(other):
-            return False
+        if os.pardir in (one.split(os.sep) + other.split(os.sep)):
+            # A spelling carrying ".." is the unsound case: the kernel follows a symlink
+            # before applying it, so lexical and resolved forms must BOTH agree before
+            # these are called one directory.
+            return (os.path.normpath(one) == os.path.normpath(other)
+                    and os.path.realpath(one) == os.path.realpath(other))
+        # No "..", so resolved identity is the whole question, and it is the right one:
+        # --dest may be a symlink alias of the directory the recorded pointer sits in,
+        # and those spellings differ lexically while naming one directory.
         # realpath answers best-effort and does not raise on a loop, but a NUL-bearing
         # string cannot name a path at all and raises ValueError from either of these.
         return os.path.realpath(one) == os.path.realpath(other)

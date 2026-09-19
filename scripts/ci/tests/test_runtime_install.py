@@ -9217,6 +9217,20 @@ class ResidueNeverGuessesAboutAPointer(unittest.TestCase):
         self.assertIn("under the lock this reading did not hold", guidance)
         self.assertIn("does NOT recommend removing the link by hand", guidance)
 
+    def test_a_symlink_alias_of_the_destination_is_the_destination(self):
+        """--dest may be a symlink alias of the directory the recorded pointer sits in. Those
+        spellings differ lexically while naming one directory, and refusing them omitted an
+        owned dangling pointer from the cleanup list."""
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            pointer.place(host.pointer_path, host.destination / "env-that-went-away")
+            alias = Path(temporary) / "alias"
+            alias.symlink_to(host.destination)
+            found = _diagnose(host, dest=str(alias))
+        self.assertEqual(found["residue"]["pointer"]["finding"], residue.DANGLING_POINTER,
+                         "a symlink alias of this very destination read as another one")
+        self.assertIn(str(host.pointer_path), found["residualPaths"])
+
     def test_a_pointer_under_another_destination_is_not_in_this_one_s_cleanup_list(self):
         """Diagnosis prefers the RECORDED pointer when classifying a runtime, and that pointer
         can sit under a different destination from the one --dest named. Surveying it here

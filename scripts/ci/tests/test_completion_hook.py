@@ -2441,6 +2441,41 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          [one["cause"] for one in cell.get("candidates") or []],
                          "the policy is every_invocation, which the settings settle")
 
+    def test_a_journal_that_cannot_be_listed_is_not_an_empty_one_under_faults_only(self):
+        """An unknown count is not zero. Read as zero, the faults-only candidate went on the
+        table without an empty journal ever having been observed."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            # A regular file where the journal root should be: scandir raises NotADirectoryError,
+            # so the count is unestablished rather than zero, and this case is about that and
+            # not about any other way a listing can fail.
+            blocked = Path(temporary) / "not-a-journal"
+            blocked.write_text("", encoding="utf-8")
+            amend_settings(temporary, journalPolicy=completion.FAULTS_ONLY,
+                           journalRoot=str(blocked))
+            cell = why_no_record(temporary)
+        self.assertNotIn(firing.POLICY_RECORDS_ONLY_FAULTS,
+                         [one["cause"] for one in cell.get("candidates") or []],
+                         "a journal nobody could list was counted as an empty one")
+
+    def test_a_journal_path_that_cannot_name_a_file_is_a_reading_not_a_crash(self):
+        """complaints() accepts any absolute string, and one carrying a NUL cannot name a path,
+        so scandir raises ValueError rather than OSError. The settings read back fine, so a
+        journal reading is what belongs here."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            amend_settings(temporary, journalRoot=str(Path(temporary) / "journal") + "\x00bad")
+            try:
+                found = completion.status(codex_home=temporary, environ={})
+            except Exception as error:
+                found = {"raised": type(error).__name__ + ": " + str(error)}
+        self.assertNotIn("raised", found,
+                         "a journal path that cannot name a file raised out of status instead"
+                         " of answering: " + str(found.get("raised")))
+        self.assertEqual(found["firingJournal"]["value"], reading.ACCESS_ERROR)
+
 
 class TheCausePartitionItself(unittest.TestCase):
     """Support for the cases above, not evidence of the defect. These check that the partition
