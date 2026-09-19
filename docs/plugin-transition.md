@@ -77,6 +77,13 @@ after it. That last one is a weaker guarantee than the other two and is named as
 directory has no lock, so a link arriving during the removals is reported rather than prevented,
 and the run refuses instead of reporting success over it.
 
+Step 7 removes nothing until every link it would remove has been proved, and then proves each one
+again in the moment before it is unlinked. Neither pass is a lock. The first stops a refusal from
+leaving half a manual installation behind; the second stops a link replaced during the removals
+from being deleted as though it were still ours, and narrows that window to the gap between a
+read and the call after it. Closing it entirely needs a lock that `scripts/install.py` takes too,
+which is a change to a tool other flows use and is not made here.
+
 One limitation of the locks themselves, stated rather than papered over. The ownership lock is
 `hostrecord.Locked`, because that is the lock `register-mcp` takes and a lock only excludes those
 who take the same one. `Locked` treats a lock file older than 300 seconds as stale and removes it,

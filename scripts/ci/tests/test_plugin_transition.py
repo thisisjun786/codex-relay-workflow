@@ -1873,6 +1873,38 @@ class TheFindingsFromReview(TransitionCase):
         self.assertIn("crw-completion-hook", refusal["detail"])
         self.assertEqual((host.hooks_document(), host.settings()), before)
 
+    def test_a_link_replaced_during_the_removals_is_not_unlinked(self):
+        """Nothing locks this directory, so each path is proved again immediately before it goes."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        victim = host.home / "skills" / "crw-run"
+        seen = {}
+        original = inventory.checkout_of
+
+        def counting(path):
+            """Replace a later link the moment the removal pass starts on an earlier one."""
+            key = str(path)
+            seen[key] = seen.get(key, 0) + 1
+            # Three readers ask about each path in turn: the fresh inventory, the proof pass, and
+            # the last look before the unlink. The third is the one this case has to land in.
+            if seen[key] == 3 and victim.is_symlink() and key != str(victim):
+                victim.unlink()
+                victim.symlink_to(host.root)
+            return original(path)
+
+        inventory.checkout_of = counting
+        self.addCleanup(setattr, inventory, "checkout_of", original)
+        answer = steps.skill_unlink(snapshot, {}, apply=True)
+        self.assertEqual(answer["outcome"], "refused", json.dumps(answer)[:500])
+        self.assertIn("was replaced while these links were being removed", answer["detail"])
+        self.assertNotIn(str(victim), answer["removed"])
+        self.assertTrue(victim.is_symlink())
+        self.assertEqual(victim.resolve(), host.root.resolve())
+
     def test_an_idle_relay_store_is_not_work_in_flight(self):
         """The relay is never asked: its snapshot is nonempty when idle, and asking can create it."""
         host = self.ready()

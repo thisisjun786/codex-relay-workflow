@@ -952,6 +952,27 @@ def plugin_refusals(host):
         found.append("the installed package no longer carries " + ", ".join(missing))
     return found
 
+
+def _still_ours(item):
+    """Whether this path is, right now, the CRW-owned link ownership was established on.
+
+    One reader for two callers inside the step: the proof pass that decides whether anything may
+    be removed at all, and the last look each path gets immediately before its own unlink. Both
+    ask the same question of the same three things -- it is a symlink, it resolves into a CRW
+    checkout carrying a SKILL.md, and it still resolves to the target ownership was decided on.
+    """
+    path = Path(item["path"])
+    if not path.is_symlink():
+        return False
+    if inventory.checkout_of(path) is None:
+        return False
+    try:
+        settled = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return (settled / "SKILL.md").is_file() and str(settled) == item.get("target")
+
+
 def skill_unlink(host, options, *, apply=False):
     owned = host["skills"]["crwOwned"]
     if not apply:
@@ -1001,9 +1022,7 @@ def skill_unlink(host, options, *, apply=False):
         path = Path(item["path"])
         # Re-established here rather than trusted from the inventory: a link replaced since then is
         # somebody else's, and "is a symlink" is not the question ownership was decided on.
-        owner = inventory.checkout_of(path) if path.is_symlink() else None
-        if owner is None or not (path.resolve() / "SKILL.md").is_file() \
-                or str(path.resolve()) != item.get("target"):
+        if not _still_ours(item):
             left.append(str(path))
     if left:
         return _answer("skill unlink", REFUSED,
@@ -1014,6 +1033,18 @@ def skill_unlink(host, options, *, apply=False):
     # unlinking in one pass left the links before the mismatch already gone and the ones after it
     # in place, so a refusal reported a manual installation that was in fact half dismantled.
     for item in candidates:
+        # Proved once more immediately before its own unlink. Nothing locks this directory, so a
+        # writer can replace a path between the proof pass and this one, and unlinking then would
+        # delete somebody else's registration at a name we had proved was ours. The re-check does
+        # not close that window -- only a lock both writers take could -- but it narrows it to the
+        # gap between this read and the call below, and it stops rather than carrying on.
+        if not _still_ours(item):
+            return _answer("skill unlink", REFUSED,
+                           str(item["path"]) + " was replaced while these links were being"
+                           " removed, so it was left where it is and the removals stopped there."
+                           " Rerun this transition to decide against the directory as it stands",
+                           removed=removed, applied=bool(removed), wrote=bool(removed),
+                           paths=[item["path"]])
         Path(item["path"]).unlink()
         removed.append(item["path"])
     # Read once more, for the same reason the hook file is: what is in reach is not preventing a
