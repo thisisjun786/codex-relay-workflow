@@ -3791,6 +3791,28 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
                          "the recorded entry point is gone and the answer never probed it,"
                          " because an unrelated field of the same document failed validation")
 
+    def test_one_readable_launcher_half_is_probed_without_the_other(self):
+        """Two independent readings, joined by an 'and' that hid one of them.
+
+        The raw-field probe required BOTH the entry point and the interpreter to be usable
+        absolute paths. Where the settings record a deleted entry point and no interpreter at
+        all -- or a relative one -- the readable half was dropped with the unreadable one, so a
+        launcher this host cannot start went unreported because of a fact about a different
+        field. The cause reads the halves separately, and so does this.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = self._host(temporary)
+            gone = host / "an-entry-point-that-was-deleted.py"
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterEntryPoint=str(gone),
+                     adapterInterpreter="a-relative-interpreter",
+                     mode="not-a-mode-this-reader-knows")
+            cell = why_no_record(temporary)
+        self.assertEqual(self._standings(cell).get(firing.ADAPTER_CANNOT_RUN),
+                         firing.ESTABLISHED,
+                         "a recorded entry point that is gone went unprobed because the"
+                         " interpreter beside it was not an absolute path")
+
     def test_a_user_owned_host_with_nothing_named_still_evaluates_nothing(self):
         """SUPPORT, not evidence. The direction the requirement change must not break: where no
         settings file was read for the question to be about, the policy causes answer

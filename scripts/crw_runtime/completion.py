@@ -1725,6 +1725,19 @@ def journals_named(registrations, already_read=None):
     return found
 
 
+def _stated_path_cell(named, what, read):
+    """Read one launcher path a rejected document still states, or answer that it stated none.
+
+    Only an absolute spelling, because a relative one is resolved by the host against something
+    this command is not running under, and reading the path THIS process would resolve would
+    report an unrelated file as the registration's own.
+    """
+    if not isinstance(named, str) or not os.path.isabs(os.path.expanduser(named)):
+        return NOT_READ
+    found = read(named, what)
+    return NOT_READ if found is None else found["value"]
+
+
 def _one_source_each(spellings):
     """Collapse the spellings the kernel says name one file, holding each while it is a key.
 
@@ -2245,20 +2258,24 @@ def status(codex_home=None, environ=None, event=EVENT):
         # entirely: a deleted entry point then hid behind an unrelated complaint, on the one
         # host whose repair this probe exists to name. Read here only because the branch above
         # had no reading to carry, and only for paths the document states absolutely.
-        named_entry = recorded_launcher.get("adapterEntryPoint")
-        named_interpreter = recorded_launcher.get("adapterInterpreter")
-        if (isinstance(named_entry, str) and os.path.isabs(os.path.expanduser(named_entry))
-                and isinstance(named_interpreter, str)
-                and os.path.isabs(os.path.expanduser(named_interpreter))):
-            probed = presence(named_entry, "the recorded adapter entry point")["value"]
-            probed_interpreter = (_recorded_program_cell(named_interpreter,
-                                                         "the recorded adapter interpreter")
-                                  or _cell(NOT_READ, "no interpreter was recorded"))["value"]
+        #
+        # Each half on its own. Requiring BOTH to be usable was a conjunctive guard over two
+        # independent readings: an entry point this host cannot start stayed unreported because
+        # the interpreter beside it was omitted or relative, which is the shape of hiding a
+        # repair behind an unrelated fact. The cause reads the halves separately too -- one
+        # half that cannot start establishes it whatever the other says.
+        if probed == NOT_READ:
+            probed = _stated_path_cell(recorded_launcher.get("adapterEntryPoint"),
+                                       "the recorded adapter entry point", presence)
+        if probed_interpreter == NOT_READ:
+            probed_interpreter = _stated_path_cell(
+                recorded_launcher.get("adapterInterpreter"),
+                "the recorded adapter interpreter", _recorded_program_cell)
     launcher_probe = ([{"registration": "the launcher these settings record",
                         "adapter": probed,
                         "interpreter": probed_interpreter}]
                       if registration_elsewhere
-                      and NOT_READ not in (probed, probed_interpreter)
+                      and not (probed == NOT_READ and probed_interpreter == NOT_READ)
                       else [])
     absence = firing.decide({
         "registrationReadable": ours is not None,
