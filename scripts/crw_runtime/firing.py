@@ -159,12 +159,14 @@ def _adapter_cannot_run(observed):
     """
     probes = list(observed.get("startProbes") or [])
     if not probes:
-        # A record must NOT answer here, and ruling this cause out from one was wrong: a
-        # journal entry says the host started the adapter ONCE, and this cause asks whether it
-        # can start NOW. A plugin-owned installation whose recorded entry point or interpreter
-        # has since been deleted kept an old record, and the answer reported records_found
-        # while the launcher repair sat unnamed in the payload beside it. The startability of
-        # a launcher these settings record is read as a probe of its own instead.
+        # Nothing named a command. Where the hook file IS where this host's registration
+        # lives, that is not uncertainty about startability: there is no command to start and
+        # not_registered owns the host, so this question was never reachable. Scoping it here
+        # rather than as a prerequisite is what lets the plugin-scoped probe below be asked at
+        # all, on a host where nobody can rule not_registered out.
+        if observed.get("registrationReadHere", True):
+            return NOT_EVALUATED, ("no registration named a command here for this question to"
+                                   " be about")
         return NOT_RULED_OUT, "no probe of a registered command was made"
     blocked = [probe for probe in probes if _halves(probe) & set(CANNOT_START)]
     unjudged = [probe for probe in probes
@@ -510,7 +512,7 @@ CAUSE_RULES = {
                       "unregisteredRecords"), _not_registered),
     RECORD_PATH_UNIDENTIFIED: (("relativeSettings", "silentRegistrations"),
                                _record_path_unidentified),
-    ADAPTER_CANNOT_RUN: (("startProbes",), _adapter_cannot_run),
+    ADAPTER_CANNOT_RUN: (("startProbes", "registrationReadHere"), _adapter_cannot_run),
     SETTINGS_ABSENT: (("namedJournals", "settledSettings", "registrationElsewhere"),
                       _settings_absent),
     SETTINGS_UNUSABLE: (("namedJournals", "settledSettings", "registrationElsewhere"),
@@ -532,7 +534,14 @@ CAUSE_RULES = {
 CAUSE_REQUIRES = {
     NOT_REGISTERED: (),
     RECORD_PATH_UNIDENTIFIED: (NOT_REGISTERED,),
-    ADAPTER_CANNOT_RUN: (NOT_REGISTERED,),
+    # ADAPTER_CANNOT_RUN does not require it either, and for the reason the settings causes
+    # do not: a launcher this command CAN read is a present reading, and waiting for
+    # not_registered to be ruled out hid it on exactly the host that cannot rule it out. A
+    # plugin-owned installation with an empty journal and a deleted entry point reported only
+    # "maybe it is not registered" while adapterEntryPoint read ABSENT beside it. The rule
+    # answers NOT_EVALUATED by itself where the hook file is where the registration lives and
+    # named no command, so a user-owned host reads exactly as before.
+    ADAPTER_CANNOT_RUN: (),
     # Nor do they require RECORD_PATH_UNIDENTIFIED. That cause is established when ANY
     # registration spells its settings relatively or names none, and as a prerequisite it then
     # blanked out every downstream cause for the registrations whose paths ARE known --

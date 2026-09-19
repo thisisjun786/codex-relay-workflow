@@ -2017,6 +2017,15 @@ def status(codex_home=None, environ=None, event=EVENT):
     registration_elsewhere = (found is not None and found.usable
                               and isinstance(found.value, dict)
                               and found.value.get("owner") == OWNER_PLUGIN)
+    # The launcher those settings record, as a probe of what is there NOW. Both halves are
+    # already read for the cells this payload publishes, so this carries a present reading
+    # rather than re-deriving one -- and an old journal record can never stand in for it.
+    launcher_probe = ([{"registration": "the launcher these settings record",
+                        "adapter": adapter["value"],
+                        "interpreter": adapter_interpreter["value"]}]
+                      if registration_elsewhere
+                      and NOT_READ not in (adapter["value"], adapter_interpreter["value"])
+                      else [])
     absence = firing.decide({
         "registrationReadable": ours is not None,
         "adapterRegistrations": len(ours or []),
@@ -2045,10 +2054,13 @@ def status(codex_home=None, environ=None, event=EVENT):
         # for the cells beside this. Carried here, an entry point or interpreter deleted since
         # the last invocation is named as the repair, instead of an old journal record standing
         # in for a reading of what is there now.
-        "startProbes": (start_probes if start_probes or not registration_elsewhere else
-                        [{"registration": "the launcher these settings record",
-                          "adapter": adapter["value"],
-                          "interpreter": adapter_interpreter["value"]}]),
+        # APPENDED, not substituted. Plugin-owned settings can sit beside a hook-file
+        # registration on a hand-edited host, and dropping the recorded launcher whenever the
+        # hook file named anything let the other registration's records hide its failure.
+        # Supplied only where those settings actually record a launcher: where they record
+        # none, there is nothing present to read and inventing an unjudged probe would put
+        # uncertainty on the table that no reading pointed at.
+        "startProbes": start_probes + launcher_probe,
         "unregisteredRecords": unregistered_records,
     })
 

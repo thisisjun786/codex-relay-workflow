@@ -3092,6 +3092,60 @@ class OneBrokenRegistrationNeverAnswersForItsPeer(unittest.TestCase):
                          "an old record answered a question about what is there now, and the"
                          " launcher repair went unnamed beside a cell that reads ABSENT")
 
+    def test_a_deleted_plugin_launcher_is_named_without_an_old_record(self):
+        """The same repair, and no record to expose it.
+
+        Whether the launcher starts is a present reading, and it was reachable only when an old
+        record happened to exist to rule not_registered out. With an empty journal the
+        prerequisite held the probe unasked, so the answer carried "maybe it is not registered"
+        while adapterEntryPoint read ABSENT beside it -- the same repair, hidden by whether the
+        host had ever fired.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            adapter = Path(temporary) / "the-recorded-adapter-entry-point.py"
+            adapter.write_text("", encoding="utf-8")
+            settings(temporary, owner=completion.OWNER_PLUGIN,
+                     adapterInterpreter=sys.executable, adapterEntryPoint=str(adapter))
+            adapter.unlink()
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertEqual(found["firingJournal"]["value"], reading.ABSENT,
+                         "the fixture recorded something, so this is the case the record"
+                         " already covers rather than the one it hides")
+        self.assertEqual(found["adapterEntryPoint"]["value"], reading.ABSENT,
+                         "the fixture did not delete the recorded launcher")
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertEqual(standings.get(firing.ADAPTER_CANNOT_RUN), firing.ESTABLISHED,
+                         "a launcher this command read as ABSENT was left unasked because"
+                         " nobody could rule out a registration it never reads")
+
+    def test_a_recorded_launcher_is_probed_beside_a_hook_file_registration(self):
+        """Both commands run on a host that has both. Supplying the recorded launcher only
+        when the hook file named nothing let the other registration's healthy probe answer for
+        a plugin launcher that is gone."""
+        with tempfile.TemporaryDirectory() as temporary:
+            self._host(temporary)
+            register(temporary)
+            adapter = Path(temporary) / "the-recorded-adapter-entry-point.py"
+            adapter.write_text("", encoding="utf-8")
+            amend_settings(temporary, owner=completion.OWNER_PLUGIN,
+                           adapterInterpreter=sys.executable, adapterEntryPoint=str(adapter))
+            adapter.unlink()
+            found = completion.status(codex_home=temporary, environ={})
+        self.assertTrue(found["configuration"]["namedSettings"],
+                        "the fixture left no hook-file registration, so nothing here could"
+                        " have hidden the launcher")
+        cell = found["firingRecordAbsence"]
+        standings = {one["cause"]: one["standing"]
+                     for group in ("candidates", "ruledOut", "notEvaluated")
+                     for one in (cell.get(group) or [])}
+        self.assertEqual(standings.get(firing.ADAPTER_CANNOT_RUN), firing.ESTABLISHED,
+                         "a healthy hook-file registration answered for a recorded launcher"
+                         " that is not there")
+
     def test_an_open_that_yielded_no_descriptor_publishes_no_identity(self):
         """An open that failed established nothing about WHICH directory refused it. Taking the
         identity from the spelling afterwards answered about whatever it named by then, so a
