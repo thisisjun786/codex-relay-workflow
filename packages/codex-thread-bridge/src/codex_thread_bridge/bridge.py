@@ -870,11 +870,14 @@ class Bridge:
                 model=execution.model,
                 reasoning_effort=execution.reasoning_effort,
                 runtime_workspace_roots=supplied.get("runtime_workspace_roots"),
-                # Absent means never, which is what this tool has always assumed. Supplied, it is
-                # checked against the policies AskForApproval names before any RPC goes out.
+                # ABSENT means never, which is what this tool has always assumed. Supplied, it
+                # is checked against the policies AskForApproval names before any RPC goes out.
+                # Keyed on presence rather than on the value, so an explicit null is refused
+                # instead of quietly becoming never: a discarded key is indistinguishable from
+                # one never written, which is the whole failure this contract exists to stop.
                 approval_policy=(
                     UNATTENDED_APPROVAL_POLICY
-                    if supplied.get("approval_policy") is None
+                    if "approval_policy" not in supplied
                     else supplied["approval_policy"]
                 ),
             )

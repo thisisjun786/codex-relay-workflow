@@ -219,7 +219,7 @@ reported under `settings`:
 | `reasoning_effort` | `config.model_reasoning_effort`; the protocol has no effort parameter |
 | sandbox kind | The `sandbox` mode string |
 | `expected_sandbox_policy` write roots and flags | `config.sandbox_workspace_write.*`; the mode string cannot carry them |
-| approval policy | Always `never`; this bridge cannot service interactive approvals |
+| `approval_policy` | Nothing. It is DECLARED, never transmitted: the resume carries no `approvalPolicy`, so a thread's own policy is preserved and then judged against the declaration |
 
 The `settings` receipt reports `requested`, the host's `actual` values, which
 fields were `verified`, and a `verification` state. Anything omitted is absent
@@ -357,11 +357,21 @@ matching and do not apply this legacy fallback.
 
 Reading, listing, waiting, and Goal inspection never resume or modify a thread.
 Messaging explicitly calls `thread/resume` without configuration overrides before
-`turn/start`. It refuses a thread observed active or a resumed interactive approval
-policy. Concurrent external clients can still change a thread between those
+`turn/start`. It refuses a thread observed active, and it refuses one whose approval
+policy is not the policy the caller declared in `expected_settings.approval_policy`.
+Omitting that key declares `never`, so an interactive thread is still refused unless the
+caller names its policy. The resume itself carries no `approvalPolicy` at all, so this
+bridge cannot set or change the policy of a thread it did not create; measured on
+codex-cli 0.154.0 in both directions, omitting it reports the thread's own policy and
+does not inherit the `CODEX_HOME` config default.
+Declaring an interactive policy buys delivery, not approval servicing. Unsupported
+client-side tool and approval requests receive an explicit error, so this bridge grants
+none of them, and it holds no route to the thread's own approver: the protocol has no
+method by which a second client hands an approval request to the client that owns the
+thread. Work that needs an approval therefore stays undone rather than becoming
+approved; continue those tasks in the client that owns the thread.
+Concurrent external clients can still change a thread between those
 steps; the App Server remains authoritative. Nothing steers or interrupts on its own.
-Unsupported client-side tool/approval requests receive an explicit
-error; continue those tasks in Desktop.
 
 ## Reaching a thread that is already working
 

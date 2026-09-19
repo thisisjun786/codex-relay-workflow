@@ -673,7 +673,7 @@ async def test_an_idle_thread_on_on_request_accepts_a_declared_delivery(
     created = await create(bridge, "c", str(tmp_path))
     fake.approval_policy = "on-request"
     result = await send(
-        bridge, "m", created["threadId"], "parent report", 
+        bridge, "m", created["threadId"], "parent report",
         expected_settings={"approval_policy": "on-request"},
     )
     assert result["status"] == "accepted", result.get("error")
@@ -886,3 +886,24 @@ async def test_an_accepted_delivery_is_not_reported_as_completed_work(
     observed = await bridge.wait_thread(created["threadId"], result["turnId"], 0)
     assert observed["turn"]["status"] == "inProgress"
     assert observed["timedOut"] is True
+
+
+async def test_an_explicit_null_declaration_is_refused_rather_than_read_as_never(
+    bridge, fake_server, tmp_path
+):
+    """A key that was written must never be read as a key that was not.
+
+    Absent declares never. Present-but-null is a caller mistake, and folding it into never would
+    accept an invalid declaration and let the caller believe it had stated something. That is the
+    same "a discarded key looks identical to a setting never requested" failure the unknown-key
+    refusal above exists to prevent, so it is refused the same way: locally, before any RPC.
+    """
+    fake, _ = fake_server
+    created = await create(bridge, "c", str(tmp_path))
+    settled = len(fake.calls)
+    with pytest.raises(ValueError, match="approval_policy must be one of"):
+        await send(
+            bridge, "null-declaration", created["threadId"], "hello",
+            expected_settings={"approval_policy": None},
+        )
+    assert fake.calls[settled:] == [], "refused before anything reached the host"
