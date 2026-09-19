@@ -716,5 +716,115 @@ class TheHostedReviewFoundTheseOnTheOpenPullRequest(LinkageTestCase):
         answer = self.linkage.counterpart(PARENT, CHILD, quoted_revision=99)
         self.assertIn("stale_revision", answer["findings"])
 
+class TheSecondReviewRoundFoundTheseToo(LinkageTestCase):
+    """Five more, from the same two reviewers, on the head that fixed the first seven."""
+
+    def test_a_scope_key_reused_at_another_level_cannot_forge_a_link(self):
+        """_joining_link compared keys without their kinds.
+
+        A scope identity is its kind AND its key, so an identifier that appears at two levels
+        let a reversed edge match and two unlinked tasks be reported as linked.
+        """
+        shared = "SHARED-KEY"
+        self.linkage.bind_scope(
+            role=linkage.SUPERVISOR, scope_key=shared, endpoint=self.supervisor())
+        self.linkage.bind_scope(
+            role=linkage.CHILD, scope_key=shared, endpoint=Endpoint("01child-far", HOST))
+        answer = self.linkage.counterpart(SUPERVISOR_TASK, "01child-far")
+        self.assertEqual(answer["state"], "unlinked")
+        self.assertIn("unregistered_link", answer["findings"])
+
+    def test_a_directive_naming_the_right_key_at_the_wrong_level_is_refused(self):
+        execution = self.supervise()
+        self.assertRefused(
+            RefusalReason.UNREGISTERED_SCOPE, self.linkage.record_directive,
+            scope_kind=linkage.ISSUE, scope_key=PROJECT, from_task_id=SUPERVISOR_TASK,
+            from_scope_key=INITIATIVE, link_id_value=execution["linkId"], digest="d-kind")
+
+    def test_one_issue_cannot_belong_to_two_projects(self):
+        """An issue belongs to one project whichever assignment asks.
+
+        Two rules now hold this, and which one fires depends on the route. A replacement
+        inherits the project of what it supersedes, so it carries its own scope row and the
+        per-relationship rule answers first - that is what happens here. The
+        cross-relationship rule added alongside it is the backstop for a sibling that is
+        scoped while this one is not, which the per-relationship rule cannot see.
+        """
+        self.supervise()
+        # One parent owning both projects, which the role contract allows. Without it the
+        # attempt is refused a step earlier, for belonging to another parent's project, and
+        # this case would pass without ever reaching the rule it is named for.
+        self.supervise(initiative="INIT-2", project=OTHER_PROJECT,
+                       supervisor=self.supervisor(OTHER_SUPERVISOR),
+                       parent=self.parent(), kind=linkage.REFERENCE)
+        first = self.register()
+        self.linkage.attach_issue(first["relationshipId"], PROJECT)
+        second = self.registry.register(
+            parent=Endpoint(PARENT, HOST, cwd="/parent"),
+            child=Endpoint("01child-two", HOST),
+            issue_key=ISSUE, artifact_roots=[self.root],
+            allowed_recipients=[PARENT], dispatch_request_id="dispatch-rival",
+            dispatch_turn_id="turn-rival", supersedes=first["relationshipId"])
+        refusal = self.assertRefused(
+            RefusalReason.FOREIGN_SCOPE,
+            self.linkage.attach_issue, second["relationshipId"], OTHER_PROJECT)
+        self.assertIn(PROJECT, refusal.detail)
+        edges = self.store.all(
+            "SELECT link_id FROM scope_links WHERE lower_kind = ? AND lower_key = ?"
+            "  AND status IN ('active','paused')",
+            (linkage.ISSUE, ISSUE))
+        self.assertEqual(len(edges), 1, "the issue acquired an edge from a second project")
+
+    def test_a_replacement_inherits_the_project_of_what_it_supersedes(self):
+        """Superseding a scoped assignment without restating the project archived the outgoing
+        binding and edge and attached no successor, so the issue lost its level silently."""
+        self.supervise()
+        original = self.register()
+        self.linkage.attach_issue(original["relationshipId"], PROJECT)
+        replacement = self.registry.register(
+            parent=Endpoint(PARENT, HOST, cwd="/parent"),
+            child=Endpoint("01child-two", HOST), issue_key=ISSUE,
+            artifact_roots=[self.root], allowed_recipients=[PARENT],
+            dispatch_request_id="dispatch-successor", dispatch_turn_id="turn-successor",
+            supersedes=original["relationshipId"],
+        )
+        self.assertEqual(
+            self.linkage.attachment(replacement["relationshipId"])["projectKey"], PROJECT)
+        self.assertEqual(self.linkage.owner(linkage.ISSUE, ISSUE)["taskId"], "01child-two")
+
+    def test_a_second_handover_still_sees_the_projects_unfinished_work(self):
+        """outstanding filtered by the parent task, so after one handover the replacement
+        appeared to owe nothing and a second replacement could take the project free."""
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[rid],
+            evidence="the first handover", actor="test")
+        self.assertEqual(self.linkage.outstanding(PROJECT), [rid])
+        self.assertRefused(
+            RefusalReason.HANDOVER_UNCONFIRMED,
+            self.linkage.handover, role=linkage.PARENT, scope_key=PROJECT,
+            expect_task_id=OTHER_PARENT, endpoint=self.parent("01parent-three"),
+            acknowledged=[], evidence="a second handover owing nothing", actor="test")
+
+    def test_a_parent_handover_moves_the_assignments_it_acknowledged(self):
+        """The binding and the edges moved while relationships kept naming the outgoing task,
+        so delivery and AssignmentView went on answering to the parent that stepped down."""
+        self.supervise()
+        relationship = self.register()
+        rid = relationship["relationshipId"]
+        self.linkage.attach_issue(rid, PROJECT)
+        self.linkage.handover(
+            role=linkage.PARENT, scope_key=PROJECT, expect_task_id=PARENT,
+            endpoint=self.parent(OTHER_PARENT), acknowledged=[rid],
+            evidence="taking on the unfinished issue", actor="test")
+        moved = self.registry.get(rid)
+        self.assertEqual(moved["parent"]["taskId"], OTHER_PARENT)
+        self.assertIn(OTHER_PARENT, moved["authorizedScope"]["allowedRecipients"])
+        self.assertNotIn(PARENT, moved["authorizedScope"]["allowedRecipients"])
+
 if __name__ == "__main__":
     unittest.main()

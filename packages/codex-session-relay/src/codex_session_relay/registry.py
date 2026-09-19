@@ -128,6 +128,15 @@ class Registry:
             )
         rid = relationship_id(parent.task_id, child.task_id, issue_key)
         dispatch_turn_id = validated_turn_id(dispatch_turn_id)
+        if project_key is None and supersedes:
+            # A replacement takes over the SAME issue, so it belongs to the same project. Left
+            # to the caller, superseding a scoped assignment without restating the project
+            # archived the outgoing child binding and the project-to-issue edge and attached
+            # no successor, so the issue silently lost its level.
+            inherited = self.store.one(
+                "SELECT project_key FROM relationship_scope WHERE relationship_id = ?",
+                (supersedes,))
+            project_key = inherited["project_key"] if inherited else None
         existing = self.store.one("SELECT * FROM relationships WHERE relationship_id = ?", (rid,))
         if existing is not None:
             record = self._row_to_record(existing)

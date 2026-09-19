@@ -609,6 +609,25 @@ class Linkage:
                 + repr(recorded["project_key"]) + ", not " + repr(project_key),
                 scope_kind=ISSUE, scope_key=issue_key,
                 incumbent=recorded["project_key"], challenger=project_key)
+        # An ISSUE belongs to one project, whichever relationship asks. Keyed on the
+        # relationship alone, two relationships naming the same issue could attach it to two
+        # projects and leave the issue with an execution edge from each, which an upward walk
+        # then chose between silently.
+        elsewhere = db.execute(
+            "SELECT s.project_key FROM relationship_scope s"
+            "  JOIN relationships r ON r.relationship_id = s.relationship_id"
+            " WHERE r.issue_key = ? AND s.project_key != ? AND s.relationship_id != ?"
+            " LIMIT 1",
+            (issue_key, project_key, rid),
+        ).fetchone()
+        if elsewhere is not None:
+            return None, _Refusal(
+                RefusalReason.FOREIGN_SCOPE,
+                "issue " + repr(issue_key) + " is already scoped to project "
+                + repr(elsewhere["project_key"]) + " through another assignment, so it cannot "
+                "also belong to " + repr(project_key),
+                scope_kind=ISSUE, scope_key=issue_key,
+                incumbent=elsewhere["project_key"], challenger=project_key)
         plan, refusal = self.binding_plan(
             db, role=CHILD, scope_key=issue_key,
             endpoint=Endpoint(child_task, relationship_row["child_host_id"],
@@ -789,11 +808,13 @@ class Linkage:
                 )
             elif edge["link_kind"] not in SUPERVISION_KINDS \
                     or edge["upper_key"] != from_scope_key \
-                    or edge["lower_key"] != scope_key:
+                    or edge["lower_key"] != scope_key \
+                    or edge["lower_kind"] != scope_kind:
                 refusal = _Refusal(
                     RefusalReason.UNREGISTERED_SCOPE,
                     "link " + repr(link_id_value) + " does not join " + repr(from_scope_key)
-                    + " down to " + repr(scope_key) + " by execution or reference",
+                    + " down to " + scope_kind + " " + repr(scope_key)
+                    + " by execution or reference",
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=str(link_id_value), challenger=from_scope_key,
                 )
@@ -1071,10 +1092,13 @@ class Linkage:
         row = self.store.one(
             "SELECT * FROM scope_links"
             "  WHERE status IN ('active','paused') AND superseded_by IS NULL"
-            "    AND ((upper_key = ? AND lower_key = ?) OR (upper_key = ? AND lower_key = ?))"
+            "    AND ((upper_kind = ? AND upper_key = ? AND lower_kind = ? AND lower_key = ?)"
+            "      OR (upper_kind = ? AND upper_key = ? AND lower_kind = ? AND lower_key = ?))"
             "  ORDER BY revision DESC LIMIT 1",
-            (sender["scopeKey"], recipient["scopeKey"],
-             recipient["scopeKey"], sender["scopeKey"]),
+            (sender["scopeKind"], sender["scopeKey"],
+             recipient["scopeKind"], recipient["scopeKey"],
+             recipient["scopeKind"], recipient["scopeKey"],
+             sender["scopeKind"], sender["scopeKey"]),
         )
         return self._link_record(row) if row else None
 
@@ -1250,8 +1274,14 @@ class Linkage:
 
     # ---------------------------------------------------------------- handover
 
-    def outstanding(self, project_key, task_id):
-        """Live assignments under this parent in this project that are not finished.
+    def outstanding(self, project_key, task_id=None):
+        """Live assignments in this project that are not finished.
+
+        Scoped to the PROJECT, not to whichever task currently parents each row. Filtering by
+        the parent task meant that after one handover the replacement appeared to have no
+        outstanding work at all, so a second replacement could take the project without
+        acknowledging anything. task_id narrows it when a caller genuinely wants one parent's
+        rows, and handover does not use that narrowing.
 
         Derived through AssignmentView.state() rather than by asking whether a merge mark
         exists, because a mark counts only where it matches the CURRENT head event, generation
@@ -1263,14 +1293,17 @@ class Linkage:
 
         view = AssignmentView(self.store, Registry(self.store, self.clock), self.clock)
         unfinished_ids = []
-        for row in self.store.all(
-            "SELECT r.relationship_id AS rid FROM relationships r"
+        rows = self.store.all(
+            "SELECT r.relationship_id AS rid, r.parent_task_id AS parent FROM relationships r"
             "  JOIN relationship_scope s ON s.relationship_id = r.relationship_id"
-            " WHERE s.project_key = ? AND r.parent_task_id = ?"
+            " WHERE s.project_key = ?"
             "   AND r.status IN ('active','paused') AND r.superseded_by IS NULL"
             " ORDER BY r.created_at",
-            (project_key, task_id),
-        ):
+            (project_key,),
+        )
+        for row in rows:
+            if task_id is not None and row["parent"] != task_id:
+                continue
             if view.state(row["rid"])["state"] not in FINISHED_STATES:
                 unfinished_ids.append(row["rid"])
         return unfinished_ids
@@ -1341,8 +1374,7 @@ class Linkage:
                     scope_kind=scope_kind, scope_key=scope_key,
                     incumbent=current["taskId"], challenger=endpoint.task_id)
             else:
-                unfinished = (self.outstanding(scope_key, expect_task_id)
-                              if scope_kind == PROJECT else [])
+                unfinished = self.outstanding(scope_key) if scope_kind == PROJECT else []
                 if claimed != sorted(set(unfinished)):
                     refusal = _Refusal(
                         RefusalReason.HANDOVER_UNCONFIRMED,
@@ -1395,9 +1427,44 @@ class Linkage:
                      "actor": actor, "acknowledged": claimed},
                     at=now,
                 )
+                if scope_kind == PROJECT:
+                    self._move_assignments(db, claimed, expect_task_id, endpoint.task_id,
+                                           at=now)
         if refusal is not None:
             raise refusal.error()
         return self.binding(new_id)
+
+    def _move_assignments(self, db, relationship_ids, outgoing, incoming, *, at):
+        """Repoint the assignments a parent handover acknowledged.
+
+        Moving the project binding and the edges while relationships kept naming the outgoing
+        task left delivery and AssignmentView still targeting it, so the replacement owned a
+        project whose work answered to its predecessor. The acknowledged list IS the set the
+        incoming owner confirmed it is taking on, so it is exactly the set that moves.
+
+        allowedRecipients moves with it. It names the task a completion may be delivered to,
+        so repointing the parent without it would leave every one of those assignments
+        authorized to deliver only to a parent that no longer owns them.
+        """
+        import json as _json
+
+        for rid in relationship_ids:
+            row = db.execute(
+                "SELECT parent_task_id, allowed_recipients FROM relationships"
+                "  WHERE relationship_id = ?", (rid,)
+            ).fetchone()
+            if row is None or row["parent_task_id"] != outgoing:
+                continue
+            recipients = _json.loads(row["allowed_recipients"])
+            moved = [incoming if name == outgoing else name for name in recipients]
+            db.execute(
+                "UPDATE relationships SET parent_task_id = ?, allowed_recipients = ?,"
+                " updated_at = ? WHERE relationship_id = ?",
+                (incoming, _json.dumps(moved), at, rid),
+            )
+            self.store.journal(
+                "assignment_reparented", rid,
+                {"from": outgoing, "to": incoming}, at=at)
 
     # ---------------------------------------------------------------- records
 

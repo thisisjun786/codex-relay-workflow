@@ -1911,7 +1911,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     outstanding = subparsers.add_parser("linkage-outstanding")
     outstanding.add_argument("--project", required=True)
-    outstanding.add_argument("--task", required=True)
+    outstanding.add_argument("--task",
+                             help="narrow to one parent's rows. A handover acknowledges the"
+                                  " PROJECT's unfinished work, so leave this off for that")
     outstanding.set_defaults(handler=cmd_linkage_outstanding)
 
     handover = subparsers.add_parser("linkage-handover")
