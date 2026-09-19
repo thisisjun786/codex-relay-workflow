@@ -305,7 +305,8 @@ def payload_complaints(repo_root, cache_version):
                  " scripts/ci/plugin.py --payload, so what is installed is not a package this"
                  " transition can rely on: " + (done.stdout + done.stderr).strip()[:400]],
                 {"payloadCheck": argv, "exitCode": done.returncode})
-    return (declaration_complaints(repo_root, cache_version),
+    return (declaration_complaints(repo_root, cache_version)
+            + launcher_complaints(repo_root, cache_version),
             {"payloadCheck": argv, "exitCode": done.returncode})
 
 
@@ -551,6 +552,43 @@ def declaration_complaints(repo_root, cache_version):
     return found
 
 
+def launcher_complaints(repo_root, cache_version):
+    """Whether the launcher FILES the cached declarations name are the ones this checkout ships.
+
+    The declarations can agree while the programs they name do not. scripts/ci/plugin.py --payload
+    takes a file census and declaration_complaints compares JSON, so a cached wiring/crw_stop_hook.py
+    truncated to its shebang passes both: the surface reads as the replacement, the manual
+    registration is removed, and every Stop then runs a launcher that does nothing.
+
+    Compared byte for byte against this checkout's own copy, because an install is a verbatim copy
+    of the plugin root -- the same test same_adapter makes of a registered adapter. A launcher the
+    cache carries and this checkout does not is reported rather than skipped, since it is a program
+    a declaration names and nothing here can vouch for.
+    """
+    ours = Path(repo_root) / "plugins" / "crw"
+    events, servers, unread = _declared(cache_version, repo_root)
+    found, seen = [], set()
+    for value in [item for values in events.values() for item in values] + list(servers.values()):
+        script = value.split(" as written ")[0].split(" ", 1)[-1] if " " in value else None
+        if not script or script in seen or script.startswith("a command this cannot read"):
+            continue
+        seen.add(script)
+        cached, mine = Path(cache_version) / script, ours / script
+        try:
+            same = mine.is_file() and cached.is_file() \
+                and cached.read_bytes() == mine.read_bytes()
+        except OSError as error:
+            found.append(str(cached) + " could not be read to compare with the launcher this"
+                         " checkout ships (" + type(error).__name__ + ": " + str(error) + ")")
+            continue
+        if not same:
+            found.append("the installed " + script + " is not the launcher this checkout ships."
+                         " The declarations match and the programs they name do not, so removing"
+                         " the manual surfaces would hand them to something this repository"
+                         " cannot vouch for")
+    return found
+
+
 def runtime_complaints(host):
     """Whether the runtime this would record can still run, as a list.
 
@@ -601,6 +639,17 @@ def preflight(host, options):
     refusals = []
     notes = []
     plugin = host["plugin"]
+
+    named = host.get("exportedHome") or {}
+    if named.get("exported") and not named.get("agrees"):
+        # Reported on the run that would act, not left for the operator to notice afterwards. The
+        # packaged launchers read CODEX_HOME and never see --codex-home, so a session started in
+        # this environment reads a home this run is not touching.
+        notes.append({"exportedHome": named.get("exported"), "transitioning": named.get("using"),
+                      "why": "CODEX_HOME names one home and this run is transitioning another."
+                             " The packaged launchers read the exported one, so a session started"
+                             " in this environment will not read what this run writes. Nothing"
+                             " here refuses it: naming another home is what --codex-home is for"})
 
     if plugin["configEntry"] != reading.PRESENT:
         refusals.append("the plugin is not registered in " + str(inventory.config_path(
@@ -1937,7 +1986,17 @@ def disable(host, options, *, apply=False):
     settings = home / completion.CONFIG_NAME
     try:
         answer = decide("hook settings", settings, _settings_owner(settings))
-        if answer is None:
+        if apply and answer is not None and answer["outcome"] == ALREADY:
+            # Absent is not settled until it is held. A supported runtime_install.py hook --apply
+            # can write plugin-owned settings the moment after this reading, and answering from
+            # the reading reported that new adapter invocations were stopped while the packaged
+            # launcher had a document to read. Decided again under the lock that writer takes.
+            with hostrecord.Locked(settings):
+                answer = decide("hook settings", settings, _settings_owner(settings))
+                if answer is None:
+                    answer = _answer("hook settings", SETTLED, "retired " + str(settings),
+                                     applied=True, wrote=True, retired=retire(settings))
+        elif answer is None:
             with hostrecord.Locked(settings):
                 answer = decide("hook settings", settings, _settings_owner(settings))
                 if answer is None:

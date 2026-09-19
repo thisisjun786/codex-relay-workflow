@@ -329,10 +329,22 @@ def read_skill_links(codex_home, repo_root):
         for entry in found:
             if not entry.name.startswith(SKILL_PREFIX):
                 continue
-            owner = checkout_of(entry) if entry.is_symlink() else None
-            if owner is not None and (entry.resolve() / "SKILL.md").is_file():
+            try:
+                owner = checkout_of(entry) if entry.is_symlink() else None
+                target = entry.resolve() if owner is not None else None
+                ours = target is not None and (target / "SKILL.md").is_file()
+            except (OSError, RuntimeError) as error:
+                # A link replaced with a looping or unresolvable one between the two calls. This
+                # reader also runs as skill_unlink's last recheck, after the hook and the bridge
+                # have moved, so raising here loses the modelled partial-transition result. A link
+                # this cannot resolve is not one to remove: it is reported as foreign, with why.
+                answer["foreign"].append({"path": str(entry),
+                                          "why": "this link could not be resolved ("
+                                                 + type(error).__name__ + ": " + str(error) + ")"})
+                continue
+            if ours:
                 answer["crwOwned"].append({"path": str(entry), "checkout": str(owner),
-                                           "target": str(entry.resolve())})
+                                           "target": str(target)})
             else:
                 answer["foreign"].append({"path": str(entry),
                                           "why": "not a symlink into a CRW checkout"})

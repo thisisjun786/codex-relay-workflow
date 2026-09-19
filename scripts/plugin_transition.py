@@ -77,8 +77,19 @@ def host_of(args):
     # relative --dest would pass preflight resolving from this command's working directory and be
     # refused at the record write with the settings retired and the registration already gone.
     destination = Path(args.dest).expanduser().resolve() if args.dest else None
-    return inventory.snapshot(home, repo_root=ROOT, destination=destination,
-                              event=getattr(args, "event", None))
+    found = inventory.snapshot(home, repo_root=ROOT, destination=destination,
+                               event=getattr(args, "event", None))
+    # Named rather than chosen between. The flag decides where THIS run reads and writes; the
+    # packaged launchers read the exported variable and never see the flag, so when the two name
+    # different homes a session started in this environment will not find what this run wrote.
+    # That is a mistake worth seeing and a supported way to work on another home, which is why it
+    # is reported on every command rather than refused.
+    found["exportedHome"] = {
+        "exported": exported,
+        "using": str(home),
+        "agrees": (not exported) or Path(exported).expanduser().resolve() == home,
+    }
+    return found
 
 
 def options_of(args):

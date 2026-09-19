@@ -3238,8 +3238,10 @@ class TheFindingsFromReview(TransitionCase):
         host.install_plugin()
         before = host.hooks_document()
         # Relative on purpose, resolved against the working directory this run is given.
+        # With no exported home at all, so the flag is the only thing naming one.
         done = run([CLI, "--codex-home", "home", "--dest", "dest", "transition", "--apply",
-                    "--accept-hook-trust-gap"], cwd=host.root)
+                    "--accept-hook-trust-gap"], cwd=host.root,
+                   env={key: value for key, value in os.environ.items() if key != "CODEX_HOME"})
         answer = json.loads(done.stdout)
         self.assertEqual(done.returncode, 0, json.dumps(answer["results"], indent=2)[:1500])
         outcomes = {item["step"]: item["outcome"] for item in answer["results"]}
@@ -3270,6 +3272,120 @@ class TheFindingsFromReview(TransitionCase):
                 self.assertEqual(
                     (host.config(), host.hooks_document(), host.settings(), host.record()),
                     before)
+
+    @needs_reader
+    def test_two_absolute_homes_that_disagree_are_reported(self):
+        """The flag decides where this run writes; the launchers read the exported one."""
+        host = self.ready()
+        elsewhere = Path(self.directory) / "another-home"
+        elsewhere.mkdir()
+        done = run([CLI, "--codex-home", host.home, "--dest", "dest", "transition",
+                    "--accept-hook-trust-gap"], cwd=host.root,
+                   env={**os.environ, "CODEX_HOME": str(elsewhere)})
+        answer = json.loads(done.stdout)
+        self.assertEqual(done.returncode, 0, done.stdout[-800:])
+        notes = json.dumps(answer["results"][0].get("notes"))
+        self.assertIn(str(elsewhere), notes)
+        self.assertIn("will not read what this run writes", notes)
+        # And two homes that agree say nothing about it.
+        agreed = run([CLI, "--codex-home", host.home, "--dest", "dest", "transition",
+                      "--accept-hook-trust-gap"], cwd=host.root,
+                     env={**os.environ, "CODEX_HOME": str(host.home)})
+        self.assertEqual(agreed.returncode, 0, agreed.stdout[-800:])
+        self.assertNotIn("will not read what this run writes", agreed.stdout)
+
+    def test_a_cached_launcher_that_is_not_ours_is_refused(self):
+        """The declarations can agree while the programs they name do not."""
+        host = self.ready()
+        launcher = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "crw_stop_hook.py")
+        self.assertTrue(launcher.is_file())
+        # A payload census counts this file and the declarations still name it.
+        launcher.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("wiring/crw_stop_hook.py", answer["results"][0]["detail"])
+        self.assertIn("is not the launcher this checkout ships", answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
+    @needs_reader
+    def test_absent_settings_are_decided_under_the_lock_a_writer_takes(self):
+        """Absent is not stopped until it is held: a supported install can write in the window."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_runtime import hostrecord
+        from crw_transition import inventory, steps
+
+        host = self.ready()
+        settings = host.home / "crw-completion-hook.json"
+        plugin_owned = {**json.loads(settings.read_text(encoding="utf-8")), "owner": "plugin",
+                        "adapterInterpreter": str(host.destination / "current" / "bin" / "python3"),
+                        "adapterEntryPoint": str(host.destination / "current" / "bin"
+                                                 / "crw-completion-hook")}
+        settings.unlink()
+        snapshot = inventory.snapshot(host.home, repo_root=ROOT)
+        original = hostrecord.Locked
+        made = []
+
+        class Arriving(original):
+            """The supported installer writing plugin-owned settings inside the window."""
+
+            def __init__(self, target, timeout=None):
+                if not made:
+                    made.append(1)
+                    settings.write_text(json.dumps(plugin_owned), encoding="utf-8")
+                super().__init__(target, timeout)
+
+        hostrecord.Locked = Arriving
+        self.addCleanup(setattr, hostrecord, "Locked", original)
+        results = steps.disable(snapshot, {}, apply=True)
+        hostrecord.Locked = original
+        outcomes = {item["step"]: item["outcome"] for item in results}
+        self.assertEqual(outcomes["hook settings"], "settled", json.dumps(results)[:700])
+        self.assertFalse(settings.exists(), "the document written in the window is still live")
+        self.assertTrue(sorted(host.home.glob("crw-completion-hook.json.superseded-*")))
+
+    @needs_reader
+    def test_a_link_that_cannot_be_resolved_is_foreign_rather_than_an_exception(self):
+        """skill_unlink re-reads this after the hook and the bridge have already moved."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import inventory
+
+        host = self.ready()
+        # Names this repository does not ship, so the loop is the only thing under test.
+        looping = host.home / "skills" / "crw-zzz-looping"
+        partner = host.home / "skills" / "crw-zzz-partner"
+        looping.symlink_to(partner)
+        partner.symlink_to(looping)
+        genuine = inventory.checkout_of
+
+        def claiming(path):
+            """A link this run believed was ours a moment before it stopped resolving."""
+            return Path(ROOT) if Path(path).name.startswith("crw-zzz") else genuine(path)
+
+        # 3.13 answers a loop by returning the path; the floor this repository supports raises
+        # RuntimeError from a non-strict resolve, and a dead mount raises OSError on any version.
+        # Raised here for those two rather than skipped, because the guard is for them.
+        real_resolve = Path.resolve
+
+        def resolving(self, *arguments, **keywords):
+            if self.name.startswith("crw-zzz"):
+                raise RuntimeError("Symbolic link loop: " + str(self))
+            return real_resolve(self, *arguments, **keywords)
+
+        Path.resolve = resolving
+        self.addCleanup(setattr, Path, "resolve", real_resolve)
+        inventory.checkout_of = claiming
+        self.addCleanup(setattr, inventory, "checkout_of", genuine)
+        found = inventory.read_skill_links(host.home, ROOT)
+        inventory.checkout_of = genuine
+        Path.resolve = real_resolve
+        why = [item["why"] for item in found["foreign"] if "crw-zzz" in item["path"]]
+        self.assertTrue(why, json.dumps(found["foreign"])[:500])
+        self.assertTrue(any("could not be resolved" in item for item in why), json.dumps(why))
+        self.assertFalse([item for item in found["crwOwned"] if "crw-zzz" in item["path"]])
 
     @needs_reader
     def test_a_cache_whose_skills_cannot_be_listed_is_a_reading_not_a_crash(self):
