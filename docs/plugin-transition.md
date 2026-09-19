@@ -130,6 +130,42 @@ as a link; and every registration proven, including any table that starts the sa
 another name, because `register-mcp` takes `--name` and leaving an alias would start two
 bridges.
 
+It also requires the relay under that pointer, which is easy to forget because the adapter does not
+answer a Stop by itself: it runs the relay as a subprocess for the guard decision, and a host
+missing it reaches a working adapter on every Stop and releases with `guard_unreachable`.
+
+## The cached package has to be the replacement, not merely a valid package
+
+`scripts/ci/plugin.py --payload` answers whether the installed package is well formed. Well formed
+is not the question standing in front of a working hook and a working bridge registration about to
+be removed: its hook check accepts any nonempty event and command, and its server check any
+nonempty name. So the transition also compares what the cached package DECLARES with what this
+checkout ships, and refuses when they differ.
+
+What is compared, and why each part is there:
+
+- the documents the cached MANIFEST names, not the files at the paths this repository happens to
+  use, because Codex loads what the manifest declares and ignores everything else in the package;
+- the interpreter and the script together, as one pair, because half a launcher is not a launcher:
+  a versioned name this checkout does not ship is a valid spelling of a Python that need not exist
+  on the host;
+- the script positionally, the way an interpreter resolves it -- the first non-option argument, with
+  only the options that leave the next word alone skipped -- because `-c` takes source text and
+  `-m` takes a module name, and a command that merely mentions the launcher does not run it;
+- the matcher and the timeout beside the command, because the right launcher under a restrictive
+  matcher fires on some turns and not others, and a one-second timeout is killed before the
+  adapter's own budget can answer;
+- the whole set, counted: a document declaring our launcher twice fires two adapters on every Stop,
+  and an `mcp.json` carrying the expected entry plus another name starting the same launcher loads
+  two bridges. Addition defeats a one-owner handoff as surely as substitution does;
+- a declaration whose shape cannot be read is counted as exactly that rather than skipped, because
+  a skipped declaration is one Codex still runs and this comparison cannot see.
+
+What this deliberately is not: a shell parser, and not a resolution of the declared interpreter
+against a PATH this command does not control. An unreadable shape is refused rather than
+interpreted, and the interpreter that IS resolved is the one the settings record, through the same
+probe that asks it to be a Python before recording it.
+
 Work in flight is reported rather than judged. The relay is never asked: its status subcommand takes
 no store argument, asking about an absent store would create one, and an idle relay answers with a
 nonempty object. The marker root is listed instead, and a marker is created once and outlives the
