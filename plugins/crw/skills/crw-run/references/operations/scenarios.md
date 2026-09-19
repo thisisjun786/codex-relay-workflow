@@ -622,3 +622,111 @@ It does not recreate Focus or replace foreign files/links.
 
 Preserved: stable project/task IDs, existing specifications and coordination history,
 active child ownership, explicit execution limits, old installation contents and runtime state.
+
+## S28 Three levels run, and each one reads the level below by result
+
+Observed: an initiative has a supervisor bound to its stable ID, two of its projects each have one
+parent, and each parent has one child per ready issue. A child reports its pull request ready: the
+current head's required checks have PASSED, its required reviews have finished and no blocking
+finding remains, which is the only reading of OPS-9.2 that is not also true of a failed check. Its parent
+verifies that head, merges it, verifies the landing, records the issue, and reports the project's
+progress upward. The supervisor holds no checkout of its own and sees no implementation diff.
+
+Clauses: OPS-7.4, OPS-9.3, OPS-10.1; role semantics belong to
+[the shared role contract](../../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
+
+Action: the supervisor verifies the reported project outcome against the initiative's finish
+condition and stops there. It does not re-open the issue investigation its parent already did, does
+not re-review the child's diff, and does not instruct that child. The parent performs and verifies
+its own merges, and the child's work ends at that reviewed handoff rather than waiting to be woken
+for a landing it does not own. Child delivery, parent acceptance, the merge, installation, live behaviour, project
+completion and initiative completion stay seven separate claims, so no level reports the level
+above as finished on the strength of one landing.
+
+Preserved: the three bindings by stable Linear ID, each level's own record, the single active owner
+of each scope, and the distinction between a verified result and a completed level.
+
+## S29 One project, several initiatives, still one execution owner
+
+Observed: a project contributes to two initiatives. The first initiative has an execution
+supervisor and the project already has its parent and its running children. The second initiative
+now wants the same project's outcome, and its own supervisor asks that a further issue be added.
+
+Clauses: OPS-7.1, OPS-7.4; ownership selection belongs to
+[the shared role contract](../../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
+
+Action: the project keeps one execution supervisor and one parent. The second initiative references
+the project's outcome rather than issuing it work: its supervisor does not instruct that parent,
+does not clone its children, and does not register a second relationship for the same issues. A
+genuinely new requirement is raised with the owning supervisor, which decides whether it becomes
+scope for that project, and the decision is recorded once rather than tracked in both initiatives
+as separate output.
+
+Preserved: the project's stable ID, its parent and children, both initiative relations, and the
+existing rule that shared progress is never summed twice.
+
+## S30 No supervisor, no project, and an owner who already exists
+
+Observed: three variants. A project with no initiative runs with its parent and children as it does
+today. A standalone issue with no project runs in an issue-scoped task. A user supplies an
+initiative link for work whose project already has an active parent, and in a fourth variant
+another task is already the supervisor of that initiative.
+
+Clauses: OPS-7.1, OPS-7.4, OPS-8.2; binding decisions belong to
+[Project parent binding](../../../crw-plan/references/integrations.md#project-parent-binding), and
+existing-owner handling is already worked in S8 and S27.
+
+Action: run the first two exactly as today. Create no initiative, no project and no upper task to
+complete the shape, and create no supervisor for a project that does not need one. For the third,
+the initiative link alone rebinds nothing: the existing parent keeps the project, and the link is
+recorded as context. For the fourth, read the existing supervisor's ownership and current status
+without waking it, and settle a material conflict with the user rather than replacing it. No
+variant produces a second writer for an issue that already has one.
+
+Preserved: existing bindings and ownership, the projectless and supervisorless paths, active
+children and their pull requests, and the user's own decision about any replacement.
+
+## S31 Report only, no goal, no create, and work that needs its own authority
+
+Observed: a supervisor-level request asks only for a status report across an initiative's projects.
+Variants: the same request under an explicit no-goal limit; under an explicit no-create limit; and a
+report whose finding is that a project needs an installation, a release or a deployment to finish.
+
+Clauses: OPS-7.3, OPS-7.4, OPS-8.1, OPS-9.3; no-goal handling is already worked in S26 and the
+release boundary in S15.
+
+Action: read the existing parents, their records and their evidence, and answer. Wake nothing,
+dispatch nothing, create no task at any level, and create no goal where the limit forbids it. Write
+no record that the request did not authorize. The limits in force for this request are not widened
+by the fact that a level above now exists, and connecting a supervisor is not itself authority to
+act. Where the finding is installation, release or deployment, name it as work requiring the user's
+own approval and leave it unperformed; a supervisor decision about order supplies none of it.
+
+Preserved: every existing limit and its scope, all task and issue ownership, the absence of any new
+goal, and the separation between reporting a needed action and having authority to take it.
+
+## S32 Two parents agree directly, and a conditional yes is not a change
+
+Observed: two parents' projects both edit one shared surface. A proposes an edit split and a base
+revision; B replies with a conditional acceptance whose condition is that A lands first. Later B's
+child reports work that assumed the condition already held, and separately A asks that a third
+project adopt the same split.
+
+Clauses: OPS-7.3, OPS-7.4, OPS-9.3; the path and its form are
+[Direct coordination between parents](../../../crw-plan/references/integrations.md#direct-coordination-between-parents) and the
+[Coordination message](../../../crw-run/references/task-packet.md#coordination-message).
+
+Action: the two parents settle the split between themselves without the supervisor relaying it, and
+record the request and reply ids, the agreed area and the base revision. B's conditional acceptance
+is recorded as conditional with its condition, and is never cited as evidence that anything was
+applied: B's parent instructing its own child, that child's change and its verification are three
+further facts, each needing its own evidence. A never instructs B's child. The third project is not
+bound by an agreement its owner never accepted, so the proposal is recorded as unassigned until
+that owner accepts explicitly, and where it is a required dependency it is escalated as a blocker
+by actual ownership: to that third project's own supervisor where it has one, to a supervisor the
+projects share where there is one, and to the user where a genuinely shared decision has neither. The supervisor decides an unresolved disagreement, a scope change, new
+ownership and shared resources including merge order, and nothing about the edit agreement grants
+either parent a merge turn.
+
+Preserved: each parent's own children and records, the conditional state of an unapplied agreement,
+the third owner's freedom to decline, and the separation of edit agreement from merge order.

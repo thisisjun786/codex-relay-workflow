@@ -6,7 +6,9 @@ description: "Add a native parent goal and automatic continuation to crw-run's e
 # CRW Loop
 
 One parent coordinates one project; one independent child owns one issue and its
-one delivery PR. Run and Loop have the same project scope. This skill adds the
+one delivery PR, under the shared
+[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
+Run and Loop have the same project scope. This skill adds the
 parent's host goal, automatic continuation and goal completion decision.
 Use [crw-run](../crw-run/SKILL.md) for operation selection, project binding, ownership, parallel
 scheduling, task packets, delivery verification and authorized integration. Read

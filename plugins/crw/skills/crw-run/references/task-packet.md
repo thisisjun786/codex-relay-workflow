@@ -54,6 +54,10 @@ Task: [one issue ID and bounded result]
 Parent: [one Linear project ID and verified coordinator task ID, or no project
   for a standalone issue; retain the real coordinator task ID if delegated.
   Initiative membership does not assign another project]
+Supervisor: [the initiative ID and task ID of THIS project's designated execution supervisor,
+  where one exists; context only. A project contributing to several initiatives still has exactly
+  one, and the others are not named here because they only reference its outcome.
+  A supervisor works through your parent and is not a route into this task]
 Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
   or existing PR URL; related issues are dependencies, not additional deliveries.
   For non-PR work, state the result and how it will be verified]
@@ -102,6 +106,9 @@ Execution:
 - You orchestrate this one issue and its internal helpers. Do not absorb another
   issue into this task or PR. The parent orchestrates one project and owns coordination,
   delivery validation, and authorized integration. Do not adopt the parent's CXC binding.
+  Where an initiative above it has a supervisor, that supervisor works through your parent:
+  it does not instruct you, and you report to your parent. See
+  [Supervisor, parent and child scope](../../crw-plan/references/integrations.md#supervisor-parent-and-child-scope).
 - Where the assignment covers publication and you can push, own the delivery end to
   end: implement, test, commit, push, open the pull request, then triage, fix, reply
   to and recheck its reviews. Report once the current head's required checks and
@@ -197,6 +204,8 @@ Return:
   current head, and any unresolved finding. Record the relay receipt's own outcome
   separately; `ready_for_review` there is not `isDraft=false` here.
 - Remaining defects, unverified behavior, and possible integration conflicts.
+- Proposed changes to a Linear record, returned rather than written: the document or issue ID,
+  the revision you read, the reason, the smallest sufficient change and its evidence.
 Stop after this assigned result; do not auto-start another issue.
 ```
 
@@ -227,6 +236,59 @@ Relay, if used: [exact issue identity, scope reference, real coordinator/child I
   and digest under an authorized root; current generation/receipt outcome]
 Stop after this issue; do not start another issue or create an empty PR.
 ```
+
+## Coordination message
+
+Use this between parents coordinating directly, between two supervisors coordinating across their
+initiatives, for a parent's escalation to its supervisor, and for a supervisor's decision returning
+to them. It carries coordination between owners; it is never a route into anyone else's children.
+It is not a delivery channel: it carries no receipt, no acknowledgement and no verdict, and it
+never instructs another parent's child. The path and the rules it follows are
+[Direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents).
+
+Keep it short. Name what identifies this message, and reference what the existing relationship
+already holds instead of recopying it, exactly as the restoration block carries pointers rather
+than contents.
+
+```text
+Request: [id the sender chose for this message]
+Reply to: [on a reply, the id it answers; omit on a first message]
+Kind: [proposal | acceptance | conditional acceptance | rejection | correction | result | blocked |
+  merge turn request | merge turn assignment | merge turn return | recovery update.
+  The three merge-turn kinds are about the order into a shared target and nothing else: no kind
+  here assigns work to another parent, because no parent can]
+From / To: [each side's role, task id and Linear scope]
+Scope: [the issues, files, interfaces or behaviour this is about, and the base revision]
+Asking: [the action or decision required, or the decision being returned]
+Because: [where the reason lives: the finding, the pull request, the criterion, the receipt]
+Next: [who owns the next step, and what would settle it]
+```
+
+A worked pair. The long values stay as references, and the reply is conditional, so it is recorded
+as conditional rather than as evidence that anything was applied:
+
+```text
+Request: shared-surface-1
+Kind: proposal
+From / To: parent of project A, task 01a0...a1; to parent of project B, task 01a0...b7
+Scope: A's CRW-127 and B's CRW-131 both edit references/operations.md; base dev 89c2c58
+Asking: B holds OPS-7 until A's clause lands, and A leaves OPS-8 untouched
+Because: overlapping edit surfaces recorded in both projects' coordination records
+Next: B, to accept or to name its own constraint
+
+Request: shared-surface-1-r1
+Reply to: shared-surface-1
+Kind: conditional acceptance
+From / To: parent of project B, task 01a0...b7; to parent of project A, task 01a0...a1
+Scope: same two issues, same base revision
+Asking: nothing yet; accepted on the condition that A lands before B's own review opens
+Because: B's child already has a branch at that base
+Next: A, to report its landing. Until then this is conditional and is not applied evidence
+```
+
+The record of what happened next belongs in the coordination record below, not in another message:
+B's parent instructing its own child, that child's change, and the verification are three further
+facts, and none of them follows from this reply.
 
 ## Restoration block
 
@@ -326,6 +388,9 @@ needed to resume:
   or non-PR source revision.
 - Where a relay holds the assignment: relationship id, current generation, current
   revision, assignment state, and the synchronisation jobs still owed.
+- Per direct agreement with a peer parent: the request and reply ids, the counterpart parent and
+  its project, the agreed area and base revision, whether the agreement is still conditional and
+  on what, and whether a follow-up owner has explicitly accepted.
 - Actual worktree/branch ownership and how local-only prerequisites are preserved.
 - Per mutation: stable request ID, actual task/host/turn IDs, receipt location.
 - Independent task creation/reuse route, authorization source, and verified

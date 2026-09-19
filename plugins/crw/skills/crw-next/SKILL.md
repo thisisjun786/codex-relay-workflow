@@ -60,7 +60,16 @@ and observed behavior. Reuse valid proof; read
 readiness or integration determines the next action.
 
 If the claimed result still has a consequential gap, choose its correction or
-missing verification and route it to the existing owner. Do not start a successor
+missing verification and route it one level down from whoever is asking, unless the fix is the
+caller's own to make, in which case it stays with the caller: a parent takes an issue's gap to its
+responsible child or handles what its project owns itself, a supervisor takes the same gap to that
+project's parent and never to its children, and a standalone issue keeps its own issue-scoped owner. Where the gap spans projects
+it goes to the parents that own the work, while an unresolved
+disagreement, a scope change, new ownership or a shared resource is their common supervisor's
+decision even when those parents agree. Where the projects
+answer to different supervisors, a requirement for one of them goes to that project's own
+supervisor, and only a genuinely shared decision with no common supervisor goes to the user. All of this follows
+[supervisor, parent and child scope](../crw-plan/references/integrations.md#supervisor-parent-and-child-scope). Do not start a successor
 whose prerequisite is unverified. If the required result is verified, choose the
 next ready dependency or milestone step that advances the product outcome.
 Do not repeatedly audit completed work or demand deployment when the agreed
