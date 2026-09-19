@@ -39,6 +39,13 @@ project to its parent are each contact, each gated on the limits in force at tha
 returned prepared and unsent, named as unsent, where a limit forbids it. The gate is per action and
 per project, so a limit that stops one of them does not hold back the rest.
 
+A task's own state is the other thing read before contact. Running and idle are not the only
+answers: a paused, cancelled or archived task is a third, and resuming one is a decision its owner
+makes rather than something a handoff may do
+([OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents)). Its brief waits and
+is reported as waiting, with what would release it, because the ordinary message path would start
+a turn in work somebody deliberately stopped.
+
 ## What the binding fixes
 
 Bind three things together, because a supervision missing any of them has no boundary:
@@ -140,9 +147,14 @@ recording itself preserves any entry already there rather than replacing it, so 
 binding stays readable and is what stands, rather than ownership being decided by whoever wrote
 last. And the initiative record is read again before each handoff and at each returned result, not
 only before the first, so a second supervisor is found within a step or two rather than at the end.
-On finding one, the later binding stops there: it sends nothing further, tells the parents it
+On finding one, the later binding stops there: it sends no further handoffs, tells the parents it
 already handed projects to that its handoff is withdrawn and names the owner, and hands its record
-over. That does not prevent an overlap; it bounds one to the work already started, which can be
+over. A parent settles that change the way it settled the first handoff, from the record rather
+than from the message: finding the initiative record now naming a supervisor other than the one its
+own record holds, it takes the recorded owner, updates its own record, and leaves its children,
+results and pull requests exactly as they are, because the supervision changed and the project's
+work did not. A withdrawal, or a replacement handoff from the other side, is what prompts that
+read; neither is what settles it, which is also why forging either achieves nothing. That does not prevent an overlap; it bounds one to the work already started, which can be
 reconciled, instead of letting an initiative run to completion under two owners. A busy parent, an unreachable record or an
 uncertain read is not evidence that a level is missing; it is a level that has not been read yet.
 
@@ -256,8 +268,8 @@ Preserved: one parent per project, its running work intact, and no duplicate wri
 
 ### C4 The existing parent is idle
 
-Observed: the project's parent exists, has no running turn, and its last result is older than the
-current project state.
+Observed: the project's parent exists, has no running turn, is not paused, cancelled or archived,
+and its last result is older than the current project state.
 Clauses: [OPS-7.1](operations.md#ops-71-what-an-assignment-binds).
 Action: send the handoff by the ordinary message path with the restoration block, because an idle
 task has usually lost the context its first prompt gave it. Refresh the brief to the current
@@ -299,7 +311,23 @@ only the projects that would need a parent created, naming that one missing perm
 Preserved: the creation limit, and every project whose owner already exists still moving rather
 than collapsed into a report nobody asked for.
 
-### C8 Part of the set is already finished
+### C8 Two supervisions start at once on different projects
+
+Observed: two designations run concurrently, neither sees the other, and each hands a different
+project to its parent before either reads again.
+Clauses: [OPS-7.1](operations.md#ops-71-what-an-assignment-binds),
+[OPS-7.3](operations.md#ops-73-isolation-between-parents).
+Action: nothing here prevents that overlap, so the work is to bound and end it. The earliest
+recorded binding stands, because a supervisor recording itself preserves the entry already there.
+Each supervisor reads the initiative record again before its next handoff and at each returned
+result, so the second is found within a step or two. The later one then sends no further handoffs,
+withdraws the ones it made and names the owner; each parent re-reads the initiative record itself,
+takes the recorded owner and keeps its children, results and pull requests unchanged.
+Preserved: one owner per initiative once it is found, the work already started by either side, and
+an honest account of the window, which closes properly only when a store records the relationship
+and refuses the second.
+
+### C9 Part of the set is already finished
 
 Observed: two projects in the approved set are complete, with their pull requests merged and their
 outcomes verified.
