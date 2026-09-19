@@ -24,6 +24,7 @@ from .transport import (
     HELD_UNCERTAIN,
     INBOX_ONLY,
     QUEUED,
+    SENDING,
     SUPERSEDED,
     WITHHELD_PRE_SEND,
     assert_attempt_invariants,
@@ -31,7 +32,10 @@ from .transport import (
     classify_operation_receipt,
 )
 from .policy import PUSH_CHANNEL_CLOSED, SUPERSEDED as SUPERSEDED_HOLD
-from .report import read as read_work_report, render_completion, render_revision
+from . import restoration
+from .report import (
+    compose_revision, read as read_work_report, render_completion, render_revision,
+)
 
 COMPLETION = "completion_event"
 REVISION = "revision_request"
@@ -42,9 +46,30 @@ REVISION = "revision_request"
 # it IS answered by the child's reply.
 EXECUTION_ONLY_OUTCOMES = ("failed", "interrupted", "blocked_needs_input")
 CLAIMABLE = (QUEUED, DEFERRED_BUSY, WITHHELD_PRE_SEND)
-SENDING = "sending"
 MANIFEST_LINES = 10
 NEWLINE = chr(10)
+
+
+def _overflow_line(items, event_id, *, shown=MANIFEST_LINES, name_block=True):
+    """What the cap removed, said out loud, or None when it removed nothing.
+
+    The deliverables block has always said this and the two findings blocks did not, so a
+    correction could lose its eleventh finding - and with it the restoration block a compacted
+    child needs in order to resume - leaving nothing at all behind to read. A recipient
+    holding nine findings and a recipient whose tenth was cut read the same message.
+
+    The count alone is not enough either, which is why the block is named when it is one of
+    the things that went: "5 more" and "5 more, one of which was the restoration block" ask
+    the reader for different decisions.
+    """
+    hidden = list(items)[shown:]
+    if not hidden:
+        return None
+    return (
+        f"  ... {len(hidden)} more"
+        f"{restoration.overflow_detail(hidden) if name_block else ''}; see"
+        f" 'codex-session-relay show --event {event_id}'"
+    )
 
 
 class DeliveryService:
@@ -222,6 +247,32 @@ class DeliveryService:
             return self._render_revision(row, record, request, report)
         return self._render_completion(row, record, request, report)
 
+    def _render_and_account(self, row, record, request, report=None):
+        """The bytes, and what became of a declared restoration block in exactly those bytes.
+
+        Accounted from the SAME rendering the recipient gets rather than recomputed beside it,
+        so the two cannot disagree, and rendered once rather than twice because this runs
+        inside the claim transaction, where a second pass holds the single writer for no
+        reason. The legacy renderer's rule IS its cap, which is arithmetic over the finding
+        list; the composed one reports which findings its own shortening left standing.
+
+        None means there is nothing to account for: a completion carries no correction, and a
+        correction that declared no block has no claim to check.
+        """
+        if row["kind"] != REVISION:
+            return self._render_completion(row, record, request, report), None
+        findings = record.get("criteria") or []
+        declared = restoration.declared(findings) is not None
+        if report is not None:
+            composed = compose_revision(row, record, request, report)
+            return composed.text, (
+                restoration.project_survivors(findings, composed.survivors)
+                if declared else None
+            )
+        return self._render_revision(row, record, request, None), (
+            restoration.project_cap(findings, cap=MANIFEST_LINES) if declared else None
+        )
+
     def preview_message(self, event_id: str) -> str:
         """What the NEXT attempt would say. Never evidence of what any attempt DID say.
 
@@ -264,11 +315,9 @@ class DeliveryService:
                     f"  {entry['path']}  sha256={entry['sha256']}"
                     + (f"  bytes={size}" if size is not None else "")
                 )
-            if len(manifest) > MANIFEST_LINES:
-                lines.append(
-                    f"  ... {len(manifest) - MANIFEST_LINES} more; see"
-                    f" 'codex-session-relay show --event {row['event_id']}'"
-                )
+            overflow = _overflow_line(manifest, row["event_id"], name_block=False)
+            if overflow:
+                lines.append(overflow)
         else:
             lines.append("deliverables: none (execution-only outcome)")
         if record.get("manifestRef"):
@@ -277,7 +326,15 @@ class DeliveryService:
         if criteria:
             lines.append("criteria claimed by the child:")
             for item in criteria[:MANIFEST_LINES]:
+                # No restoration label on this direction. These are the CHILD's claims about
+                # its own work, they never pass through normalise_findings, and the completion
+                # receipt's schema lets an item carry any extra property - so a stray truthy
+                # "restoration" would print an official-looking marker on a message that
+                # carries no correction at all, contradicting the accounting one method below.
                 lines.append(f"  {item.get('id')}: {item.get('verdict')}")
+            overflow = _overflow_line(criteria, row["event_id"], name_block=False)
+            if overflow:
+                lines.append(overflow)
         lines += [
             "",
             "To respond, from inside your own turn:",
@@ -312,8 +369,12 @@ class DeliveryService:
             for item in findings[:MANIFEST_LINES]:
                 note = item.get("note")
                 lines.append(
-                    f"  {item.get('id')}: {item.get('verdict')}" + (f" — {note}" if note else "")
+                    f"  {item.get('id')}{restoration.label(item)}: {item.get('verdict')}"
+                    + (f" — {note}" if note else "")
                 )
+            overflow = _overflow_line(findings, row["event_id"])
+            if overflow:
+                lines.append(overflow)
         else:
             lines.append("what to change: no per-criterion findings were recorded")
         lines += [
@@ -497,9 +558,7 @@ class DeliveryService:
                 )
             record = self.intake.get(event_id) or {}
             report = read_work_report(self.store, event_id)
-            message = self._render_for(
-                row, record, request_id, report
-            )
+            message, carried = self._render_and_account(row, record, request_id, report)
             db.execute(
                 "INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state,"
                 " state, sent_at, observed_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -513,6 +572,18 @@ class DeliveryService:
                 " message, rendered_at) VALUES (?,?,?,?,?,?)",
                 (request_id, event_id, attempt_no, row["kind"], message, self.clock.iso()),
             )
+            if carried is not None:
+                # Against the bytes this attempt actually froze, in the same transaction that
+                # froze them. Everything measured earlier describes the attempt that was next
+                # AT THAT TIME: a retry-safe attempt that never sent leaves the following
+                # render one request-id digit longer, and at a byte boundary that is the
+                # difference between carrying the block and dropping it. So the earlier
+                # measurements stay what they are, preflight, and this is the one that
+                # settles what an attempt carried.
+                carried["attempt"] = attempt_no
+                self.store.journal(
+                    "restoration_attempted", event_id, carried, at=self.clock.iso(),
+                )
             if report is not None:
                 # Which submission these bytes came from. The message says so for its reader;
                 # this is the same fact in a form the relay can compare against, so a
