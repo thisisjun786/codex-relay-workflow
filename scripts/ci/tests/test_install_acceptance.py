@@ -1352,7 +1352,14 @@ def observe_all(root):
 # is wrong that way so that it is never wrong in the direction where a place settles for a refusal
 # and nobody is ever asked about it. Being precise about which binding a particular line saw would
 # mean following flow, and a precise-looking answer this reader cannot actually justify is the
-# thing this whole module exists to refuse. That is what keeps the declaration from rotting: widening
+# thing this whole module exists to refuse.
+#
+# One limit does not fit that record, because it cannot be planted as a single line: a class is
+# named by its own name, so two classes written with the same name in different function scopes
+# answer to one key and the first found wins. Telling them apart would mean carrying the
+# enclosing chain through the method index, the held-attribute table and the base table at once.
+# It is the one place where this reader takes the first answer rather than all of them, and it is
+# written down here rather than left to be discovered. That is what keeps the declaration from rotting: widening
 # the derivation later makes the control for the form it now covers fail, which is the prompt to
 # delete the entry rather than leave a limitation standing that stopped being true.
 
