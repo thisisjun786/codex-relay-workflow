@@ -3215,16 +3215,22 @@ class TheFindingsFromReview(TransitionCase):
         """The launchers read that same variable from their own directory, not from this one."""
         host = self.ready()
         before = (host.config(), host.hooks_document(), host.settings(), host.record())
-        done = run([CLI, "--dest", "dest", "transition", "--apply", "--accept-hook-trust-gap"],
-                   cwd=host.root, env={**os.environ, "CODEX_HOME": "home"})
-        answer = json.loads(done.stdout)
-        self.assertEqual(done.returncode, 2, done.stdout[-800:])
-        self.assertEqual(answer["outcome"], "refused")
-        self.assertIn("CODEX_HOME", answer["error"])
-        self.assertIn("relative", answer["error"])
-        # Nothing read, nothing written: the refusal happens before the snapshot is taken.
-        self.assertEqual((host.config(), host.hooks_document(), host.settings(), host.record()),
-                         before)
+        # With the flag and without it. The flag moves where this run writes and never reaches a
+        # launcher, so it cannot settle what the exported variable means to one.
+        for extra in ([], ["--codex-home", str(host.home)]):
+            with self.subTest(flag=bool(extra)):
+                done = run([CLI, *extra, "--dest", "dest", "transition", "--apply",
+                            "--accept-hook-trust-gap"],
+                           cwd=host.root, env={**os.environ, "CODEX_HOME": "home"})
+                answer = json.loads(done.stdout)
+                self.assertEqual(done.returncode, 2, done.stdout[-800:])
+                self.assertEqual(answer["outcome"], "refused")
+                self.assertIn("CODEX_HOME", answer["error"])
+                self.assertIn("relative", answer["error"])
+                # Nothing read, nothing written: the refusal is in front of the snapshot.
+                self.assertEqual(
+                    (host.config(), host.hooks_document(), host.settings(), host.record()),
+                    before)
 
     @needs_reader
     def test_a_cache_whose_skills_cannot_be_listed_is_a_reading_not_a_crash(self):
