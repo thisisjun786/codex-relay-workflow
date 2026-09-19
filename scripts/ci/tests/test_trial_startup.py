@@ -4011,6 +4011,22 @@ class FortyThirdHostedRound(TrialCase):
         self.assertIn("No finite number of passes", snapshot)
         self.assertIn("relay exposes no revision", snapshot)
 
+    def test_the_span_is_measured_on_a_clock_that_cannot_go_backwards(self):
+        # A duration is not the difference between two moments: a synchronisation step during the
+        # pass would otherwise be reported as part of the interval, or as a negative one.
+        source = (ROOT / "scripts" / "trial_startup.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        node = next(n for n in ast.walk(tree)
+                    if isinstance(n, ast.FunctionDef) and n.name == "gate_reads_held")
+        used = {a.attr for a in ast.walk(node) if isinstance(a, ast.Attribute)}
+        self.assertIn("monotonic", used)
+        self.assertNotIn("time", used, "a wall-clock reading is not a duration")
+
+        self.world.start_supervisor()
+        cell = cells_of(self.world.preflight(), "assignmentState")["gateReadsHeld"]
+        span = float(cell["evidence"].split("in sequence over ")[1].split(" seconds")[0])
+        self.assertGreaterEqual(span, 0)
+
 
 if __name__ == "__main__":                                           # pragma: no cover
     unittest.main()

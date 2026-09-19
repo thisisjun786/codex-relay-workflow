@@ -2091,7 +2091,10 @@ def gate_reads_held(record, relay, rows, criteria, assignment_read, assignment_e
     support: these values were unchanged when they were read again, over an interval of this
     length.
     """
-    began = time.time()
+    # Monotonic, because this is a duration rather than a moment. Two wall-clock readings differ
+    # by whatever the clock did between them, so a synchronisation step during the pass would
+    # have reported a span that included the adjustment, or a negative one.
+    began = time.monotonic()
     moved, unread = [], []
     for name in participants_of(record):
         probe = relay.relay("settings-show", "--task", name)
@@ -2128,7 +2131,7 @@ def gate_reads_held(record, relay, rows, criteria, assignment_read, assignment_e
                   evidence=("every read the gate was graded from is unchanged when taken again"
                             " after the last of them. They are separate processes and not one"
                             " transaction, and this pass reads them in sequence over "
-                            + str(round(time.time() - began, 3)) + " seconds, so a row read at"
+                            + str(round(time.monotonic() - began, 3)) + " seconds, so a row read at"
                             " its start could still be replaced before its end. This bounds the"
                             " window and does not remove it"
                             if not moved else
