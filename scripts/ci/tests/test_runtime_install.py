@@ -5963,6 +5963,20 @@ class UpdateRecoveryTests(unittest.TestCase):
 
             patches.append(mock.patch.object(runtime_install.staging, "write_claim",
                                              side_effect=write_then_strand))
+        if breaking == "settle the staging claim after the record vanishes":
+            # The host record disappears between the promotion and the claim write. It reads
+            # back as ABSENT, which is USABLE and carries an empty record -- so an empty
+            # selection and a superseded one look identical unless the state is consulted.
+            real_write = runtime_install.staging.write_claim                  # noqa: F811
+
+            def unlink_then_fail(environment, state, **kwargs):
+                if state == staging.COMPLETE:
+                    Path(host.record_path).unlink()
+                    raise OSError("read-only filesystem")
+                return real_write(environment, state, **kwargs)
+
+            patches.append(mock.patch.object(runtime_install.staging, "write_claim",
+                                             side_effect=unlink_then_fail))
         if breaking == "settle the staging claim after the selection alone moves on":
             # The selection moves and the POINTER does not, which is what a promotion that
             # died between its two writes leaves. staging.decide() keeps a directory the
@@ -6415,6 +6429,33 @@ class SettledRecordTests(unittest.TestCase):
                       "the record still did not land, which is reported as itself")
         self.assertTrue(claim.get("recoveryRequires"),
                         "with what to do instead: wait for the run that holds it")
+
+    def test_a_host_record_that_vanished_is_not_reported_as_a_selection_that_moved(self):
+        """ABSENT is usable, and an absent record carries an empty one.
+
+        An empty selection reads exactly like a selection that names somewhere else, so
+        without consulting the reading's STATE this command reports a host record that was
+        LOST as another run having moved on -- and tells the operator nothing needs doing.
+        Losing the authority for what this host selected is not the same event as being
+        superseded by a promotion that succeeded.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            host = _Host(temporary)
+            code, payload = UpdateRecoveryTests()._run(
+                host, breaking="settle the staging claim after the record vanishes")
+            vanished = _advice(payload, host)
+        with tempfile.TemporaryDirectory() as temporary:
+            other = _Host(temporary)
+            moved = _advice(UpdateRecoveryTests()._run(
+                other,
+                breaking="settle the staging claim after the selection alone moves on")[1],
+                other)
+
+        self.assertIs(payload.get("claimSettled"), False)
+        self.assertTrue(moved, "the contrast needs the other case to say something")
+        self.assertNotEqual(vanished, moved,
+                            "a record that is gone and a record that says something else are"
+                            " different events and need different recovery: " + vanished[:300])
 
     def test_a_directory_the_pointer_still_names_is_not_called_abandoned(self):
         """The next run decides on a PAIR, so advice drawn from the selection alone is wrong.

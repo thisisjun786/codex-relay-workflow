@@ -3124,8 +3124,14 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
     # still reach. The destination is this environment's parent, which is how the name was
     # derived in the first place. An unreadable record leaves both None, and None is never
     # folded into either of the other answers.
+    # 'ok' and not 'usable', because ABSENT is usable and it is not an answer about a
+    # selection. hostrecord.load() fills an absent record with an EMPTY one, and an empty
+    # record selects nothing -- which reads identically to a record that selects somewhere
+    # else, and would have this command report a host record that VANISHED as another run
+    # having moved on. The authority for what this host selected is gone in that case, and
+    # losing it is not the same event as being superseded by a successful promotion.
     current = hostrecord.load(record_path, definition_version)
-    if current.usable:
+    if current.ok:
         protected, protection = protected_environment(current.value, environment,
                                                       environment.parent, data)
         selected = protection["recordSelectsIt"]
@@ -3154,6 +3160,15 @@ def _settle_claim(environment, state, *, issue, run, record_path, definition_ver
             " cannot be read is not a claim this command may act on, so the next run reports"
             " the directory and leaves it exactly as it stands rather than finishing the"
             " promotion.")
+    elif current.state == reading.ABSENT:
+        record_requires = (
+            "restore the host record at " + str(record_path) + " before rerunning, and do not"
+            " remove this environment. The record is GONE, not merely saying something else:"
+            " it is the authority for what this host selected, and the promotion this run made"
+            " cannot be confirmed or finished by anything without it. The next run reads an"
+            " empty record, finds nothing selecting this environment and keeps the directory"
+            " rather than repairing it, so rerunning alone settles nothing. The owned pointer"
+            " may still reach this environment and a process may still be running out of it.")
     elif selected is None:
         record_requires = (
             "read " + str(record_path) + " before acting on this. The host record could not be"
