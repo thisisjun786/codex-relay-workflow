@@ -106,8 +106,10 @@ A request from a peer parent is answered here, by this task, under
 [Direct coordination between parents](../crw-plan/references/integrations.md#direct-coordination-between-parents):
 decide what this project's own issues and children do about it, never reach into the other
 project's children, and escalate to the supervisor only an unresolved disagreement, a scope
-change, new ownership, or a shared resource including the order into a shared target. Record the
-agreement and whether it is still conditional; a peer message moves no delivery by itself.
+change, new ownership, or a shared resource including the order into a shared target. Where the
+two projects share no supervisor, or answer to different ones, invent none: record the unsettled
+part, hold only that part, keep the independent work moving, and raise that decision to the user.
+Record the agreement and whether it is still conditional; a peer message moves no delivery by itself.
 
 For authorized automatic continuation, [crw-loop](../crw-loop/SKILL.md) owns the parent
 host goal and automatic continuation across turns. Returning from Run hands

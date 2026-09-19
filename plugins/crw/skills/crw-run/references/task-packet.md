@@ -237,7 +237,8 @@ Stop after this issue; do not start another issue or create an empty PR.
 
 ## Coordination message
 
-Use this between parents coordinating directly, and for a supervisor's decision returning to them.
+Use this between parents coordinating directly, for a parent's escalation to its supervisor, and
+for a supervisor's decision returning to them.
 It is not a delivery channel: it carries no receipt, no acknowledgement and no verdict, and it
 never instructs another parent's child. The path and the rules it follows are
 [Direct coordination between parents](../../crw-plan/references/integrations.md#direct-coordination-between-parents).

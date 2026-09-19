@@ -233,7 +233,7 @@ that happens to share the word.
 |---|---|---|---|---|
 | Supervisor | each parent's reported project outcome against the initiative's finish condition | nothing; it decides cross-project order, never a landing ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | the initiative record | the initiative's finish condition holds on its projects' verified outcomes |
 | Parent | each child's delivery, pull request, checks and review against the issue's accepted criteria | its own project's issues, into their intended target | the project record and the issues it owns | every obligation in the agreed project scope is delivered, integrated and reconciled |
-| Child | its own implementation and the review on its one pull request | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | nothing; it returns proposed record changes to its parent | its one delivery PR has landed under [Implementation Done](#implementation-done) |
+| Child | its own implementation and the review on its one pull request | never ([OPS-9.3](../../crw-run/references/operations.md#ops-93-the-parent-merges-and-does-not-release)) | nothing; it returns proposed record changes to its parent | the current head's required checks and reviews have finished and its blocking findings are resolved ([OPS-9.2](../../crw-run/references/operations.md#ops-92-what-normal-completion-means)); the issue itself is Done once its parent lands that pull request, under [Implementation Done](#implementation-done) |
 
 A ready batch means several separate children, not several issues assigned to one child, and the
 same holds a level up: several ready projects mean several parents. Each level reads the level
@@ -251,7 +251,9 @@ an authorized definition change follows the [initiative body standard](#initiati
 decisions and dispositions are comments, and material progress is an update. The parent's records
 are the project and the issues it owns. A child writes none. It returns the document or issue ID,
 the revision it read, the reason, the smallest sufficient change and its evidence to its parent,
-which decides and writes. Accepted design text is preserved rather than rewritten.
+which decides and writes. A supervisor's authority to write that record comes from its own
+assignment exactly as a parent's does; the binding identifies the scope and grants nothing.
+Accepted design text is preserved rather than rewritten.
 
 Bind a supervisor by stable initiative ID, the parent by stable project ID and each child by its
 issue ID. An initiative spanning projects may have one execution supervisor; it never becomes a
@@ -289,6 +291,10 @@ every message would become the bottleneck it exists to remove, so it decides onl
 cannot settle alone: an agreement they cannot reach, a change that widens either project's scope,
 who owns newly discovered work, and shared resources, including the order in which projects reach a
 shared target. The resource decision and the merge order are two decisions and are recorded as two.
+Where the two projects share no supervisor, or answer to different ones, neither supervisor
+acquires authority over the pair and none is invented or rebound: the parents record the unsettled
+part, hold only that part while their independent work continues, and raise that decision to the
+user, who is the owner it falls to.
 
 Only the owning parent instructs its own children, and no parent instructs another. A peer
 message is a request or an agreement: the parent that receives it decides what its own issues and
