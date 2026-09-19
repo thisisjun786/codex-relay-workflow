@@ -392,9 +392,13 @@ leading to a record belonging to somebody else, or to none, is refused and raise
 block whose stated workflow, child or pull request the records it points at do not bear out. The
 block never supplies those values; it says where to look for them.
 
-A repeat is not a second instruction. The receiver keeps each request id beside the disposition it
-gave, and a message arriving again under an id already answered is answered with that same
-disposition rather than acted on twice. That is what makes an uncertain send safe to reconcile by
+A repeat is not a second instruction. The receiver keeps each request beside the disposition it
+gave, keyed on the corroborated sender and scope together with the id rather than on the id alone,
+because senders choose their own ids and two peers can easily pick the same one. A message arriving
+again under a key already answered is answered with that same disposition rather than acted on
+twice. One that repeats a key while carrying different content is neither a replay nor a new
+instruction but a collision, and it is raised rather than silently given the earlier answer, which
+is also what stops a predictable id from being spent in advance to suppress the real request. That is what makes an uncertain send safe to reconcile by
 asking rather than by sending again, and it is why a replayed handoff, correction or decision
 cannot restart work that already ran.
 
