@@ -2659,6 +2659,36 @@ class TheFindingsFromReview(TransitionCase):
         self.assertEqual(steps._script(["python3", "-u", launcher]), "wiring/crw_stop_hook.py")
         self.assertEqual(steps._script(["python3", launcher]), "wiring/crw_stop_hook.py")
 
+    def test_a_name_that_merely_starts_with_python3_is_not_an_interpreter(self):
+        """python3-does-not-exist is not a Python, and need not even be on the host."""
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "scripts"))
+        from crw_transition import steps
+
+        launcher = "./wiring/crw_stop_hook.py"
+        self.assertIsNone(steps._script(["python3-does-not-exist", launcher]))
+        self.assertIsNone(steps._script(["python3x", launcher]))
+        self.assertIsNone(steps._script(["pythonista", launcher]))
+        # The real spellings, including a versioned one and an absolute path.
+        for name in ("python", "python3", "python3.11", "/usr/bin/python3.13"):
+            self.assertEqual(steps._script([name, launcher]), "wiring/crw_stop_hook.py", name)
+
+    def test_a_cache_declaring_a_python_that_is_not_one_is_refused(self):
+        """It passes every structural check and starts nothing."""
+        host = self.ready()
+        declared = (Path(host.home) / "plugins" / "cache" / "crw" / "crw" / PLUGIN_VERSION
+                    / "wiring" / "hooks" / "stop-recording-completion.json")
+        document = json.loads(declared.read_text(encoding="utf-8"))
+        entry = document["hooks"]["Stop"][0]["hooks"][0]
+        entry["command"] = entry["command"].replace("python3 ", "python3-does-not-exist ", 1)
+        declared.write_text(json.dumps(document), encoding="utf-8")
+        before = host.hooks_document()
+        code, answer = host.transition("--apply")
+        self.assertEqual(code, 1, json.dumps(answer["results"])[:700])
+        self.assertIn("this checkout declares wiring/crw_stop_hook.py",
+                      answer["results"][0]["detail"])
+        self.assertEqual(host.hooks_document(), before)
+
     def test_a_watched_path_is_locked_across_the_removal_too(self):
         """A registration names it and it was absent; something arriving there is the same event."""
         import sys as _sys

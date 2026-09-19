@@ -10,6 +10,7 @@ import errno
 import importlib.util
 import json
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -303,6 +304,10 @@ def payload_complaints(repo_root, cache_version):
 # means this command's shape is not one whose executed script can be read positionally, and a
 # declaration whose shape cannot be read is not one this transition may rely on.
 SAFE_INTERPRETER_FLAGS = ("-u", "-E", "-s", "-S", "-B", "-I", "-O", "-OO", "-q", "-b", "-bb", "-d")
+# The names a Python executable actually has. "starts with python3" also accepts
+# python3-does-not-exist, which is not a Python and need not even be on the host: a declaration
+# naming one passes every structural check and starts nothing.
+INTERPRETER_NAMES = re.compile(r"^python(3(\.\d+)?)?$")
 
 
 def _relative(word):
@@ -325,7 +330,7 @@ def _script(words):
     if not words:
         return None
     program = Path(str(words[0]).strip("\"'")).name
-    if not (program == "python" or program.startswith("python3")):
+    if not INTERPRETER_NAMES.match(program):
         # Something other than a Python starts this. What it does with a file name that follows
         # is its own business, and it is not this launcher being declared.
         return None
