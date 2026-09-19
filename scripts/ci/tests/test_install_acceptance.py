@@ -770,6 +770,152 @@ REFUSAL_OUT_OF_REACH = {
          " callers with it when it hands the refusal back rather than a container holding one."),
 }
 
+# This reader resolves a name through classes; Python resolves it through objects. Where the two
+# disagree the reader is wrong, and eight of these were found by review against this branch: four
+# places it lost and four it invented. They are data rather than eight cases because the next
+# disagreement belongs beside them, and because each fix needs the form it must NOT break written
+# next to it -- a shadow that stops the lookup is right when the binding really happens, and the
+# fix for the loop that never runs is one line away from disabling it altogether.
+#
+# Each entry is (which derivation, the lines producing it, the place at issue, whether that place
+# really does reach the declared thing, why). The fourth column is Python's answer, not this
+# reader's, which is the whole point of writing it down.
+REFUSAL, TEXT = "refusal", "text"
+RESOLVES_LIKE_PYTHON = {
+    "a class-body name a loop that may never run does not shadow":
+        (REFUSAL,
+         ("def carrier():",
+          "    return \"not_verified\"",
+          "",
+          "class Holder:",
+          "    for carrier in []:",
+          "        pass",
+          "    answer = carrier()"),
+         "Holder.answer", True,
+         "a for target is created only once the iterator yields, so a class body looping over an"
+         " empty sequence never binds the name and the call reaches the enclosing one."),
+    "a class-body name an ordinary binding does shadow":
+        (REFUSAL,
+         ("def carrier():",
+          "    return \"not_verified\"",
+          "",
+          "class Holder:",
+          "    carrier = None",
+          "    answer = carrier()"),
+         "Holder.answer", False,
+         "the pair of the case above: an unconditional binding really does shadow, so stopping"
+         " the outward lookup is right here and the loop fix must not have disabled it."),
+    "a property reached through a class alias":
+        (REFUSAL,
+         ("class Holder:",
+          "    @property",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    alias = carrier",
+          "    def answer(self):",
+          "        return self.alias"),
+         "answer", True,
+         "reading self.alias runs the same getter, so the alias table has to be consulted for"
+         " descriptors exactly as it already is for method calls."),
+    "a property reached through super()":
+        (REFUSAL,
+         ("class Base:",
+          "    @property",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class Child(Base):",
+          "    def answer(self):",
+          "        return super().carrier"),
+         "answer", True,
+         "super() is the one receiver spelled as a call rather than a name; the base getter runs"
+         " exactly as the base method does for super().carrier()."),
+    "an inherited property with nothing standing over it":
+        (REFUSAL,
+         ("class Base:",
+          "    @property",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class Child(Base):",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", True,
+         "the pair of the override cases below: ordinary inheritance still has to be followed,"
+         " so stopping at a subclass binding must not have stopped the walk altogether."),
+    "a subclass method standing over an inherited property":
+        (REFUSAL,
+         ("class Base:",
+          "    @property",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class Child(Base):",
+          "    def carrier(self):",
+          "        return \"fine\"",
+          "    def answer(self):",
+          "        return self.carrier"),
+         "answer", False,
+         "the first definition in the lookup order wins, so self.carrier reads Child's method"
+         " and the base getter never runs."),
+    "an inherited method with nothing standing over it":
+        (REFUSAL,
+         ("class Base:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class Sub(Base):",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", True,
+         "the same pairing on the method side."),
+    "a subclass binding standing over an inherited method":
+        (REFUSAL,
+         ("class Base:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "",
+          "class Sub(Base):",
+          "    carrier = str",
+          "    def consumer(self):",
+          "        return self.carrier()"),
+         "consumer", False,
+         "Sub.carrier is str, so the call reaches a builtin and the bases are never consulted."),
+    "a staticmethod decorated through an alias":
+        (REFUSAL,
+         ("sm = staticmethod",
+          "",
+          "class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @sm",
+          "    def consumer(this):",
+          "        return this.carrier()"),
+         "consumer", False,
+         "a static method has no receiver, so its first parameter is whatever a caller passed"
+         " and crediting it with the class's carriers invents the call."),
+    "a staticmethod decorated by its own name":
+        (REFUSAL,
+         ("class Holder:",
+          "    def carrier(self):",
+          "        return reading.UNREADABLE",
+          "    @staticmethod",
+          "    def consumer(this):",
+          "        return this.carrier()"),
+         "consumer", False,
+         "the pair of the case above, which was already right and has to stay right."),
+    "source text handed on from a file object opened in the same expression":
+        (TEXT,
+         ("def helper():",
+          "    return open(HERE).read()",
+          "",
+          "def consumer():",
+          "    return helper()"),
+         "consumer", True,
+         "the helper was already accounted, because HERE is named in it. What was lost is the"
+         " onward step, which HERE.read_text() in the same shape has always carried."),
+}
+
 # The spellings this module actually relies on. Not the reach -- the reach is derived and may go
 # further, which is not a failure. This is the floor: a kind that quietly stopped resolving, an
 # import that moved or a constant that was renamed, loses one of these and fails. Occurrence
@@ -1349,11 +1495,21 @@ def observe_all(root):
 # Where the reader cannot tell, it errs in one direction on purpose. It follows names -- a handle,
 # a called name, a name bound to one, an attribute a class binds -- and it does NOT follow flow.
 # So a name that ever holds the thing is treated as holding it for that scope, even where a later
-# line rebinds it. That is wrong in the direction where somebody has to write a sentence, and it
-# is wrong that way so that it is never wrong in the direction where a place settles for a refusal
-# and nobody is ever asked about it. Being precise about which binding a particular line saw would
-# mean following flow, and a precise-looking answer this reader cannot actually justify is the
-# thing this whole module exists to refuse.
+# line rebinds it. That is wrong in the direction where somebody has to write a sentence rather
+# than in the direction where a place settles for a refusal unasked. Being precise about which
+# binding a particular line saw would mean following flow, and a precise-looking answer this
+# reader cannot actually justify is the thing this whole module exists to refuse.
+#
+# That is the direction it prefers where it can see at all, and it is not a claim of
+# completeness. The forms it cannot see are the ones in SOURCE_OUT_OF_REACH and
+# REFUSAL_OUT_OF_REACH: a name spelled as a string, a callable taken out of a registry, a helper
+# in another module. A place arriving in one of those settles for a refusal and is never asked
+# about, which is the cost of following names, and the reason those are written down as data with
+# a control each rather than argued away here.
+#
+# Where a name IS in the text, agreeing with Python is not optional, and this reader resolves
+# through classes while Python resolves through objects. Every measured disagreement between the
+# two is in RESOLVES_LIKE_PYTHON with the sample that produces it and the answer Python gives.
 #
 # One limit does not fit that record, because it cannot be planted as a single line: a class is
 # named by its own name, so two classes written with the same name in different function scopes
@@ -1719,6 +1875,25 @@ def _hands_on(tree, spelled):
 
     is_method = {id(inner) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
                  for inner in in_body(node.body)}
+    # Which names mean staticmethod in this file. Spelled out it is recognised by the name;
+    # bound to another name first -- sm = staticmethod -- it is the same decorator applied the
+    # same way. A static method has no receiver, so reading its first parameter as the instance
+    # credits it with every carrier the class holds, and the alias is a name like any other, so
+    # it is resolved rather than declared unreachable. To a fixpoint, because an alias of an
+    # alias is still the decorator.
+    means_standalone, widening = {"staticmethod"}, True
+    while widening:
+        widening = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if (_dotted(node.value) or "").rpartition(".")[2] not in means_standalone:
+                continue
+            named = {inner.id for target in node.targets for inner in ast.walk(target)
+                     if isinstance(inner, ast.Name) and isinstance(inner.ctx, ast.Store)}
+            if not named <= means_standalone:
+                means_standalone |= named
+                widening = True
     defined, methods, plain, receivers, properties = set(), {}, set(), {}, {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -1732,7 +1907,7 @@ def _hands_on(tree, spelled):
         # And the instance is whatever the first parameter is called: self is a convention.
         args = node.args
         first = (args.posonlyargs + args.args)[:1]
-        standalone = any((_dotted(mark) or "").rpartition(".")[2] == "staticmethod"
+        standalone = any((_dotted(mark) or "").rpartition(".")[2] in means_standalone
                          for mark in getattr(node, "decorator_list", []))
         if id(node) in is_method and first and not standalone:
             receivers[where] = first[0].arg
@@ -1744,6 +1919,9 @@ def _hands_on(tree, spelled):
             if any((_dotted(mark) or "").rpartition(".")[2] in ("property", "cached_property")
                    for mark in getattr(node, "decorator_list", [])):
                 properties.setdefault((klass, where.rpartition(".")[2]), where)
+    # The places that ARE getters, so a class alias naming one can be recognised as naming a
+    # property rather than an ordinary method.
+    property_places = set(properties.values())
     for node in ast.walk(tree):
         # carrier = lambda self: ... in a class body binds a method named carrier, and the
         # lambda's own place is what a call through it reaches.
@@ -1780,13 +1958,17 @@ def _hands_on(tree, spelled):
             whether it happened is a question about the run, and blocking the outward lookup on
             a guess would lose the place that really does reach the module name. So only an
             unconditional binding shadows, which errs towards reporting.
+
+            A for target is conditional for the same reason and is not written here at all: the
+            target is created only once the iterator yields, so a class body looping over an
+            empty sequence never binds it and the name still reaches the enclosing scope.
             """
             for statement in body:
                 if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
                                           ast.ClassDef)):
                     yield statement.name, statement.lineno
                     continue
-                if certain:
+                if certain and not isinstance(statement, (ast.For, ast.AsyncFor)):
                     for named in _binds_locally(statement):
                         yield named, statement.lineno
                 for field, value in ast.iter_fields(statement):
@@ -1841,6 +2023,13 @@ def _hands_on(tree, spelled):
                 # Every method the alias may name: a conditional one names both arms, and
                 # answering with the first would lose whichever of them is the carrier.
                 return set(held_alias)
+        if named in class_bound.get(klass, {}):
+            # This class binds the name to something this reader cannot follow -- carrier = str.
+            # Attribute lookup stops at the first class that binds the name, so the bases are
+            # never consulted and crediting the inherited carrier here would invent a call
+            # nobody makes. What the binding holds instead is a question for whatever follows
+            # names, and where that ends is already written down as out of reach.
+            return set()
         for base in parents.get(klass, ()):
             reached = inherited(base, named, tuple(seen) + (klass,), aliases)
             if reached:
@@ -2038,6 +2227,16 @@ def _hands_on(tree, spelled):
             return None
         if (klass, named) in properties:
             return properties[(klass, named)]
+        for scope, _around in class_scope.get(klass, ()):
+            # alias = carrier in the class body is a second name for the same getter, and
+            # reading self.alias runs it exactly as reading self.carrier does.
+            for reached in sorted((aliases or {}).get(scope, {}).get(named) or ()):
+                if reached in property_places:
+                    return reached
+        if named in class_bound.get(klass, {}):
+            # A subclass method or binding of the same name stands in front of the inherited
+            # descriptor, so the base getter never runs and the bases are not searched.
+            return None
         for base in parents.get(klass, ()):
             reached = a_property(base, named, tuple(seen) + (klass,))
             if reached:
@@ -2050,12 +2249,23 @@ def _hands_on(tree, spelled):
         Through an INSTANCE only. Reading Example.carrier off the class hands back the
         descriptor rather than running the getter, so counting that would invent an occurrence
         nobody performs.
+
+        super().carrier is the one receiver that is a call rather than a name, and it runs the
+        base getter exactly as super().carrier() runs the base method, so it starts the same
+        lookup one class up.
         """
         if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
             return set()
+        _where, klass = places.get(id(node), (MODULE_LEVEL, None))
+        if (_dotted(node.value) is None and isinstance(node.value, ast.Call)
+                and _dotted(node.value.func) == "super"):
+            for base in parents.get(klass, ()):
+                reached = a_property(base, node.attr)
+                if reached:
+                    return {reached}
+            return set()
         if _dotted(node.value) not in instance(function):
             return set()
-        _where, klass = places.get(id(node), (MODULE_LEVEL, None))
         reached = a_property(klass, node.attr)
         return {reached} if reached else set()
 
@@ -2467,7 +2677,20 @@ def _source_spelled(handles, hands_source, held):
             reader = klass if through in ("self", "cls") else None
             on_a_handle = head in handles or (reader is not None
                                               and last in held.get(reader, ()))
-            return spelling if on_a_handle and attribute.startswith("read") else None
+            if on_a_handle and attribute.startswith("read"):
+                return spelling
+            # open(HERE).read(): the file object has no name of its own, so there is no dotted
+            # spelling to match, and the handle it was opened on is written in the same
+            # expression. Nothing about the run decides which file that is, so this is read
+            # rather than left out: the place itself was already accounted through HERE, and
+            # what this recovers is the helper handing the text ON to its caller.
+            if (isinstance(node.func, ast.Attribute) and node.func.attr.startswith("read")
+                    and isinstance(node.func.value, ast.Call)):
+                for argument in node.func.value.args:
+                    opened = spelled(argument, klass)
+                    if opened:
+                        return opened + "." + node.func.attr
+            return None
         return None
 
     return spelled
@@ -2554,6 +2777,19 @@ def source_text_reached(source):
         held = wider
     return (_occurrences(tree, _source_spelled(handles, hands_source, held)),
             {"handle": handles, "hands source": frozenset(hands_source)}, undecided, called)
+
+
+def places_reached(which, source):
+    """The places one derivation names in a source of our own.
+
+    The samples are whole modules rather than planted lines, because every form they record is
+    about class structure and a single line cannot carry one.
+    """
+    if which == TEXT:
+        found, _reach, _undecided, _called = source_text_reached(source)
+    else:
+        found, _spellings = refusals_reached(source)
+    return sorted({row[1] for row in found})
 
 
 class SevenReadingsTests(unittest.TestCase):
@@ -3075,6 +3311,32 @@ class SevenReadingsTests(unittest.TestCase):
                     planted_source((), "", "a_place_outside_the_reach", [sample]))
                 self.assertEqual([row for row in found if row[1] == "a_place_outside_the_reach"],
                                  [], form + " is inside the reach now, so delete the entry")
+
+    def test_each_name_this_reader_resolves_lands_where_python_lands(self):
+        """A name reaches what Python reaches, through classes as much as through scopes.
+
+        Eight forms here are places this reader got wrong and review found: it lost a class-body
+        name a never-running loop appeared to shadow, a property reached through a class alias or
+        through super(), and source text handed on from a file object opened in the same
+        expression; and it invented a call for a subclass standing over an inherited property or
+        method, and for a staticmethod decorated through an alias.
+
+        The other three are the forms each fix must not break. They are why the answers are kept
+        as data: a shadow that stops the lookup is correct when the binding really happens, and
+        the fix for a loop that never runs sits one line from disabling shadowing altogether.
+        """
+        for form, (which, lines, place, reaches, why) in sorted(RESOLVES_LIKE_PYTHON.items()):
+            with self.subTest(form):
+                self.assertTrue(why.strip(), form + " is declared without a reason")
+                places = places_reached(which, "\n".join(lines))
+                if reaches:
+                    self.assertIn(place, places,
+                                  form + ": " + place + " reaches the declared thing and this"
+                                  " reader lost it: " + json.dumps(places))
+                else:
+                    self.assertNotIn(place, places,
+                                     form + ": " + place + " cannot reach the declared thing and"
+                                     " this reader named it anyway: " + json.dumps(places))
 
     def test_no_two_places_this_module_declares_can_share_a_name(self):
         """Support: the declarations are keyed by name, so two places sharing one would merge.
@@ -3820,6 +4082,7 @@ HANDED = {
     "_reachable": NOTHING,
     "_bindings": NOTHING,
     "_binds_locally": NOTHING,
+    "places_reached": NOTHING,
     "_owned_by_a_class": NOTHING,
     "_held_by_class": NOTHING,
     "_hands_on": NOTHING,
@@ -3998,6 +4261,7 @@ HANDED = {
         NOTHING,
     "test_the_reach_of_each_derivation_is_the_declared_one": NOTHING,
     "test_the_forms_outside_each_derivations_reach_are_the_declared_ones": NOTHING,
+    "test_each_name_this_reader_resolves_lands_where_python_lands": NOTHING,
     "test_no_two_places_this_module_declares_can_share_a_name": NOTHING,
 }
 
